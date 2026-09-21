@@ -54,7 +54,15 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 | Tresor-Freigabe | `vault_grant.sealed_private_key` | `Tresor-Version(1) \| box_seal(VK_priv, U_pub)` |
 | Wiederherstellungsschlüssel | – (nur Papier) | `Version(1) \| VK_priv(32) \| Prüfsumme(2)`, Crockford-Base32 |
 | Blind Index | `*_bi` | rohe 32 Byte `HMAC-SHA256(BIK, zweck \| 0x00 \| normalisierter Wert)` |
+| Blob-Kopf | `file_blob.header` | `Version(1) \| secretstream-Header(24)` |
+| Blob-Inhalt | Datei bzw. `file_blob_chunk.data` | Folge von Blöcken `secretstream(DEK)` à 64 KiB Klartext (65553 Byte Chiffrat), der letzte kürzer und mit `TAG_FINAL`; `file_blob.cipher_sha256` = SHA-256 über das gesamte Chiffrat |
 
+- Die feste Chunkgröße erlaubt dem Leser, die Blöcke ohne eigenes
+  Rahmenformat zu trennen – deshalb sind beide Speicher-Backends (`db`/`fs`)
+  austauschbar. `TAG_FINAL` macht eine abgeschnittene Datei zum Fehler statt
+  zu einem kürzeren Beleg; die Verkettung von secretstream erkennt
+  vertauschte oder fehlende Blöcke. Beide Seiten halten nie mehr als einen
+  Chunk im Speicher.
 - Tabellen- und Spaltennamen in der AAD sind auf `[a-z][a-z0-9_]*` begrenzt,
   damit kein Bestandteil das Trennzeichen enthalten und die Bindung
   aushebeln kann.

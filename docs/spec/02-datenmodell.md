@@ -33,7 +33,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
-| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s` | – |
+| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s`; Speicher (M2-3): `speicher_backend` (`fs`/`db`) | – |
 | `mail_queue` | to_enc, subject_enc, body_enc, status, attempts, next_try_at, last_error | S |
 | `ai_provider` | name, base_url, api_key_enc, model, caps JSON (`vision`, `json_schema`, `max_images`, `max_tokens`), timeout_s, active, is_default | S (api_key) |
 | `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at, updated_at (M1-5; `executor`/`status` als VARCHAR, die PHP-Enums sind maßgeblich; `last_error` nur die Exception-Klasse) | – (state ohne Klartext-Fachdaten) |
@@ -48,8 +48,24 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
-| `blob` | storage (`db`/`fs`), fs_name NULL (Zufalls-ID), size, cipher_sha256, dek_sealed, header (secretstream), meta_enc (MIME, Originalname, Pixelmaße, Seitenzahl), created_at | T |
-| `blob_chunk` | blob_id, seq, data (MEDIUMBLOB ≤ 1 MiB) | T |
+| `file_blob` | storage (`db`/`fs`), fs_name NULL (Zufalls-ID), size (Klartextlänge), cipher_sha256 NULL, dek_sealed, header (Version + secretstream), meta_enc (MIME, Originalname, Pixelmaße, Seitenzahl), created_at | T |
+| `file_blob_chunk` | blob_id, seq, data (MEDIUMBLOB, 256 KiB je Zeile) – FK auf `file_blob` mit ON DELETE CASCADE | T |
+
+- `file_blob` statt `blob`, weil BLOB in MySQL/MariaDB ein reserviertes Wort
+  ist – gleicher Grund wie `setting.name` statt `key`. Die Spaltennamen
+  (`blob_id`, `pdf_blob_id`, `file_blob_id`) bleiben kurz.
+- Inhalt ist immer Chiffrat: secretstream mit dem DEK der Datei, Klartext-
+  Chunks à 64 KiB (Formate siehe 01 §2). Schreiben geht ohne Geheimnis
+  (`dek_sealed` an `VK_pub`), Lesen nur mit entsperrtem Tresor.
+- `cipher_sha256` ist NULL, solange der Strom nicht zu Ende geschrieben ist;
+  erst damit gilt ein Blob als lesbar. Fertig geschrieben dient die Prüfsumme
+  der Integritätsprüfung nach dem Backend-Wechsel (M2-5).
+- Backend `fs`: `shared/var/blobs/<2 Zeichen>/<Zufalls-ID>` – der Dateiname
+  ist eine Zufalls-ID (32 Hex-Zeichen), nie der hochgeladene Name; die
+  Unterverzeichnisse halten das Verzeichnis listbar. Geschrieben wird in eine
+  `.part`-Datei und erst am Ende umbenannt.
+- Backend-Wahl über das Setting `speicher_backend` (Default `fs`, E-06);
+  das Umstellen ist eine Schrittkette (M2-5).
 
 ## Fachdaten
 
