@@ -1,0 +1,24 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # script-src 'self' without 'unsafe-inline' is the point of this header
+    # (CLAUDE.md section 4): no inline <script>, no on* attributes, htmx
+    # without hx-on. Every JS library is vendored under public/js/vendor/,
+    # so no external host appears anywhere in the policy.
+    # 'unsafe-eval' is NOT needed and must not creep in: htmx works without
+    # it, and a scanner/OCR bundle that demanded it would be the wrong
+    # library for a page that handles decrypted receipt data.
+    # img-src needs blob: and data:: the scanner (milestone M5) renders
+    # camera frames and pdf.js pages into a canvas and shows the result via
+    # createObjectURL before anything is uploaded.
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    # HTTPS is an installation requirement, so committing to it is safe.
+    Header always set Strict-Transport-Security "max-age=15768000"
+</IfModule>
+
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [L]

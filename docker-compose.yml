@@ -1,0 +1,51 @@
+services:
+  app:
+    build: ./docker/php
+    ports:
+      - "8080:80"
+    working_dir: /var/www/html/current
+    environment:
+      # The PHPUnit suite creates its own database next to the dev one.
+      TEST_DB_HOST: db
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: dev-root
+      # The database probes of tools/hosting-check.php run against the dev
+      # database (they create and drop their own table and clean up after
+      # themselves). Without these the probes skip and only their "incomplete
+      # credentials" branch is ever exercised.
+      HC_TEST_DB_HOST: db
+      HC_TEST_DB_NAME: vereinsbelege
+      HC_TEST_DB_USER: vereinsbelege
+      HC_TEST_DB_PASS: dev-password
+    volumes:
+      - ./:/var/www/html/current
+      - ./docker/web:/var/www/html/web
+      - ./docker/shared:/var/www/html/shared
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mariadb:10.11
+    # wait_timeout mirrors the target host (hosting finding M0, issue #98):
+    # 120 s instead of the usual 28800, so a connection left idle across a
+    # long AI call dies in dev exactly as it does in production.
+    command: ["--wait-timeout=120", "--interactive-timeout=120"]
+    environment:
+      MARIADB_DATABASE: vereinsbelege
+      MARIADB_USER: vereinsbelege
+      MARIADB_PASSWORD: dev-password
+      MARIADB_ROOT_PASSWORD: dev-root
+    volumes:
+      # Named volume: bind-mounting /var/lib/mysql breaks on NTFS.
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "3306:3306"
+
+volumes:
+  dbdata:

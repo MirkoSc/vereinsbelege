@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root
+          # The hosting-check database probes need an existing schema.
+          MARIADB_DATABASE: vereinsbelege
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_mysql, zip, gd, sodium, curl, mbstring, fileinfo
+          coverage: none
+          # zend.exception_ignore_args is deliberately left at 0 here: the
+          # target host ships it off (issue #97), so CI runs in the worse of
+          # the two worlds and the tests have to hold there.
+          # Both trace settings are left in the WORSE of the two possible
+          # states here (args kept, parameters not capped), i.e. worse than
+          # the target host itself: the tests have to hold there.
+          ini-values: error_reporting=E_ALL, display_errors=On, zend.assertions=1, zend.exception_ignore_args=0, zend.exception_string_param_max_len=15
+
+      - name: Validate composer files
+        run: composer validate --no-check-publish
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Lint every PHP file
+        run: find app bin public tools tests -name '*.php' -print0 | xargs -0 -n1 -P4 php -l
+
+      - name: Run tests (deprecations fail the build)
+        run: vendor/bin/phpunit
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: 3306
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: ci-root
+          TEST_DB_REQUIRED: '1'
+          HC_TEST_DB_HOST: 127.0.0.1
+          HC_TEST_DB_NAME: vereinsbelege
+          HC_TEST_DB_USER: root
+          HC_TEST_DB_PASS: ci-root
+
+      # No JS logic yet - the first modules arrive with the layout (M1-3) and
+      # the scanner (M5). The step is wired now so adding a test file is
+      # enough to have it run.
+      - name: Run client-side JS tests
+        run: |
+          if ls tests/js/*.test.js >/dev/null 2>&1; then
+            node --test tests/js/*.test.js
+          else
+            echo "no JS tests yet - skipping"
+          fi

@@ -1,0 +1,73 @@
+/*
+ * Placeholder stylesheet. The design system - mobile first, light/dark, form
+ * components, flash messages - is milestone M1-3 (CLAUDE.md section 3, E-07).
+ * Just enough here that the start page is readable on a phone.
+ */
+:root {
+    --farbe-text: #1c1d1f;
+    --farbe-hintergrund: #ffffff;
+    --farbe-rand: #d6d8dc;
+    --farbe-gedaempft: #5b5f66;
+    --farbe-link: #1a5c9e;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --farbe-text: #e8e9ea;
+        --farbe-hintergrund: #16171a;
+        --farbe-rand: #33363b;
+        --farbe-gedaempft: #9aa0a8;
+        /* The browser default link blue fails contrast on a dark
+           background - readable in both themes matters even for a
+           placeholder, because this is the 404 page. */
+        --farbe-link: #7fb4ee;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    color: var(--farbe-text);
+    background: var(--farbe-hintergrund);
+}
+
+.site-header,
+.site-footer,
+main {
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.site-header {
+    border-bottom: 1px solid var(--farbe-rand);
+}
+
+.site-header h1 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.brand {
+    color: inherit;
+    text-decoration: none;
+}
+
+.site-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-top: 1px solid var(--farbe-rand);
+    color: var(--farbe-gedaempft);
+    font-size: 0.875rem;
+}
+
+a {
+    color: var(--farbe-link);
+}
