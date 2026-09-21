@@ -113,6 +113,22 @@ final class CspComplianceTest extends TestCase
         );
     }
 
+    /**
+     * setup.php runs BEFORE the .htaccess it writes exists, and it is the
+     * only page of this project that carries an inline <style> block (it
+     * ships as a standalone release asset and cannot link the stylesheet).
+     * A <script> in it would be a different matter: the environment check
+     * and the install button have to work without JavaScript, and once the
+     * .htaccess is in place script-src would silently drop it anyway.
+     */
+    public function testTheBootstrapInstallerWorksWithoutScripts(): void
+    {
+        self::assertStringNotContainsString(
+            '<script',
+            (string) file_get_contents(self::repoRoot() . '/setup.php'),
+        );
+    }
+
     public function testPolicyRestrictsScriptsToSameOrigin(): void
     {
         $csp = self::csp();

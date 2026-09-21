@@ -11,6 +11,8 @@ composer.phar
 /docker/shared/*.key
 /docker/shared/maintenance.flag
 /docker/shared/update_state.json
+/docker/shared/release_checksums.txt
+/docker/shared/setup_kanal.txt
 
 # docker/shared/config.php IS committed on purpose: it is the dev
 # configuration of the container (CLAUDE.md section 8, "docker compose up"

@@ -8,10 +8,10 @@ use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 
 /**
- * The migrator against a real server. The application's own migrations/ is
- * still empty at this milestone (the schema arrives with M1-5 and M2), so the
- * run uses the fixture set - which is what makes this a test of the migrator
- * rather than of the schema.
+ * The migrator against a real server. Most cases run against the fixture
+ * set - which is what makes them a test of the migrator rather than of the
+ * schema; the last one runs the application's own migrations the way a
+ * fresh installation does.
  */
 final class MigrationRunTest extends DatabaseTestCase
 {
@@ -73,14 +73,24 @@ final class MigrationRunTest extends DatabaseTestCase
     }
 
     /**
-     * The application's own migrations directory must stay loadable even
-     * while it is empty - the installer runs the migrator unconditionally.
+     * The application's own migrations, as a fresh installation runs them
+     * (the installer calls the migrator from 0). Deliberately not pinned to
+     * a list of versions - that would turn every new migration into a test
+     * change - but a second run has to be a no-op, which is what makes the
+     * update step chain repeatable.
      */
-    public function testTheApplicationsOwnMigrationsDirectoryRuns(): void
+    public function testTheApplicationsOwnMigrationsRunFromZero(): void
     {
         $migrator = new Migrator($this->pdo(), $this->migrationsDir());
 
-        self::assertSame([], $migrator->migrate()->applied);
-        self::assertSame(0, $migrator->currentVersion());
+        $result = $migrator->migrate();
+
+        self::assertNotSame([], $result->applied, 'the schema starts at migration 001');
+        self::assertSame(0, $result->fromVersion);
+        self::assertSame(
+            [],
+            new Migrator($this->pdo(), $this->migrationsDir())->migrate()->applied,
+            'a repeated run applies nothing',
+        );
     }
 }

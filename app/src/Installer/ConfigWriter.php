@@ -1,0 +1,69 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Installer;
+
+/**
+ * Writes shared/config.php - the last installer step: its existence is what
+ * locks /install (docs/spec/06-betrieb.md section 1).
+ *
+ * The file lives in shared/ and therefore survives every update; nothing
+ * ever overwrites it again.
+ */
+final class ConfigWriter
+{
+    /**
+     * The server key (CLAUDE.md section 4, key level 1): 32 bytes for
+     * libsodium's secretbox, base64 encoded so the config stays a readable
+     * PHP file.
+     *
+     * It is generated HERE, at install time, although the crypto service
+     * that uses it only arrives with milestone M2-1. The installer is the
+     * one place that can create it, and an installation set up with v0.1.0
+     * must not need re-keying later - so it is written now and simply not
+     * read yet. It must never end up in the database or in a database
+     * backup.
+     */
+    public const int SERVER_KEY_BYTES = 32;
+
+    /**
+     * @param array<string, mixed> $db host/port/name/user/password
+     */
+    public static function write(string $configFile, array $db): void
+    {
+        $config = [
+            'debug' => false,
+            'db' => [
+                'host' => (string) $db['host'],
+                'port' => (int) $db['port'],
+                'name' => (string) $db['name'],
+                'user' => (string) $db['user'],
+                'password' => (string) $db['password'],
+            ],
+            'server_key' => base64_encode(random_bytes(self::SERVER_KEY_BYTES)),
+            'cron_token' => bin2hex(random_bytes(24)),
+        ];
+
+        $dir = dirname($configFile);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $content = "<?php\n\n"
+            . "// Written by the installer. Lives in shared/ and survives updates.\n"
+            . "// Contains the server key - never commit it, never put it into a\n"
+            . "// database backup (CLAUDE.md section 4).\n"
+            . 'return ' . var_export($config, true) . ";\n";
+
+        if (file_put_contents($configFile, $content, LOCK_EX) === false) {
+            throw new \RuntimeException('config.php kann nicht geschrieben werden: ' . $configFile);
+        }
+
+        // The config is the only file in shared/ that holds a secret, and
+        // shared/ may be inside the FTP area of a shared host. Best effort:
+        // some hosts ignore it, which is why the layout keeps shared/ out of
+        // the docroot in the first place.
+        @chmod($configFile, 0600);
+    }
+}

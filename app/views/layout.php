@@ -7,6 +7,12 @@
     <title><?= e($seitentitel) ?></title>
     <link rel="stylesheet" href="/css/app.css?v=<?= e($version) ?>">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <?php /* Only external files: script-src 'self' without 'unsafe-inline'
+             rules out inline scripts and on* attributes (CLAUDE.md §4).
+             Values a script needs travel as data-* attributes. */ ?>
+    <?php foreach (($scripts ?? []) as $skript): ?>
+        <script src="<?= e($skript) ?>?v=<?= e($version) ?>" defer></script>
+    <?php endforeach; ?>
 </head>
 <body>
 <header class="site-header">

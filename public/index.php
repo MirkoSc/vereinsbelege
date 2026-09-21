@@ -27,7 +27,13 @@ ini_set('zend.exception_string_param_max_len', '0');
 // run once, this is the only check there is.
 $maintenanceFlag = dirname(__DIR__, 2) . '/shared/maintenance.flag';
 $requestPath = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-if (is_file($maintenanceFlag) && !str_starts_with($requestPath, '/admin')) {
+// Same exceptions as the shim: /admin plus the assets that page needs, or
+// the only page that can end the maintenance arrives unstyled and without
+// the script that drives the update steps.
+$maintenanceBypass = str_starts_with($requestPath, '/admin')
+    || str_starts_with($requestPath, '/css/')
+    || str_starts_with($requestPath, '/js/');
+if (is_file($maintenanceFlag) && !$maintenanceBypass) {
     http_response_code(503);
     header('Content-Type: text/html; charset=utf-8');
     header('Retry-After: 30');

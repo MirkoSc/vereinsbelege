@@ -14,7 +14,12 @@ auf dem Server, ohne `exec()`. Installation und Updates wie beim
 `setup.php` hochladen, Rest per Browser.
 
 **Status:** Meilenstein M1 – das Projektgerüst steht (Routing, Konfiguration,
-Datenbank, Migrationen, Logging). Fachlich kann die Anwendung noch nichts.
+Datenbank, Migrationen, Logging), dazu Installer, Self-Updater und
+Wartungsmodus. Fachlich kann die Anwendung noch nichts.
+
+> Der Adminbereich (`/admin/update`) hat bis Meilenstein M3 **keine
+> Anmeldung**. Eine öffentlich erreichbare Installation gehört bis dahin
+> zusätzlich hinter einen Passwortschutz des Hosters.
 
 ## Entwicklung
 
@@ -30,9 +35,20 @@ docker compose up --build
 # Tests (nutzen die MariaDB aus docker compose und legen vereinsbelege_test an)
 docker compose run --rm app php vendor/bin/phpunit
 
+# Tests der Client-Logik (Node, keine weiteren Abhängigkeiten)
+node --test tests/js/*.test.js
+
 # Migrationen anwenden
 docker compose exec app php bin/migrate.php
+
+# setup.php neu erzeugen (nach Änderungen an bin/setup.template.php oder
+# app/src/Service/Update/ReleaseDownloader.php – die CI prüft das)
+docker compose exec app php bin/build_setup.php
 ```
+
+Die Update-Seite liegt unter <http://localhost:8080/admin/update>. Den
+Installer sieht man, indem man `docker/shared/config.php` kurz beiseite
+schiebt – ohne Konfiguration läuft die Anwendung im Installationsmodus.
 
 Die Umgebung bildet den Zielhoster nach: `disable_functions` ohne `exec` und
 Verwandte, `max_execution_time = 30`, und `wait_timeout = 120` auf der
