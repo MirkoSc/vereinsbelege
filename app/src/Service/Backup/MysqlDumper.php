@@ -12,7 +12,8 @@ namespace App\Service\Backup;
  *
  * Values are quoted through PDO::quote, so the dump is safe for the
  * ciphertext columns of M2 as long as they are text. Binary columns
- * (blob_chunk, M2-6) need their own handling when the blob backup arrives.
+ * (`file_blob`, `file_blob_chunk`) need their own handling, which comes with
+ * the blob backup in M2-6.
  */
 final readonly class MysqlDumper
 {

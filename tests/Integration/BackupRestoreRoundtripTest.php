@@ -57,9 +57,13 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
 
     private function wipeDatabase(): void
     {
+        // Foreign keys off while dropping: SHOW TABLES is alphabetical, not
+        // in dependency order (file_blob before file_blob_chunk).
+        $this->pdo()->exec('SET FOREIGN_KEY_CHECKS = 0');
         foreach ($this->pdo()->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN) as $table) {
             $this->pdo()->exec(sprintf('DROP TABLE `%s`', (string) $table));
         }
+        $this->pdo()->exec('SET FOREIGN_KEY_CHECKS = 1');
         self::assertSame([], $this->pdo()->query('SHOW TABLES')->fetchAll());
     }
 
