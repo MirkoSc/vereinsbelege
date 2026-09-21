@@ -1046,6 +1046,133 @@ function hc_remove_tree(string $path): void
     @rmdir($path);
 }
 
+/**
+ * Builds the public URL of a path below the script directory, derived from the
+ * request itself. Returns null when the request data is unusable.
+ */
+function hc_public_url_for(string $relative, array $server): ?string
+{
+    $host = (string) ($server['HTTP_HOST'] ?? '');
+    if (preg_match('/^[A-Za-z0-9.\-]+(:\d{1,5})?$/', $host) !== 1) {
+        return null; // kein brauchbarer Hostname, kein Selbstaufruf
+    }
+    $scriptName = (string) ($server['SCRIPT_NAME'] ?? '');
+    if ($scriptName === '' || !str_starts_with($scriptName, '/')) {
+        return null;
+    }
+    $https = (string) ($server['HTTPS'] ?? '');
+    $scheme = ($https !== '' && strtolower($https) !== 'off') ? 'https' : 'http';
+    $base = substr($scriptName, 0, (int) strrpos($scriptName, '/'));
+
+    return $scheme . '://' . $host . $base . '/' . ltrim($relative, '/');
+}
+
+/** The portable snippet that denies web access to a directory. */
+function hc_htaccess_deny(): string
+{
+    return <<<'HTACCESS'
+        <IfModule mod_authz_core.c>
+            Require all denied
+        </IfModule>
+        <IfModule !mod_authz_core.c>
+            Order allow,deny
+            Deny from all
+        </IfModule>
+
+        HTACCESS;
+}
+
+/**
+ * Are .htaccess directives evaluated? Everything in the DocumentRoot depends
+ * on it: the security headers and the CSP, and – if the DocumentRoot cannot be
+ * moved into web/ – whether shared/ can be shielded at all.
+ *
+ * Works by writing a probe file next to this script, fetching it over HTTP
+ * (expecting 200), then denying it via .htaccess and fetching again
+ * (expecting anything but 200).
+ */
+function hc_group_htaccess(array $params): array
+{
+    $label = '.htaccess';
+    $skip = static fn (string $why): array => ['id' => 'htaccess', 'label' => $label, 'rows' => [hc_row(
+        'htaccess_deny',
+        '.htaccess sperrt ein Verzeichnis',
+        'übersprungen',
+        'Zugriff wird verweigert',
+        HC_STATUS_SKIP,
+        $why,
+    )]];
+
+    if (PHP_SAPI === 'cli') {
+        return $skip('Nur im Webaufruf prüfbar.');
+    }
+    if (PHP_SAPI === 'cli-server') {
+        return $skip('Der eingebaute PHP-Server kennt keine .htaccess und verarbeitet nur einen Request.');
+    }
+    if (($params['selftest'] ?? '1') === '0') {
+        return $skip('selftest=0 gesetzt.');
+    }
+
+    $name = 'hc_probe_' . bin2hex(random_bytes(6));
+    $dir = __DIR__ . DIRECTORY_SEPARATOR . $name;
+    $url = hc_public_url_for($name . '/probe.txt', $_SERVER ?? []);
+    if ($url === null) {
+        return $skip('Die öffentliche Adresse des Skripts ließ sich nicht bestimmen.');
+    }
+    if (!@mkdir($dir, 0775)) {
+        return $skip('Im Skript-Verzeichnis ließ sich kein Prüfverzeichnis anlegen.');
+    }
+
+    $rows = [];
+    try {
+        file_put_contents($dir . DIRECTORY_SEPARATOR . 'probe.txt', 'hosting-check');
+        $before = hc_http_probe($url, 8);
+        $rows[] = hc_row(
+            'htaccess_reachable',
+            'Datei neben dem Skript ist öffentlich abrufbar',
+            $before['ok'] ? 'HTTP ' . $before['status'] : 'nicht erreichbar',
+            'HTTP 200 (belegt, dass die Prüfung etwas aussagt)',
+            $before['status'] === 200 ? HC_STATUS_OK : HC_STATUS_WARN,
+            $before['ok']
+                ? $before['detail']
+                : 'Der Server hat seine eigene Adresse ' . $url . ' nicht erreicht. Das sagt '
+                    . 'nichts über .htaccess – die Sperre dann von Hand prüfen. (' . $before['detail'] . ')',
+        );
+        if ($before['status'] !== 200) {
+            $rows[] = hc_row(
+                'htaccess_deny',
+                '.htaccess sperrt ein Verzeichnis',
+                'nicht prüfbar',
+                'Zugriff wird verweigert',
+                HC_STATUS_SKIP,
+                'Ohne erfolgreichen Erstabruf sagt die Sperre nichts aus.',
+            );
+
+            return ['id' => 'htaccess', 'label' => $label, 'rows' => $rows];
+        }
+
+        file_put_contents($dir . DIRECTORY_SEPARATOR . '.htaccess', hc_htaccess_deny());
+        $after = hc_http_probe($url, 8);
+        $denied = $after['ok'] && $after['status'] !== 200;
+        $rows[] = hc_row(
+            'htaccess_deny',
+            '.htaccess sperrt ein Verzeichnis',
+            $after['ok'] ? 'HTTP ' . $after['status'] : 'keine Antwort',
+            'Zugriff wird verweigert (403)',
+            $denied ? HC_STATUS_OK : HC_STATUS_FAIL,
+            $denied
+                ? 'AllowOverride ist aktiv: Security-Header, CSP und ein Schutz für shared/ greifen.'
+                : 'Die Datei war trotz .htaccess weiter abrufbar – Security-Header und CSP '
+                    . 'müssen dann anders gesetzt werden, und shared/ darf nicht im '
+                    . 'DocumentRoot liegen.',
+        );
+    } finally {
+        hc_remove_tree($dir);
+    }
+
+    return ['id' => 'htaccess', 'label' => $label, 'rows' => $rows];
+}
+
 /** Facts that cannot be probed and have to be read from the control panel. */
 function hc_group_notes(): array
 {
@@ -1115,6 +1242,7 @@ function hc_build_report(array $params): array
         hc_group_database($params),
         hc_group_outbound($params),
         hc_group_filesystem($params),
+        hc_group_htaccess($params),
         hc_group_notes(),
     ];
 

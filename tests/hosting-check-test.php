@@ -293,7 +293,10 @@ $report = hc_build_report(['outbound' => '0']);
 
 $t->run('hc_build_report liefert alle Gruppen', static function (HcTestRunner $t) use ($report): void {
     $ids = array_column($report['groups'], 'id');
-    $t->same(['php', 'extensions', 'crypto', 'database', 'outbound', 'filesystem', 'notes'], $ids);
+    $t->same(
+        ['php', 'extensions', 'crypto', 'database', 'outbound', 'filesystem', 'htaccess', 'notes'],
+        $ids,
+    );
     $t->same('vereinsbelege-hosting-check', $report['tool']);
     $t->same('report', $report['mode']);
     $t->same(HC_VERSION, $report['version']);
@@ -327,7 +330,8 @@ $t->run('der Bericht deckt die Prüfpunkte der Spec ab', static function (HcTest
         'ext_mbstring', 'ext_intl', 'ext_fileinfo', 'ext_pdo_mysql', 'ext_iconv',
         'gd_formats', 'pwhash_interactive', 'pwhash_moderate', 'password_argon2id',
         'fs_rename_dir', 'fs_writable', 'fs_above_document_root',
-        'cron_interval', 'longrun_limit', 'stream_limit', 'smtp',
+        'cron_interval', 'longrun_limit', 'stream_limit', 'smtp', 'shared_reachable',
+        'htaccess_deny',
     ];
     foreach ($required as $id) {
         $t->true(in_array($id, $ids, true), 'Prüfpunkt fehlt im Bericht: ' . $id);
@@ -343,6 +347,72 @@ $t->run('Datenbank und ausgehende Verbindungen werden ohne Angaben übersprungen
     }
     $t->same(HC_STATUS_SKIP, $byId['db_connect']['status'], 'ohne Zugangsdaten kein DB-Test');
     $t->same(HC_STATUS_SKIP, $byId['outbound']['status'], 'outbound=0 überspringt die Netzprüfung');
+});
+
+$t->run('hc_public_url_for leitet die öffentliche Adresse aus dem Request ab', static function (HcTestRunner $t): void {
+    $t->same(
+        'https://finanzen.example.de/tools/hc_probe_x/probe.txt',
+        hc_public_url_for('hc_probe_x/probe.txt', [
+            'HTTP_HOST' => 'finanzen.example.de',
+            'SCRIPT_NAME' => '/tools/hosting-check.php',
+            'HTTPS' => 'on',
+        ]),
+    );
+    $t->same(
+        'http://example.de:8080/hosting-check/probe.txt',
+        hc_public_url_for('/hosting-check/probe.txt', [
+            'HTTP_HOST' => 'example.de:8080',
+            'SCRIPT_NAME' => '/hosting-check.php',
+        ]),
+        'ohne HTTPS und im DocumentRoot',
+    );
+    $t->same(
+        'http://example.de/p/probe.txt',
+        hc_public_url_for('p/probe.txt', [
+            'HTTP_HOST' => 'example.de',
+            'SCRIPT_NAME' => '/hosting-check.php',
+            'HTTPS' => 'off',
+        ]),
+        'HTTPS=off zählt als unverschlüsselt',
+    );
+});
+
+$t->run('hc_public_url_for verweigert unbrauchbare Request-Daten', static function (HcTestRunner $t): void {
+    $t->same(null, hc_public_url_for('p', []), 'ohne Host');
+    $t->same(null, hc_public_url_for('p', ['HTTP_HOST' => 'example.de']), 'ohne SCRIPT_NAME');
+    $t->same(
+        null,
+        hc_public_url_for('p', ['HTTP_HOST' => 'evil.example.de/../x', 'SCRIPT_NAME' => '/a.php']),
+        'Hostname mit Sonderzeichen wird nicht verwendet',
+    );
+    $t->same(
+        null,
+        hc_public_url_for('p', ['HTTP_HOST' => 'a b', 'SCRIPT_NAME' => '/a.php']),
+        'Leerzeichen im Host',
+    );
+    $t->same(
+        null,
+        hc_public_url_for('p', ['HTTP_HOST' => 'example.de', 'SCRIPT_NAME' => 'relativ.php']),
+        'SCRIPT_NAME muss absolut sein',
+    );
+});
+
+$t->run('hc_htaccess_deny sperrt für alte und neue Apache-Versionen', static function (HcTestRunner $t): void {
+    $snippet = hc_htaccess_deny();
+    $t->contains('Require all denied', $snippet);
+    $t->contains('Deny from all', $snippet);
+    $t->contains('mod_authz_core.c', $snippet);
+    $t->true(str_ends_with($snippet, "
+"), 'Datei soll mit einem Zeilenumbruch enden');
+});
+
+$t->run('hc_group_htaccess prüft nichts ohne echten Webserver', static function (HcTestRunner $t): void {
+    $group = hc_group_htaccess([]);
+    $t->same('htaccess', $group['id']);
+    $t->same(1, count($group['rows']));
+    $t->same(HC_STATUS_SKIP, $group['rows'][0]['status'], 'auf der Kommandozeile gibt es keinen Selbstaufruf');
+    $rest = array_values(array_diff(scandir(__DIR__ . '/../tools') ?: [], ['.', '..']));
+    $t->same(['hosting-check.php'], $rest, 'im Skript-Verzeichnis darf nichts zurückbleiben');
 });
 
 $t->run('hc_outbound_targets prüft die Anbieter der Spec', static function (HcTestRunner $t): void {

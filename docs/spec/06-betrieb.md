@@ -93,6 +93,12 @@ zeigt als Tabelle (und als JSON zum Kopieren):
   eigenen llama.cpp-Proxy (`llm_url=…`)
 - `rename()` von Verzeichnissen (inkl. Rückweg), `flock()`, Schreibrechte
   oberhalb des DocumentRoot; Prüfdateien werden restlos aufgeräumt
+- **Werden `.htaccess`-Direktiven ausgewertet?** Das Skript legt eine Datei
+  neben sich ab, ruft sie über die eigene Adresse ab (erwartet 200), sperrt
+  sie per `.htaccess` und ruft erneut ab (erwartet 403). Davon hängen die
+  Security-Header und die CSP ab – und, falls der DocumentRoot nicht auf
+  `/web/` gelegt werden kann, auch der Schutz von `shared/`.
+  Abschaltbar mit `selftest=0`
 - Krypto-Rundläufe, die das Tresor-Modell belegen: Sealed Box und
   secretstream
 - Minimales Cron-Intervall: im Kontrollpanel nachsehen und notieren
