@@ -46,7 +46,7 @@ const HC_STATUS_SKIP = 'skip';
 const HC_MIB = 1048576;
 
 // ---------------------------------------------------------------------------
-// Pure helpers (covered by tests/hosting-check-test.php)
+// Pure helpers (covered by tests/HostingCheckTest.php)
 // ---------------------------------------------------------------------------
 
 /**

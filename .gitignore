@@ -1,11 +1,22 @@
+composer.phar
 /vendor/
 /node_modules/
+
 /.phpunit.cache/
 /dist/
+
+# shared/ survives updates and holds runtime state - nothing in it belongs
+# in the repository, except the dev config below.
 /docker/shared/var/
-/docker/shared/config.php
 /docker/shared/*.key
-/docker/shared/update_state.json
 /docker/shared/maintenance.flag
+/docker/shared/update_state.json
+
+# docker/shared/config.php IS committed on purpose: it is the dev
+# configuration of the container (CLAUDE.md section 8, "docker compose up"
+# must just work) and contains no secret - the credentials belong to a
+# MariaDB that only exists inside the local compose network. The production
+# config.php is written by the installer into /shared and never travels.
+
 .env
 *.local.php

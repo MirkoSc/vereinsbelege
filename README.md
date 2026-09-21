@@ -13,7 +13,30 @@ auf dem Server, ohne `exec()`. Installation und Updates wie beim
 [Vereinskalender](https://github.com/MirkoSc/vereinskalender): eine
 `setup.php` hochladen, Rest per Browser.
 
-**Status:** Planungsphase. Noch kein Code.
+**Status:** Meilenstein M1 – das Projektgerüst steht (Routing, Konfiguration,
+Datenbank, Migrationen, Logging). Fachlich kann die Anwendung noch nichts.
+
+## Entwicklung
+
+Voraussetzung: Docker. PHP und Composer werden lokal nicht gebraucht.
+
+```bash
+# Abhängigkeiten installieren (einmalig bzw. nach Änderungen an composer.json)
+docker run --rm -v "$PWD":/app -w /app composer:2 composer install
+
+# Anwendung starten – http://localhost:8080
+docker compose up --build
+
+# Tests (nutzen die MariaDB aus docker compose und legen vereinsbelege_test an)
+docker compose run --rm app php vendor/bin/phpunit
+
+# Migrationen anwenden
+docker compose exec app php bin/migrate.php
+```
+
+Die Umgebung bildet den Zielhoster nach: `disable_functions` ohne `exec` und
+Verwandte, `max_execution_time = 30`, und `wait_timeout = 120` auf der
+Datenbank – eine untätige Verbindung stirbt lokal genauso schnell wie dort.
 
 ## Dokumente
 
