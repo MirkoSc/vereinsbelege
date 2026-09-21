@@ -185,7 +185,7 @@ function hc_summarize(array $groups): array
 function hc_redact(array $params): array
 {
     foreach (array_keys($params) as $key) {
-        if (preg_match('/(pass|secret|token|key)/i', (string) $key)) {
+        if (preg_match('/(pass|secret|token|key|user|login)/i', (string) $key)) {
             $params[$key] = $params[$key] === '' ? '' : '***';
         }
     }

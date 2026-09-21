@@ -198,6 +198,9 @@ $t->run('hc_redact entfernt Geheimnisse aus der Ausgabe', static function (HcTes
         'token' => 's3cret',
         'api_key' => 'sk-123',
         'secret' => 'x',
+        'smtp_user' => 'm0000000',
+        'db_user' => 'd0000000',
+        'login' => 'abc',
         'smtp_host' => 'mail.example.org',
         'leer' => '',
     ]);
@@ -206,9 +209,13 @@ $t->run('hc_redact entfernt Geheimnisse aus der Ausgabe', static function (HcTes
     $t->same('***', $redacted['token']);
     $t->same('***', $redacted['api_key']);
     $t->same('***', $redacted['secret']);
+    $t->same('***', $redacted['smtp_user'], 'Benutzernamen gehören nicht in einen Befundbericht');
+    $t->same('***', $redacted['db_user']);
+    $t->same('***', $redacted['login']);
     $t->same('mail.example.org', $redacted['smtp_host'], 'harmlose Werte bleiben');
     $t->same('', $redacted['leer'], 'leere Werte bleiben leer');
     $t->notContains('geheim', json_encode($redacted, JSON_THROW_ON_ERROR));
+    $t->notContains('m0000000', json_encode($redacted, JSON_THROW_ON_ERROR));
 });
 
 $t->run('hc_pad füllt auf und kürzt mit Auslassung', static function (HcTestRunner $t): void {
