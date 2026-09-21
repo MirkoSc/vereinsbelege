@@ -85,16 +85,46 @@ zeigt als Tabelle (und als JSON zum Kopieren):
   INTERACTIVE/MODERATE), gd (JPEG/PNG/WebP-Support), imagick (vorhanden?),
   zip, curl, openssl, mbstring, intl, fileinfo, pdo_mysql, iconv
 - `password_hash` mit `PASSWORD_ARGON2ID` verfügbar?
-- MySQL/MariaDB-Version, `max_allowed_packet`, JSON-Spalten
-- Ausgehende HTTPS-Verbindung zu `api.openai.com` und `api.anthropic.com`
-  (nur Erreichbarkeit, kein Key nötig) und optional zum eigenen
-  llama.cpp-Proxy + **Langlauf-Test**: Endpunkt, der N Sekunden wartet
-  (z. B. httpbin-ähnlich oder eigener Proxy) für 30/60/90/120/180 s →
-  ab wann bricht der Request ab?
-- Streaming-Test: Ausgabe von 200 MB in Chunks über 60 s – kommt sie an?
-- SMTP-Verbindung (Host/Port/TLS, Login optional) + Testmail
-- `rename()` von Verzeichnissen, Schreibrechte oberhalb des DocumentRoot
+- MySQL/MariaDB-Version, `max_allowed_packet`, Zeichensatz,
+  Standard-Speicher-Engine, Tabelle anlegen (Installer), JSON-Spalte mit
+  `JSON_EXTRACT`, `LONGBLOB` schreiben und lesen
+- Ausgehende HTTPS-Verbindung zu `api.openai.com`, `api.anthropic.com` und
+  `api.github.com` (nur Erreichbarkeit, kein Key nötig) und optional zum
+  eigenen llama.cpp-Proxy (`llm_url=…`)
+- `rename()` von Verzeichnissen (inkl. Rückweg), `flock()`, Schreibrechte
+  oberhalb des DocumentRoot; Prüfdateien werden restlos aufgeräumt
+- Krypto-Rundläufe, die das Tresor-Modell belegen: Sealed Box und
+  secretstream
 - Minimales Cron-Intervall: im Kontrollpanel nachsehen und notieren
+
+**Aufruf.** `HC_TOKEN` im Skript setzen oder `VEREINSBELEGE_HC_TOKEN` in der
+Umgebung; ohne Token antwortet das Skript mit 503, bei falschem Token mit 403
+(Vergleich per `hash_equals`). Ausgabe: HTML-Tabelle (mobil als Karten, ohne
+JavaScript) bzw. `format=json`; auf der Kommandozeile Text bzw.
+`--format=json`. Parameter gehen auch per POST, damit Zugangsdaten nicht in
+der URL stehen. Der Exit-Code ist 1, sobald ein Prüfpunkt `fail` ist.
+
+**Lang laufende Messungen sind eigene Aufrufe**, sonst sprengt der Check
+selbst die Grenzen, die er messen soll:
+
+| Aufruf | Messung |
+|---|---|
+| `?test=longrun&seconds=30\|60\|90\|120\|180` | Wartet serverseitig; ab wann bricht der Request ab? |
+| `?test=longrun&mode=remote&seconds=N&url=…` | Wartet auf einen eigenen Verzögerungs-Endpunkt (kein Fremddienst voreingestellt) |
+| `?test=stream&mb=200&seconds=60` | Kommt eine langsame große Antwort an? |
+| `?test=smtp&smtp_host=…&smtp_port=465&smtp_secure=implicit\|starttls\|none` | Verbindung, optional Anmeldung, optional Testmail (nur mit `mail_from` **und** `mail_to`) |
+
+Geheimnisse (Token, Passwörter, Schlüssel) werden in jeder Ausgabe durch
+`***` ersetzt; das SMTP-Protokoll zeigt statt der Anmeldedaten Platzhalter.
+
+**Pflicht-Tests:** `tests/hosting-check-test.php` – Token-Vergleich (leere
+Erwartung greift nie), `hc_parse_bytes`/`hc_format_bytes`, Bewertung von
+Mindestwerten, Zusammenfassung und schlechtester Status, Redaktion von
+Geheimnissen, Abdeckung der oben gelisteten Prüfpunkte, HTML-Ausgabe ohne
+Skript und mit maskierten Sonderzeichen, restloses Aufräumen der
+Dateisystem-Proben, Abbruch ohne SMTP-Host bzw. ohne Langlauf-URL. Die
+Datenbank-Prüfungen laufen gegen einen echten Server, wenn
+`HC_TEST_DB_HOST`/`_NAME`/`_USER`/`_PASS` gesetzt sind.
 
 Ergebnis wird in `docs/hosting-befunde.md` eingetragen; Abweichungen von
 den Annahmen dieser Specs werden als Issues angelegt.

@@ -26,6 +26,7 @@ auf dem Server, ohne `exec()`. Installation und Updates wie beim
 | [docs/spec/](docs/spec/) | Detail-Spezifikationen je Bereich (werden bei Bedarf gelesen) |
 | [docs/spec/07-worker.md](docs/spec/07-worker.md) | Optionales Worker-Modul (Raspberry Pi): OCR, PDF/A, KI rund um die Uhr |
 | [docs/hosting-befunde.md](docs/hosting-befunde.md) | Ergebnis des Hosting-Checks (M0) |
+| [tools/hosting-check.php](tools/hosting-check.php) | Eigenständiges Prüfskript für den Webspace (M0), ohne Abhängigkeiten |
 
 ## Lizenz
 

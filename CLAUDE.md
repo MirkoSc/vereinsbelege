@@ -61,7 +61,9 @@ Identisch zum Vereinskalender:
 Repo spiegelt ein Release: `app/src/` (Namespace `App\`, Unterordner
 `Http`, `Domain`, `Repository`, `Service/<Bereich>`, `Admin`, `App`,
 `Api`, `PublicPages`), `app/views/`, `public/` (CSS, JS, vendored JS-Libs),
-`bin/`, `migrations/`, `tests/`, `setup.php`.
+`bin/`, `migrations/`, `tests/`, `setup.php`. Dazu `tools/` für
+eigenständige, abhängigkeitsfreie Hilfsskripte, die **nicht** Teil eines
+Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
 
 ## 3. Bereiche der Anwendung
 
