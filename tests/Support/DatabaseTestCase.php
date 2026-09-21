@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Support;
 
+use App\Service\Crypto\ServerCrypto;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -62,6 +63,7 @@ abstract class DatabaseTestCase extends TestCase
                 'user' => getenv('TEST_DB_USER') ?: 'root',
                 'password' => getenv('TEST_DB_PASSWORD') ?: 'dev-root',
             ],
+            'server_key' => base64_encode(str_repeat('t', ServerCrypto::KEY_BYTES)),
             'cron_token' => 'test-token',
         ];
     }

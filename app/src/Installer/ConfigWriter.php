@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Installer;
 
+use App\Service\Crypto\ServerCrypto;
+
 /**
  * Writes shared/config.php - the last installer step: its existence is what
  * locks /install (docs/spec/06-betrieb.md section 1).
@@ -16,16 +18,12 @@ final class ConfigWriter
     /**
      * The server key (CLAUDE.md section 4, key level 1): 32 bytes for
      * libsodium's secretbox, base64 encoded so the config stays a readable
-     * PHP file.
+     * PHP file. Read by App\Service\Crypto\ServerCrypto.
      *
-     * It is generated HERE, at install time, although the crypto service
-     * that uses it only arrives with milestone M2-1. The installer is the
-     * one place that can create it, and an installation set up with v0.1.0
-     * must not need re-keying later - so it is written now and simply not
-     * read yet. It must never end up in the database or in a database
-     * backup.
+     * The installer is the one place that creates it, and it must never end
+     * up in the database or in a database backup.
      */
-    public const int SERVER_KEY_BYTES = 32;
+    public const int SERVER_KEY_BYTES = ServerCrypto::KEY_BYTES;
 
     /**
      * @param array<string, mixed> $db host/port/name/user/password

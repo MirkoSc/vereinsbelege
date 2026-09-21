@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Config;
 
+use App\Service\Crypto\ServerCrypto;
+
 /**
  * Immutable application configuration, loaded from shared/config.php.
  *
- * The server key (CLAUDE.md section 4) belongs in this file too, but it
- * arrives with the crypto service that consumes it (milestone M2-1) - an
- * unused required key would only break the installer that has to write it.
+ * Holds the server key (CLAUDE.md section 4, key level 1). The installer has
+ * written it since v0.1.0; from M2-1 on it is also read, by
+ * App\Service\Crypto\ServerCrypto. It must never reach the database, a
+ * database backup, a log line or an error page.
  */
 final readonly class Config
 {
@@ -19,6 +22,8 @@ final readonly class Config
         public string $dbName,
         public string $dbUser,
         public string $dbPassword,
+        /** Raw 32 bytes, already base64-decoded. */
+        public string $serverKey,
         public string $cronToken,
         public bool $debug,
     ) {
@@ -49,9 +54,29 @@ final readonly class Config
             dbName: self::stringValue($data, 'db.name'),
             dbUser: self::stringValue($data, 'db.user'),
             dbPassword: self::stringValue($data, 'db.password'),
+            serverKey: self::serverKey($data),
             cronToken: self::stringValue($data, 'cron_token'),
             debug: self::boolValue($data, 'debug', false),
         );
+    }
+
+    /**
+     * Keeps both secrets out of var_dump() output in a debug session.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return [
+            'dbHost' => $this->dbHost,
+            'dbPort' => $this->dbPort,
+            'dbName' => $this->dbName,
+            'dbUser' => $this->dbUser,
+            'dbPassword' => '***',
+            'serverKey' => '*** server key ***',
+            'cronToken' => '***',
+            'debug' => $this->debug,
+        ];
     }
 
     public function dsn(): string
@@ -75,6 +100,26 @@ final readonly class Config
         }
 
         return $value;
+    }
+
+    /**
+     * The key is stored base64 encoded so that config.php stays a readable
+     * PHP file (App\Installer\ConfigWriter); the application works with the
+     * raw bytes.
+     *
+     * @param array<mixed> $data
+     */
+    private static function serverKey(array $data): string
+    {
+        $raw = base64_decode(self::stringValue($data, 'server_key'), true);
+        if ($raw === false || strlen($raw) !== ServerCrypto::KEY_BYTES) {
+            throw new ConfigException(sprintf(
+                'Config value server_key must be %d base64 encoded bytes.',
+                ServerCrypto::KEY_BYTES,
+            ));
+        }
+
+        return $raw;
     }
 
     /**

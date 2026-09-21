@@ -9,6 +9,7 @@ use App\Config\Config;
 use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Service\Cron\CronRunner;
+use App\Service\Crypto\ServerCrypto;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -24,6 +25,7 @@ final class CronTokenTest extends TestCase
     {
         $config = Config::fromArray([
             'db' => ['host' => 'h', 'name' => 'n', 'user' => 'u', 'password' => 'p'],
+            'server_key' => base64_encode(str_repeat('k', ServerCrypto::KEY_BYTES)),
             'cron_token' => 'richtiges-token',
         ]);
 
