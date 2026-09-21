@@ -50,13 +50,33 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 | Feld (Tresor) | `*_enc` | `Version(1) \| Nonce(24) \| XChaCha20-Poly1305-IETF`, AAD = `tabelle\|id\|spalte` |
 | Betriebsdaten (Server-Schlüssel) | `*_enc` | `Version(1) \| Nonce(24) \| secretbox` |
 | Datenschlüssel | `dek_sealed` | `Tresor-Version(1) \| box_seal(DEK, VK_pub)` |
+| Benutzer-Privatkey | `user_key.wrapped_private_key` | `Version(1) \| Nonce(24) \| secretbox(U_priv, KEK)`, KEK = Argon2id(Passwort, `kdf_salt`, `kdf_ops`, `kdf_mem`) |
+| Tresor-Freigabe | `vault_grant.sealed_private_key` | `Tresor-Version(1) \| box_seal(VK_priv, U_pub)` |
+| Wiederherstellungsschlüssel | – (nur Papier) | `Version(1) \| VK_priv(32) \| Prüfsumme(2)`, Crockford-Base32 |
 | Blind Index | `*_bi` | rohe 32 Byte `HMAC-SHA256(BIK, zweck \| 0x00 \| normalisierter Wert)` |
 
 - Tabellen- und Spaltennamen in der AAD sind auf `[a-z][a-z0-9_]*` begrenzt,
   damit kein Bestandteil das Trennzeichen enthalten und die Bindung
   aushebeln kann.
 - Die Tresor-Version im `dek_sealed` ist der vorgesehene Pfad für eine
-  spätere Schlüsselrotation (siehe „Sperren/Entfernen").
+  spätere Schlüsselrotation (siehe „Sperren/Entfernen"). Die Freigabe trägt
+  sie ebenso, damit eine Generation ihre Grants findet;
+  `vault_grant.vault_version` spiegelt das Byte nur für SQL.
+- Die KDF-Parameter stehen je Benutzer im Klartext daneben
+  (`kdf_salt`, `kdf_ops`, `kdf_mem`), damit die Vorgaben später angehoben
+  werden können, ohne bestehende Benutzer auszusperren: eine alte Zeile wird
+  mit ihren eigenen Parametern geöffnet und beim nächsten Passwortwechsel auf
+  den aktuellen Stand gehoben.
+- Das Versionsbyte des Wiederherstellungsschlüssels ist die Version **dieser
+  Kodierung**, nicht die Tresor-Generation – ein gedruckter Schlüssel muss
+  auch für eine Installation lesbar bleiben, die das Format inzwischen
+  geändert hat. Zu welchem Tresor er gehört, entscheidet der Vergleich mit
+  `vault.public_key`.
+- Der Wiederherstellungsschlüssel enthält VK_priv selbst und wird nirgends
+  gespeichert; 35 Byte Nutzlast ergeben genau 56 Zeichen = 7 Gruppen à 8.
+  Crockford-Base32 lässt I, L, O und U weg, beim Einlesen gelten zusätzlich
+  `O → 0` und `I`/`L → 1`, Groß-/Kleinschreibung und Trennzeichen sind egal;
+  die Prüfsumme (BLAKE2b, 2 Byte) fängt den Rest ab.
 - Der HMAC-Schlüssel wird abgeleitet (`BIK = BLAKE2b(VK_priv,
   "blind-index-v1")`, für `user.email_bi` entsprechend aus dem
   Server-Schlüssel), damit dasselbe Geheimnis nicht für zwei Primitive dient.
@@ -95,7 +115,8 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   aber im Datenmodell vorgesehen (`vault.version`, `dek_sealed` mit
   Versionspräfix).
 - **Wiederherstellungsschlüssel**: bei Installation einmalig angezeigt
-  (Base32, 8er-Gruppen, Prüfsumme) + als druckbare Seite. Installation erst
+  (Crockford-Base32, 7 Gruppen à 8, Prüfsumme – Format siehe
+  „Speicherformate") + als druckbare Seite. Installation erst
   abschließbar nach Eingabe der letzten Gruppe (Beweis, dass notiert).
 
 ## 3. Anmeldung
