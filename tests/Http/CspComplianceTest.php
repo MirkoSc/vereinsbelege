@@ -73,10 +73,10 @@ final class CspComplianceTest extends TestCase
         $treffer = [];
         foreach (self::viewFiles() as $file) {
             $inhalt = (string) file_get_contents($file);
-            if (preg_match_all('/\son[a-z]+\s*=\s*"/i', $inhalt, $m) > 0) {
+            if (preg_match_all('/\son[a-z]+\s*=\s*["\x27]/i', $inhalt, $m) > 0) {
                 $treffer[] = basename($file) . ': ' . implode(', ', $m[0]);
             }
-            if (preg_match_all('/\shx-on[:a-z-]*\s*=\s*"/i', $inhalt, $m) > 0) {
+            if (preg_match_all('/\shx-on[:a-z-]*\s*=\s*["\x27]/i', $inhalt, $m) > 0) {
                 $treffer[] = basename($file) . ': ' . implode(', ', $m[0]);
             }
         }
@@ -148,8 +148,8 @@ final class CspComplianceTest extends TestCase
     /**
      * Styles too: the CSS is handwritten and served from public/css/, so
      * unlike the calendar this application has no reason to allow inline
-     * styles anywhere. Pinned before the design system arrives (M1-3), while
-     * it is still free to keep it that way.
+     * styles anywhere. The design system (M1-3) kept it that way - which is
+     * also why htmx is told not to inject its indicator styles.
      */
     public function testPolicyAllowsNoInlineStylesEither(): void
     {
@@ -219,5 +219,45 @@ final class CspComplianceTest extends TestCase
         ] as $header) {
             self::assertStringContainsString($header, $htaccess);
         }
+    }
+
+    /**
+     * Every JS library is vendored (CLAUDE.md section 4). A <script src> or
+     * a stylesheet pointing at a CDN would be blocked by the CSP, so the
+     * page would silently lose htmx - and the provider would learn about
+     * every view of a page that shows decrypted receipts.
+     */
+    public function testNoViewLoadsAnAssetFromAnExternalHost(): void
+    {
+        $treffer = [];
+        foreach (self::viewFiles() as $file) {
+            $inhalt = (string) file_get_contents($file);
+            if (preg_match_all('#(?:src|href)\s*=\s*["\x27]https?://#i', $inhalt, $m) > 0) {
+                $treffer[] = basename($file) . ': ' . implode(', ', $m[0]);
+            }
+        }
+
+        self::assertSame([], $treffer);
+    }
+
+    /**
+     * htmx is configured through <meta name="htmx-config">, never through a
+     * script: script-src 'self' would drop an inline configuration block,
+     * and the settings it carries are not cosmetic - includeIndicatorStyles
+     * off keeps htmx from injecting a <style> element that style-src drops
+     * anyway, and selfRequestsOnly keeps an hx- attribute from ever sending
+     * receipt data to a foreign host.
+     */
+    public function testHtmxIsConfiguredWithoutAScript(): void
+    {
+        $layout = (string) file_get_contents(self::repoRoot() . '/app/views/layout.php');
+
+        self::assertMatchesRegularExpression(
+            '/<meta name="htmx-config" content=\x27[^\x27]+\x27>/',
+            $layout,
+        );
+        self::assertStringContainsString('"includeIndicatorStyles":false', $layout);
+        self::assertStringContainsString('"selfRequestsOnly":true', $layout);
+        self::assertStringContainsString('src="/js/vendor/htmx.min.js', $layout);
     }
 }

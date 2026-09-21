@@ -16,7 +16,7 @@
             Benutzerkonten, Tresor und die Fachbereiche kommen mit den nächsten
             Meilensteinen. Bis dahin gibt es die Startseite und die Update-Seite.
         </p>
-        <p><a class="knopf" href="/">Zur Startseite</a></p>
+        <p><a class="knopf knopf-primaer" href="/">Zur Startseite</a></p>
     <?php else: ?>
         <p>
             Trage die Zugangsdaten der Datenbank ein, die du im Kundenmenü des Hosters
@@ -64,7 +64,7 @@
                 </select>
             </label>
 
-            <p><button type="submit" class="knopf">Installation starten</button></p>
+            <p><button type="submit" class="knopf knopf-primaer">Installation starten</button></p>
         </form>
     <?php endif; ?>
 </section>

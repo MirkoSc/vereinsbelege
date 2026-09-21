@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http;
 
 use App\Support\FileLogger;
+use App\View\Area;
 use App\View\View;
 
 /**
@@ -23,6 +24,11 @@ final class Kernel
 
     public function handle(Request $request): ResponseInterface
     {
+        // The layout marks the current navigation entry with
+        // aria-current="page"; this is the one place every response passes
+        // through, so no controller has to remember to pass its own path.
+        $this->view->setCurrentPath($request->path);
+
         try {
             return $this->staticFiles->tryServe($request) ?? $this->dispatch($request);
         } catch (\Throwable $e) {
@@ -37,10 +43,12 @@ final class Kernel
         return match ($match->type) {
             MatchType::Matched => ($match->handler)($request, $match->params),
             MatchType::NotFound => Response::html(
+                // Area::Oeffentlich: a 404 can hit any URL, including one
+                // that never had a session, so its layout must not need one.
                 $this->view->render('error', [
                     'title' => 'Seite nicht gefunden',
                     'message' => 'Die angeforderte Seite existiert nicht.',
-                ]),
+                ], Area::Oeffentlich),
                 404,
             ),
             MatchType::MethodNotAllowed => new Response(

@@ -1,159 +1,346 @@
 /*
- * Placeholder stylesheet. The design system - mobile first, light/dark, form
- * components, flash messages - is milestone M1-3 (CLAUDE.md section 3, E-07).
- * Just enough here that the start page is readable on a phone.
+ * Designsystem der Belegverwaltung (Meilenstein M1-3, E-07).
+ *
+ * Handgeschrieben, kein Build-Schritt, kein Framework: Die Datei wird so
+ * ausgeliefert, wie sie hier steht. Reihenfolge: Tokens, Grundgerüst,
+ * Seitenaufbau, Komponenten.
+ *
+ * Grundsätze
+ * - Mobile first: alles ohne Media Query gilt ab 360 px; Media Queries
+ *   fügen nur auf breiteren Schirmen etwas hinzu.
+ * - Hell und Dunkel über prefers-color-scheme; jede Farbe ist ein Token,
+ *   damit kein Wert nur in einer der beiden Fassungen stimmt.
+ * - Keine Inline-Styles irgendwo (CSP: style-src 'self', CLAUDE.md §4).
  */
+
+/* ---------------------------------------------------------------- Tokens */
+
 :root {
+    color-scheme: light dark;
+
+    --farbe-hintergrund: #f5f6f8;
+    --farbe-flaeche: #ffffff;
+    --farbe-flaeche-still: #eef0f3;
     --farbe-text: #1c1d1f;
-    --farbe-hintergrund: #ffffff;
-    --farbe-rand: #d6d8dc;
     --farbe-gedaempft: #5b5f66;
+    --farbe-rand: #d6d8dc;
+    --farbe-rand-stark: #b3b7bd;
+
+    --farbe-akzent: #1a5c9e;
+    --farbe-akzent-text: #ffffff;
     --farbe-link: #1a5c9e;
+
     --farbe-ok: #1c6b3f;
+    --farbe-info: #1a5c9e;
     --farbe-warnung: #8a5a00;
     --farbe-fehler: #a3231b;
+
+    /* Flächen der Meldungen und Marken: getönt, damit sie auch ohne die
+       Randfarbe erkennbar bleiben (Farbe allein trägt keine Bedeutung). */
+    --farbe-ok-flaeche: #e7f3ec;
+    --farbe-info-flaeche: #e8f0f8;
+    --farbe-warnung-flaeche: #fbf1dd;
+    --farbe-fehler-flaeche: #fbebea;
+
+    --abstand-1: 0.25rem;
+    --abstand-2: 0.5rem;
+    --abstand-3: 0.75rem;
+    --abstand-4: 1rem;
+    --abstand-5: 1.5rem;
+    --abstand-6: 2rem;
+
+    --radius: 6px;
+    --radius-gross: 10px;
+
+    --schrift-klein: 0.875rem;
+    --schrift-gross: 1.125rem;
+
+    /* Mindesthöhe für alles, was angetippt wird. */
+    --tippflaeche: 2.75rem;
+
+    --inhalt-breite: 48rem;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --farbe-text: #e8e9ea;
         --farbe-hintergrund: #16171a;
+        --farbe-flaeche: #1e2024;
+        --farbe-flaeche-still: #24272c;
+        --farbe-text: #e8e9ea;
+        --farbe-gedaempft: #a2a8b0;
         --farbe-rand: #33363b;
-        --farbe-gedaempft: #9aa0a8;
-        /* The browser default link blue fails contrast on a dark
-           background - readable in both themes matters even for a
-           placeholder, because this is the 404 page. */
+        --farbe-rand-stark: #4a4e55;
+
+        --farbe-akzent: #2f6fad;
+        --farbe-akzent-text: #ffffff;
+        /* Das Blau der Browser-Voreinstellung fällt auf dunklem Grund
+           durch den Kontrastcheck - lesbar muss es in beiden Fassungen
+           sein. */
         --farbe-link: #7fb4ee;
+
         --farbe-ok: #6cc48f;
+        --farbe-info: #7fb4ee;
         --farbe-warnung: #e0b155;
         --farbe-fehler: #f08a83;
+
+        --farbe-ok-flaeche: #172a20;
+        --farbe-info-flaeche: #17232f;
+        --farbe-warnung-flaeche: #2b2415;
+        --farbe-fehler-flaeche: #2e1c1a;
     }
 }
+
+/* Der Anwenderbereich zeigt Listen und Tabellen und darf breiter werden. */
+body.bereich-app {
+    --inhalt-breite: 64rem;
+}
+
+/* ----------------------------------------------------------- Grundgerüst */
 
 * {
     box-sizing: border-box;
 }
 
 /*
- * The hidden attribute is how the server and public/js/ hide elements. The
- * browser default is display:none, but ANY author display rule beats it -
- * .knopf sets inline-block, which silently un-hid the "Update starten"
- * button. !important is the documented fix for exactly this case.
+ * Das hidden-Attribut ist der Weg, auf dem Server und public/js/ Elemente
+ * ausblenden. Die Voreinstellung des Browsers ist display:none, aber JEDE
+ * eigene display-Regel schlägt sie - .knopf setzt inline-block und hat so
+ * einmal den Knopf "Update starten" stillschweigend wieder eingeblendet.
+ * !important ist für genau diesen Fall die vorgesehene Lösung.
  */
 [hidden] {
     display: none !important;
 }
 
+html {
+    /* Verhindert, dass iOS beim Drehen die Schrift eigenmächtig vergrößert. */
+    -webkit-text-size-adjust: 100%;
+}
+
 body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
     margin: 0;
-    padding: 0;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 1rem;
     line-height: 1.5;
     color: var(--farbe-text);
     background: var(--farbe-hintergrund);
 }
 
-.site-header,
-.site-footer,
-main {
-    max-width: 48rem;
-    margin: 0 auto;
-    padding: 1rem;
+h1,
+h2,
+h3,
+h4 {
+    line-height: 1.25;
+    text-wrap: balance;
 }
 
-.site-header {
-    border-bottom: 1px solid var(--farbe-rand);
+h2 {
+    margin-top: 0;
+    font-size: 1.375rem;
 }
 
-.site-header h1 {
-    margin: 0;
-    font-size: 1.25rem;
+h3 {
+    margin-top: var(--abstand-6);
+    font-size: 1.125rem;
 }
 
-.brand {
-    color: inherit;
-    text-decoration: none;
-}
-
-.site-footer {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    border-top: 1px solid var(--farbe-rand);
-    color: var(--farbe-gedaempft);
-    font-size: 0.875rem;
+h4 {
+    margin: 0 0 var(--abstand-2);
+    font-size: 1rem;
 }
 
 a {
     color: var(--farbe-link);
 }
 
+code {
+    /* Pfade und Dateinamen dürfen das Layout nicht breiter machen als das
+       Telefon. */
+    overflow-wrap: anywhere;
+    font-size: 0.9375em;
+}
+
+:focus-visible {
+    outline: 2px solid var(--farbe-akzent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
+
+.gedaempft {
+    color: var(--farbe-gedaempft);
+}
+
+.klein {
+    font-size: var(--schrift-klein);
+}
+
+/* Für Text, den nur Hilfsmittel vorlesen sollen. */
+.visuell-versteckt {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    border: 0;
+    clip-path: inset(50%);
+}
+
+/* ---------------------------------------------------------- Seitenaufbau */
+
+.sprungmarke {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 10;
+    padding: var(--abstand-2) var(--abstand-4);
+    color: var(--farbe-akzent-text);
+    background: var(--farbe-akzent);
+    border-radius: 0 0 var(--radius) 0;
+}
+
+.sprungmarke:focus {
+    left: 0;
+}
+
+.inhalt {
+    width: 100%;
+    max-width: var(--inhalt-breite);
+    margin: 0 auto;
+    padding: var(--abstand-4);
+}
+
+main.inhalt {
+    flex: 1;
+}
+
+.kopf {
+    background: var(--farbe-flaeche);
+    border-bottom: 1px solid var(--farbe-rand);
+}
+
+.kopf-zeile {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--abstand-4);
+    max-width: var(--inhalt-breite);
+    margin: 0 auto;
+    padding: var(--abstand-3) var(--abstand-4);
+}
+
+.brand {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--abstand-2);
+    font-size: var(--schrift-gross);
+    font-weight: 600;
+    color: inherit;
+    text-decoration: none;
+}
+
+.brand-bereich {
+    font-size: var(--schrift-klein);
+    font-weight: 400;
+    color: var(--farbe-gedaempft);
+}
+
 /*
- * Just enough for the installer and the update page to be usable on a
- * phone (360 px) and on the desktop. The real design system - components,
- * spacing scale, dark mode beyond these variables - is milestone M1-3.
+ * Navigation: eine Zeile, die auf schmalen Schirmen waagerecht scrollt.
+ * Bewusst kein Klappmenü - das bräuchte JavaScript und einen Zustand, und
+ * eine scrollbare Zeile zeigt auf 360 px immer noch drei bis vier Einträge.
  */
+.navi {
+    max-width: var(--inhalt-breite);
+    margin: 0 auto;
+    padding: 0 var(--abstand-2);
+}
+
+.navi ul {
+    display: flex;
+    gap: var(--abstand-1);
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    list-style: none;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+}
+
+.navi a,
+.navi-spaeter {
+    display: flex;
+    align-items: center;
+    min-height: var(--tippflaeche);
+    padding: 0 var(--abstand-3);
+    white-space: nowrap;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+}
+
+.navi a {
+    color: var(--farbe-text);
+}
+
+.navi a:hover {
+    border-bottom-color: var(--farbe-rand-stark);
+}
+
+.navi a[aria-current="page"] {
+    font-weight: 600;
+    color: var(--farbe-akzent);
+    border-bottom-color: var(--farbe-akzent);
+}
+
+/* Bereiche, die ein späterer Meilenstein bringt: sichtbar, aber kein Link. */
+.navi-spaeter {
+    color: var(--farbe-gedaempft);
+    cursor: default;
+}
+
+.fuss {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--abstand-4);
+    max-width: var(--inhalt-breite);
+    width: 100%;
+    margin: 0 auto;
+    padding: var(--abstand-4);
+    color: var(--farbe-gedaempft);
+    font-size: var(--schrift-klein);
+    border-top: 1px solid var(--farbe-rand);
+}
+
+/* Inhaltsspalten, die nicht breiter als angenehm lesbar werden sollen. */
 .schmal {
     max-width: 36rem;
 }
 
-.schmal h3 {
-    margin-bottom: 0.25rem;
-}
+/* ----------------------------------------------------------- Komponenten */
 
-label {
-    display: block;
-    margin: 0.75rem 0;
-}
-
-input,
-select {
-    display: block;
-    width: 100%;
-    max-width: 24rem;
-    margin-top: 0.25rem;
-    padding: 0.5rem;
-    font: inherit;
-    color: var(--farbe-text);
-    background: var(--farbe-hintergrund);
-    border: 1px solid var(--farbe-rand);
-    border-radius: 6px;
-}
-
-.knopf {
-    display: inline-block;
-    padding: 0.6rem 1.2rem;
-    font: inherit;
-    color: var(--farbe-text);
-    text-decoration: none;
-    background: var(--farbe-hintergrund);
-    border: 1px solid var(--farbe-rand);
-    border-radius: 6px;
-    cursor: pointer;
-}
-
-.knopf:hover {
-    border-color: var(--farbe-text);
-}
-
-.knopf[disabled] {
-    color: var(--farbe-gedaempft);
-    cursor: progress;
-}
-
-.knopf-still {
-    font-size: 0.875rem;
-}
-
-.knopf-gefahr {
-    color: var(--farbe-fehler);
-}
-
+/* Meldungen: Flash nach einer Weiterleitung und feste Hinweise auf Seiten. */
 .hinweis {
-    padding: 0.75rem 1rem;
+    padding: var(--abstand-3) var(--abstand-4);
+    background: var(--farbe-flaeche);
     border: 1px solid var(--farbe-rand);
     border-left-width: 4px;
-    border-radius: 6px;
+    border-radius: var(--radius);
 }
 
 .hinweis p:first-child {
@@ -165,24 +352,311 @@ select {
 }
 
 .hinweis-ok {
+    background: var(--farbe-ok-flaeche);
     border-left-color: var(--farbe-ok);
 }
 
+.hinweis-info {
+    background: var(--farbe-info-flaeche);
+    border-left-color: var(--farbe-info);
+}
+
 .hinweis-warnung {
+    background: var(--farbe-warnung-flaeche);
     border-left-color: var(--farbe-warnung);
 }
 
 .hinweis-fehler {
+    background: var(--farbe-fehler-flaeche);
     border-left-color: var(--farbe-fehler);
 }
 
-/* The step log of the update page. */
-#update-log {
-    padding-left: 1.25rem;
-    font-size: 0.875rem;
+/* Der Platzhalter der Flash-Meldung bleibt immer im DOM (aria-live), darf
+   aber leer keinen Abstand erzeugen. */
+.flash:empty {
+    display: none;
 }
 
-code {
-    /* Paths and file names must not push the layout wider than the phone. */
-    overflow-wrap: anywhere;
+.flash > :first-child {
+    margin-top: 0;
+}
+
+.karte {
+    padding: var(--abstand-4);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius-gross);
+}
+
+.karte > :last-child {
+    margin-bottom: 0;
+}
+
+.leer {
+    padding: var(--abstand-6) var(--abstand-4);
+    color: var(--farbe-gedaempft);
+    text-align: center;
+    border: 1px dashed var(--farbe-rand-stark);
+    border-radius: var(--radius-gross);
+}
+
+.marke {
+    display: inline-block;
+    padding: 0.125rem var(--abstand-2);
+    font-size: var(--schrift-klein);
+    color: var(--farbe-gedaempft);
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand);
+    border-radius: 999px;
+}
+
+.marke-ok {
+    color: var(--farbe-ok);
+    background: var(--farbe-ok-flaeche);
+    border-color: var(--farbe-ok);
+}
+
+.marke-warnung {
+    color: var(--farbe-warnung);
+    background: var(--farbe-warnung-flaeche);
+    border-color: var(--farbe-warnung);
+}
+
+.marke-fehler {
+    color: var(--farbe-fehler);
+    background: var(--farbe-fehler-flaeche);
+    border-color: var(--farbe-fehler);
+}
+
+/* --- Knöpfe --- */
+
+.knopf {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--tippflaeche);
+    padding: var(--abstand-2) var(--abstand-4);
+    font: inherit;
+    text-align: center;
+    text-decoration: none;
+    color: var(--farbe-text);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand-stark);
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.knopf:hover {
+    border-color: var(--farbe-text);
+}
+
+.knopf-primaer {
+    color: var(--farbe-akzent-text);
+    background: var(--farbe-akzent);
+    border-color: var(--farbe-akzent);
+}
+
+.knopf-primaer:hover {
+    border-color: var(--farbe-text);
+}
+
+.knopf-gefahr {
+    color: var(--farbe-fehler);
+    border-color: var(--farbe-fehler);
+}
+
+.knopf-still {
+    min-height: auto;
+    padding: var(--abstand-2) var(--abstand-3);
+    font-size: var(--schrift-klein);
+}
+
+/* Solange ein Schritt läuft, schaltet public/js/update.js den Knopf ab. */
+.knopf[disabled],
+.knopf[aria-disabled="true"] {
+    color: var(--farbe-gedaempft);
+    background: var(--farbe-flaeche-still);
+    border-color: var(--farbe-rand);
+    cursor: not-allowed;
+}
+
+/* Mehrere Knöpfe nebeneinander - auf 360 px umbrechend statt überlaufend. */
+.knopfreihe {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--abstand-2);
+}
+
+/* --- Formulare --- */
+
+.formular {
+    max-width: 32rem;
+}
+
+label {
+    display: block;
+    margin: var(--abstand-4) 0 0;
+    font-weight: 600;
+}
+
+fieldset {
+    margin: var(--abstand-5) 0;
+    padding: var(--abstand-3) var(--abstand-4) var(--abstand-4);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+legend {
+    padding: 0 var(--abstand-2);
+    font-weight: 600;
+}
+
+/* Schriftgröße 1rem = 16 px auch hier: alles darunter lässt iOS beim
+   Hineintippen in das Feld zoomen. */
+input,
+select,
+textarea {
+    display: block;
+    width: 100%;
+    max-width: 28rem;
+    min-height: var(--tippflaeche);
+    margin-top: var(--abstand-1);
+    padding: var(--abstand-2) var(--abstand-3);
+    font: inherit;
+    font-weight: 400;
+    color: var(--farbe-text);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand-stark);
+    border-radius: var(--radius);
+}
+
+textarea {
+    min-height: 6rem;
+    resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--farbe-gedaempft);
+}
+
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+    border-color: var(--farbe-fehler);
+    border-width: 2px;
+}
+
+.feld-kurz input,
+.feld-kurz select {
+    max-width: 10rem;
+}
+
+.feld-hilfe,
+.feld-fehler {
+    margin: var(--abstand-1) 0 0;
+    font-size: var(--schrift-klein);
+}
+
+.feld-hilfe {
+    color: var(--farbe-gedaempft);
+}
+
+.feld-fehler {
+    color: var(--farbe-fehler);
+    font-weight: 600;
+}
+
+.pflicht {
+    color: var(--farbe-fehler);
+}
+
+/* Ankreuzfelder stehen neben ihrer Beschriftung, nicht darüber. */
+.feld-ankreuz {
+    display: flex;
+    align-items: center;
+    gap: var(--abstand-2);
+    min-height: var(--tippflaeche);
+    margin: 0;
+    font-weight: 400;
+}
+
+.feld-ankreuz input {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    min-height: 1.25rem;
+    margin: 0;
+}
+
+/* --- Tabellen --- */
+
+.tabelle-rahmen {
+    overflow-x: auto;
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+.tabelle {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tabelle caption {
+    padding: var(--abstand-3) var(--abstand-4);
+    color: var(--farbe-gedaempft);
+    font-size: var(--schrift-klein);
+    text-align: left;
+}
+
+.tabelle th,
+.tabelle td {
+    padding: var(--abstand-3) var(--abstand-4);
+    text-align: left;
+    white-space: nowrap;
+    border-top: 1px solid var(--farbe-rand);
+}
+
+.tabelle thead th {
+    background: var(--farbe-flaeche-still);
+    border-top: 0;
+}
+
+/* Beträge und Mengen rechtsbündig - Ziffern sollen untereinander stehen. */
+.tabelle .zahl {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- htmx --- */
+
+/*
+ * htmx bringt seine eigenen Indikator-Styles nicht mit
+ * (includeIndicatorStyles ist im Layout abgeschaltet, E-07) - es würde sie
+ * als style-Element in die Seite einfügen, und style-src verwirft das
+ * stillschweigend. Deshalb stehen sie hier.
+ */
+.htmx-indicator {
+    opacity: 0;
+    transition: opacity 0.2s ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    opacity: 1;
+}
+
+.lade-anzeige {
+    display: inline-block;
+    color: var(--farbe-gedaempft);
+    font-size: var(--schrift-klein);
+}
+
+/* --- Update-Seite --- */
+
+#update-log {
+    padding-left: 1.25rem;
+    font-size: var(--schrift-klein);
 }

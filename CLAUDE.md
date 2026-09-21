@@ -84,6 +84,14 @@ Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
   KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
   Update, Audit-Log.
 
+Jede Seite wählt ihren Bereich über `App\View\Area`; daran hängen
+Navigation, Inhaltsbreite und ob die Seite eine Session haben darf. Es gibt
+genau **ein** Layout (`app/views/layout.php` + `app/views/partials/`) und ein
+handgeschriebenes Designsystem in `public/css/app.css` (Farbtokens hell/
+dunkel, Formularfelder, Meldungen, Tabellen). Musterseite aller Bausteine:
+`/admin/designsystem` – neue Seiten kopieren von dort, statt eigene Klassen
+zu erfinden.
+
 ## 4. Sicherheits-Invarianten (Details: 01-sicherheit.md)
 
 - **Zwei Schlüsselebenen:**
@@ -113,7 +121,9 @@ Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
 - CSP wie im Vereinskalender: `script-src 'self'` **ohne** `unsafe-inline`
   (kein Inline-JS, keine `on*`-Attribute, htmx ohne `hx-on`), keine
   externen Hosts. Alle JS-Bibliotheken (htmx, pdf.js, ggf. OpenCV.js) werden
-  vendored ausgeliefert.
+  vendored ausgeliefert – unter `public/js/vendor/`, mit Version, Lizenz und
+  Prüfsumme in dessen `README.md`. htmx wird über
+  `<meta name="htmx-config">` konfiguriert, nicht per Skript.
 - Rechte werden **serverseitig pro Aktion** geprüft (`Permission`-Enum),
   nie nur in der UI ausgeblendet.
 
