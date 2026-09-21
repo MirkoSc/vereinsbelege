@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\UpdateController;
 use App\Api\CronController;
+use App\Api\UploadController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
@@ -13,16 +14,24 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\InstallController;
 use App\Repository\CronLockRepository;
+use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
+use App\Repository\VaultRepository;
 use App\Service\Backup\BackupService;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\JobCleanupTask;
+use App\Service\Cron\UploadCleanupTask;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
+use App\Service\Storage\BlobService;
+use App\Service\Storage\DbBlobBackend;
+use App\Service\Storage\FsBlobBackend;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
+use App\Service\Upload\UploadService;
+use App\Service\Upload\UploadStore;
 use App\Support\FileLogger;
 use App\Support\Version;
 use App\View\View;
@@ -122,7 +131,7 @@ $updates = static fn(): UpdateController => new UpdateController(
 );
 
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths): CronRunner {
     $pdo = $connections->pdo();
 
     return new CronRunner(
@@ -131,13 +140,35 @@ $cron = static fn(): CronController => new CronController($config, static functi
         // The mail queue joins here with M3-1. Nothing that decrypts, ever
         // (CLAUDE.md section 4).
         jedesMal: [],
-        aufraeumen: [new JobCleanupTask(new JobRepository($pdo))],
+        aufraeumen: [
+            new JobCleanupTask(new JobRepository($pdo)),
+            new UploadCleanupTask(new UploadService($paths->uploadDir())),
+        ],
         logger: $logger,
     );
 });
 
+// Chunk upload (docs/spec/03-erfassung-und-ki.md section 4). The service
+// itself only needs a directory, so opening, storing and aborting an upload
+// costs no database connection; only the closing request builds the store.
+$uploads = static fn(): UploadController => new UploadController(
+    new Session(),
+    new UploadService($paths->uploadDir()),
+    static function () use ($connections, $paths): UploadStore {
+        $pdo = $connections->pdo();
+        $blobs = new BlobRepository($pdo);
+
+        return new UploadStore(
+            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            new VaultRepository($pdo),
+            new SettingRepository($pdo),
+        );
+    },
+    logger: $logger,
+);
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $updates, $cron);
+(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,
