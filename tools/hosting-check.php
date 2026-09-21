@@ -906,14 +906,20 @@ function hc_group_filesystem(array $params): array
             'Nur im Webaufruf feststellbar; auf der Kommandozeile gibt es keinen DocumentRoot.',
         );
     } else {
-        $above = !str_starts_with(realpath($base) ?: $base, $realRoot . DIRECTORY_SEPARATOR);
+        $realBase = realpath($base) ?: $base;
+        $realRoot = rtrim($realRoot, DIRECTORY_SEPARATOR);
+        // Equal paths mean the probe ran in the DocumentRoot itself, which is
+        // public – that is not "above" it.
+        $isRoot = $realBase === $realRoot;
+        $inside = $isRoot || str_starts_with($realBase, $realRoot . DIRECTORY_SEPARATOR);
         $rows[] = hc_row(
             'fs_above_document_root',
             'Prüfpfad liegt über dem DocumentRoot',
-            $above ? 'ja' : 'nein',
+            $inside ? ($isRoot ? 'nein, es ist der DocumentRoot selbst' : 'nein, er liegt darin') : 'ja',
             'ja (shared/ darf nicht öffentlich sein)',
-            $above ? HC_STATUS_OK : HC_STATUS_WARN,
-            'Geprüfter Pfad: ' . $base . ' – mit fsdir=/pfad überschreibbar.',
+            $inside ? HC_STATUS_WARN : HC_STATUS_OK,
+            'Geprüfter Pfad: ' . $realBase . ' – mit fsdir=/pfad auf das Verzeichnis '
+                . 'zeigen, in dem später shared/ liegen soll.',
         );
     }
 

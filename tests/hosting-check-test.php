@@ -451,6 +451,41 @@ $t->run('hc_group_filesystem räumt seine Prüfdateien restlos auf', static func
     }
 });
 
+$t->run('hc_group_filesystem unterscheidet DocumentRoot, darin und darüber', static function (HcTestRunner $t): void {
+    $root = sys_get_temp_dir() . '/hc_root_' . bin2hex(random_bytes(6));
+    mkdir($root . '/public/tools', 0775, true);
+    $previous = $_SERVER['DOCUMENT_ROOT'] ?? null;
+    $_SERVER['DOCUMENT_ROOT'] = $root . '/public';
+    try {
+        $status = static fn (string $dir): array => array_column(
+            hc_group_filesystem(['fsdir' => $dir])['rows'],
+            'status',
+            'id',
+        );
+
+        $inRoot = $status($root . '/public');
+        $t->same(HC_STATUS_WARN, $inRoot['fs_above_document_root'], 'der DocumentRoot selbst liegt nicht über sich');
+
+        $below = $status($root . '/public/tools');
+        $t->same(HC_STATUS_WARN, $below['fs_above_document_root'], 'ein Unterverzeichnis ist öffentlich');
+
+        $above = $status($root);
+        $t->same(HC_STATUS_OK, $above['fs_above_document_root'], 'nur oberhalb ist shared/ nicht öffentlich');
+
+        // Mit angehängtem Trennzeichen, wie es all-inkl im DocumentRoot liefert.
+        $_SERVER['DOCUMENT_ROOT'] = $root . '/public/';
+        $t->same(HC_STATUS_WARN, $status($root . '/public')['fs_above_document_root'], 'Schrägstrich am Ende darf nichts ändern');
+        $t->same(HC_STATUS_OK, $status($root)['fs_above_document_root']);
+    } finally {
+        if ($previous === null) {
+            unset($_SERVER['DOCUMENT_ROOT']);
+        } else {
+            $_SERVER['DOCUMENT_ROOT'] = $previous;
+        }
+        hc_remove_tree($root);
+    }
+});
+
 $t->run('hc_group_filesystem meldet fehlendes Schreibrecht', static function (HcTestRunner $t): void {
     $missing = sys_get_temp_dir() . '/hc_missing_' . bin2hex(random_bytes(6));
     $group = hc_group_filesystem(['fsdir' => $missing]);
