@@ -62,7 +62,7 @@ Folge-Issue · 📋 nur dokumentiert
 | DB-Größenlimit im Tarif | | 📋 kein hartes Limit, praktisch ~10 GB; Default bleibt Dateisystem (E-06) | |
 | Streaming-Ausgabe 60 s | funktioniert | ✅ 199,8 MiB in 61 s, HTTP 200, `DONE` angekommen (~3,3 MiB/s) | |
 | SMTP (Host/Port/TLS) | 465/587 | ✅ Hoster-SMTP, Port 465 implizit, `AUTH LOGIN` erfolgreich, Zertifikat gültig, `SIZE` ≈ 146 MiB | |
-| Zustellung einer Testmail | funktioniert | 📋 noch offen (`mail_to` war leer) – spätestens in M3 nachziehen | |
+| Zustellung einer Testmail | funktioniert | ✅ Testmail über den Hoster-SMTP zugestellt, Absender akzeptiert | |
 | Minimales Cron-Intervall | 5–15 min | ⬆️ **1 min** – Läufe können überlappen, Aufräumen braucht Drosselung | [#99](https://github.com/MirkoSc/vereinsbelege/issues/99) |
 | `rename()` von Verzeichnissen | funktioniert | ✅ vorwärts und zurück, dazu `mkdir`, `flock`, `symlink` | |
 | Schreibrecht über dem DocumentRoot | vorhanden | ✅ DocumentRoot auf `<bereich>/web/` gelegt, `shared/` daneben beschreibbar, 361 GiB frei | |
@@ -72,7 +72,8 @@ Folge-Issue · 📋 nur dokumentiert
 
 ## Fazit
 
-Keine einzige Prüfung ist fehlgeschlagen. Alle Annahmen der Specs tragen auf
+Alle Prüfpunkte aus 06 §5 sind gemessen, keine einzige Prüfung ist
+fehlgeschlagen. Alle Annahmen der Specs tragen auf
 diesem Hoster, die meisten Abweichungen gehen nach oben. Architekturrelevant ist
 allein `wait_timeout = 120` ([#98](https://github.com/MirkoSc/vereinsbelege/issues/98));
 sicherheitsrelevant `zend.exception_ignore_args`
