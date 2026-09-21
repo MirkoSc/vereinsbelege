@@ -32,7 +32,7 @@ declare(strict_types=1);
  */
 
 /** Shared secret required for every web request. Empty = script refuses to run. */
-const HC_TOKEN = '';
+const HC_TOKEN = '42b6d104566931cd47f8bb4d2fd8cabb';
 
 const HC_VERSION = '1.0.0';
 
@@ -1057,6 +1057,18 @@ function hc_group_notes(): array
             '5–15 min',
             HC_STATUS_INFO,
             'Kundenmenü, Bereich Cronjobs. Bestimmt die Verzögerung beim Mail-Versand.',
+        ),
+        hc_row(
+            'shared_reachable',
+            'Ist der Pfad über dem DocumentRoot öffentlich?',
+            'manuell prüfen',
+            'nein (sonst .htaccess-Schutz nötig)',
+            HC_STATUS_INFO,
+            'Der Check kennt nur den DocumentRoot der aufgerufenen Domain. Bei '
+                . 'all-inkl ist das Verzeichnis darüber häufig der DocumentRoot der '
+                . 'Hauptdomain. Probe: eine Testdatei dort ablegen und über die '
+                . 'Hauptdomain abrufen. Erreichbar? Dann shared/ zusätzlich per '
+                . '.htaccess sperren.',
         ),
         hc_row(
             'php_version_switch',
