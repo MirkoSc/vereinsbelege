@@ -1,0 +1,11 @@
+/vendor/
+/node_modules/
+/.phpunit.cache/
+/dist/
+/docker/shared/var/
+/docker/shared/config.php
+/docker/shared/*.key
+/docker/shared/update_state.json
+/docker/shared/maintenance.flag
+.env
+*.local.php
