@@ -126,7 +126,12 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         $zip->close();
 
         self::assertSame('9.9.9-test', $manifest['app_version']);
-        self::assertSame(1, $manifest['schema_version']);
+        // The version the database actually is at - not a literal, which
+        // would break with every new migration.
+        self::assertSame(
+            new Migrator($this->pdo(), $this->migrationsDir())->currentVersion(),
+            $manifest['schema_version'],
+        );
         self::assertFalse($manifest['config_enthalten']);
     }
 

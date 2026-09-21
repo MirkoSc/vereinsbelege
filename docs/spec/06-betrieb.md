@@ -162,10 +162,57 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   Fallback-Frist dieselben Jobs mit Executor `session`/`browser`.
   Session-Worker und Worker nutzen dieselbe Sperrlogik (`locked_by`,
   `locked_until`).
-- **Cron** (alle 5–15 min per Hoster-Kontrollpanel, Token wie im
-  Vereinskalender): nur Mail-Queue, Aufräumen (Upload-Chunks, abgelaufene
-  Tokens/Codes, Rate-Limit-Einträge, IP-Hashes), Erinnerungs-Mails
-  („5 Belege warten auf Prüfung" – ohne Details).
+- **Cron** (per Hoster-Kontrollpanel, Token wie im Vereinskalender): nur
+  Mail-Queue, Aufräumen (Upload-Chunks, abgelaufene Tokens/Codes,
+  Rate-Limit-Einträge, IP-Hashes), Erinnerungs-Mails („5 Belege warten auf
+  Prüfung" – ohne Details). Der Hoster erlaubt einen Aufruf **jede Minute**
+  (M0-Befund); der Endpunkt ist darauf ausgelegt.
+
+  **Stand M1-5:** `GET /cron?token=…` (`Api\CronController`). Ohne Session,
+  ohne Anmeldung – einziges Credential ist `cron_token` aus
+  `shared/config.php`, verglichen per `hash_equals`; fehlendes, leeres, falsches
+  oder als Array übergebenes Token gibt 403, **ohne** dass der Runner (und damit
+  die DB-Verbindung) gebaut wird. Die Route trägt keine `Permission`, weil es
+  keinen Nutzer gibt; sie entschlüsselt nie.
+
+  - *Sperre gegen Überlappung:* eine Zeile `cron_lock_until` in `setting`,
+    atomar in **einer** Anweisung genommen (`CronLockRepository::acquire`).
+    Ist sie gehalten, endet der Aufruf sofort mit Status `laeuft_bereits` –
+    kein Fehler. Die Sperre verfällt nach `CronRunner::LOCK_TTL_SECONDS` (300 s),
+    ein abgestürzter Lauf blockiert also nicht dauerhaft. Freigegeben wird nur
+    die **eigene** Sperre (Vergleich mit dem Ablaufzeitpunkt), damit ein Lauf,
+    dessen Sperre abgelaufen war, nicht die eines Nachfolgers löst.
+  - *Aufgaben:* Schnittstelle `Service\Cron\CronTask` (`name()`, `run($now)`).
+    `jedesMal` läuft bei jedem Aufruf (ab M3-1 die Mail-Queue), `aufraeumen`
+    nur, wenn seit `cron_letztes_aufraeumen` mindestens
+    `cron_aufraeum_intervall_s` (Setting, Standard 3600, mindestens 60)
+    vergangen sind. Der Zeitstempel wird **vor** den Aufräum-Tasks gesetzt:
+    ein Task, der den Lauf abbricht, wird nicht jede Minute neu versucht.
+    Ein fehlschlagender Task stoppt die anderen nicht; die Antwort nennt nur
+    den Klassennamen, das Log (`FileLogger`) Klasse und Meldung.
+  - *Erster Task:* `JobCleanupTask` löscht `fertig`/`uebersprungen`-Jobs, die
+    älter als 7 Tage sind; `fehler` bleibt stehen.
+  - *Wartungsmodus:* der Shim lässt `/cron` nicht durch (nur `/admin`, `/css/`,
+    `/js/`); der Aufruf bekommt 503 und der nächste Minutenlauf holt nach.
+  - *Antwort:* JSON `status` (`ok`/`fehler`/`laeuft_bereits`), `aufgaben`,
+    `aufgeraeumt`, `dauer_ms` – nur Namen und Zähler, nie fachliche Daten.
+  - *Job-Tabelle:* `migrations/002_job.sql`; `JobRepository::claim()` vergibt
+    einen Job an genau einen Aufrufer (bedingtes `UPDATE`, Gewinner per
+    Zeilenzahl, bewusst kein `FOR UPDATE`, damit keine Transaktion über einen
+    Jobschritt offen bleibt – #98). Übernommen wird ein `offen`er oder ein
+    `laeuft`-Job mit abgelaufenem `locked_until`; `heartbeat()` verlängert nur
+    für den Halter. Abgearbeitet werden Jobs nicht vom Cron, sondern ab M4
+    vom Browser-Worker (`POST /api/jobs/step`) bzw. vom Worker-Modul.
+
+  **Pflicht-Tests:** `JobRepositoryTest` (Claim setzt Sperre und `attempts`;
+  zweiter Claim während der Sperre bekommt nichts; abgelaufene Sperre wird
+  übernommen; Filter nach Executor/Typ; `heartbeat` nur für den Halter;
+  `fehler` speichert nur die Klasse; Aufräumen trifft nur alte, erledigte
+  Jobs); `CronRunTest` (zweiter Lauf bei gehaltener Sperre arbeitet nicht,
+  abgelaufene Sperre wird übernommen, Sperre nach Absturz frei, fremde Sperre
+  bleibt bei `release`, Aufräumen einmal je Intervall und konfigurierbar,
+  fehlschlagender Task ohne Meldung in der Antwort); `CronTokenTest`
+  (Token-Prüfung ohne Datenbank).
 - Langlaufende KI-Aufrufe: curl-Timeout aus dem Anbieter-Profil. Auf
   Linux zählt Warten auf Netzwerk-I/O nicht in `max_execution_time`, aber
   der Webserver kann Requests trotzdem kappen – **Grenze im Hosting-Check
