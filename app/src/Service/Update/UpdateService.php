@@ -6,6 +6,7 @@ namespace App\Service\Update;
 
 use App\Config\Paths;
 use App\Repository\SettingRepository;
+use App\Service\Backup\BackupService;
 use App\Service\Migration\Migrator;
 
 /**
@@ -17,10 +18,9 @@ use App\Service\Migration\Migrator;
  * new release, so these endpoints have to exist in every version from now
  * on.
  *
- * Two steps of the final chain are missing on purpose and are added by the
- * milestone that brings what they need:
- *   - a backup before the switch (M1-4, there is no BackupService yet),
- *   - an alarm mail when a step fails (M3-1, there is no mail queue yet).
+ * One step of the final chain is missing on purpose and is added by the
+ * milestone that brings what it needs: an alarm mail when a step fails
+ * (M3-1, there is no mail queue yet).
  */
 final class UpdateService
 {
@@ -30,7 +30,7 @@ final class UpdateService
      * Steps in the order the admin page walks them. Kept here rather than
      * in the JavaScript so the server side owns the chain.
      */
-    public const array STEPS = ['check', 'download', 'extract', 'switch', 'migrate', 'finish'];
+    public const array STEPS = ['check', 'download', 'extract', 'backup', 'switch', 'migrate', 'finish'];
 
     public function __construct(
         private readonly Paths $paths,
@@ -39,6 +39,7 @@ final class UpdateService
         private readonly ReleaseDownloader $downloader,
         private readonly ReleaseSwitcher $switcher,
         private readonly Migrator $migrator,
+        private readonly BackupService $backups,
     ) {
     }
 
@@ -156,7 +157,21 @@ final class UpdateService
     }
 
     /**
-     * Step 4: atomic switch (maintenance flag around the renames).
+     * Step 4: database backup right before the only step that changes the
+     * installation. Without config.php: the server key stays out of files
+     * that may be copied around (docs/spec/06-betrieb.md section 2).
+     */
+    public function backup(): UpdateState
+    {
+        return $this->step('backup', function (UpdateState $state): UpdateState {
+            $name = $this->backups->create();
+
+            return $state->mit(meldung: 'Backup erstellt: ' . $name);
+        });
+    }
+
+    /**
+     * Step 5: atomic switch (maintenance flag around the renames).
      */
     public function switchRelease(): UpdateState
     {
@@ -168,7 +183,7 @@ final class UpdateService
     }
 
     /**
-     * Step 5: apply pending migrations (already running on the new code).
+     * Step 6: apply pending migrations (already running on the new code).
      */
     public function migrate(): UpdateState
     {
@@ -187,7 +202,7 @@ final class UpdateService
     }
 
     /**
-     * Step 6: refresh the docroot shim, self-test, clean up, keep the last
+     * Step 7: refresh the docroot shim, self-test, clean up, keep the last
      * two releases.
      *
      * The shim refresh happens HERE and not earlier because finish is the

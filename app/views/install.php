@@ -17,6 +17,32 @@
             Meilensteinen. Bis dahin gibt es die Startseite und die Update-Seite.
         </p>
         <p><a class="knopf knopf-primaer" href="/">Zur Startseite</a></p>
+    <?php elseif (($restore ?? false) === true): ?>
+        <div id="wiederherstellung" data-csrf="<?= e($csrf) ?>">
+            <p>
+                Das Backup<?= ($backupVersion ?? null) !== null ? ' (Version ' . e($backupVersion) . ')' : '' ?>
+                wird eingespielt. Bitte diese Seite geöffnet lassen.
+            </p>
+            <?php if (($serverKeyUebernommen ?? false) === true): ?>
+                <p class="hinweis hinweis-ok">
+                    Das Backup enthält den Server-Schlüssel der alten Installation. Er wird
+                    übernommen, damit verschlüsselte Betriebsdaten lesbar bleiben.
+                </p>
+            <?php else: ?>
+                <p class="hinweis hinweis-warnung">
+                    Das Backup enthält keinen Server-Schlüssel. Es wird ein neuer erzeugt;
+                    mit dem alten Schlüssel verschlüsselte Betriebsdaten (zum Beispiel
+                    Mail-Adressen und API-Schlüssel, sobald es sie gibt) sind dann nicht mehr lesbar.
+                </p>
+            <?php endif; ?>
+
+            <p id="wiederherstellung-status" role="status">Starte …</p>
+            <progress id="wiederherstellung-fortschritt" max="100" value="0"></progress>
+            <p id="wiederherstellung-fehler" class="hinweis hinweis-fehler" role="alert" hidden></p>
+            <p id="wiederherstellung-fertig" hidden>
+                <a class="knopf knopf-primaer" href="/">Zur Startseite</a>
+            </p>
+        </div>
     <?php else: ?>
         <p>
             Trage die Zugangsdaten der Datenbank ein, die du im Kundenmenü des Hosters
@@ -32,8 +58,33 @@
             <p class="hinweis hinweis-fehler"><?= e($errors['db']) ?></p>
         <?php endif; ?>
 
-        <form method="post" action="/install">
+        <?php if (isset($errors['backup'])): ?>
+            <p class="hinweis hinweis-fehler"><?= e($errors['backup']) ?></p>
+        <?php endif; ?>
+
+        <form method="post" action="/install" enctype="multipart/form-data">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+            <fieldset>
+                <legend>Was soll passieren?</legend>
+                <label class="feld-ankreuz">
+                    <input type="radio" name="modus" value="frisch"
+                        <?= ($values['modus'] ?? 'frisch') !== 'restore' ? 'checked' : '' ?>>
+                    Frische Installation
+                </label>
+                <label class="feld-ankreuz">
+                    <input type="radio" name="modus" value="restore"
+                        <?= ($values['modus'] ?? '') === 'restore' ? 'checked' : '' ?>>
+                    Backup einspielen
+                </label>
+                <label for="backup-datei">Backup-ZIP (nur bei „Backup einspielen“)
+                    <input type="file" id="backup-datei" name="backup" accept=".zip,application/zip">
+                </label>
+                <p class="feld-hilfe">
+                    Das ZIP stammt aus der Update-Kette oder von <code>bin/backup.php</code>. Enthält es
+                    die <code>config.php</code>, wird der Server-Schlüssel übernommen.
+                </p>
+            </fieldset>
 
             <h3>Datenbank</h3>
             <label>Host

@@ -29,8 +29,9 @@ final class ConfigWriter
 
     /**
      * @param array<string, mixed> $db host/port/name/user/password
+     * @param ?string $serverKey base64 server key to keep (restore); null generates a new one
      */
-    public static function write(string $configFile, array $db): void
+    public static function write(string $configFile, array $db, ?string $serverKey = null): void
     {
         $config = [
             'debug' => false,
@@ -41,7 +42,9 @@ final class ConfigWriter
                 'user' => (string) $db['user'],
                 'password' => (string) $db['password'],
             ],
-            'server_key' => base64_encode(random_bytes(self::SERVER_KEY_BYTES)),
+            // A restore passes the key of the backed-up installation: data
+            // encrypted with it (M3: mail addresses, API keys) stays readable.
+            'server_key' => $serverKey ?? base64_encode(random_bytes(self::SERVER_KEY_BYTES)),
             'cron_token' => bin2hex(random_bytes(24)),
         ];
 

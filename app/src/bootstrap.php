@@ -12,6 +12,7 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\InstallController;
 use App\Repository\SettingRepository;
+use App\Service\Backup\BackupService;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
 use App\Service\Update\ReleaseDownloader;
@@ -69,6 +70,7 @@ if (!is_file($configFile)) {
     $router = new Router();
     $router->get('/install', $installer->form(...));
     $router->post('/install', $installer->submit(...));
+    $router->post('/install/wiederherstellen', $installer->restoreStep(...));
     // Registered last: the router takes the first matching route, and this
     // one matches everything.
     $router->get('/{rest:.*}', static fn(): \App\Http\Response => \App\Http\Response::redirect('/install'));
@@ -104,6 +106,12 @@ $updates = static fn(): UpdateController => new UpdateController(
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
         migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
+        backups: new BackupService(
+            $connections->pdo(),
+            $paths->backupDir(),
+            $paths->configFile(),
+            $version->value,
+        ),
     ),
     $maintenance,
 );

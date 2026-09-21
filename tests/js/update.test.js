@@ -8,12 +8,13 @@ const assert = require('node:assert/strict');
 
 const { naechsteSchritte, abSchritt, letzteMeldung } = require('../../public/js/update.js');
 
-const SCHRITTE = ['check', 'download', 'extract', 'switch', 'migrate', 'finish'];
+const SCHRITTE = ['check', 'download', 'extract', 'backup', 'switch', 'migrate', 'finish'];
 
 test('after the version check the rest of the chain follows', () => {
     assert.deepEqual(naechsteSchritte(SCHRITTE, 'check'), [
         'download',
         'extract',
+        'backup',
         'switch',
         'migrate',
         'finish',
@@ -29,7 +30,7 @@ test('nothing is left after the last step', () => {
 // idempotent, whereas skipping steps would switch releases without a
 // download.
 test('an unknown step means the whole chain runs', () => {
-    assert.deepEqual(naechsteSchritte(SCHRITTE, 'backup'), SCHRITTE);
+    assert.deepEqual(naechsteSchritte(SCHRITTE, 'nachbessern'), SCHRITTE);
     assert.deepEqual(naechsteSchritte(SCHRITTE, undefined), SCHRITTE);
 });
 
