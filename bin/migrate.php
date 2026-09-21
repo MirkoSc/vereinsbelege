@@ -16,6 +16,11 @@ if (PHP_SAPI !== 'cli') {
 }
 
 ini_set('zend.exception_ignore_args', '1');
+// Belt to those braces: even where arguments ARE kept - a host that
+// ignores the above, or an extension that reads the trace differently -
+// this caps every string parameter to '...'. php.ini-production sets it
+// to 0 for the same reason; the host does not.
+ini_set('zend.exception_string_param_max_len', '0');
 error_reporting(E_ALL);
 date_default_timezone_set('Europe/Berlin');
 

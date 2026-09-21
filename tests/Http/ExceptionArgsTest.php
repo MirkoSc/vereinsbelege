@@ -45,33 +45,68 @@ final class ExceptionArgsTest extends TestCase
     }
 
     /**
+     * Runs $fn with both trace-related ini settings pinned, and restores
+     * them afterwards.
+     *
+     * The second one matters as much as the first and is easy to miss:
+     * zend.exception_string_param_max_len caps how much of a string
+     * argument a trace shows, and php.ini-production sets it to 0, which
+     * replaces every string parameter with '...'. Leaving it to the host
+     * would make these tests pass or fail depending on whose PHP runs them -
+     * CI ships 0, the docker image does not - and the control case below
+     * would silently stop proving anything.
+     *
+     * @param \Closure(): void $fn
+     */
+    private static function withIni(string $ignoreArgs, string $paramLen, \Closure $fn): void
+    {
+        $vorherIgnore = ini_set('zend.exception_ignore_args', $ignoreArgs);
+        $vorherLen = ini_set('zend.exception_string_param_max_len', $paramLen);
+
+        try {
+            $fn();
+        } finally {
+            ini_set('zend.exception_ignore_args', $vorherIgnore === false ? '1' : $vorherIgnore);
+            ini_set('zend.exception_string_param_max_len', $vorherLen === false ? '0' : $vorherLen);
+        }
+    }
+
+    /**
      * The control case: with the setting off, the secret IS in the trace.
      * Without this the test below would also pass on a PHP build that simply
      * never records arguments, and would prove nothing.
      */
     public function testWithoutTheSettingTheArgumentLeaksIntoTheTrace(): void
     {
-        $previous = ini_set('zend.exception_ignore_args', '0');
-
-        try {
+        self::withIni('0', '15', static function (): void {
             self::assertStringContainsString(self::SECRET, self::traceFor(self::SECRET));
-        } finally {
-            ini_set('zend.exception_ignore_args', $previous === false ? '1' : $previous);
-        }
+        });
     }
 
+    /**
+     * The same generous parameter length as the control case, so a failure
+     * here means the argument was dropped - not merely shortened.
+     */
     public function testWithTheSettingTheArgumentIsGone(): void
     {
-        $previous = ini_set('zend.exception_ignore_args', '1');
-
-        try {
+        self::withIni('1', '15', static function (): void {
             $trace = self::traceFor(self::SECRET);
 
             self::assertStringNotContainsString(self::SECRET, $trace);
             self::assertStringContainsString('throwWith', $trace, 'the frame itself is still there');
-        } finally {
-            ini_set('zend.exception_ignore_args', $previous === false ? '1' : $previous);
-        }
+        });
+    }
+
+    /**
+     * The belt to the first setting's braces, and the one the release ships
+     * as well: even with arguments kept, a string parameter is cut to '...'.
+     * Pinned separately because the two settings fail independently.
+     */
+    public function testTheParameterLengthCapAloneAlsoHidesTheArgument(): void
+    {
+        self::withIni('0', '0', static function (): void {
+            self::assertStringNotContainsString(self::SECRET, self::traceFor(self::SECRET));
+        });
     }
 
     /**
@@ -116,6 +151,9 @@ final class ExceptionArgsTest extends TestCase
             if (!str_contains($inhalt, "ini_set('zend.exception_ignore_args', '1')")) {
                 $fehlend[] = $datei;
             }
+            if (!str_contains($inhalt, "ini_set('zend.exception_string_param_max_len', '0')")) {
+                $fehlend[] = $datei . ' (param length cap)';
+            }
         }
 
         self::assertSame([], $fehlend, 'entry points without the ini_set from issue #97');
@@ -132,9 +170,11 @@ final class ExceptionArgsTest extends TestCase
         $userIni = self::entrypoints() . '/docker/web/.user.ini';
 
         self::assertFileExists($userIni);
+        $inhalt = (string) file_get_contents($userIni);
+        self::assertMatchesRegularExpression('/^\s*zend\.exception_ignore_args\s*=\s*On\s*$/mi', $inhalt);
         self::assertMatchesRegularExpression(
-            '/^\s*zend\.exception_ignore_args\s*=\s*On\s*$/mi',
-            (string) file_get_contents($userIni),
+            '/^\s*zend\.exception_string_param_max_len\s*=\s*0\s*$/mi',
+            $inhalt,
         );
     }
 }

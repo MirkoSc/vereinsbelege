@@ -10,6 +10,11 @@ use App\Http\Request;
 // throw before that file's own ini_set() is reached. A trace rendered or
 // logged from the catch block must not carry call arguments either.
 ini_set('zend.exception_ignore_args', '1');
+// Belt to those braces: even where arguments ARE kept - a host that
+// ignores the above, or an extension that reads the trace differently -
+// this caps every string parameter to '...'. php.ini-production sets it
+// to 0 for the same reason; the host does not.
+ini_set('zend.exception_string_param_max_len', '0');
 
 // Maintenance mode: set while the updater switches releases. Checked before
 // bootstrap so it works even if the app is mid-switch; /admin stays reachable

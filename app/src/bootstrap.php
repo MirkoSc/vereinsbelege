@@ -28,6 +28,11 @@ use App\View\View;
 // Http\Kernel never logs the full exception string regardless.
 // -------------------------------------------------------------------------
 ini_set('zend.exception_ignore_args', '1');
+// Belt to those braces: even where arguments ARE kept - a host that
+// ignores the above, or an extension that reads the trace differently -
+// this caps every string parameter to '...'. php.ini-production sets it
+// to 0 for the same reason; the host does not.
+ini_set('zend.exception_string_param_max_len', '0');
 
 // The ONLY place for global runtime setup (timezone convention: everything
 // is stored and interpreted as Europe/Berlin, CLAUDE.md section 5).
