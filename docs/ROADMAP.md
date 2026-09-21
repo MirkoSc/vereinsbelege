@@ -105,6 +105,11 @@ Ziel: leere, aber installier- und updatebare Anwendung.
 - **M3-8 · Audit-Log mit Hash-Kette** – 01 §6 – inkl. Admin-Ansicht +
   Integritätsprüfung.
 - **M3-9 · Wiederherstellung per Wiederherstellungsschlüssel** – 01 §2.
+- **M3-10 · Adminseite „Systemcheck"** – 06 §5 – zeigt zur Laufzeit, ob die
+  M0-Annahmen noch gelten: effektives `zend.exception_ignore_args`,
+  `wait_timeout` des Servers, Grenzwerte und Erweiterungen. Der Dienst
+  dahinter steht seit M1-1, es fehlt die Seite. Schließt die Restpunkte von
+  #97 und #98.
 
 **Release v0.3.0** – Anmeldung produktionsreif; Security-Review-Checkliste
 aus M13-1 vorziehen und für diesen Stand einmal durchgehen.
