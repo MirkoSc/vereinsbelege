@@ -650,7 +650,13 @@ function hc_group_database(array $params): array
 
     foreach ([
         'max_allowed_packet' => ['label' => 'max_allowed_packet', 'expected' => '≥ 4 MiB', 'min' => 4 * HC_MIB],
-        'wait_timeout' => ['label' => 'wait_timeout', 'expected' => 'egal', 'min' => null],
+        'wait_timeout' => [
+            'label' => 'wait_timeout',
+            'expected' => 'lange Schritte beachten',
+            'min' => null,
+            'detail' => 'Untätige Verbindungen brechen danach ab. Nach langen externen '
+                . 'Aufrufen (KI) muss die Verbindung neu aufgebaut werden.',
+        ],
         'character_set_database' => ['label' => 'Zeichensatz', 'expected' => 'utf8mb4', 'min' => null],
         'default_storage_engine' => ['label' => 'Standard-Speicher-Engine', 'expected' => 'InnoDB', 'min' => null],
     ] as $variable => $spec) {
@@ -678,7 +684,14 @@ function hc_group_database(array $params): array
             );
             continue;
         }
-        $rows[] = hc_row('db_' . $variable, $spec['label'], $value === '' ? 'unbekannt' : $value, $spec['expected'], HC_STATUS_INFO);
+        $rows[] = hc_row(
+            'db_' . $variable,
+            $spec['label'],
+            $value === '' ? 'unbekannt' : $value . ($variable === 'wait_timeout' ? ' s' : ''),
+            $spec['expected'],
+            HC_STATUS_INFO,
+            (string) ($spec['detail'] ?? ''),
+        );
     }
 
     $probeTable = 'hc_probe_' . bin2hex(random_bytes(6));
