@@ -11,5 +11,8 @@ return [
         'user' => 'vereinsbelege',
         'password' => 'dev-password',
     ],
+    // Development key only. A real installation gets a random one from the
+    // installer (App\Installer\ConfigWriter).
+    'server_key' => 'ZGV2LXNlcnZlci1rZXktMzItYnl0ZXMtbG9uZyEhISE=',
     'cron_token' => 'dev-cron-token',
 ];

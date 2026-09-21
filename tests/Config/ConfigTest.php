@@ -6,10 +6,15 @@ namespace App\Tests\Config;
 
 use App\Config\Config;
 use App\Config\ConfigException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ConfigTest extends TestCase
 {
+    private const string SERVER_KEY = 'test-server-key-32-bytes-long!!!';
+
+    private const string SERVER_KEY_BASE64 = 'dGVzdC1zZXJ2ZXIta2V5LTMyLWJ5dGVzLWxvbmchISE=';
+
     /**
      * @return array<mixed>
      */
@@ -23,6 +28,7 @@ final class ConfigTest extends TestCase
                 'user' => 'belege',
                 'password' => 'secret',
             ],
+            'server_key' => self::SERVER_KEY_BASE64,
             'cron_token' => 'token',
         ];
     }
@@ -37,7 +43,51 @@ final class ConfigTest extends TestCase
         self::assertSame('belege', $config->dbUser);
         self::assertSame('secret', $config->dbPassword);
         self::assertSame('token', $config->cronToken);
+        self::assertSame(self::SERVER_KEY, $config->serverKey, 'the raw key, base64 already decoded');
         self::assertFalse($config->debug);
+    }
+
+    public function testMissingServerKeyThrowsWithKeyName(): void
+    {
+        $data = self::validData();
+        unset($data['server_key']);
+
+        $this->expectException(ConfigException::class);
+        $this->expectExceptionMessage('server_key');
+
+        Config::fromArray($data);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function unusableServerKeys(): array
+    {
+        return [
+            'too short' => [base64_encode('too short')],
+            'too long' => [base64_encode(str_repeat('x', 33))],
+            'not base64' => ['nope, this is not base64!'],
+        ];
+    }
+
+    #[DataProvider('unusableServerKeys')]
+    public function testUnusableServerKeyThrows(string $value): void
+    {
+        $data = self::validData();
+        $data['server_key'] = $value;
+
+        $this->expectException(ConfigException::class);
+        $this->expectExceptionMessage('server_key');
+
+        Config::fromArray($data);
+    }
+
+    public function testDebugOutputHidesTheSecrets(): void
+    {
+        $dump = print_r(Config::fromArray(self::validData())->__debugInfo(), true);
+
+        self::assertStringNotContainsString(self::SERVER_KEY, $dump);
+        self::assertStringNotContainsString('secret', $dump, 'the database password');
     }
 
     public function testDbPortDefaultsTo3306(): void

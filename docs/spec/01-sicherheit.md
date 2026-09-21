@@ -40,6 +40,32 @@ Server-Schlüssel (`shared/config.php`, 32 Byte, bei Installation erzeugt):
 `ai_provider.api_key_enc`, `totp_secret_enc`. Login-Lookup über
 `user.email_bi = HMAC(Server-Schlüssel, lowercase(email))`.
 
+### Speicherformate (`App\Service\Crypto`)
+
+Jeder gespeicherte Wert beginnt mit einem Versionsbyte – ein Leser, der eine
+unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
+
+| Wert | Spalte | Aufbau |
+|---|---|---|
+| Feld (Tresor) | `*_enc` | `Version(1) \| Nonce(24) \| XChaCha20-Poly1305-IETF`, AAD = `tabelle\|id\|spalte` |
+| Betriebsdaten (Server-Schlüssel) | `*_enc` | `Version(1) \| Nonce(24) \| secretbox` |
+| Datenschlüssel | `dek_sealed` | `Tresor-Version(1) \| box_seal(DEK, VK_pub)` |
+| Blind Index | `*_bi` | rohe 32 Byte `HMAC-SHA256(BIK, zweck \| 0x00 \| normalisierter Wert)` |
+
+- Tabellen- und Spaltennamen in der AAD sind auf `[a-z][a-z0-9_]*` begrenzt,
+  damit kein Bestandteil das Trennzeichen enthalten und die Bindung
+  aushebeln kann.
+- Die Tresor-Version im `dek_sealed` ist der vorgesehene Pfad für eine
+  spätere Schlüsselrotation (siehe „Sperren/Entfernen").
+- Der HMAC-Schlüssel wird abgeleitet (`BIK = BLAKE2b(VK_priv,
+  "blind-index-v1")`, für `user.email_bi` entsprechend aus dem
+  Server-Schlüssel), damit dasselbe Geheimnis nicht für zwei Primitive dient.
+- Jeder Blind Index trägt seinen Zweck (`supplier.iban`,
+  `bank_account.iban`): derselbe Wert in zwei Spalten ergibt zwei
+  verschiedene Indexe und ist damit für einen DB-Leser nicht korrelierbar.
+  Normalisiert werden Groß-/Kleinschreibung und Leerraum; alles Weitere
+  (IBAN ohne Gruppen, Rechnungsnummer) macht der Aufrufer.
+
 ### Session-Entsperrung
 - Login erfolgreich (inkl. 2FA) → KEK aus Passwort → `U_priv` entpacken →
   `VK_priv = box_seal_open(vault_grant.sealed)`.
