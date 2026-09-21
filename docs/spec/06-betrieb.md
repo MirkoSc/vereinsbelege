@@ -83,6 +83,18 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   Linux zählt Warten auf Netzwerk-I/O nicht in `max_execution_time`, aber
   der Webserver kann Requests trotzdem kappen – **Grenze im Hosting-Check
   messen** und Timeout darunter setzen.
+- **Die DB-Verbindung überlebt einen langen externen Aufruf nicht.** Der
+  Zielhost setzt `wait_timeout = 120` (M0-Befund), eine untätige Verbindung
+  stirbt also mitten im KI-Aufruf. Regel: Ein Schritt, der auf etwas
+  Externes wartet, gibt die Verbindung vorher mit
+  `ConnectionFactory::release()` frei und holt sie danach neu; er hält
+  keine Verbindung über den Aufruf hinweg offen. Als Netz prüft
+  `ConnectionFactory` eine länger untätige Verbindung mit `SELECT 1` und
+  baut sie neu auf, **bevor** die eigentliche Abfrage läuft – gescheiterte
+  Anweisungen werden nie wiederholt, weil ein Schreibvorgang mit unbekanntem
+  Ausgang sonst doppelt liefe. Ist eine Transaktion offen, wird nicht neu
+  verbunden, sondern mit `ConnectionLostException` abgebrochen: der Server
+  hat die Transaktion bereits zurückgerollt.
 
 ## 5. Hosting-Check (Meilenstein M0)
 
@@ -134,14 +146,17 @@ selbst die Grenzen, die er messen soll:
 Geheimnisse (Token, Passwörter, Schlüssel) werden in jeder Ausgabe durch
 `***` ersetzt; das SMTP-Protokoll zeigt statt der Anmeldedaten Platzhalter.
 
-**Pflicht-Tests:** `tests/hosting-check-test.php` – Token-Vergleich (leere
+**Pflicht-Tests:** `tests/HostingCheckTest.php` – Token-Vergleich (leere
 Erwartung greift nie), `hc_parse_bytes`/`hc_format_bytes`, Bewertung von
 Mindestwerten, Zusammenfassung und schlechtester Status, Redaktion von
 Geheimnissen, Abdeckung der oben gelisteten Prüfpunkte, HTML-Ausgabe ohne
 Skript und mit maskierten Sonderzeichen, restloses Aufräumen der
 Dateisystem-Proben, Abbruch ohne SMTP-Host bzw. ohne Langlauf-URL. Die
 Datenbank-Prüfungen laufen gegen einen echten Server, wenn
-`HC_TEST_DB_HOST`/`_NAME`/`_USER`/`_PASS` gesetzt sind.
+`HC_TEST_DB_HOST`/`_NAME`/`_USER`/`_PASS` gesetzt sind; die Docker-Umgebung
+und die CI setzen sie. Das Skript selbst bleibt abhängigkeitsfrei – es wird
+per FTP in ein leeres Verzeichnis geladen –, seine Tests laufen seit M1-1
+unter PHPUnit mit.
 
 Ergebnis wird in `docs/hosting-befunde.md` eingetragen; Abweichungen von
 den Annahmen dieser Specs werden als Issues angelegt.
