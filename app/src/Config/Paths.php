@@ -120,4 +120,14 @@ final readonly class Paths
     {
         return $this->varDir() . '/tmp';
     }
+
+    /**
+     * Chunks of uploads that are still running (M2-4). The one place where
+     * plaintext may lie around, and only until the closing request encrypts
+     * it - orphans go after 24 h (docs/spec/03-erfassung-und-ki.md section 4).
+     */
+    public function uploadDir(): string
+    {
+        return $this->tmpDir() . '/upload';
+    }
 }

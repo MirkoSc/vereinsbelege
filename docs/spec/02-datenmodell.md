@@ -19,7 +19,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher") | – |
 | `user_scope` | user_id, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten) | – |
 | `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem | – (selbst gewrappt) |
-| `vault` | version, public_key, created_at | – |
+| `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at | S |
 | `mfa_email_code` | user_id, code_hash, expires_at, attempts | – |
@@ -28,6 +28,12 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `auth_token` | user_id, typ (`reset`/`invite`), token_hash, expires_at, used_at | – |
 | `rate_limit` | key_hash, window_start, count (übernommen) | – |
 | `audit_log` | ts, user_id NULL, action, entity, entity_id, ip_hash, details_enc, dek_sealed, prev_hash, hash | T (details) |
+
+- `vault` steht als einzige dieser Tabellen schon (Migration 004, M2-4): der
+  Chunk-Upload ist der erste Schreiber, der einen Datenschlüssel versiegeln
+  muss, und dafür braucht er `public_key`. Die Zeile schreibt der Installer
+  mit M3-2; bis dahin ist die Tabelle leer und der Upload-Abschluss antwortet
+  503 (03 §4).
 
 ## Betrieb
 

@@ -92,6 +92,91 @@ graustufen + globale Schwelle; kein Entzerren.
   Upload-Limit des Hosters und hält Requests kurz.
 - Verwaiste Upload-Chunks räumt der Cron nach 24 h ab.
 
+**Stand M2-4:** `Api\UploadController` + `Service\Upload\*` (issue #11).
+
+- *Routen* (alle `POST`, Pfadsegmente englisch, weil die Chunk-Route oben so
+  festgelegt ist):
+
+  | Route | Body | Antwort |
+  |---|---|---|
+  | `/api/upload` | JSON `{groesse}` | 201 `{id, groesse, chunks, chunk_bytes}` |
+  | `/api/upload/{id}/chunk/{n}` | Rohdaten | 200 `{chunk, chunks, fehlend, empfangen, vollstaendig}` |
+  | `/api/upload/{id}/finish` | JSON `{name}` | 201 `{blob_id, groesse, typ}` |
+  | `/api/upload/{id}/abort` | – | 200 `{status}` |
+
+  `{id}` ist eine 32-stellige Zufalls-Hex-ID, `{n}` der Chunk-Index ab 0. Der
+  Chunk-Body sind Rohbytes (`application/octet-stream`), kein Multipart:
+  `Http\Request` liest nur JSON, der Controller bekommt den Strom deshalb als
+  injizierte Closure (Default `php://input`) – dasselbe Muster wie
+  `InstallController` mit `is_uploaded_file`.
+- *Rechte:* bis M3-6 keine `Permission` – es gibt weder Anmeldung (M3-3) noch
+  das Enum. Einziges Credential ist das **CSRF-Token der Session**
+  (`_csrf`-Feld oder `X-CSRF-Token`), damit sind die Routen heute aus `/app`
+  und `/admin` nutzbar. Ab M3-6: `document.submit_internal`.
+  **Offen für M5:** die öffentliche Einreichung hat bewusst keine Session und
+  kann die Route so nicht nutzen; sie braucht vorher den unsichtbaren
+  Proof-of-Work und das Rate-Limit aus 01.
+- *Zustand ohne Tabelle:* ein Verzeichnis je Upload unter
+  `shared/var/tmp/upload/<id>/` mit `<n>.part` je Chunk und einer `meta.json`
+  (Größe, Chunkzahl, Chunkgröße, Zeitstempel). Kein DB-Tisch – so braucht das
+  Aufräumen im Cron keine Datenbankverbindung. **Originalname und der vom
+  Browser gemeldete MIME-Typ stehen nicht im Temp-Bereich**: der Name ist ein
+  Fachdatum, er kommt erst mit dem Abschluss-Request und geht direkt
+  verschlüsselt in die Blob-Metadaten (ohne Pfad, ohne Steuerzeichen,
+  max. 200 Zeichen). Die Chunk-Inhalte selbst dürfen dort im Klartext liegen –
+  dafür ist `var/tmp` da (CLAUDE.md §1).
+- *Chunks:* beliebige Reihenfolge, Wiederholung erlaubt. Jeder Chunk wird
+  unter einem Zufallsnamen geschrieben und erst dann umbenannt, ein
+  abgebrochener Request hinterlässt also keinen halben Chunk. Ein zu langer
+  Chunk wird **beim Lesen** abgebrochen (413), ein zu kurzer landet und gilt
+  als fehlend – die Antwort nennt `fehlend`, der Browser schickt nur diese
+  Indizes neu.
+- *Limits:* `UploadService::CHUNK_BYTES` = 2 MiB, `MAX_FILE_BYTES` = 32 MiB
+  (Konstanten, keine Settings). Die angekündigte Größe wird geprüft, **bevor**
+  ein Byte fließt.
+- *Abschluss:* vollständig? → Magic Bytes des ersten Chunks (nur JPEG, PNG,
+  PDF; der Client-MIME wird nie verwendet) → `BlobService::store()` bekommt
+  die Chunks als Generator, der Klartext wird also nie zu einer zweiten Datei
+  → Temp-Verzeichnis gelöscht. Versiegelt wird an `vault.public_key`
+  (Tabelle `vault`, Migration 004); solange keine Zeile existiert, antwortet
+  der Abschluss 503 statt zu raten – der Installer legt sie mit M3-2 an.
+  Abgelehnte Uploads (falscher Typ) werden sofort gelöscht, nicht erst vom
+  Cron.
+- *Fehler:* JSON `{fehler: "<deutscher Satz>"}` mit 403 (CSRF), 404
+  (unbekannt), 409 (unvollständig, zusätzlich `fehlend`), 413 (zu groß), 415
+  (Typ), 422 (Index/Größenangabe), 503 (kein Tresor). Die Meldungen nennen
+  weder Dateinamen noch Größen noch IDs.
+- *Aufräumen:* `Cron\UploadCleanupTask` (`uploads_aufraeumen`,
+  `KEEP_HOURS = 24`) im `aufraeumen`-Bucket. Entscheidend ist der **jüngste**
+  Zeitstempel im Verzeichnis, ein laufender Upload wird also nicht unter dem
+  Browser weggeräumt.
+- *Wartungsmodus:* der Shim lässt `/api/...` nicht durch (nur `/admin`,
+  `/css/`, `/js/`) – ein Upload während eines Updates scheitert und wird
+  aufgeräumt.
+- *Browser:* `public/js/upload.js`, klassisches Skript ohne Fremdbibliothek
+  (CSP `script-src 'self'`, `connect-src 'self'`). Reine Funktionen
+  (`chunkGrenzen`, `fortschrittProzent`, `fehlertext`) plus
+  `dateiHochladen(datei, {csrf, fetch, onFortschritt})`: eröffnen, Chunks
+  **nacheinander**, abschließen; bei einem Fehler wird der Upload sofort
+  abgebrochen. `fetch` ist injizierbar, damit `node --test` den ganzen Ablauf
+  ohne DOM und ohne Netz prüft. Eine Oberfläche gibt es noch nicht – die
+  Erfassungsseiten kommen mit M4-6 und M5.
+
+**Pflicht-Tests (Upload):** `MagicBytesTest` (die drei erlaubten Typen, ZIP/
+ELF/HTML/Text/GIF/HEIC/leer/zu kurz abgelehnt, PDF-Kopf mit Versatz
+abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
+Übertragung abgelehnt, Limit selbst erlaubt, zu langer Chunk abgelehnt und
+ohne Rest, letzter Chunk kürzer, verkehrte Reihenfolge ergibt die richtige
+Datei, Wiederholung überschreibt, Index außerhalb, fehlender und zu kurzer
+Chunk stehen in `fehlend`, ID ohne Pfad-Traversal, `discard` wiederholbar,
+Metadaten ohne Fachdaten, Aufräumen nur bei altem Verzeichnis);
+`UploadCleanupTaskTest` (24-h-Grenze, Wiederholbarkeit);
+`ChunkUploadTest` (voller Weg gegen beide Speicher-Backends, entschlüsselter
+Blob identisch, Originalname verschlüsselt und ohne Pfad, `var/tmp` leer,
+unvollständig/falscher Typ/kein Tresor/fehlendes CSRF/unbekannte ID);
+`VaultRepositoryTest`; `tests/js/upload.test.js` (Chunk-Grenzen, Fortschritt,
+Reihenfolge der Requests, Abbruch bei Fehler).
+
 ## 5. Verarbeitungspipeline (Jobs)
 
 Jeder Beleg durchläuft Jobs in `job` (siehe 06-betrieb.md,
