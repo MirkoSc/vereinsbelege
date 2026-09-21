@@ -11,6 +11,8 @@ use App\Http\Session;
 use App\Service\MaintenanceMode;
 use App\Service\Update\UpdateService;
 use App\Service\Update\UpdateState;
+use App\View\Area;
+use App\View\FlashArt;
 use App\View\View;
 
 /**
@@ -57,7 +59,7 @@ final readonly class UpdateController
             'kanal' => $this->updates->channel(),
             'wartung' => $this->maintenance->state(),
             'schritte' => UpdateService::STEPS,
-        ]));
+        ], Area::Admin));
     }
 
     public function setChannel(Request $request): ResponseInterface
@@ -139,7 +141,7 @@ final readonly class UpdateController
 
     private function csrfFailure(): ResponseInterface
     {
-        $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.');
+        $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
 
         return Response::redirect('/admin/update');
     }

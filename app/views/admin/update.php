@@ -1,16 +1,6 @@
 <section class="schmal">
     <h2>Update</h2>
 
-    <p class="hinweis hinweis-warnung">
-        <strong>Dieser Bereich ist noch nicht geschützt.</strong> Anmeldung und Rechte
-        kommen mit Meilenstein M3. Bis dahin gehört eine öffentlich erreichbare
-        Installation zusätzlich hinter einen Passwortschutz des Hosters.
-    </p>
-
-    <?php if (($flash ?? null) !== null): ?>
-        <p class="hinweis hinweis-ok"><?= e($flash) ?></p>
-    <?php endif; ?>
-
     <?php if (($wartung ?? null) !== null): ?>
         <div class="hinweis hinweis-warnung">
             <p>
@@ -22,7 +12,7 @@
             </p>
             <form method="post" action="/admin/wartung/aufheben">
                 <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
-                <button type="submit" class="knopf">Wartungsmodus aufheben</button>
+                <button type="submit" class="knopf knopf-primaer">Wartungsmodus aufheben</button>
             </form>
         </div>
     <?php endif; ?>

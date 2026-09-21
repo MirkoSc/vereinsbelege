@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http;
 
+use App\View\Flash;
+use App\View\FlashArt;
+
 /**
  * PHP session wrapper.
  *
@@ -65,16 +68,34 @@ final class Session
             && hash_equals($known, $token);
     }
 
-    public function flash(string $message): void
+    /**
+     * Never fachliche Klartextdaten - see App\View\Flash.
+     */
+    public function flash(string $message, FlashArt $art = FlashArt::Ok): void
     {
-        $_SESSION['flash'] = $message;
+        $_SESSION['flash'] = ['text' => $message, 'art' => $art->value];
     }
 
-    public function pullFlash(): ?string
+    public function pullFlash(): ?Flash
     {
-        $message = $_SESSION['flash'] ?? null;
+        $gespeichert = $_SESSION['flash'] ?? null;
         unset($_SESSION['flash']);
 
-        return is_string($message) ? $message : null;
+        // A release switch does not end the running sessions, so the value
+        // in the store can still be the plain string an older release wrote
+        // (and, after a downgrade, the array a newer one wrote). Both stay
+        // readable rather than throwing on the first page after an update.
+        if (is_string($gespeichert)) {
+            return new Flash($gespeichert);
+        }
+        if (!is_array($gespeichert) || !is_string($gespeichert['text'] ?? null)) {
+            return null;
+        }
+
+        $art = is_string($gespeichert['art'] ?? null)
+            ? FlashArt::tryFrom($gespeichert['art'])
+            : null;
+
+        return new Flash($gespeichert['text'], $art ?? FlashArt::Ok);
     }
 }
