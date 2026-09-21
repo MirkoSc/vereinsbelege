@@ -11,6 +11,24 @@ use App\Support\FileLogger;
 use App\Support\Version;
 use App\View\View;
 
+// -------------------------------------------------------------------------
+// Issue #97 - FIRST statement of the application, before an autoloader, a
+// config file or a single line of our own code can throw.
+//
+// The target host ships zend.exception_ignore_args = 0 (hosting finding M0),
+// which puts every function's ARGUMENTS into stack traces. On this
+// application that is not a cosmetic difference: the login path carries a
+// plaintext password, the unlock path the vault key, and the processing
+// chain decrypted receipt data - all as call arguments, all into any trace
+// that gets rendered or logged. CLAUDE.md section 4 requires it on.
+//
+// The value is PHP_INI_ALL, so setting it here actually takes effect
+// (verified on the host by the M0 check, not assumed). Two more layers sit
+// around it: web/.user.ini covers the window before this file runs, and
+// Http\Kernel never logs the full exception string regardless.
+// -------------------------------------------------------------------------
+ini_set('zend.exception_ignore_args', '1');
+
 // The ONLY place for global runtime setup (timezone convention: everything
 // is stored and interpreted as Europe/Berlin, CLAUDE.md section 5).
 error_reporting(E_ALL);

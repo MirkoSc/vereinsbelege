@@ -15,6 +15,7 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 
+ini_set('zend.exception_ignore_args', '1');
 error_reporting(E_ALL);
 date_default_timezone_set('Europe/Berlin');
 

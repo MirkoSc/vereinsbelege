@@ -6,6 +6,17 @@
 10 gelten sinngemäß): `setup.php` (Nextcloud-Stil) → Release laden, SHA-256
 prüfen, entpacken, Shim + `shared/` anlegen → `/install`.
 
+Im DocumentRoot legt `setup.php` drei Dateien ab, die der Updater
+mitpflegt: den Shim `index.php`, die `.htaccess` (Security-Header, CSP) und
+eine `.user.ini` mit `zend.exception_ignore_args = On`. Die `.user.ini` ist
+das Netz für Fehler, die auftreten, bevor der Bootstrap läuft – ohne sie
+stünden Aufrufargumente (Passwörter, Tresor-Schlüssel, Belegdaten) im
+Stacktrace. `.user.ini` und nicht `.htaccess`, weil der Zielhost PHP als
+`fpm-fcgi` ausführt; dort beantwortet Apache `php_value` mit einem 500.
+Alle drei Dateien liegen im Repo unter `docker/web/` und werden von dort
+übernommen, damit Entwicklungsumgebung und frische Installation nicht
+auseinanderlaufen.
+
 Erweiterungen im `/install`-Flow:
 1. DB-Zugangsdaten + Verbindungstest (wie gehabt)
 2. **Server-Schlüssel** erzeugen → `config.php`

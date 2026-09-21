@@ -5,6 +5,12 @@ declare(strict_types=1);
 use App\Http\Kernel;
 use App\Http\Request;
 
+// Issue #97, repeated here and not only in bootstrap.php: this file runs
+// FIRST, and everything below - including the require of bootstrap.php - can
+// throw before that file's own ini_set() is reached. A trace rendered or
+// logged from the catch block must not carry call arguments either.
+ini_set('zend.exception_ignore_args', '1');
+
 // Maintenance mode: set while the updater switches releases. Checked before
 // bootstrap so it works even if the app is mid-switch; /admin stays reachable
 // for the update step chain.
