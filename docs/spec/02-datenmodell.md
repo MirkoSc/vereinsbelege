@@ -33,10 +33,10 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
-| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2) | – |
+| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s` | – |
 | `mail_queue` | to_enc, subject_enc, body_enc, status, attempts, next_try_at, last_error | S |
 | `ai_provider` | name, base_url, api_key_enc, model, caps JSON (`vision`, `json_schema`, `max_images`, `max_tokens`), timeout_s, active, is_default | S (api_key) |
-| `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at | – (state ohne Klartext-Fachdaten) |
+| `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at, updated_at (M1-5; `executor`/`status` als VARCHAR, die PHP-Enums sind maßgeblich; `last_error` nur die Exception-Klasse) | – (state ohne Klartext-Fachdaten) |
 | `worker` | name, public_key, key_fingerprint, secret_hash, status (`gekoppelt`/`aktiv`/`gesperrt`), protocol_version, app_version, capabilities JSON, last_heartbeat_at, config_sealed (an W_pub), config_version | – |
 | `worker_pairing` | code_hash, expires_at, used_at | – |
 | `worker_grant` | worker_id, blob_id, sealed_dek (an W_pub), job_id, created_at – wird nach Abschluss gelöscht | – (versiegelt) |

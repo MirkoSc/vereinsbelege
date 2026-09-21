@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Admin\UpdateController;
+use App\Api\CronController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
@@ -11,8 +12,12 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\InstallController;
+use App\Repository\CronLockRepository;
+use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
 use App\Service\Backup\BackupService;
+use App\Service\Cron\CronRunner;
+use App\Service\Cron\JobCleanupTask;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
 use App\Service\Update\ReleaseDownloader;
@@ -116,8 +121,23 @@ $updates = static fn(): UpdateController => new UpdateController(
     $maintenance,
 );
 
+// Cron: like $updates, built only once the token was right.
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger): CronRunner {
+    $pdo = $connections->pdo();
+
+    return new CronRunner(
+        lock: new CronLockRepository($pdo),
+        settings: new SettingRepository($pdo),
+        // The mail queue joins here with M3-1. Nothing that decrypts, ever
+        // (CLAUDE.md section 4).
+        jedesMal: [],
+        aufraeumen: [new JobCleanupTask(new JobRepository($pdo))],
+        logger: $logger,
+    );
+});
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $updates);
+(require __DIR__ . '/routes.php')($router, $view, $updates, $cron);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

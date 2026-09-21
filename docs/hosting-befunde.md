@@ -63,7 +63,7 @@ Folge-Issue · 📋 nur dokumentiert
 | Streaming-Ausgabe 60 s | funktioniert | ✅ 199,8 MiB in 61 s, HTTP 200, `DONE` angekommen (~3,3 MiB/s) | |
 | SMTP (Host/Port/TLS) | 465/587 | ✅ Hoster-SMTP, Port 465 implizit, `AUTH LOGIN` erfolgreich, Zertifikat gültig, `SIZE` ≈ 146 MiB | |
 | Zustellung einer Testmail | funktioniert | ✅ Testmail über den Hoster-SMTP zugestellt, Absender akzeptiert | |
-| Minimales Cron-Intervall | 5–15 min | ⬆️ **1 min** – Läufe können überlappen, Aufräumen braucht Drosselung | [#99](https://github.com/MirkoSc/vereinsbelege/issues/99) |
+| Minimales Cron-Intervall | 5–15 min | ⬆️ **1 min** – Läufe können überlappen, Aufräumen braucht Drosselung → Sperre + Drosselung in M1-5 umgesetzt (06 §4) | [#99](https://github.com/MirkoSc/vereinsbelege/issues/99) |
 | `rename()` von Verzeichnissen | funktioniert | ✅ vorwärts und zurück, dazu `mkdir`, `flock`, `symlink` | |
 | Schreibrecht über dem DocumentRoot | vorhanden | ✅ DocumentRoot auf `<bereich>/web/` gelegt, `shared/` daneben beschreibbar, 361 GiB frei | |
 | `shared/` öffentlich erreichbar? | nein | ✅ Testdatei über die Hauptdomain nicht abrufbar; Vorsorge per `.htaccess` trotzdem sinnvoll | [#101](https://github.com/MirkoSc/vereinsbelege/issues/101) |

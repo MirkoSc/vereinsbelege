@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Admin\UpdateController;
+use App\Api\CronController;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
@@ -25,8 +26,9 @@ use App\View\View;
  *
  * @param \Closure(): UpdateController $updates built lazily: it opens the
  *        database connection, and the public routes must not pay for that.
+ * @param \Closure(): CronController $cron built lazily for the same reason.
  */
-return static function (Router $router, View $view, \Closure $updates): void {
+return static function (Router $router, View $view, \Closure $updates, \Closure $cron): void {
     $router->get('/', static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
     ));
@@ -38,6 +40,12 @@ return static function (Router $router, View $view, \Closure $updates): void {
     $router->get('/app', static fn(): Response => Response::html(
         $view->render('app/start', ['title' => ''], Area::App),
     ));
+
+    // Cron entry point for the host's control panel (06 section 4, issue #99).
+    // Permission: none in the Permission sense - no session, no login. The
+    // shared secret cron_token from shared/config.php is the only credential,
+    // compared with hash_equals. The cron never decrypts (CLAUDE.md section 4).
+    $router->get('/cron', static fn(Request $r) => $cron()->run($r));
 
     $router->get('/admin', static fn(): Response => Response::redirect('/admin/update'));
 
