@@ -13,9 +13,17 @@ das Netz für Fehler, die auftreten, bevor der Bootstrap läuft – ohne sie
 stünden Aufrufargumente (Passwörter, Tresor-Schlüssel, Belegdaten) im
 Stacktrace. `.user.ini` und nicht `.htaccess`, weil der Zielhost PHP als
 `fpm-fcgi` ausführt; dort beantwortet Apache `php_value` mit einem 500.
-Alle drei Dateien liegen im Repo unter `docker/web/` und werden von dort
-übernommen, damit Entwicklungsumgebung und frische Installation nicht
-auseinanderlaufen.
+Alle drei Dateien liegen im Repo unter `docker/web/`; das Release-ZIP führt
+diesen Ordner mit, `setup.php` kopiert sie von dort in den DocumentRoot und
+der Updater hält sie aktuell. Damit laufen Entwicklungsumgebung und frische
+Installation nicht auseinander. Beim Aktualisieren gilt: der Shim wird immer
+auf den Stand des Releases gebracht (er muss zur laufenden Version passen),
+`.htaccess` und `.user.ini` nur, solange sie noch Byte für Byte der Vorlage
+des **vorherigen** Releases entsprechen – eine von Hand angepasste
+`.htaccess` (IP-Sperre, Passwortschutz) bleibt stehen und wird nur gemeldet.
+Der Shim liegt zusätzlich als Konstante `ReleaseSwitcher::SHIM` vor: beim
+Umschalten ist das Release-Verzeichnis kurz nicht lesbar, die Selbstheilung
+braucht den Inhalt also ohne Datei. `ShimContentTest` hält beide gleich.
 
 Erweiterungen im `/install`-Flow:
 1. DB-Zugangsdaten + Verbindungstest (wie gehabt)
@@ -26,9 +34,44 @@ Erweiterungen im `/install`-Flow:
 5. Mail-Einstellungen (SMTP) + Testmail – überspringbar
 6. „Frische Installation" oder „Backup einspielen"
 
+Stand M1-2: Schritt 1 und 2 sind umgesetzt, dazu alle Migrationen ab 0 und
+der Release-Kanal. Schritt 6 kommt mit M1-4 (Backup), 3 und 4 mit M3-2
+(Benutzer und Tresor), 5 mit M3-1 (Mail). Den Kanal wählt der Admin schon in
+`setup.php` – dort gibt es noch keine Datenbank, also legt `setup.php` die
+Antwort als `shared/setup_kanal.txt` ab; der Installer übernimmt sie als
+Einstellung `update_kanal` und löscht die Datei. Ohne diese Übergabe würde
+eine aus einer Vorabversion installierte Testinstanz danach stillschweigend
+auf `stable` nach Updates suchen. Am Ende löscht der Installer `setup.php`;
+klappt das nicht (Dateieigentümer FTP), sagt die Abschlussseite Bescheid.
+
 Update-Schrittkette, Kanäle stable/beta, Pre-Releases, Rollback,
-Wartungsmodus inkl. Banner: unverändert übernommen. Der Updater speichert
-die `checksums.txt` des Releases für den Code-Integritätscheck.
+Wartungsmodus inkl. Banner: unverändert übernommen. Die Schritte sind
+`check` → `download` → `extract` → `switch` → `migrate` → `finish`; jeder ist
+ein eigener kurzer Request, jeder ist wiederholbar, der Stand liegt in
+`shared/update_state.json`. Ein Backup-Schritt vor `switch` kommt mit M1-4.
+Der Updater speichert die `checksums.txt` des Releases als
+`shared/release_checksums.txt` für den Code-Integritätscheck (01 §8).
+
+Während der Wartungsmodus gesetzt ist, lässt der Shim außer `/admin` auch
+`/css/` und `/js/` durch: sonst käme genau die Seite, die die Wartung beendet
+(Update fortsetzen, Rollback, Flag freigeben), ohne Stylesheet und ohne das
+Skript der Schrittkette an.
+
+**Pflicht-Tests:** `ShimContentTest` (Konstante ≡ `docker/web/index.php`,
+Shim ist gültiges PHP, beide Sperrbedingungen und die Ausnahmen für
+`/css/` und `/js/` vorhanden, `setup.php` kopiert die drei Docroot-Dateien
+statt eigene Kopien zu führen); `ReleaseSwitcherTest` (Umschalten,
+Idempotenz, Reparatur nach Absturz zwischen den `rename()`-Aufrufen,
+Rollback, Aufräumen, Shim-Selbstheilung und -Rücknahme, Docroot-Dateien inkl.
+„von Hand geändert bleibt stehen"); `ReleaseDownloaderTest` (Kanäle, Entwürfe
+überspringen, fehlende Assets, Prüfsummen erkennen und ablehnen, Dateiname
+des Assets, curl-Zweig); `MaintenanceModeTest`; `ConfigWriterTest`
+(Server-Schlüssel, je Installation eigene Geheimnisse); `UpdateChainTest`
+(ganze Kette gegen ein lokales Release-ZIP, manipuliertes ZIP, falsche
+`VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück);
+`InstallFlowTest` (Schema, `config.php`, Kanal-Übernahme, CSRF, abgelehnte
+Zugangsdaten); `tests/js/update.test.js` (Reihenfolge der Schritte,
+Wiederholung ab dem fehlgeschlagenen Schritt).
 
 ## 2. Backup & Restore
 

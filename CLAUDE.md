@@ -57,6 +57,9 @@ greift, prüft `tools/hosting-check.php`.
 /releases/vX.Y.Z/
 /shared/         überlebt Updates:
    config.php        DB-Zugang, Cron-Token, Server-Schlüssel (Abschnitt 4)
+   maintenance.flag  gesetzt, solange der Updater umschaltet (Shim prüft sie)
+   update_state.json Stand der Update-Schrittkette
+   release_checksums.txt  Prüfsummen des installierten Releases
    var/blobs/        verschlüsselte Dateien (Storage-Backend „Dateisystem")
    var/backups/      Backups (enthalten nur Chiffrat für fachliche Daten)
    var/log/app.log

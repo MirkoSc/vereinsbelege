@@ -43,6 +43,15 @@ jobs:
       - name: Validate composer files
         run: composer validate --no-check-publish
 
+      # setup.php is generated from bin/setup.template.php plus the shared
+      # ReleaseDownloader. A stale copy is what a fresh installation would
+      # actually run, so it is regenerated and diffed rather than trusted.
+      - name: Verify generated setup.php is up to date
+        run: |
+          php bin/build_setup.php
+          git diff --exit-code setup.php
+          php -l setup.php
+
       - name: Install dependencies
         run: composer install --no-interaction --no-progress
 
@@ -62,13 +71,5 @@ jobs:
           HC_TEST_DB_USER: root
           HC_TEST_DB_PASS: ci-root
 
-      # No JS logic yet - the first modules arrive with the layout (M1-3) and
-      # the scanner (M5). The step is wired now so adding a test file is
-      # enough to have it run.
       - name: Run client-side JS tests
-        run: |
-          if ls tests/js/*.test.js >/dev/null 2>&1; then
-            node --test tests/js/*.test.js
-          else
-            echo "no JS tests yet - skipping"
-          fi
+        run: node --test tests/js/*.test.js

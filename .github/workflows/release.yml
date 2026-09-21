@@ -25,11 +25,16 @@ jobs:
       - name: Write VERSION from tag
         run: echo "${GITHUB_REF_NAME#v}" > VERSION
 
+      # docker/web/ carries the three docroot files - shim, .htaccess,
+      # .user.ini (docs/spec/06-betrieb.md section 1). setup.php copies them
+      # from the unpacked release and the updater keeps them up to date, so
+      # they have to travel with it. The rest of docker/ stays out: it is the
+      # development environment and holds the dev database password.
       - name: Build release ZIP
         run: |
           mkdir -p dist
           zip -r "dist/vereinsbelege-${GITHUB_REF_NAME}.zip" \
-            app public vendor bin migrations VERSION
+            app public vendor bin migrations VERSION docker/web
 
       - name: Stage setup.php (exists from milestone M1-2 on)
         run: if [ -f setup.php ]; then cp setup.php dist/; fi

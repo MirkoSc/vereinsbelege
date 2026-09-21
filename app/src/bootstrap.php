@@ -2,11 +2,21 @@
 
 declare(strict_types=1);
 
+use App\Admin\UpdateController;
 use App\Config\Config;
 use App\Config\Paths;
+use App\Database\ConnectionFactory;
 use App\Http\Kernel;
 use App\Http\Router;
+use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Installer\InstallController;
+use App\Repository\SettingRepository;
+use App\Service\MaintenanceMode;
+use App\Service\Migration\Migrator;
+use App\Service\Update\ReleaseDownloader;
+use App\Service\Update\ReleaseSwitcher;
+use App\Service\Update\UpdateService;
 use App\Support\FileLogger;
 use App\Support\Version;
 use App\View\View;
@@ -51,18 +61,17 @@ $logger = new FileLogger($paths->logFile());
 $view = new View($paths->viewsDir(), $version->value);
 
 // Install mode: while shared/config.php is missing there is no database and
-// no vault, so nothing but the installer can run. The installer itself is
-// milestone M1-2; until then this is an honest "not set up yet" page rather
-// than a stack of exceptions from Config::fromFile().
+// no vault, so nothing but the installer can run. Writing the config is the
+// last thing the installer does - that is what locks /install afterwards.
 if (!is_file($configFile)) {
+    $installer = new InstallController($view, $paths, new Session());
+
     $router = new Router();
-    $router->get('/{rest:.*}', static fn(): \App\Http\Response => \App\Http\Response::html(
-        $view->render('error', [
-            'title' => 'Noch nicht eingerichtet',
-            'message' => 'Es gibt noch keine Konfiguration. Die Einrichtung folgt mit dem Installer.',
-        ]),
-        503,
-    ));
+    $router->get('/install', $installer->form(...));
+    $router->post('/install', $installer->submit(...));
+    // Registered last: the router takes the first matching route, and this
+    // one matches everything.
+    $router->get('/{rest:.*}', static fn(): \App\Http\Response => \App\Http\Response::redirect('/install'));
 
     return new Kernel(
         router: $router,
@@ -78,8 +87,29 @@ if (!is_file($configFile)) {
 
 $config = Config::fromFile($configFile);
 
+// One factory per collaborator that needs the database, called only when a
+// route actually uses it: ConnectionFactory opens the connection lazily, and
+// the public pages must not pay for one (see also issue #98 - a connection
+// held open across a long external call dies on this host).
+$connections = new ConnectionFactory($config);
+$maintenance = new MaintenanceMode($paths->maintenanceFlagFile());
+
+$updates = static fn(): UpdateController => new UpdateController(
+    $view,
+    new Session(),
+    new UpdateService(
+        paths: $paths,
+        currentVersion: $version->value,
+        settings: new SettingRepository($connections->pdo()),
+        downloader: new ReleaseDownloader(),
+        switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
+        migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
+    ),
+    $maintenance,
+);
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view);
+(require __DIR__ . '/routes.php')($router, $view, $updates);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

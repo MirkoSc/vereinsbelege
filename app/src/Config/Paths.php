@@ -55,6 +55,50 @@ final readonly class Paths
         return $this->sharedDir() . '/var';
     }
 
+    /**
+     * Set while the updater renames releases; checked by the docroot shim,
+     * which is why it sits directly in shared/ and not below var/.
+     */
+    public function maintenanceFlagFile(): string
+    {
+        return $this->sharedDir() . '/maintenance.flag';
+    }
+
+    /**
+     * State of the running update step chain. A file and not a table: the
+     * chain has to survive the rename of current/ and be readable by a
+     * release whose migrations have not run yet.
+     */
+    public function updateStateFile(): string
+    {
+        return $this->sharedDir() . '/update_state.json';
+    }
+
+    /**
+     * checksums.txt of the installed release, kept by the updater for the
+     * code integrity check (docs/spec/01-sicherheit.md section 8).
+     */
+    public function releaseChecksumsFile(): string
+    {
+        return $this->sharedDir() . '/release_checksums.txt';
+    }
+
+    /**
+     * Release channel chosen in setup.php, handed over to the installer -
+     * setup.php runs before there is a database to write the setting into.
+     * Deleted once the setting exists.
+     */
+    public function setupChannelFile(): string
+    {
+        return $this->sharedDir() . '/setup_kanal.txt';
+    }
+
+    /** The docroot, sibling of the release root: shim, .htaccess, .user.ini. */
+    public function webDir(): string
+    {
+        return dirname($this->releaseRoot) . '/web';
+    }
+
     public function logFile(): string
     {
         return $this->varDir() . '/log/app.log';

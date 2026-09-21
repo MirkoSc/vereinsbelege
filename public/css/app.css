@@ -9,6 +9,9 @@
     --farbe-rand: #d6d8dc;
     --farbe-gedaempft: #5b5f66;
     --farbe-link: #1a5c9e;
+    --farbe-ok: #1c6b3f;
+    --farbe-warnung: #8a5a00;
+    --farbe-fehler: #a3231b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,11 +24,24 @@
            background - readable in both themes matters even for a
            placeholder, because this is the 404 page. */
         --farbe-link: #7fb4ee;
+        --farbe-ok: #6cc48f;
+        --farbe-warnung: #e0b155;
+        --farbe-fehler: #f08a83;
     }
 }
 
 * {
     box-sizing: border-box;
+}
+
+/*
+ * The hidden attribute is how the server and public/js/ hide elements. The
+ * browser default is display:none, but ANY author display rule beats it -
+ * .knopf sets inline-block, which silently un-hid the "Update starten"
+ * button. !important is the documented fix for exactly this case.
+ */
+[hidden] {
+    display: none !important;
 }
 
 body {
@@ -70,4 +86,103 @@ main {
 
 a {
     color: var(--farbe-link);
+}
+
+/*
+ * Just enough for the installer and the update page to be usable on a
+ * phone (360 px) and on the desktop. The real design system - components,
+ * spacing scale, dark mode beyond these variables - is milestone M1-3.
+ */
+.schmal {
+    max-width: 36rem;
+}
+
+.schmal h3 {
+    margin-bottom: 0.25rem;
+}
+
+label {
+    display: block;
+    margin: 0.75rem 0;
+}
+
+input,
+select {
+    display: block;
+    width: 100%;
+    max-width: 24rem;
+    margin-top: 0.25rem;
+    padding: 0.5rem;
+    font: inherit;
+    color: var(--farbe-text);
+    background: var(--farbe-hintergrund);
+    border: 1px solid var(--farbe-rand);
+    border-radius: 6px;
+}
+
+.knopf {
+    display: inline-block;
+    padding: 0.6rem 1.2rem;
+    font: inherit;
+    color: var(--farbe-text);
+    text-decoration: none;
+    background: var(--farbe-hintergrund);
+    border: 1px solid var(--farbe-rand);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.knopf:hover {
+    border-color: var(--farbe-text);
+}
+
+.knopf[disabled] {
+    color: var(--farbe-gedaempft);
+    cursor: progress;
+}
+
+.knopf-still {
+    font-size: 0.875rem;
+}
+
+.knopf-gefahr {
+    color: var(--farbe-fehler);
+}
+
+.hinweis {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--farbe-rand);
+    border-left-width: 4px;
+    border-radius: 6px;
+}
+
+.hinweis p:first-child {
+    margin-top: 0;
+}
+
+.hinweis p:last-child {
+    margin-bottom: 0;
+}
+
+.hinweis-ok {
+    border-left-color: var(--farbe-ok);
+}
+
+.hinweis-warnung {
+    border-left-color: var(--farbe-warnung);
+}
+
+.hinweis-fehler {
+    border-left-color: var(--farbe-fehler);
+}
+
+/* The step log of the update page. */
+#update-log {
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+}
+
+code {
+    /* Paths and file names must not push the layout wider than the phone. */
+    overflow-wrap: anywhere;
 }

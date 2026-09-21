@@ -33,7 +33,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
-| `setting` | key, value (nur nicht-sensible Einstellungen) | – |
+| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2) | – |
 | `mail_queue` | to_enc, subject_enc, body_enc, status, attempts, next_try_at, last_error | S |
 | `ai_provider` | name, base_url, api_key_enc, model, caps JSON (`vision`, `json_schema`, `max_images`, `max_tokens`), timeout_s, active, is_default | S (api_key) |
 | `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at | – (state ohne Klartext-Fachdaten) |
