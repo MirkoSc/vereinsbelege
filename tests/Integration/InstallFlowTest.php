@@ -10,8 +10,11 @@ use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Session;
+use App\Installer\ConfigWriter;
 use App\Installer\InstallController;
 use App\Repository\SettingRepository;
+use App\Service\Backup\BackupService;
+use App\Service\Migration\Migrator;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -60,12 +63,17 @@ final class InstallFlowTest extends DatabaseTestCase
         return new Paths($this->base . '/current');
     }
 
-    private function controller(): InstallController
+    /**
+     * @param bool $echterUploadTest keep PHP's own is_uploaded_file(), which
+     *        refuses everything that did not come in through a real upload
+     */
+    private function controller(bool $echterUploadTest = false): InstallController
     {
         return new InstallController(
             new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test'),
             $this->paths(),
             new Session(),
+            $echterUploadTest ? null : static fn(string $pfad): bool => is_file($pfad),
         );
     }
 
@@ -206,6 +214,187 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertInstanceOf(Response::class, $response);
         self::assertSame(403, $response->status);
         self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    /**
+     * A backup ZIP of the current test database, as the update chain or
+     * bin/backup.php would make it.
+     */
+    private function makeBackup(bool $mitConfig): string
+    {
+        $quelle = $this->base . '/quelle_config.php';
+        /** @var array{host: string, port: int, name: string, user: string, password: string} $db */
+        $db = self::configData()['db'];
+        ConfigWriter::write($quelle, $db);
+
+        $service = new BackupService($this->pdo(), $this->base . '/backups', $quelle, '0.0.9-alt');
+
+        return $this->base . '/backups/' . $service->create($mitConfig);
+    }
+
+    private function wipeDatabase(): void
+    {
+        foreach ($this->pdo()->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN) as $table) {
+            $this->pdo()->exec(sprintf('DROP TABLE `%s`', (string) $table));
+        }
+    }
+
+    /**
+     * @param array<string, string> $post
+     */
+    private function submitRestore(string $zip, array $post = [], bool $echterUploadTest = false): Response
+    {
+        $session = new Session();
+        $session->start();
+
+        $response = $this->controller($echterUploadTest)->submit(new Request(
+            method: HttpMethod::Post,
+            path: '/install',
+            post: [...$this->validPost(), 'modus' => 'restore', '_csrf' => $session->csrfToken(), ...$post],
+            files: ['backup' => ['error' => \UPLOAD_ERR_OK, 'tmp_name' => $zip, 'name' => 'b.zip']],
+        ));
+        self::assertInstanceOf(Response::class, $response);
+
+        return $response;
+    }
+
+    /**
+     * Calls the step endpoint like install.js until it reports "fertig".
+     *
+     * @return array<string, mixed> the last answer
+     */
+    private function runRestoreSteps(): array
+    {
+        $session = new Session();
+        $session->start();
+
+        for ($i = 0; $i < 50; $i++) {
+            $response = $this->controller()->restoreStep(new Request(
+                method: HttpMethod::Post,
+                path: '/install/wiederherstellen',
+                headers: ['x-csrf-token' => $session->csrfToken()],
+            ));
+            self::assertInstanceOf(Response::class, $response);
+            $antwort = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame(200, $response->status, (string) ($antwort['fehler'] ?? ''));
+            if ($antwort['fertig']) {
+                return $antwort;
+            }
+        }
+        self::fail('the restore did not finish');
+    }
+
+    public function testARestoreBringsBackDataAndTheServerKey(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        new SettingRepository($this->pdo())->set('probe', "Grün; 'zitiert'");
+        $zip = $this->makeBackup(mitConfig: true);
+        $alterSchluessel = (require $this->base . '/quelle_config.php')['server_key'];
+
+        $this->wipeDatabase();
+        mkdir($this->paths()->sharedDir(), 0775, true);
+        file_put_contents($this->paths()->setupChannelFile(), 'beta');
+
+        $response = $this->submitRestore($zip);
+        self::assertSame(200, $response->status);
+        self::assertStringContainsString('Version 0.0.9-alt', $response->body);
+        self::assertStringContainsString('Server-Schlüssel der alten Installation', $response->body);
+        self::assertFileDoesNotExist($this->paths()->configFile(), 'the config is written last');
+
+        $ende = $this->runRestoreSteps();
+
+        self::assertTrue($ende['fertig']);
+        self::assertSame("Grün; 'zitiert'", new SettingRepository($this->pdo())->get('probe'));
+        self::assertSame('beta', new SettingRepository($this->pdo())->get(UpdateService::SETTING_CHANNEL));
+
+        $config = require $this->paths()->configFile();
+        self::assertSame($alterSchluessel, $config['server_key'], 'the old server key is kept');
+        self::assertNotSame('', Config::fromFile($this->paths()->configFile())->cronToken);
+
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary dump removed');
+        self::assertFileDoesNotExist($this->base . '/web/setup.php');
+    }
+
+    public function testARestoreWithoutConfigInTheBackupGetsANewServerKey(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        $zip = $this->makeBackup(mitConfig: false);
+        $alterSchluessel = (require $this->base . '/quelle_config.php')['server_key'];
+        $this->wipeDatabase();
+
+        $response = $this->submitRestore($zip);
+        self::assertStringContainsString('keinen Server-Schlüssel', $response->body);
+
+        $this->runRestoreSteps();
+
+        $config = require $this->paths()->configFile();
+        self::assertNotSame($alterSchluessel, $config['server_key']);
+        self::assertSame(32, strlen((string) base64_decode($config['server_key'], true)));
+    }
+
+    public function testAZipWithoutDumpIsRejectedAndNothingIsWritten(): void
+    {
+        $zip = $this->base . '/kaputt.zip';
+        $archiv = new \ZipArchive();
+        $archiv->open($zip, \ZipArchive::CREATE);
+        $archiv->addFromString('etwas.txt', 'x');
+        $archiv->close();
+
+        $response = $this->submitRestore($zip);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('dump.sql fehlt', $response->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: []);
+    }
+
+    /**
+     * The path in $_FILES is opened as a ZIP, so a path the client made up
+     * must never get that far.
+     */
+    public function testAPathThatIsNoRealUploadIsRefused(): void
+    {
+        $zip = $this->base . '/irgendwo.zip';
+        file_put_contents($zip, 'egal');
+
+        $response = $this->submitRestore($zip, echterUploadTest: true);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('Backup-ZIP hochladen', $response->body);
+    }
+
+    public function testRestoreWithoutAFileAsksForOne(): void
+    {
+        $session = new Session();
+        $session->start();
+
+        $response = $this->controller()->submit(new Request(
+            method: HttpMethod::Post,
+            path: '/install',
+            post: [...$this->validPost(), 'modus' => 'restore', '_csrf' => $session->csrfToken()],
+        ));
+
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame(422, $response->status);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    public function testTheStepEndpointNeedsCsrfAndAnActiveRestore(): void
+    {
+        $ohneToken = $this->controller()->restoreStep(new Request(HttpMethod::Post, '/install/wiederherstellen'));
+        self::assertInstanceOf(Response::class, $ohneToken);
+        self::assertSame(403, $ohneToken->status);
+
+        $session = new Session();
+        $session->start();
+        unset($_SESSION['install_restore']);
+        $nichtAktiv = $this->controller()->restoreStep(new Request(
+            method: HttpMethod::Post,
+            path: '/install/wiederherstellen',
+            headers: ['x-csrf-token' => $session->csrfToken()],
+        ));
+        self::assertInstanceOf(Response::class, $nichtAktiv);
+        self::assertSame(409, $nichtAktiv->status);
     }
 
     private static function removeTree(string $dir): void

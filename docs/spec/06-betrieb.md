@@ -34,9 +34,9 @@ Erweiterungen im `/install`-Flow:
 5. Mail-Einstellungen (SMTP) + Testmail – überspringbar
 6. „Frische Installation" oder „Backup einspielen"
 
-Stand M1-2: Schritt 1 und 2 sind umgesetzt, dazu alle Migrationen ab 0 und
-der Release-Kanal. Schritt 6 kommt mit M1-4 (Backup), 3 und 4 mit M3-2
-(Benutzer und Tresor), 5 mit M3-1 (Mail). Den Kanal wählt der Admin schon in
+Stand M1-4: Schritt 1, 2 und 6 sind umgesetzt, dazu alle Migrationen ab 0
+und der Release-Kanal. 3 und 4 kommen mit M3-2 (Benutzer und Tresor), 5 mit
+M3-1 (Mail). Den Kanal wählt der Admin schon in
 `setup.php` – dort gibt es noch keine Datenbank, also legt `setup.php` die
 Antwort als `shared/setup_kanal.txt` ab; der Installer übernimmt sie als
 Einstellung `update_kanal` und löscht die Datei. Ohne diese Übergabe würde
@@ -46,9 +46,15 @@ klappt das nicht (Dateieigentümer FTP), sagt die Abschlussseite Bescheid.
 
 Update-Schrittkette, Kanäle stable/beta, Pre-Releases, Rollback,
 Wartungsmodus inkl. Banner: unverändert übernommen. Die Schritte sind
-`check` → `download` → `extract` → `switch` → `migrate` → `finish`; jeder ist
-ein eigener kurzer Request, jeder ist wiederholbar, der Stand liegt in
-`shared/update_state.json`. Ein Backup-Schritt vor `switch` kommt mit M1-4.
+`check` → `download` → `extract` → `backup` → `switch` → `migrate` →
+`finish`; jeder ist ein eigener kurzer Request, jeder ist wiederholbar, der
+Stand liegt in `shared/update_state.json`. `backup` liegt bewusst direkt vor
+`switch`: Download und Entpacken sind dann geglückt, und das Backup ist eine
+Momentaufnahme unmittelbar vor dem einzigen Schritt, der die Installation
+verändert. Er läuft noch mit dem Code des alten Releases – das Update von
+einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
+Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
+vor dem Umschalten ab.
 Der Updater speichert die `checksums.txt` des Releases als
 `shared/release_checksums.txt` für den Code-Integritätscheck (01 §8).
 
@@ -83,6 +89,44 @@ Wiederholung ab dem fehlgeschlagenen Schritt).
 - Große Backups als Schrittkette (Blobs in Teilen), Rotation 10.
 - Restore im Installer; danach Anmeldung mit bisherigem Konto (Grants
   liegen in der DB) oder per Wiederherstellungsschlüssel.
+
+**Stand M1-4** (ohne Blobs, die kommen mit M2-6): `manifest.json` enthält
+`app_version`, `schema_version`, `erstellt_am` und `config_enthalten`.
+
+- *Erstellen:* `BackupService::create(mitConfig)`; ohne Angabe **ohne**
+  `config.php`. Die Update-Kette sichert nie mit `config.php`. Von Hand:
+  `php bin/backup.php [--mit-config]`. Eine **Admin-Seite mit Download
+  gibt es noch nicht**: bis zur Anmeldung (M3-3) wäre sie ein offener
+  Download des kompletten Dumps. Sie kommt mit M3, zusammen mit der Wahl
+  „config.php mitsichern“.
+- *Einspielen:* Installer-Schritt 6, „Backup einspielen“ mit hochgeladenem
+  ZIP. Der Dump wird in Blöcken zu 200 Anweisungen eingespielt (ein Request
+  je Block, Stand in der Session, `public/js/install.js`), danach laufen nur
+  die Migrationen, die neuer sind als das Backup. DB-Zugangsdaten kommen aus
+  dem Formular, der Kanal ebenfalls; der `cron_token` wird neu erzeugt.
+- *Server-Schlüssel:* Enthält das ZIP eine `config.php`, wird **nur** deren
+  `server_key` übernommen – gelesen per regulärem Ausdruck, nie per
+  `include`, denn das ZIP ist ein Upload und dürfte sonst Code ausführen.
+  Fehlt die Datei oder ist der Schlüssel ungültig, erzeugt der Installer einen
+  neuen und die Seite weist darauf hin, dass damit verschlüsselte
+  Betriebsdaten nicht mehr lesbar sind.
+- Fehlermeldungen des Einspielens nennen nur SQLSTATE und Fehlercode, nie den
+  Text der Datenbank: der zitiert Teile der fehlgeschlagenen Anweisung, also
+  Zeilendaten des Backups.
+- Bricht ein Block mitten in der Ausführung ab (Absturz), ist die Zieldatenbank
+  halb gefüllt. Abhilfe: Restore von vorn – jede Tabelle beginnt mit
+  `DROP TABLE IF EXISTS`.
+
+**Pflicht-Tests:** `BackupRestoreRoundtripTest` (Backup → alle Tabellen
+löschen → einspielen → byte-gleich; Sonderzeichen, NULL, mehr Zeilen als ein
+INSERT fasst; Manifest; `config.php` nur auf Wunsch; Rotation; kein
+Traversal über den Dateinamen; keine Zwischendatei übrig);
+`RestoreServiceTest` (ZIP ohne `dump.sql`, Server-Schlüssel wird gelesen,
+**eine hochgeladene `config.php` wird nie ausgeführt**, ungültiger Schlüssel);
+`UpdateChainTest` (`backup` direkt vor `switch`, ohne `config.php`, bei Fehler
+kein Umschalten); `InstallFlowTest` (Restore mit und ohne Schlüssel im
+Backup, ZIP ohne Dump, Pfad ohne echten Upload, CSRF, Schritt ohne aktive
+Wiederherstellung); `tests/js/install.test.js` (Fortschritt, Statuszeile).
 
 ## 3. Mail
 

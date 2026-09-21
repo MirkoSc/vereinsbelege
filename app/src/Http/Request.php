@@ -17,6 +17,7 @@ final readonly class Request
      * @param array<string, mixed> $query
      * @param array<string, mixed> $post
      * @param array<string, string> $headers lowercase header names
+     * @param array<string, mixed> $files as in $_FILES
      */
     public function __construct(
         public HttpMethod $method,
@@ -25,6 +26,7 @@ final readonly class Request
         public array $post = [],
         public array $headers = [],
         public string $ip = '',
+        public array $files = [],
     ) {
     }
 
@@ -54,6 +56,7 @@ final readonly class Request
             post: $post,
             headers: self::headersFromServer($_SERVER),
             ip: (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+            files: $_FILES,
         );
     }
 

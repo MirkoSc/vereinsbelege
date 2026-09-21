@@ -6,6 +6,7 @@ namespace App\Tests\Integration;
 
 use App\Config\Paths;
 use App\Repository\SettingRepository;
+use App\Service\Backup\BackupService;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
 use App\Service\Update\ReleaseDownloader;
@@ -95,6 +96,12 @@ final class UpdateChainTest extends DatabaseTestCase
                 new MaintenanceMode($this->base . '/shared/maintenance.flag'),
             ),
             migrator: new Migrator($this->pdo(), $this->migrationsDir()),
+            backups: new BackupService(
+                $this->pdo(),
+                $this->paths()->backupDir(),
+                $this->paths()->configFile(),
+                $version,
+            ),
         );
     }
 
@@ -152,6 +159,7 @@ final class UpdateChainTest extends DatabaseTestCase
 
         self::assertNull($this->service($antworten)->download()->fehler);
         self::assertNull($this->service($antworten)->extract()->fehler);
+        self::assertNull($this->service($antworten)->backup()->fehler);
         self::assertNull($this->service($antworten)->switchRelease()->fehler);
         self::assertNull($this->service($antworten)->migrate()->fehler);
 
@@ -188,11 +196,64 @@ final class UpdateChainTest extends DatabaseTestCase
         $this->service($antworten)->download();
         $this->service($antworten)->extract();
         $this->service($antworten)->extract();
+        $this->service($antworten)->backup();
+        self::assertNull($this->service($antworten)->backup()->fehler, 'a repeated backup step is harmless');
         $this->service($antworten)->switchRelease();
         $state = $this->service($antworten)->switchRelease();
 
         self::assertNull($state->fehler);
         self::assertSame("1.1.0\n", file_get_contents($this->base . '/current/VERSION'));
+    }
+
+    /**
+     * The point of the step: a restorable copy has to exist BEFORE the
+     * release is switched, and it must not carry the server key.
+     */
+    public function testTheBackupStepRunsBeforeTheSwitchAndLeavesTheConfigOut(): void
+    {
+        self::assertSame(
+            ['backup', 'switch'],
+            array_slice(UpdateService::STEPS, array_search('backup', UpdateService::STEPS, true), 2),
+            'backup sits directly before switch',
+        );
+
+        file_put_contents($this->paths()->configFile(), "<?php return ['server_key' => 'nicht ins backup'];\n");
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+
+        $this->service($antworten)->check();
+        $this->service($antworten)->download();
+        $this->service($antworten)->extract();
+        $state = $this->service($antworten)->backup();
+
+        self::assertNull($state->fehler);
+        self::assertSame('backup', $state->abgeschlossenerSchritt);
+        self::assertSame("1.0.0\n", file_get_contents($this->base . '/current/VERSION'), 'not switched yet');
+
+        $backups = glob($this->paths()->backupDir() . '/backup_*.zip') ?: [];
+        self::assertCount(1, $backups);
+
+        $archiv = new \ZipArchive();
+        self::assertTrue($archiv->open($backups[0]));
+        self::assertNotFalse($archiv->getFromName('dump.sql'));
+        self::assertFalse($archiv->getFromName('config.php'), 'the automatic backup never carries the server key');
+        $archiv->close();
+    }
+
+    public function testAFailingBackupStopsTheChainBeforeTheSwitch(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $this->service($antworten)->check();
+
+        // a file where the backup directory has to be
+        mkdir($this->base . '/shared/var', 0775, true);
+        file_put_contents($this->paths()->backupDir(), 'im Weg');
+
+        $state = $this->service($antworten)->backup();
+
+        self::assertNotNull($state->fehler);
+        self::assertSame("1.0.0\n", file_get_contents($this->base . '/current/VERSION'));
     }
 
     /**

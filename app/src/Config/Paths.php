@@ -110,6 +110,12 @@ final readonly class Paths
         return $this->varDir() . '/blobs';
     }
 
+    /** Backup ZIPs (docs/spec/06-betrieb.md section 2); survives updates. */
+    public function backupDir(): string
+    {
+        return $this->varDir() . '/backups';
+    }
+
     public function tmpDir(): string
     {
         return $this->varDir() . '/tmp';

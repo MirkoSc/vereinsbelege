@@ -94,6 +94,7 @@ final readonly class UpdateController
                 'check' => $this->updates->check(),
                 'download' => $this->updates->download(),
                 'extract' => $this->updates->extract(),
+                'backup' => $this->updates->backup(),
                 'switch' => $this->updates->switchRelease(),
                 'migrate' => $this->updates->migrate(),
                 'finish' => $this->updates->finish($this->baseUrl($request)),
