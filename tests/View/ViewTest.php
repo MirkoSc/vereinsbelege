@@ -195,13 +195,16 @@ final class ViewTest extends TestCase
 
     /**
      * Part of the admin chrome, so it holds on every admin page instead of
-     * only on the one that happens to render the banner itself.
+     * only on the one that happens to render the banner itself. Since M3-3
+     * the gap it names is the rights check, not the login: every admin route
+     * is behind App\Http\LoginGuard, but every account that gets through it
+     * may still do everything (M3-6).
      */
-    public function testTheAdminAreaWarnsThatItIsNotProtectedYet(): void
+    public function testTheAdminAreaWarnsThatRolesAreStillMissing(): void
     {
         $html = $this->render('admin/designsystem', ['title' => ''], Area::Admin);
 
-        self::assertStringContainsString('noch nicht geschützt', $html);
+        self::assertStringContainsString('Rollen und Rechte fehlen noch', $html);
     }
 
     /** A template must not be able to shadow the frame it renders into. */

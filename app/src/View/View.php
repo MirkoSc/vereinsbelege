@@ -25,6 +25,20 @@ final class View
      */
     private string $currentPath = '/';
 
+    /**
+     * Who is logged in, and the token their forms need. Set once per
+     * request by App\Http\LoginGuard, for the same reason $currentPath is
+     * set by the Kernel: it belongs to the chrome, not to a page, and no
+     * controller should have to remember to pass it.
+     *
+     * The display name is decrypted for this one request and lives nowhere
+     * else - not in the session, which is on disk (docs/spec/01-sicherheit.md
+     * section 2).
+     */
+    private ?string $angemeldet = null;
+
+    private ?string $csrfToken = null;
+
     public function __construct(
         private readonly string $viewsDir,
         private readonly string $version,
@@ -38,10 +52,25 @@ final class View
     }
 
     /**
+     * @param string|null $anzeigename decrypted display name, or null when
+     *                                 nobody is logged in
+     */
+    public function setAnmeldung(?string $anzeigename, ?string $csrfToken): void
+    {
+        $this->angemeldet = $anzeigename;
+        $this->csrfToken = $csrfToken;
+    }
+
+    /**
      * @param array<string, mixed> $data
      */
     public function render(string $template, array $data = [], Area $bereich = Area::Oeffentlich): string
     {
+        // A page that renders nothing but static markup still gets the token
+        // of the session it runs in - the logout button lives in the chrome,
+        // and it is a form like any other.
+        $data['csrf'] ??= $this->csrfToken;
+
         $content = $this->renderFile($this->viewsDir . '/' . $template . '.php', $data);
 
         return $this->renderFile(
@@ -50,6 +79,7 @@ final class View
                 ...$data,
                 // After the spread, so a template cannot shadow the frame
                 // it renders into.
+                'angemeldet' => $this->angemeldet,
                 'content' => $content,
                 'bereich' => $bereich,
                 'pfad' => $this->currentPath,

@@ -25,13 +25,13 @@ use App\View\View;
  * it would be FTP.
  *
  * ---------------------------------------------------------------------
- * NOT AUTHENTICATED at this milestone. Login, roles and the Permission
- * enum arrive with M3-3/M3-6 (docs/spec/01-sicherheit.md section 4), and
- * until then every route below is open to anyone who can reach the site.
- * The endpoints can switch releases and roll back, so an installation that
- * is publicly reachable before M3 has to be protected by the web server
- * (HTTP basic auth in the hosting panel). CSRF is enforced regardless, so
- * at least no foreign page can trigger a step in a visitor's browser.
+ * LOGIN REQUIRED since M3-3, rights still missing. Every route below is
+ * wrapped in App\Http\LoginGuard (app/src/routes.php), so no anonymous
+ * visitor can switch a release or roll one back anymore. What is not there
+ * yet is WHICH account may: roles and the Permission enum are M3-6
+ * (docs/spec/01-sicherheit.md section 4), so until then every account that
+ * can log in can do this. CSRF is enforced regardless, so no foreign page
+ * can trigger a step in a logged-in user's browser.
  * ---------------------------------------------------------------------
  */
 final readonly class UpdateController

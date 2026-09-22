@@ -7,10 +7,12 @@ use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
+use App\App\AuthController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
 use App\Http\Kernel;
+use App\Http\LoginGuard;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
@@ -19,20 +21,31 @@ use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
+use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
+use App\Repository\UserKeyRepository;
+use App\Repository\UserRepository;
+use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Service\Account\LoginService;
+use App\Service\Account\PasswordHasher;
+use App\Service\Account\SessionTimeouts;
+use App\Service\Account\SessionUser;
+use App\Service\Account\SessionVault;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\JobCleanupTask;
 use App\Service\Cron\MailCleanupTask;
 use App\Service\Cron\MailQueueTask;
+use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
+use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -174,6 +187,11 @@ $cron = static fn(): CronController => new CronController($config, static functi
             new JobCleanupTask(new JobRepository($pdo)),
             new UploadCleanupTask(new UploadService($paths->uploadDir())),
             new MailCleanupTask($mailQueueFor($pdo)),
+            // M3-3: the login counters. Same window the login uses, so a
+            // row is only ever swept once it can no longer block anybody.
+            new RateLimitCleanupTask(
+                new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+            ),
         ],
         logger: $logger,
     );
@@ -230,8 +248,43 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
     );
 };
 
+// Login and vault unlock (M3-3, issue #16). Built lazily like the rest: the
+// login FORM needs no database, only the attempt behind it does - and the
+// guard reads the timeout settings only once a protected route matched.
+$auth = static fn(): AuthController => new AuthController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $serverCrypto): LoginService {
+        $pdo = $connections->pdo();
+
+        return new LoginService(
+            new UserRepository($pdo),
+            new UserKeyRepository($pdo),
+            new VaultGrantRepository($pdo),
+            new VaultRepository($pdo),
+            $serverCrypto,
+            new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+            new PasswordHasher(),
+        );
+    },
+);
+
+$guard = static fn(): LoginGuard => new LoginGuard(
+    new Session(),
+    $view,
+    static fn(): SessionTimeouts => SessionTimeouts::fromSettings(new SettingRepository($connections->pdo())),
+    static function (int $userId) use ($connections, $serverCrypto): ?SessionUser {
+        $user = new UserRepository($connections->pdo())->findById($userId);
+
+        return $user === null
+            ? null
+            : new SessionUser($user, $serverCrypto->decrypt($user->displayNameEnc));
+    },
+);
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads, $storage, $mail);
+(require __DIR__ . '/routes.php')($router, $view, $auth, $guard, $updates, $cron, $uploads, $storage, $mail);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

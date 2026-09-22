@@ -26,13 +26,11 @@ use App\View\View;
  * StorageController and UpdateController in that respect.
  *
  * ---------------------------------------------------------------------
- * NOT AUTHENTICATED at this milestone, exactly like those two: login, roles
- * and the Permission enum arrive with M3-3/M3-6 (docs/spec/01-sicherheit.md
- * section 4). From M3-6 on these routes carry the administration permission.
- * Until then an installation that is publicly reachable has to be protected
- * by the web server - and this page in particular can be used to send mail
- * through the club's SMTP account, which is one more reason. CSRF is
- * enforced regardless.
+ * LOGIN REQUIRED since M3-3, exactly like those two: the routes are wrapped
+ * in App\Http\LoginGuard (app/src/routes.php). Roles and the Permission
+ * enum are still M3-6 (docs/spec/01-sicherheit.md section 4), so until then
+ * every account that can log in can send mail through the club's SMTP
+ * account from here. CSRF is enforced regardless.
  * ---------------------------------------------------------------------
  */
 final readonly class MailController

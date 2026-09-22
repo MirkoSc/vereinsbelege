@@ -6,8 +6,14 @@
  *
  * @var \App\View\Area $bereich
  * @var string $pfad
+ * @var string|null $angemeldet display name of the logged-in user, set by
+ *      App\Http\LoginGuard through App\View\View - null on every public page
+ * @var string|null $csrfToken
  */
 $eintraege = $bereich->navigation();
+// The logout is a POST with a CSRF token, not a link: a GET that ends a
+// session can be triggered by any image tag on any page.
+$zeigeAbmelden = ($angemeldet ?? null) !== null && ($csrfToken ?? null) !== null;
 ?>
 <header class="kopf">
     <div class="kopf-zeile">
@@ -16,6 +22,16 @@ $eintraege = $bereich->navigation();
                 <span class="brand-bereich"><?= e($bereich->bezeichnung()) ?></span>
             <?php endif; ?>
         </a>
+
+        <?php if ($zeigeAbmelden): ?>
+            <div class="kopf-konto">
+                <span class="kopf-benutzer"><?= e((string) $angemeldet) ?></span>
+                <form method="post" action="/abmelden">
+                    <input type="hidden" name="_csrf" value="<?= e((string) $csrfToken) ?>">
+                    <button type="submit" class="knopf knopf-still">Abmelden</button>
+                </form>
+            </div>
+        <?php endif; ?>
     </div>
 
     <?php if ($eintraege !== []): ?>
@@ -36,14 +52,17 @@ $eintraege = $bereich->navigation();
 </header>
 
 <?php if ($bereich === \App\View\Area::Admin): ?>
-    <?php /* Part of the admin chrome, not of a single page: every admin
-             page is open to anyone who can reach the site until M3-3
-             (App\Admin\UpdateController says the same at length). */ ?>
+    <?php /* Part of the admin chrome, not of a single page: since M3-3 every
+             admin route needs a login (app/src/routes.php), but WHICH
+             logged-in user may do what is still open - roles and the
+             Permission enum are M3-6. Until then anybody with an account is
+             an administrator here, and the chrome says so. */ ?>
     <div class="inhalt">
         <p class="hinweis hinweis-warnung">
-            <strong>Dieser Bereich ist noch nicht geschützt.</strong> Anmeldung und Rechte
-            kommen mit Meilenstein M3. Bis dahin gehört eine öffentlich erreichbare
-            Installation zusätzlich hinter einen Passwortschutz des Hosters.
+            <strong>Rollen und Rechte fehlen noch.</strong> Diese Seiten verlangen seit
+            Meilenstein M3-3 eine Anmeldung, unterscheiden aber noch nicht zwischen
+            Rollen – jeder angemeldete Zugang darf hier alles. Die Rechteprüfung kommt
+            mit M3-6.
         </p>
     </div>
 <?php endif; ?>
