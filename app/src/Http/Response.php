@@ -68,7 +68,12 @@ final readonly class Response implements ResponseInterface
     {
         http_response_code($this->status);
         foreach ($this->headers as $name => $value) {
-            header($name . ': ' . $value);
+            // A Set-Cookie must never replace: PHP's header() drops every
+            // same-named header by default, and that includes the session
+            // cookie session_regenerate_id() queued in Session::login() -
+            // the browser would keep the old, anonymous session id and the
+            // login would not hold (issue #127).
+            header($name . ': ' . $value, strcasecmp($name, 'Set-Cookie') !== 0);
         }
         foreach ($this->additionalCookies as $cookie) {
             // false = add a further header line instead of replacing the one
