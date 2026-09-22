@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
@@ -30,6 +31,8 @@ use App\View\View;
  * @param \Closure(): CronController $cron built lazily for the same reason.
  * @param \Closure(): UploadController $uploads built lazily as well - opening
  *        and storing a chunk needs no database at all.
+ * @param \Closure(): StorageController $storage built lazily, same reason as
+ *        $updates: the storage page is the only thing that needs it.
  */
 return static function (
     Router $router,
@@ -37,6 +40,7 @@ return static function (
     \Closure $updates,
     \Closure $cron,
     \Closure $uploads,
+    \Closure $storage,
 ): void {
     $router->get('/', static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
@@ -92,6 +96,17 @@ return static function (
     $router->get('/admin/designsystem', static fn(): Response => Response::html(
         $view->render('admin/designsystem', ['title' => 'Designsystem'], Area::Admin),
     ));
+
+    // Blob storage (02 "Dateien", issue #12): which backend new files go to,
+    // moving the stock over, integrity check. The chain copies ciphertext and
+    // never decrypts, so it needs no vault - but it moves every stored file.
+    // Permission: administration, from M3-6 on; CSRF on all writes today.
+    $router->get('/admin/speicher', static fn(Request $r) => $storage()->page($r));
+    $router->post('/admin/speicher/ziel', static fn(Request $r) => $storage()->setTarget($r));
+    $router->post(
+        '/admin/speicher/schritt/{schritt:[a-z]+}',
+        static fn(Request $r, array $params) => $storage()->step($r, $params),
+    );
 
     $router->get('/admin/update', static fn(Request $r) => $updates()->page($r));
     $router->post('/admin/update/kanal', static fn(Request $r) => $updates()->setChannel($r));

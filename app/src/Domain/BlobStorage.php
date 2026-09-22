@@ -29,6 +29,42 @@ enum BlobStorage: string
         return self::Fs;
     }
 
+    /** Name of the backend on the storage admin page (M2-5). */
+    public function bezeichnung(): string
+    {
+        return match ($this) {
+            self::Db => 'Datenbank',
+            self::Fs => 'Dateisystem',
+        };
+    }
+
+    /** Where something lies: "… liegen in der Datenbank". */
+    public function ortsangabe(): string
+    {
+        return match ($this) {
+            self::Db => 'in der Datenbank',
+            self::Fs => 'im Dateisystem',
+        };
+    }
+
+    /** Where something is going: "… müssen noch in die Datenbank". */
+    public function zielangabe(): string
+    {
+        return match ($this) {
+            self::Db => 'in die Datenbank',
+            self::Fs => 'ins Dateisystem',
+        };
+    }
+
+    /** One line on what choosing this backend means, for the same page. */
+    public function beschreibung(): string
+    {
+        return match ($this) {
+            self::Db => 'Alles im Datenbank-Backup enthalten; der Dump wächst mit jedem Beleg.',
+            self::Fs => 'Dateien unter shared/var/blobs/; hält die Datenbank klein (Standard).',
+        };
+    }
+
     /**
      * Reads the admin setting. An unknown value falls back to the default
      * instead of throwing: a typo in `setting` must not make the whole

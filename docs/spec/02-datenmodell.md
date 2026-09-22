@@ -73,6 +73,49 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 - Backend-Wahl über das Setting `speicher_backend` (Default `fs`, E-06);
   das Umstellen ist eine Schrittkette (M2-5).
 
+### Backend umstellen (M2-5)
+
+Beide Backends legen denselben Byte-Strom ab – der Wechsel ist ein Kopieren
+von Chiffrat, **kein Entschlüsseln und kein Tresor**. Gemessen wird jede Kopie
+an `cipher_sha256`. Admin-Seite `/admin/speicher`
+(`Admin\StorageController`, `Service\Storage\StorageSwitchService`,
+`public/js/speicher.js`), ein Schritt je Request:
+
+1. **Ziel setzen** – `speicher_backend` wird **sofort** umgestellt: neue
+   Uploads landen ab dann im Ziel, die Kette zieht nur den Bestand nach. Der
+   Mischzustand ist unkritisch, weil jede Zeile ihr Backend selbst trägt.
+2. **`verschieben`** (wiederholbar) – arbeitet Zeilen mit `storage <> Ziel`
+   und gesetzter Prüfsumme ab, bis ein Zeit- (10 s) oder Byte-Budget erreicht
+   ist. Je Blob: bei Ziel `fs` zuerst `fs_name` in die Zeile (eine Waisen-
+   Datei bleibt so auffindbar), dann Chiffrat strömend kopieren und die
+   Prüfsumme vergleichen, dann `storage` umstellen, **danach** die Quelle
+   löschen, bei Ziel `db` zum Schluss `fs_name` leeren. Jeder Abbruch
+   hinterlässt höchstens eine Kopie zu viel, nie eine fehlende.
+   Ein Blob, dessen Kopie nicht zur Prüfsumme passt oder dessen Quelle
+   unlesbar ist, bleibt unverändert liegen; seine Zeilen-ID wird gemeldet und
+   die Kette macht weiter.
+3. **`aufraeumen`** – löscht Reste: Chunks zu Zeilen mit `storage = 'fs'`,
+   Dateien zu Zeilen mit `storage = 'db'` samt `fs_name`.
+4. **`pruefstart` / `pruefen`** (wiederholbar) – Integritätsprüfung über alle
+   fertigen Blobs; Cursor, Zähler und bis zu 50 auffällige Zeilen-IDs stehen
+   als JSON im Setting `speicher_pruefung` (nur IDs und Zahlen).
+
+Der Umzugsfortschritt wird **nirgends gespeichert**: „offen" ist
+`COUNT(*) WHERE storage <> Ziel`. Deshalb ist jeder Schritt wiederholbar und
+ein abgebrochener Lauf einfach fortsetzbar. Unfertige Zeilen
+(`cipher_sha256 IS NULL`) werden nicht verschoben – ohne Prüfsumme ist der
+Umzug nicht prüfbar – und auf der Admin-Seite ausgewiesen.
+
+**Pflicht-Tests:** `StorageSwitchTest` (db→fs und fs→db: alles liegt danach im
+Ziel, Chiffrat unverändert, Klartext über den Tresor identisch, Quelle leer;
+neue Uploads gehen während des Laufs schon ins Ziel; abgebrochener Lauf wird
+fortgesetzt; Schritte idempotent; unfertige Zeilen bleiben liegen und werden
+gezählt; `aufraeumen` entfernt Reste ohne Inhaltsverlust; Prüfung findet
+manipuliertes Chiffrat und nennt nur die Zeilen-ID; unlesbare Quelle bzw.
+Prüfsummen-Abweichung lässt den Blob auf der Quelle; gespeicherter Zustand
+enthält nur Zahlen); `tests/js/speicher.test.js` (Kettenlogik, insbesondere:
+ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
+
 ## Fachdaten
 
 | Tabelle | Spalten | Verschl. |

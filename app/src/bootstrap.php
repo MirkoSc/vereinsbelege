@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
@@ -27,6 +28,7 @@ use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
+use App\Service\Storage\StorageSwitchService;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
@@ -167,8 +169,26 @@ $uploads = static fn(): UploadController => new UploadController(
     logger: $logger,
 );
 
+// Storage administration (issue #12): the backend for new blobs and the step
+// chain that carries the existing ones over. Built lazily like $updates - it
+// needs the database, the public pages must not pay for that.
+$storage = static function () use ($connections, $paths, $view): StorageController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+
+    return new StorageController(
+        $view,
+        new Session(),
+        new StorageSwitchService(
+            $blobs,
+            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            new SettingRepository($pdo),
+        ),
+    );
+};
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads);
+(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads, $storage);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

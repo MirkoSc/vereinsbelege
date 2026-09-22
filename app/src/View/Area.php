@@ -75,7 +75,7 @@ enum Area: string
                 new NavItem('Tresor', meilenstein: 'M3'),
                 new NavItem('KI-Anbieter', meilenstein: 'M7'),
                 new NavItem('Kategorien', meilenstein: 'M6'),
-                new NavItem('Speicher', meilenstein: 'M2'),
+                new NavItem('Speicher', '/admin/speicher'),
                 new NavItem('Mail', meilenstein: 'M12'),
                 new NavItem('Backup', meilenstein: 'M1'),
                 new NavItem('Audit-Log', meilenstein: 'M3'),
