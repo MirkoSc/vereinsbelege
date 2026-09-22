@@ -135,7 +135,10 @@ final readonly class MysqlDumper
         if ($this->pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'mysql') {
             return;
         }
-        $this->pdo->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, !$unbuffered);
+        // The MYSQL_ATTR_* constants on \PDO itself are deprecated since
+        // 8.5 in favour of the driver-specific subclass (PHP 8.4+, and the
+        // platform minimum here is 8.5 - CLAUDE.md section 1).
+        $this->pdo->setAttribute(\Pdo\Mysql::ATTR_USE_BUFFERED_QUERY, !$unbuffered);
     }
 
     /**
