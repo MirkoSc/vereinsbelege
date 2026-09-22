@@ -28,3 +28,21 @@ test('the status line names the position, and the end', () => {
     assert.equal(statusText({ fertig: true, offset: 400, gesamt: 400 }), 'Fertig. Das Backup ist eingespielt.');
     assert.equal(statusText(null), 'Starte …');
 });
+
+test('the blob phase counts files, not statements', () => {
+    assert.equal(
+        statusText({ fertig: false, phase: 'blobs', offset: 0, gesamt: 12 }),
+        'Datei 0 von 12 …',
+        'the switch into the blob phase already names the new total',
+    );
+    assert.equal(statusText({ fertig: false, phase: 'blobs', offset: 7, gesamt: 12 }), 'Datei 7 von 12 …');
+    assert.equal(
+        statusText({ fertig: false, phase: 'sql', offset: 7, gesamt: 12 }),
+        'Anweisung 7 von 12 …',
+        'an answer without a phase is the dump phase',
+    );
+    assert.equal(
+        statusText({ fertig: true, phase: 'blobs', offset: 12, gesamt: 12 }),
+        'Fertig. Das Backup ist eingespielt.',
+    );
+});

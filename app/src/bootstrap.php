@@ -127,6 +127,7 @@ $updates = static fn(): UpdateController => new UpdateController(
             $paths->backupDir(),
             $paths->configFile(),
             $version->value,
+            $paths->blobDir(),
         ),
     ),
     $maintenance,

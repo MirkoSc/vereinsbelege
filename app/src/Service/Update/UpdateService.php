@@ -160,11 +160,16 @@ final class UpdateService
      * Step 4: database backup right before the only step that changes the
      * installation. Without config.php: the server key stays out of files
      * that may be copied around (docs/spec/06-betrieb.md section 2).
+     *
+     * Without blobs either: this step is a single short request, and an
+     * update never touches shared/var/blobs/ - what it can break is the
+     * schema, and that is what the dump brings back. A ZIP over gigabytes of
+     * receipt files would not fit into one request on the target host.
      */
     public function backup(): UpdateState
     {
         return $this->step('backup', function (UpdateState $state): UpdateState {
-            $name = $this->backups->create();
+            $name = $this->backups->create(mitConfig: false, mitBlobs: false);
 
             return $state->mit(meldung: 'Backup erstellt: ' . $name);
         });

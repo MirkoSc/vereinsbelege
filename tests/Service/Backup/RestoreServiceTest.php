@@ -20,10 +20,23 @@ final class RestoreServiceTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
+        self::removeDir($this->dir);
+    }
+
+    private static function removeDir(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
         }
-        rmdir($this->dir);
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $entry) {
+            assert($entry instanceof \SplFileInfo);
+            $entry->isDir() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
+        }
+        rmdir($dir);
     }
 
     /**
@@ -112,6 +125,95 @@ final class RestoreServiceTest extends TestCase
             ])),
             'wrong length',
         );
+    }
+
+    public function testBlobsAreWrittenUnderTheirOwnNames(): void
+    {
+        $name = str_repeat('ab', 16);
+        $zip = $this->zip([
+            'dump.sql' => '',
+            'blobs/' . substr($name, 0, 2) . '/' . $name => 'Chiffrat',
+        ]);
+        $ziel = $this->dir . '/blobs';
+
+        $fortschritt = new RestoreService()->blobsAusZip($zip, $ziel, 0);
+
+        self::assertSame(['offset' => 1, 'gesamt' => 1, 'abgelehnt' => 0], $fortschritt);
+        self::assertSame('Chiffrat', file_get_contents($ziel . '/ab/' . $name));
+    }
+
+    /**
+     * The ZIP is an upload: nothing is unpacked under a name that came out of
+     * the archive. Only blobs/<2 chars>/<32 hex> is written, and only where
+     * the subdirectory matches the name - everything else is counted and
+     * dropped.
+     */
+    public function testOnlyProperBlobNamesAreWritten(): void
+    {
+        $gut = str_repeat('ab', 16);
+        $zip = $this->zip([
+            'dump.sql' => '',
+            'blobs/../../entkommen.txt' => 'boese',
+            'blobs//entkommen.txt' => 'boese',
+            'blobs/ab/KEIN_HEX' => 'boese',
+            'blobs/zz/' . $gut => 'boese',
+            'blobs/ab/' . str_repeat('cd', 16) => 'boese',
+            'blobs/' . substr($gut, 0, 2) . '/' . $gut => 'Chiffrat',
+        ]);
+        $ziel = $this->dir . '/blobs';
+
+        $fortschritt = new RestoreService()->blobsAusZip($zip, $ziel, 0);
+
+        self::assertSame(6, $fortschritt['gesamt']);
+        self::assertSame(6, $fortschritt['offset'], 'a rejected entry still advances the chain');
+        self::assertSame(5, $fortschritt['abgelehnt']);
+
+        self::assertSame(['ab'], array_values(array_diff((array) scandir($ziel), ['.', '..'])));
+        self::assertSame([$gut], array_values(array_diff((array) scandir($ziel . '/ab'), ['.', '..'])));
+        self::assertFileDoesNotExist($this->dir . '/entkommen.txt');
+        self::assertFileDoesNotExist(dirname($this->dir) . '/entkommen.txt');
+    }
+
+    /**
+     * No single request may run long (CLAUDE.md section 1): the byte budget
+     * stops a step even when the file count would still allow more.
+     */
+    public function testBlobsComeInPortions(): void
+    {
+        $groessen = [RestoreService::BLOB_BYTES_PER_STEP, 32];
+        $namen = [str_repeat('1a', 16), str_repeat('2b', 16)];
+        $zip = $this->zip([
+            'dump.sql' => '',
+            'blobs/' . substr($namen[0], 0, 2) . '/' . $namen[0] => str_repeat('x', $groessen[0]),
+            'blobs/' . substr($namen[1], 0, 2) . '/' . $namen[1] => str_repeat('y', $groessen[1]),
+        ]);
+        $ziel = $this->dir . '/blobs';
+        $service = new RestoreService();
+
+        $erster = $service->blobsAusZip($zip, $ziel, 0);
+        self::assertSame(1, $erster['offset'], 'the byte budget ends the step after the first file');
+        self::assertSame(2, $erster['gesamt']);
+
+        $zweiter = $service->blobsAusZip($zip, $ziel, $erster['offset']);
+        self::assertSame(2, $zweiter['offset']);
+        self::assertSame(2, $zweiter['gesamt'], 'the total does not move between requests');
+
+        foreach ($namen as $i => $name) {
+            self::assertSame($groessen[$i], filesize($ziel . '/' . substr($name, 0, 2) . '/' . $name));
+        }
+    }
+
+    public function testABackupWithoutBlobsNeedsNoBlobPhase(): void
+    {
+        $zip = $this->zip(['dump.sql' => '', 'manifest.json' => '{}']);
+        $service = new RestoreService();
+
+        self::assertSame(0, $service->blobAnzahlImZip($zip));
+        self::assertSame(
+            ['offset' => 0, 'gesamt' => 0, 'abgelehnt' => 0],
+            $service->blobsAusZip($zip, $this->dir . '/blobs', 0),
+        );
+        self::assertDirectoryDoesNotExist($this->dir . '/blobs');
     }
 
     public function testTheManifestIsReadAndTolerantOfGarbage(): void
