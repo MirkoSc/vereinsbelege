@@ -25,12 +25,11 @@ use App\View\View;
  * the check compares checksums.
  *
  * ---------------------------------------------------------------------
- * NOT AUTHENTICATED at this milestone, exactly like UpdateController:
- * login, roles and the Permission enum arrive with M3-3/M3-6
- * (docs/spec/01-sicherheit.md section 4). From M3-6 on these routes carry
- * the administration permission. Until then an installation that is
- * publicly reachable has to be protected by the web server, because these
- * endpoints move every stored file. CSRF is enforced regardless.
+ * LOGIN REQUIRED since M3-3, exactly like UpdateController: the routes are
+ * wrapped in App\Http\LoginGuard (app/src/routes.php). Roles and the
+ * Permission enum are still M3-6 (docs/spec/01-sicherheit.md section 4),
+ * so until then every account that can log in can move every stored file
+ * from here. CSRF is enforced regardless.
  * ---------------------------------------------------------------------
  */
 final readonly class StorageController

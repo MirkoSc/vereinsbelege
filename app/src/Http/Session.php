@@ -10,14 +10,21 @@ use App\View\FlashArt;
 /**
  * PHP session wrapper.
  *
- * At this milestone it carries only the CSRF token and flash messages; the
- * login state and the encrypted vault key follow with the user management
- * (milestone M3, docs/spec/01-sicherheit.md). The cookie flags are set here
- * once, because they have to hold for every later use.
+ * It carries the CSRF token, flash messages and, since M3-3, who is logged
+ * in: the user id and the two timestamps the timeouts are measured against
+ * (docs/spec/01-sicherheit.md section 2). Nothing else about the account -
+ * no name, no address; those are read per request from the database where
+ * they are needed. The encrypted vault key sits next to this state and is
+ * handled by App\Service\Account\SessionVault.
+ *
+ * The cookie flags are set here once, because they have to hold for every
+ * later use.
  *
  * The public submission page (/einreichen) must NOT start a session: it
  * writes into the inbox without an account, and a session cookie on an
- * anonymous page is both pointless and a tracking surface.
+ * anonymous page is both pointless and a tracking surface. The login page
+ * is the one public page that does have one - it needs a CSRF token, and it
+ * is where the session that follows begins.
  */
 final class Session
 {
@@ -49,6 +56,68 @@ final class Session
             session_regenerate_id(true);
             session_destroy();
         }
+    }
+
+    /**
+     * Marks this session as logged in (docs/spec/01-sicherheit.md section 3:
+     * "Session-ID-Regeneration bei Login").
+     *
+     * Regenerating first and keeping the data means a session id somebody
+     * planted before the login is not the id that carries the account
+     * afterwards - session fixation ends here. The CSRF token is dropped
+     * with it, for the same reason: the token of the anonymous form must not
+     * stay valid for the logged-in one.
+     */
+    public function login(int $userId, ?\DateTimeImmutable $now = null): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+
+        unset($_SESSION['csrf']);
+        $zeit = ($now ?? new \DateTimeImmutable())->getTimestamp();
+        $_SESSION['user_id'] = $userId;
+        $_SESSION['login_at'] = $zeit;
+        $_SESSION['last_seen_at'] = $zeit;
+    }
+
+    /**
+     * The logged-in user's id, or null. Says nothing about the vault: a
+     * session can be logged in and still unable to decrypt, which is exactly
+     * what happens when the `__Host-vk` cookie is gone.
+     */
+    public function userId(): ?int
+    {
+        $id = $_SESSION['user_id'] ?? null;
+
+        return is_int($id) && $id > 0 ? $id : null;
+    }
+
+    /**
+     * Pushes the idle timeout out by one request.
+     */
+    public function touch(?\DateTimeImmutable $now = null): void
+    {
+        $_SESSION['last_seen_at'] = ($now ?? new \DateTimeImmutable())->getTimestamp();
+    }
+
+    /**
+     * Whether the session has run out: idle for too long, or simply too old
+     * (docs/spec/01-sicherheit.md section 2 - 30 minutes and 12 hours by
+     * default). A session without the timestamps is treated as expired; it
+     * cannot be proven fresh, and the only cost of being wrong is one login.
+     */
+    public function isExpired(int $idleSeconds, int $absoluteSeconds, ?\DateTimeImmutable $now = null): bool
+    {
+        $loginAt = $_SESSION['login_at'] ?? null;
+        $lastSeen = $_SESSION['last_seen_at'] ?? null;
+        if (!is_int($loginAt) || !is_int($lastSeen)) {
+            return true;
+        }
+
+        $jetzt = ($now ?? new \DateTimeImmutable())->getTimestamp();
+
+        return $jetzt - $lastSeen >= $idleSeconds || $jetzt - $loginAt >= $absoluteSeconds;
     }
 
     public function csrfToken(): string

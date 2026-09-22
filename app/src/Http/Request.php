@@ -18,6 +18,7 @@ final readonly class Request
      * @param array<string, mixed> $post
      * @param array<string, string> $headers lowercase header names
      * @param array<string, mixed> $files as in $_FILES
+     * @param array<string, string> $cookies as in $_COOKIE
      */
     public function __construct(
         public HttpMethod $method,
@@ -27,6 +28,7 @@ final readonly class Request
         public array $headers = [],
         public string $ip = '',
         public array $files = [],
+        public array $cookies = [],
     ) {
     }
 
@@ -57,7 +59,18 @@ final readonly class Request
             headers: self::headersFromServer($_SERVER),
             ip: (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
             files: $_FILES,
+            cookies: array_filter($_COOKIE, is_string(...)),
         );
+    }
+
+    /**
+     * One cookie by name, or null. The session cookie is PHP's own business;
+     * what this is for is the vault key (App\Http\Cookie), which the
+     * application reads itself.
+     */
+    public function cookie(string $name): ?string
+    {
+        return $this->cookies[$name] ?? null;
     }
 
     /**

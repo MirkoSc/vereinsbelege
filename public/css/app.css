@@ -261,6 +261,29 @@ main.inhalt {
 }
 
 /*
+ * Angemeldeter Zugang rechts in der Kopfzeile: Name und Abmelden.
+ * Der Name darf umbrechen und schrumpfen, der Knopf nicht - auf 360 px ist
+ * "Abmelden" das Wichtigere von beiden.
+ */
+.kopf-konto {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--abstand-2);
+}
+
+.kopf-konto form {
+    margin: 0;
+}
+
+.kopf-benutzer {
+    font-size: var(--schrift-klein);
+    color: var(--farbe-gedaempft);
+    overflow-wrap: anywhere;
+}
+
+/*
  * Navigation: eine Zeile, die auf schmalen Schirmen waagerecht scrollt.
  * Bewusst kein Klappmenü - das bräuchte JavaScript und einen Zustand, und
  * eine scrollbare Zeile zeigt auf 360 px immer noch drei bis vier Einträge.

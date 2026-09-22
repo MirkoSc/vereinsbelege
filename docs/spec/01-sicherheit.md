@@ -100,8 +100,30 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 - `VK_priv` wird mit einem zufälligen Session-Schlüssel `K_s`
   verschlüsselt in `$_SESSION` abgelegt; `K_s` steht **nur** im Cookie
   `__Host-vk` (`httponly`, `secure`, `samesite=Strict`). Server-Sessiondatei
-  allein ist damit wertlos.
-- Idle-Timeout 30 min, absolut 12 h (Settings). Logout löscht beides.
+  allein ist damit wertlos. Umgesetzt mit M3-3
+  (`App\Service\Account\SessionVault`, Ablage
+  `Version(1) | Nonce(24) | secretbox(VK_priv, K_s)`; das Cookie baut
+  `App\Http\Cookie::vaultKey()`).
+- Das `__Host-`-Präfix verlangt zwingend `Secure`, `Path=/` und kein
+  `Domain`. Über reines HTTP – also ausschließlich im Docker-Dev auf
+  `http://localhost:8080` – würde der Browser ein solches Cookie verwerfen
+  und der Login wäre dort unbenutzbar; deshalb heißt es dann schlicht `vk`,
+  bei sonst gleichen Attributen. `App\Http\Session::start()` leitet sein
+  `secure`-Flag aus demselben Grund aus dem Request-Schema ab. Produktion
+  läuft über HTTPS (Installationsvoraussetzung), dort gilt immer
+  `__Host-vk`. Gelesen wird unter beiden Namen, geschrieben nach Schema.
+- Idle-Timeout 30 min, absolut 12 h. Beides sind Settings
+  (`session_idle_timeout_s`, `session_absolute_timeout_s`,
+  `App\Service\Account\SessionTimeouts`); ein unbrauchbarer Wert fällt auf
+  den Vorgabewert zurück, statt den Ablauf abzuschalten. Logout löscht
+  beides – Sitzung und Cookie.
+- Ohne `__Host-vk` ist die Sitzung weiterhin angemeldet, kann aber nichts
+  entschlüsseln. Das ist ein eigener Zustand, kein Fehler: Seiten zeigen
+  dann einen Hinweis statt leerer Listen
+  (`App\Service\Account\VaultAccess`).
+- Jeder Request hinter der Anmeldung prüft das Konto erneut
+  (`App\Http\LoginGuard`): Sperren oder Ablaufdatum wirken sofort, nicht
+  erst beim nächsten Login.
 - Argon2id-Parameter: `OPSLIMIT_INTERACTIVE`/`MEMLIMIT_INTERACTIVE`
   (64 MiB) als Default; im Hosting-Check verifizieren (memory_limit!).
 
@@ -137,7 +159,16 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 
 - Login mit **E-Mail + Passwort**. `password_hash()` mit `PASSWORD_ARGON2ID`
   (Fallback `PASSWORD_BCRYPT`, falls Hosting-Check Argon2 verneint).
-  Passwort-Hash und KEK-Salt sind getrennt.
+  Passwort-Hash und KEK-Salt sind getrennt. Umgesetzt mit M3-3
+  (`App\Service\Account\LoginService`, Hashing an einer Stelle in
+  `App\Service\Account\PasswordHasher`, die auch der Installer nutzt).
+  M3-3 meldet **ohne** zweiten Faktor an; M3-4 hängt den Schritt zwischen
+  „Passwort stimmt" und „Tresor entsperrt" ein (`user.mfa_required`), der
+  Tresor bleibt bis dahin zu.
+- Konten-Zustand beim Login: nur `status = aktiv` und ein `expires_at` in
+  der Zukunft kommen durch. Ein Konto ohne `vault_grant` meldet sich
+  trotzdem an – es sieht nur nichts, bis ein Admin freigibt (siehe
+  „Benutzer-Lebenszyklus").
 - Passwortregeln: min. 12 Zeichen, Abgleich gegen eine mitgelieferte Liste
   häufiger Passwörter, keine Zusammensetzungsregeln. Umgesetzt als
   `App\Service\Account\PasswordPolicy` (M3-2), Liste unter
@@ -153,7 +184,13 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
     widerrufbar).
 - **Brute-Force-Schutz**: Rate-Limit je IP und je Konto (übernommener
   `RateLimiter`), generische Fehlermeldungen (keine User-Enumeration), auch
-  bei „Passwort vergessen".
+  bei „Passwort vergessen". Seit M3-3: feste Fenster von 15 Minuten,
+  20 Fehlversuche je IP, 10 je Konto; nur Fehlversuche zählen, ein Erfolg
+  löscht beide Zähler. Der Schlüssel der Zeile ist ein Hash aus Zweck und
+  Wert, die IP steht nie im Klartext in der Tabelle. Unbekannte Adresse,
+  falsches Passwort, gesperrtes und abgelaufenes Konto liefern **wortgleich
+  dieselbe** Meldung, und der Zweig ohne Konto verbrennt einen
+  Schein-`password_verify()`, damit auch die Laufzeit nichts verrät.
 - **Passwort-Reset**: Token 32 Byte, nur Hash gespeichert, 30 min,
   einmalig; beendet alle Sessions des Nutzers.
 - Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
@@ -162,7 +199,15 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
   Wiederherstellungsschlüssel im selben Flow. Umgesetzt mit M3-2 (06 §1);
-  Login selbst folgt erst mit M3-3.
+  der Login dazu mit M3-3.
+- **Geschützte Bereiche**: `/app/*`, `/admin/*` und die Upload-Routen
+  `/api/upload*` liegen hinter `App\Http\LoginGuard`, deklariert je Route in
+  `app/src/routes.php`. Die Upload-Routen antworten dort mit 401 JSON statt
+  einer Weiterleitung – sie werden aus `fetch()` gefahren. Offen bleiben die
+  Startseite, `/anmelden`, `/abmelden` und `/cron` (eigenes Token, 06 §4).
+  Die Anmeldeseite ist die einzige öffentliche Seite mit einer Session; sie
+  braucht ein CSRF-Token und ist der Ort, an dem die spätere Sitzung
+  beginnt. **Welcher** angemeldete Zugang was darf, entscheidet erst M3-6.
 
 ## 4. Rollen und Rechte
 

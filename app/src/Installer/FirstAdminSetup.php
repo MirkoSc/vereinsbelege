@@ -8,6 +8,7 @@ use App\Repository\UserKeyRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Service\Account\PasswordHasher;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\UserKey;
@@ -21,7 +22,9 @@ use App\Service\Crypto\VaultGrant;
  * and the grant that ties them together. Pulled out of InstallController so
  * the crypto/DB orchestration is testable on its own; the crypto primitives
  * themselves (Vault, UserKeyPair, UserKey, VaultGrant, RecoveryKey) come
- * unchanged from M2-2.
+ * unchanged from M2-2, and the password hash from the same
+ * App\Service\Account\PasswordHasher the login uses (M3-3) - an account
+ * created here has to verify there.
  *
  * The recovery key is generated here and handed back once - it is never
  * stored (docs/spec/01-sicherheit.md, "Wiederherstellungsschlüssel"). Only
@@ -67,7 +70,7 @@ final readonly class FirstAdminSetup
         $userPair = UserKeyPair::create();
         $wrappedKey = UserKey::wrap($userPair, $password);
         $grant = VaultGrant::seal($vault, $userPair->publicKey());
-        $passwordHash = self::hashPassword($password);
+        $passwordHash = new PasswordHasher()->hash($password);
         $recoveryKey = RecoveryKey::forVault($vault);
 
         $this->pdo->beginTransaction();
@@ -114,19 +117,4 @@ final readonly class FirstAdminSetup
         }
     }
 
-    /**
-     * PASSWORD_ARGON2ID with a PASSWORD_BCRYPT fallback if the host's PHP
-     * was built without libargon2 (docs/spec/01-sicherheit.md section 3,
-     * mirrors the check in tools/hosting-check.php).
-     */
-    private static function hashPassword(#[\SensitiveParameter] string $password): string
-    {
-        $algo = \defined('PASSWORD_ARGON2ID') ? \PASSWORD_ARGON2ID : \PASSWORD_BCRYPT;
-        $hash = password_hash($password, $algo);
-        if ($hash === false) {
-            throw new \RuntimeException('Das Passwort konnte nicht gehasht werden.');
-        }
-
-        return $hash;
-    }
 }

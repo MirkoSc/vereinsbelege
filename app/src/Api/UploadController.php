@@ -28,10 +28,11 @@ use App\Support\FileLogger;
  * texts the browser shows are German like everywhere else.
  *
  * ---------------------------------------------------------------------
- * Rights at this milestone: none in the Permission sense - there is no login
- * yet (M3-3) and no Permission enum (M3-6). The CSRF token of the session is
- * the only credential, so in practice the upload is reachable from the /app
- * and /admin pages, which carry one. From M3-6 on these routes get
+ * Rights at this milestone: a login (M3-3), not yet a permission (M3-6).
+ * The routes are wrapped in App\Http\LoginGuard (app/src/routes.php), which
+ * answers 401 JSON rather than redirecting - these endpoints are driven
+ * from fetch(), where a login page would arrive as garbage. The CSRF token
+ * is checked on top of that. From M3-6 on these routes get
  * `document.submit_internal`.
  *
  * The public submission (/einreichen, M5) has no session by design and

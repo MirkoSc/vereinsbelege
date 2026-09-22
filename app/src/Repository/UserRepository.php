@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Domain\User;
 use App\Domain\UserStatus;
 
 /**
@@ -17,6 +18,10 @@ use App\Domain\UserStatus;
  * itself, the same split App\Repository\MailQueueRepository does not follow
  * only because mail has just the one caller. The installer
  * (App\Installer\FirstAdminSetup) is the only writer until M3-7.
+ *
+ * Reading follows the same rule: the rows come back with `email_enc` and
+ * `display_name_enc` untouched (App\Domain\User), so this class needs no
+ * key at all and nothing decrypts an address that nobody asked for.
  */
 final readonly class UserRepository
 {
@@ -53,6 +58,61 @@ final readonly class UserRepository
     }
 
     /**
+     * The login lookup (docs/spec/01-sicherheit.md section 3): the only
+     * index that works before any session exists, because `email_bi` is
+     * keyed from the SERVER key and not from the vault
+     * (App\Service\Crypto\ServerCrypto::blindIndex()).
+     */
+    public function findByEmailBlindIndex(string $emailBi): ?User
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM `user` WHERE email_bi = ?');
+        $stmt->bindValue(1, $emailBi, \PDO::PARAM_LOB);
+        $stmt->execute();
+
+        return self::hydrate($stmt->fetch());
+    }
+
+    /**
+     * The logged-in user of a request: the session carries the id, never the
+     * name or the address (App\Http\Session).
+     */
+    public function findById(int $id): ?User
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM `user` WHERE id = ?');
+        $stmt->execute([$id]);
+
+        return self::hydrate($stmt->fetch());
+    }
+
+    /**
+     * Records a successful login (docs/spec/01-sicherheit.md section 3).
+     * Time from PHP, not NOW(): the database session may run in UTC while
+     * the application convention is Europe/Berlin (bootstrap.php).
+     */
+    public function touchLastLogin(int $id, ?\DateTimeImmutable $now = null): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET last_login_at = ? WHERE id = ?');
+        $stmt->execute([($now ?? new \DateTimeImmutable())->format(self::FORMAT), $id]);
+    }
+
+    /**
+     * Stores a freshly computed password hash. Used when the cost factors of
+     * password_hash() have been raised since the row was written and the
+     * login just had the plaintext in hand anyway
+     * (App\Service\Account\PasswordHasher::needsRehash()).
+     *
+     * This does NOT touch `user_key`: the KEK salt is deliberately separate
+     * from the password hash (docs/spec/01-sicherheit.md section 3), and the
+     * wrapping keeps its own parameters until the password itself changes
+     * (App\Service\Crypto\UserKey::rewrap(), M3-5).
+     */
+    public function updatePasswordHash(int $id, string $passwordHash): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET password_hash = ? WHERE id = ?');
+        $stmt->execute([$passwordHash, $id]);
+    }
+
+    /**
      * Whether any account already exists - the installer refuses a fresh
      * admin once one does (docs/spec/06-betrieb.md section 1).
      */
@@ -70,5 +130,34 @@ final readonly class UserRepository
     {
         $stmt = $this->pdo->prepare('DELETE FROM `user` WHERE id = ?');
         $stmt->execute([$id]);
+    }
+
+    /**
+     * An unknown status value is not silently turned into `aktiv`: a row a
+     * newer release wrote must not accidentally let somebody in here. It
+     * becomes `gesperrt`, which App\Domain\User::mayLogIn() refuses.
+     */
+    private static function hydrate(mixed $row): ?User
+    {
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return new User(
+            id: (int) $row['id'],
+            emailEnc: (string) $row['email_enc'],
+            displayNameEnc: (string) $row['display_name_enc'],
+            passwordHash: (string) $row['password_hash'],
+            status: UserStatus::tryFrom((string) $row['status']) ?? UserStatus::Gesperrt,
+            expiresAt: self::time($row['expires_at']),
+            mfaRequired: (bool) $row['mfa_required'],
+            createdAt: self::time($row['created_at']) ?? new \DateTimeImmutable(),
+            lastLoginAt: self::time($row['last_login_at']),
+        );
+    }
+
+    private static function time(mixed $value): ?\DateTimeImmutable
+    {
+        return is_string($value) && $value !== '' ? new \DateTimeImmutable($value) : null;
     }
 }
