@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\MailController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
@@ -17,12 +18,19 @@ use App\Installer\InstallController;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
+use App\Repository\MailQueueRepository;
 use App\Repository\SettingRepository;
 use App\Repository\VaultRepository;
 use App\Service\Backup\BackupService;
+use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\JobCleanupTask;
+use App\Service\Cron\MailCleanupTask;
+use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Mail\Mailer;
+use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
@@ -112,6 +120,23 @@ $config = Config::fromFile($configFile);
 $connections = new ConnectionFactory($config);
 $maintenance = new MaintenanceMode($paths->maintenanceFlagFile());
 
+// Server key (level 1, CLAUDE.md section 4): needs no database, so it is
+// built once here and shared by everything that reads or writes operating
+// data - from M3-1 on that includes the mail queue and its settings.
+$serverCrypto = new ServerCrypto($config->serverKey);
+
+// Mail (docs/spec/06-betrieb.md section 3, issue #14): one small factory per
+// collaborator, shared between the admin page and the cron task so both
+// build the exact same Mailer stack from a given connection.
+$mailQueueFor = static fn(\PDO $pdo): MailQueueRepository => new MailQueueRepository($pdo, $serverCrypto);
+$mailSettingsFor = static fn(\PDO $pdo): MailSettingsRepository => new MailSettingsRepository(
+    new SettingRepository($pdo),
+    $serverCrypto,
+);
+$mailerFor = static function (\PDO $pdo) use ($mailQueueFor, $mailSettingsFor, $paths): Mailer {
+    return new Mailer($mailQueueFor($pdo), $mailSettingsFor($pdo), new MailTemplates($paths->viewsDir() . '/mail'));
+};
+
 $updates = static fn(): UpdateController => new UpdateController(
     $view,
     new Session(),
@@ -134,18 +159,19 @@ $updates = static fn(): UpdateController => new UpdateController(
 );
 
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor): CronRunner {
     $pdo = $connections->pdo();
 
     return new CronRunner(
         lock: new CronLockRepository($pdo),
         settings: new SettingRepository($pdo),
-        // The mail queue joins here with M3-1. Nothing that decrypts, ever
-        // (CLAUDE.md section 4).
-        jedesMal: [],
+        // The mail queue (M3-1): nothing that decrypts, ever (CLAUDE.md
+        // section 4) - Mailer reads and writes only server-key ciphertext.
+        jedesMal: [new MailQueueTask($mailerFor($pdo))],
         aufraeumen: [
             new JobCleanupTask(new JobRepository($pdo)),
             new UploadCleanupTask(new UploadService($paths->uploadDir())),
+            new MailCleanupTask($mailQueueFor($pdo)),
         ],
         logger: $logger,
     );
@@ -188,8 +214,22 @@ $storage = static function () use ($connections, $paths, $view): StorageControll
     );
 };
 
+// Mail admin page (issue #14): built lazily like $storage - it needs the
+// database, the public pages must not pay for that.
+$mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFor, $mailQueueFor): MailController {
+    $pdo = $connections->pdo();
+
+    return new MailController(
+        $view,
+        new Session(),
+        $mailSettingsFor($pdo),
+        $mailerFor($pdo),
+        $mailQueueFor($pdo),
+    );
+};
+
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads, $storage);
+(require __DIR__ . '/routes.php')($router, $view, $updates, $cron, $uploads, $storage, $mail);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

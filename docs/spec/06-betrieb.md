@@ -169,17 +169,60 @@ echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
 
 ## 3. Mail
 
-- Versand per **SMTP** (reine PHP-Bibliothek, z. B. PHPMailer – Ports 465/
-  587, TLS), Zugangsdaten im Admin, Passwort mit Server-Schlüssel
-  verschlüsselt. Fallback PHP `mail()` wählbar.
-- Alle Mails über `mail_queue`: sofortiger Versuch im Request, bei Fehler
-  Retry im Cron (exponentiell, max. 5). Sicherheitsrelevante Mails (2FA-
-  Code, Reset) sofort, Fehler wird dem Nutzer angezeigt.
-- Mail-Vorlagen (Deutsch) als Views; **keine fachlichen Inhalte** (keine
-  Beträge, Lieferanten, IBANs) in Mails – nur Hinweise mit Link.
-- Absender, Reply-To, Vereinsname als Settings. SPF/DKIM beim Hoster
-  einrichten (Doku in `docs/betrieb.md`).
-- Admin: Testmail senden, Queue einsehen (Empfänger maskiert).
+- Versand per **SMTP** – Ports 465/587, TLS (implizit oder STARTTLS).
+  Zugangsdaten im Admin (`/admin/mail`), Passwort mit dem Server-Schlüssel
+  verschlüsselt (`ServerCrypto`, Ablage als `setting.mail_smtp_passwort_enc`,
+  Base64 von `encrypt()` – nie Klartext in der Tabelle). Fallback PHP
+  `mail()` wählbar über `mail_transport` (`smtp`/`php_mail`).
+- Alle Mails über `mail_queue`: sofortiger Versuch im Request
+  (`App\Service\Mail\Mailer::sendeTestmail()`/`sendeFaellige()`), bei Fehler
+  Retry im Cron (exponentiell: 60 s, 5 min, 15 min, 1 h, 3 h – bis zu 5
+  Versuche insgesamt, danach Status `fehler`). Sicherheitsrelevante Mails
+  (2FA-Code, Reset, ab M3-3) laufen über denselben sofortigen Versuch, Fehler
+  wird dem Nutzer angezeigt.
+- Mail-Vorlagen (Deutsch) als eigene Views unter `app/views/mail/`, gerendert
+  von `App\Service\Mail\MailTemplates` – bewusst **nicht** über `App\View\View`,
+  das immer das HTML-Layout (Navigation, CSS) davorsetzt; eine Mail ist weder
+  HTML noch Teil eines Bereichs. **Keine fachlichen Inhalte** (keine Beträge,
+  Lieferanten, IBANs) in Mails – nur Hinweise mit Link.
+- Absender, Reply-To, Vereinsname als Settings (`mail_absender`,
+  `mail_antwort_an`, `mail_vereinsname`). SPF/DKIM beim Hoster einrichten
+  (Doku in `docs/betrieb.md`, Folge-Issue zu #14).
+- Admin: Testmail senden, Queue einsehen (Empfänger maskiert, Betreff wird
+  gar nicht angezeigt).
+
+  **Stand M3-1** (issue #14): kein SMTP-Paket als Abhängigkeit – ein
+  Roh-Socket-Client (`App\Service\Mail\SmtpTransport` +
+  `StreamSmtpConnection`) übernimmt fachlich den bereits gegen den Zielhost
+  erprobten Ablauf aus `tools/hosting-check.php` (`hc_run_smtp()`, siehe §5:
+  Port 465 implizit, `AUTH LOGIN`, gültiges Zertifikat). Grund gegen eine
+  Bibliothek wie PHPMailer: keine zusätzliche Laufzeit-Abhängigkeit (CLAUDE.md
+  §8), der Protokollumfang, den diese Anwendung braucht (EHLO, optional
+  STARTTLS, optional AUTH LOGIN, MAIL FROM/RCPT TO/DATA), ist klein und bereits
+  vorhanden. Der Mail-Rumpf geht immer als Base64
+  (`Content-Transfer-Encoding: base64`) – das umgeht Zeilenlängen-Grenzen und
+  Dot-Stuffing vollständig, ohne dass eine eigene Kodierung nötig wäre.
+  `App\Service\Mail\SmtpConnection` ist die Testnaht: Tests laufen gegen eine
+  Fake-Verbindung im Speicher, nie gegen einen echten Socket.
+  `App\Service\Mail\Mailer` kennt keine Http/Session-Abhängigkeit (CLAUDE.md
+  §6a) und läuft unverändert im Cron-Task (`App\Service\Cron\MailQueueTask`,
+  läuft in `jedesMal`) und in `App\Admin\MailController`. Aufräumen
+  (`App\Service\Cron\MailCleanupTask`, in `aufraeumen`) löscht `gesendet`-
+  Zeilen nach 7 Tagen; `fehler` bleibt für einen Menschen stehen.
+
+  **Pflicht-Tests:** `MailQueueTest` (Zeile enthält keinen Klartext; Claim
+  setzt `laeuft` und `attempts+1`; zweiter Claim während der Vormerksperre
+  bekommt nichts; abgelaufene Sperre wird von `claimDue` übernommen; nach dem
+  fünften Fehlversuch `fehler` und kein weiterer Claim; `last_error`
+  speichert nur die Klasse; Aufräumen trifft nur alte `gesendet`-Zeilen);
+  `MailerTest` (Sofortversuch bei `sendeTestmail`, Backoff nach Fehlschlag,
+  Cron-Antwort und Log ohne Empfänger/Betreff); `SmtpTransportTest`
+  (Befehlsreihenfolge inkl. STARTTLS und AUTH LOGIN gegen die Fake-Verbindung,
+  sauberer Abbruch bei abgelehntem STARTTLS, keine Zugangsdaten in der
+  Fehlermeldung); `MailMessageTest` (RFC-2047-Kodierung, CRLF durchgängig,
+  Header-Injection in Empfänger/Betreff wird abgelehnt); `MailSettingsTest`
+  (Passwort-Rundreise, `setting`-Zeile enthält kein Klartext, `__debugInfo()`
+  maskiert).
 
 ## 4. Jobs und Session-Worker
 
@@ -222,7 +265,8 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     die **eigene** Sperre (Vergleich mit dem Ablaufzeitpunkt), damit ein Lauf,
     dessen Sperre abgelaufen war, nicht die eines Nachfolgers löst.
   - *Aufgaben:* Schnittstelle `Service\Cron\CronTask` (`name()`, `run($now)`).
-    `jedesMal` läuft bei jedem Aufruf (ab M3-1 die Mail-Queue), `aufraeumen`
+    `jedesMal` läuft bei jedem Aufruf (ab M3-1 `mail_versenden`, §3),
+    `aufraeumen`
     nur, wenn seit `cron_letztes_aufraeumen` mindestens
     `cron_aufraeum_intervall_s` (Setting, Standard 3600, mindestens 60)
     vergangen sind. Der Zeitstempel wird **vor** den Aufräum-Tasks gesetzt:
