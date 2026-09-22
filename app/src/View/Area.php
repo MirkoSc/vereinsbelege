@@ -60,6 +60,7 @@ enum Area: string
             self::Oeffentlich => [],
             self::App => [
                 new NavItem('Start', '/app'),
+                new NavItem('Sicherheit', '/app/sicherheit'),
                 new NavItem('Posteingang', meilenstein: 'M4'),
                 new NavItem('Belege', meilenstein: 'M6'),
                 new NavItem('Lieferanten', meilenstein: 'M7'),

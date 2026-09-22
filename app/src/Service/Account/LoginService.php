@@ -109,9 +109,24 @@ final readonly class LoginService
             $this->users->updatePasswordHash($user->id, $this->passwords->hash($password));
         }
 
-        $this->users->touchLastLogin($user->id, $now);
-
+        // `last_login_at` is NOT touched here anymore (M3-4, issue #17): the
+        // password being right is not yet a finished login while a second
+        // factor is still open - see registerSuccess() below, which
+        // App\App\AuthController/MfaController call once the session
+        // actually starts.
         return $this->entsperren($user, $password);
+    }
+
+    /**
+     * Records the moment a login actually finished - right away when no
+     * second factor stands in the way, or once one is confirmed
+     * (App\App\AuthController, App\App\MfaController). Split out from
+     * attempt() because "password correct" and "logged in" are no longer the
+     * same event (docs/spec/01-sicherheit.md section 3, M3-4).
+     */
+    public function registerSuccess(int $userId, ?\DateTimeImmutable $now = null): void
+    {
+        $this->users->touchLastLogin($userId, $now ?? new \DateTimeImmutable());
     }
 
     /**

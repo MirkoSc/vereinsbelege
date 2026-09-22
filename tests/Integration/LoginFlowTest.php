@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Integration;
 
 use App\App\AuthController;
+use App\App\LoginCompleter;
 use App\Config\Paths;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
@@ -25,6 +26,7 @@ use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
 use App\Service\Account\LoginService;
 use App\Service\Account\PasswordHasher;
+use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
@@ -83,6 +85,15 @@ final class LoginFlowTest extends DatabaseTestCase
             (string) new VaultRepository($this->pdo())->current()?->publicKey(),
             $ergebnis['vaultVersion'],
         );
+
+        // This suite is the M3-3 login layer, deliberately independent of
+        // the second factor M3-4 (issue #17) adds on top of it - that layer
+        // has its own suite, tests/Integration/TwoFactorFlowTest.php. Every
+        // account defaults to `mfa_required` (migrations/006_user.sql), so
+        // without this the tests below would all hit the "no factor set up
+        // yet" enrollment redirect (App\Http\LoginGuard) instead of the
+        // plain password/vault behaviour they exist to check.
+        $this->pdo()->prepare('UPDATE `user` SET mfa_required = 0 WHERE id = ?')->execute([$this->userId]);
     }
 
     protected function tearDown(): void
@@ -470,6 +481,8 @@ final class LoginFlowTest extends DatabaseTestCase
             $view,
             new Session(),
             new SessionVault(),
+            new PendingLogin(),
+            new LoginCompleter(new Session(), new SessionVault()),
             fn(): LoginService => new LoginService(
                 new UserRepository($pdo),
                 new UserKeyRepository($pdo),
@@ -479,6 +492,10 @@ final class LoginFlowTest extends DatabaseTestCase
                 new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
                 new PasswordHasher(),
             ),
+            // Never called: every account in this suite has mfa_required = 0
+            // (setUp()), so App\App\AuthController::deviceIsTrusted() short-
+            // circuits before it would use this.
+            static fn(): never => throw new \LogicException('MfaService hätte hier nicht gebraucht werden dürfen.'),
         );
 
         $guard = fn(): LoginGuard => new LoginGuard(
@@ -504,6 +521,8 @@ final class LoginFlowTest extends DatabaseTestCase
             $view,
             $auth,
             $guard,
+            $unerreichbar,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

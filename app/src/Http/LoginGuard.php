@@ -110,6 +110,18 @@ final readonly class LoginGuard
             $this->view->setAnmeldung($benutzer->anzeigename, $this->session->csrfToken());
         }
 
+        // M3-4 (issue #17): `mfa_required` without a configured factor is
+        // not a normal, usable state (docs/spec/01-sicherheit.md section 3,
+        // "Default: Pflicht für alle") - every page in `/app` and `/admin`
+        // is closed until setup finishes, the same way an expired session
+        // closes them, except the account stays logged in and the vault
+        // stays whatever it already was. Exempt: the setup pages themselves
+        // (or nobody could ever reach them) and the JSON API, which answers
+        // its own way when something is missing rather than redirecting.
+        if (!$api && $benutzer->user->mfaRequired && !$benutzer->user->mfaEingerichtet() && !str_starts_with($request->path, '/app/sicherheit')) {
+            return Response::redirect('/app/sicherheit/einrichten');
+        }
+
         return null;
     }
 

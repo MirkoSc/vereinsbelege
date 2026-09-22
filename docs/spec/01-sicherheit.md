@@ -162,9 +162,6 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   Passwort-Hash und KEK-Salt sind getrennt. Umgesetzt mit M3-3
   (`App\Service\Account\LoginService`, Hashing an einer Stelle in
   `App\Service\Account\PasswordHasher`, die auch der Installer nutzt).
-  M3-3 meldet **ohne** zweiten Faktor an; M3-4 hängt den Schritt zwischen
-  „Passwort stimmt" und „Tresor entsperrt" ein (`user.mfa_required`), der
-  Tresor bleibt bis dahin zu.
 - Konten-Zustand beim Login: nur `status = aktiv` und ein `expires_at` in
   der Zukunft kommen durch. Ein Konto ohne `vault_grant` meldet sich
   trotzdem an – es sieht nur nichts, bis ein Admin freigibt (siehe
@@ -174,14 +171,56 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   `App\Service\Account\PasswordPolicy` (M3-2), Liste unter
   `app/data/haeufige-passwoerter.txt` (CLAUDE.md §2) – eine eigene
   Zusammenstellung, keine separat lizenzierte Fremdliste (CLAUDE.md §8).
-- **Zweiter Faktor** (pro Rolle erzwingbar, Default: Pflicht für alle):
-  - **TOTP** (Authenticator-App, RFC 6238, QR-Code serverseitig in reinem
-    PHP) – empfohlen.
-  - **E-Mail-Code**: 6 Ziffern, 10 min gültig, max. 5 Versuche, nur Hash
-    gespeichert.
-  - 10 Einmal-Backup-Codes (gehasht) bei Einrichtung.
-  - „Dieses Gerät 30 Tage merken" (optional, Token gehasht, pro Nutzer
-    widerrufbar).
+- **Zweiter Faktor** (pro Rolle erzwingbar – die Rollen-Verfeinerung ist
+  M3-6, bis dahin ist `user.mfa_required` der ganze Schalter; Default:
+  Pflicht für alle). Umgesetzt mit M3-4 (issue #17,
+  `App\Service\Account\MfaService`/`MfaEnrollment`, Migration
+  `008_mfa.sql`). Der Schritt hängt zwischen „Passwort stimmt" und „Tresor
+  entsperrt" (`App\Service\Account\LoginService::attempt()` öffnet den
+  Tresor wie zuvor sofort, hält ihn aber nur *pending* –
+  `App\Service\Account\PendingLogin`, unten):
+  - **TOTP** (Authenticator-App, RFC 6238, `App\Service\Account\Totp`) –
+    empfohlen. Der QR-Code entsteht serverseitig in reinem PHP
+    (`App\Support\QrCode`, ISO/IEC 18004, Byte-Modus, Fehlerkorrektur M,
+    Versionen 1–6 – Version 7 verlangt zusätzlich ein 18-Bit-„Versions"-Muster,
+    das diese Klasse bewusst nicht abbildet, um die Prüfoberfläche klein zu
+    halten; das Geheimnis steht daneben immer auch als Text). Eine eigene
+    Implementierung statt einer Bibliothek, aus demselben Grund wie
+    `SmtpTransport` (CLAUDE.md §8): der Protokollumfang ist klein und schon
+    exakt spezifiziert. Gegengeprüft gegen eine etablierte Referenz
+    (RFC-6238-Testvektoren für TOTP, das PyPI-Paket `qrcode` für den
+    QR-Encoder – kein Bestandteil dieser Anwendung, nur zur Verifikation
+    während der Entwicklung benutzt).
+  - **E-Mail-Code**: 6 Ziffern, 10 min gültig, max. 5 Versuche, nur ein
+    HMAC gespeichert (`mfa_email_code.code_hash`, derselbe Blind-Index wie
+    `user.email_bi`, Zweck `mfa.email_code`, Wert `Benutzer-ID:Code`).
+    Eigenständig wählbare Methode **und** Ausweichweg: wer TOTP eingerichtet
+    hat, kann auf der Bestätigungsseite trotzdem einen Code per E-Mail
+    anfordern. Das ist eine bewusste Abwägung – wer die Mailbox kontrolliert,
+    kommt damit auch an einem TOTP-Konto vorbei.
+  - 10 Einmal-Backup-Codes (gehasht, gleicher Blind-Index, Zweck
+    `mfa.backup_code`) bei Einrichtung und bei „neu erzeugen"
+    (`App\Service\Account\BackupCodes`, Crockford-Base32 wie der
+    Wiederherstellungsschlüssel).
+  - „Dieses Gerät 30 Tage merken" (optional, Token gehasht in
+    `trusted_device`, Zweck `trusted_device.token`, pro Nutzer und pro
+    Gerät widerrufbar über `/app/sicherheit`; Frist einstellbar über
+    `mfa_geraet_merken_tage`, Vorgabe 30 –
+    `App\Service\Account\MfaService::rememberDaysFromSettings()`).
+  - **Erzwungene Einrichtung**: `mfa_required` ohne konfigurierte Methode
+    (`user.mfa_method IS NULL`) ist kein normaler Zustand. Die Anmeldung
+    wird trotzdem abgeschlossen (der Tresor öffnet sich), aber
+    `App\Http\LoginGuard` leitet jede Seite unter `/app` und `/admin`
+    – außer `/app/sicherheit/*` selbst – auf `/app/sicherheit/einrichten`
+    um, bis eine Methode bestätigt ist.
+  - **Session über den 2FA-Schritt hinweg**: `App\Service\Account\PendingLogin`
+    ist das Gegenstück zu `SessionVault` für die Zwischenzeit –
+    `$_SESSION['mfa_pending']` trägt Benutzer-ID, `VaultAccess`, gewählte
+    Methode und das Rücksprungziel, der entsperrte Tresor (falls vorhanden)
+    liegt darin verschlüsselt mit einem Sitzungsschlüssel, der nur im
+    eigenen Cookie `__Host-2fa` liegt (10 min gültig, `SameSite=Strict`).
+    Ohne dieses Cookie ist auch aus der Sitzungsdatei nichts zu entschlüsseln
+    – dieselbe Eigenschaft wie beim Tresor-Cookie selbst.
 - **Brute-Force-Schutz**: Rate-Limit je IP und je Konto (übernommener
   `RateLimiter`), generische Fehlermeldungen (keine User-Enumeration), auch
   bei „Passwort vergessen". Seit M3-3: feste Fenster von 15 Minuten,
@@ -190,11 +229,21 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   Wert, die IP steht nie im Klartext in der Tabelle. Unbekannte Adresse,
   falsches Passwort, gesperrtes und abgelaufenes Konto liefern **wortgleich
   dieselbe** Meldung, und der Zweig ohne Konto verbrennt einen
-  Schein-`password_verify()`, damit auch die Laufzeit nichts verrät.
+  Schein-`password_verify()`, damit auch die Laufzeit nichts verrät. Der
+  zweite Faktor (M3-4) hat sein eigenes Zähler-Paar (`App\Service\Account\
+  MfaService`, Zwecke `mfa.ip`/`mfa.account`, 20 je IP, 8 je Konto, dasselbe
+  15-Minuten-Fenster) – enger als beim Passwort, weil ein zweiter Faktor
+  genau dafür da ist, Erraten unpraktikabel zu machen. Der E-Mail-Code trägt
+  zusätzlich sein eigenes Fünf-Versuche-Limit in der eigenen Zeile
+  (`mfa_email_code.attempts`).
 - **Passwort-Reset**: Token 32 Byte, nur Hash gespeichert, 30 min,
   einmalig; beendet alle Sessions des Nutzers.
 - Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
-  geändert, Tresor-Freigabe erteilt/entzogen.
+  geändert, Tresor-Freigabe erteilt/entzogen. Umgesetzt für „neues Gerät"
+  und „2FA geändert" mit M3-4 (`App\Service\Mail\Mailer::
+  sendeSicherheitshinweis()`, Vorlage `app/views/mail/sicherheitshinweis.php`
+  – ein fester Satz aus dem Aufrufer, nie Nutzereingabe); „Passwort geändert"
+  kommt mit M3-5, „Tresor-Freigabe" mit M3-7.
 - Session-ID-Regeneration bei Login und Rechtewechsel.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
@@ -204,10 +253,17 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   `/api/upload*` liegen hinter `App\Http\LoginGuard`, deklariert je Route in
   `app/src/routes.php`. Die Upload-Routen antworten dort mit 401 JSON statt
   einer Weiterleitung – sie werden aus `fetch()` gefahren. Offen bleiben die
-  Startseite, `/anmelden`, `/abmelden` und `/cron` (eigenes Token, 06 §4).
-  Die Anmeldeseite ist die einzige öffentliche Seite mit einer Session; sie
-  braucht ein CSRF-Token und ist der Ort, an dem die spätere Sitzung
-  beginnt. **Welcher** angemeldete Zugang was darf, entscheidet erst M3-6.
+  Startseite, `/anmelden`, `/abmelden`, `/cron` (eigenes Token, 06 §4) und,
+  seit M3-4, die Bestätigungsseite des zweiten Faktors
+  (`/anmelden/bestaetigen`, `/anmelden/code-senden`, `/anmelden/backup-code`)
+  – dort ist noch keine `App\Http\Session` angemeldet, nur ein
+  `PendingLogin` unterwegs (siehe oben). Die Anmeldeseite und die
+  Bestätigungsseite sind die einzigen öffentlichen Seiten mit einer Session;
+  beide brauchen ein CSRF-Token. `App\App\SecurityController`
+  (`/app/sicherheit*`) liegt hinter dem Guard wie jede andere Seite in
+  `/app` – der Guard nimmt diese Routen nur von seiner eigenen
+  Einrichtungspflicht aus, nicht vom Login selbst. **Welcher** angemeldete
+  Zugang was darf, entscheidet erst M3-6.
 
 ## 4. Rollen und Rechte
 

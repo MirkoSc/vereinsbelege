@@ -11,25 +11,30 @@ use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Service\Account\LoginFailure;
 use App\Service\Account\LoginService;
+use App\Service\Account\MfaService;
+use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionVault;
-use App\Service\Account\VaultAccess;
 use App\View\Area;
-use App\View\FlashArt;
 use App\View\View;
 
 /**
- * Login and logout (M3-3, issue #16, docs/spec/01-sicherheit.md section 3).
+ * Login and logout (M3-3/M3-4, issues #16/#17, docs/spec/01-sicherheit.md
+ * section 3).
  *
  * The HTTP half of the login: App\Service\Account\LoginService does the
  * checking and the unlocking and knows nothing about requests; this class
- * turns the result into a session, a cookie and a redirect.
+ * turns the result into a session, a cookie and a redirect - or, since M3-4,
+ * into a still-open door (App\Service\Account\PendingLogin) when the account
+ * has a second factor and this request has not answered it yet.
  *
  * The two halves of the unlocked vault part ways here, and that is the whole
  * security property of the session (section 2): VK_priv goes into $_SESSION,
  * encrypted, and the key that opens it goes into the `__Host-vk` cookie and
  * nowhere else. The unlocked Vault object itself is not kept - after this
  * request it exists only as those two halves, and any later page that wants
- * to decrypt has to put them back together.
+ * to decrypt has to put them back together. While a second factor is open,
+ * the same split holds for the *pending* login instead - see PendingLogin's
+ * own docblock.
  *
  * The login page is the one public page with a session: it needs a CSRF
  * token, and it is where the session that follows begins. It renders in
@@ -42,7 +47,12 @@ final readonly class AuthController
         private View $view,
         private Session $session,
         private SessionVault $vaultSession,
+        private PendingLogin $pendingLogin,
+        private LoginCompleter $completer,
         private \Closure $login,
+        /** @var \Closure(): MfaService built lazily, like $login - only a
+         *  successful password check ever needs the trusted-device check. */
+        private \Closure $mfa,
     ) {
     }
 
@@ -89,24 +99,47 @@ final readonly class AuthController
         }
 
         assert($ergebnis->user !== null);
-        $this->session->login($ergebnis->user->id);
+        $user = $ergebnis->user;
 
-        $antwort = Response::redirect($weiter ?? '/app');
-
-        if ($ergebnis->vault === null || $ergebnis->vaultAccess !== VaultAccess::Entsperrt) {
-            // Logged in without a readable vault - a normal state of the
-            // user lifecycle (M3-5/M3-7), so it is explained, not hidden.
-            $this->session->flash(
-                $ergebnis->vaultAccess->meldung() ?? 'Der Tresor ist nicht entsperrt.',
-                FlashArt::Warnung,
+        // The second factor of M3-4 hooks in exactly here, between "password
+        // correct" and "session opened" (docs/spec/01-sicherheit.md
+        // section 3). Three ways it does not apply: no factor required at
+        // all, `mfa_required` but nothing set up yet (the account is logged
+        // in regardless - App\Http\LoginGuard then forces enrollment before
+        // anything else), or this exact browser was told to skip it.
+        if ($user->mfaRequired && $user->mfaEingerichtet() && !$this->deviceIsTrusted($request, $user->id)) {
+            assert($user->mfaMethod !== null);
+            $cookieValue = $this->pendingLogin->store(
+                $user->id,
+                $ergebnis->vault,
+                $ergebnis->vaultAccess,
+                $user->mfaMethod,
+                $weiter,
             );
 
-            return $antwort;
+            return Response::redirect('/anmelden/bestaetigen')->withCookie(
+                Cookie::pendingLoginKey($cookieValue, Request::httpsFromGlobals()),
+            );
         }
 
-        return $antwort->withCookie(
-            Cookie::vaultKey($this->vaultSession->store($ergebnis->vault), Request::httpsFromGlobals()),
-        );
+        /** @var LoginService $login */
+        $login = ($this->login)();
+        $login->registerSuccess($user->id);
+
+        return $this->completer->complete($user->id, $ergebnis->vault, $ergebnis->vaultAccess, $weiter);
+    }
+
+    private function deviceIsTrusted(Request $request, int $userId): bool
+    {
+        $token = Cookie::trustedDeviceFrom($request);
+        if ($token === null) {
+            return false;
+        }
+
+        /** @var MfaService $mfa */
+        $mfa = ($this->mfa)();
+
+        return $mfa->isDeviceTrusted($userId, $token);
     }
 
     public function logout(Request $request): ResponseInterface

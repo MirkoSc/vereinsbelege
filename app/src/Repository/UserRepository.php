@@ -6,6 +6,7 @@ namespace App\Repository;
 
 use App\Domain\User;
 use App\Domain\UserStatus;
+use App\Service\Account\MfaMethod;
 
 /**
  * The `user` table (docs/spec/02-datenmodell.md "Benutzer und Sicherheit").
@@ -113,6 +114,18 @@ final readonly class UserRepository
     }
 
     /**
+     * Records which second factor an account has committed to
+     * (docs/spec/01-sicherheit.md section 3, issue #17). `null` clears it -
+     * used when a method is abandoned mid-setup or replaced by another one
+     * (App\Service\Account\MfaEnrollment).
+     */
+    public function updateMfaMethod(int $id, ?MfaMethod $method): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET mfa_method = ? WHERE id = ?');
+        $stmt->execute([$method?->value, $id]);
+    }
+
+    /**
      * Whether any account already exists - the installer refuses a fresh
      * admin once one does (docs/spec/06-betrieb.md section 1).
      */
@@ -151,6 +164,7 @@ final readonly class UserRepository
             status: UserStatus::tryFrom((string) $row['status']) ?? UserStatus::Gesperrt,
             expiresAt: self::time($row['expires_at']),
             mfaRequired: (bool) $row['mfa_required'],
+            mfaMethod: is_string($row['mfa_method'] ?? null) ? MfaMethod::tryFrom($row['mfa_method']) : null,
             createdAt: self::time($row['created_at']) ?? new \DateTimeImmutable(),
             lastLoginAt: self::time($row['last_login_at']),
         );

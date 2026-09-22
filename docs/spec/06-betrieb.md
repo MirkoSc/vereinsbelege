@@ -229,7 +229,14 @@ echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
   Retry im Cron (exponentiell: 60 s, 5 min, 15 min, 1 h, 3 h – bis zu 5
   Versuche insgesamt, danach Status `fehler`). Sicherheitsrelevante Mails
   (2FA-Code, Reset, ab M3-3) laufen über denselben sofortigen Versuch, Fehler
-  wird dem Nutzer angezeigt.
+  wird dem Nutzer angezeigt. Umgesetzt mit M3-4 (issue #17):
+  `Mailer::sendeMfaCode()` (der sechsstellige Code, Vorlage
+  `app/views/mail/mfa-code.php`) und `Mailer::sendeSicherheitshinweis()`
+  (ein fester Satz aus einer Liste im Aufrufer, Vorlage
+  `app/views/mail/sicherheitshinweis.php`, für „neues Gerät gemerkt" und
+  „2FA geändert" – Passwort/Tresor-Freigabe folgen mit M3-5/M3-7). Bis zum
+  Aufräumen (`MailCleanupTask`) steht ein versendeter Code damit
+  server-schlüssel-verschlüsselt in `mail_queue`, wie jede andere Mail auch.
 - Mail-Vorlagen (Deutsch) als eigene Views unter `app/views/mail/`, gerendert
   von `App\Service\Mail\MailTemplates` – bewusst **nicht** über `App\View\View`,
   das immer das HTML-Layout (Navigation, CSS) davorsetzt; eine Mail ist weder

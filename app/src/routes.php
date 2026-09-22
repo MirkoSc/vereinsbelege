@@ -8,6 +8,8 @@ use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuthController;
+use App\App\MfaController;
+use App\App\SecurityController;
 use App\Http\LoginGuard;
 use App\Http\Request;
 use App\Http\Response;
@@ -35,6 +37,13 @@ use App\View\View;
  *        behind it needs one.
  * @param \Closure(): LoginGuard $guard the gate in front of /app, /admin and
  *        the upload API.
+ * @param \Closure(): MfaController $mfa built lazily: the confirmation form
+ *        itself needs no database, only submitting a code does (M3-4,
+ *        issue #17).
+ * @param \Closure(): SecurityController $sicherheit built lazily, same
+ *        reason as $storage/$mail below - every route here is already
+ *        behind $guard, but the controller still should not open a
+ *        connection before a matched route needs one.
  * @param \Closure(): UpdateController $updates built lazily: it opens the
  *        database connection, and the public routes must not pay for that.
  * @param \Closure(): CronController $cron built lazily for the same reason.
@@ -51,6 +60,8 @@ return static function (
     View $view,
     \Closure $auth,
     \Closure $guard,
+    \Closure $mfa,
+    \Closure $sicherheit,
     \Closure $updates,
     \Closure $cron,
     \Closure $uploads,
@@ -77,6 +88,17 @@ return static function (
     $router->get('/anmelden', static fn(Request $r) => $auth()->form($r));
     $router->post('/anmelden', static fn(Request $r) => $auth()->submit($r));
     $router->post('/abmelden', static fn(Request $r) => $auth()->logout($r));
+
+    // Second factor (M3-4, docs/spec/01-sicherheit.md section 3, issue #17).
+    // Permission: none, same reasoning as /anmelden - the account is not
+    // logged in yet in the App\Http\Session sense, only in the pending-login
+    // sense (App\Service\Account\PendingLogin). Rate limiting is
+    // App\Service\Account\MfaService's own counters, per IP and per account,
+    // the same shape as LoginService's.
+    $router->get('/anmelden/bestaetigen', static fn(Request $r) => $mfa()->form($r));
+    $router->post('/anmelden/bestaetigen', static fn(Request $r) => $mfa()->submitCode($r));
+    $router->post('/anmelden/code-senden', static fn(Request $r) => $mfa()->sendEmailCode($r));
+    $router->post('/anmelden/backup-code', static fn(Request $r) => $mfa()->submitBackupCode($r));
 
     // Start page of the user area. The areas behind it (Posteingang, Belege,
     // Konten, ...) arrive from milestone M4 on; they are already in the
@@ -118,6 +140,36 @@ return static function (
     $router->post(
         '/api/upload/{id:[0-9a-f]+}/abort',
         $geschuetzteApi(static fn(Request $r, array $params) => $uploads()->abort($r, $params)),
+    );
+
+    // Managing an already logged-in account's second factor (M3-4, issue
+    // #17). Permission: logged in (M3-3); administration is not needed -
+    // every account manages its own factor. CSRF on all writes. The guard
+    // (App\Http\LoginGuard) sends here on its own, to `/app/sicherheit/
+    // einrichten`, whenever `mfa_required` has no configured method yet -
+    // these routes are exactly what it exempts from that redirect.
+    $router->get('/app/sicherheit', $geschuetzt(static fn(Request $r) => $sicherheit()->page($r)));
+    $router->get('/app/sicherheit/einrichten', $geschuetzt(static fn(Request $r) => $sicherheit()->einrichten($r)));
+    $router->post(
+        '/app/sicherheit/einrichten/totp/starten',
+        $geschuetzt(static fn(Request $r) => $sicherheit()->totpStarten($r)),
+    );
+    $router->post(
+        '/app/sicherheit/einrichten/totp/bestaetigen',
+        $geschuetzt(static fn(Request $r) => $sicherheit()->totpBestaetigen($r)),
+    );
+    $router->post(
+        '/app/sicherheit/einrichten/email/starten',
+        $geschuetzt(static fn(Request $r) => $sicherheit()->emailStarten($r)),
+    );
+    $router->post(
+        '/app/sicherheit/einrichten/email/bestaetigen',
+        $geschuetzt(static fn(Request $r) => $sicherheit()->emailBestaetigen($r)),
+    );
+    $router->post('/app/sicherheit/backup-codes/neu', $geschuetzt(static fn(Request $r) => $sicherheit()->backupCodesNeu($r)));
+    $router->post(
+        '/app/sicherheit/geraete/{id:\d+}/widerrufen',
+        $geschuetzt(static fn(Request $r, array $params) => $sicherheit()->geraetWiderrufen($r, $params)),
     );
 
     $router->get('/admin', $geschuetzt(static fn(): Response => Response::redirect('/admin/update')));

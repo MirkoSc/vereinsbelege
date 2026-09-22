@@ -8,6 +8,10 @@ use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuthController;
+use App\App\LoginCompleter;
+use App\App\MfaController;
+use App\App\MfaToolbox;
+use App\App\SecurityController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
@@ -21,14 +25,21 @@ use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
+use App\Repository\MfaBackupCodeRepository;
+use App\Repository\MfaEmailCodeRepository;
+use App\Repository\MfaTotpRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
+use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
 use App\Service\Account\LoginService;
+use App\Service\Account\MfaEnrollment;
+use App\Service\Account\MfaService;
 use App\Service\Account\PasswordHasher;
+use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
@@ -39,6 +50,7 @@ use App\Service\Cron\JobCleanupTask;
 use App\Service\Cron\MailCleanupTask;
 use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\RateLimitCleanupTask;
+use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
@@ -152,6 +164,18 @@ $mailerFor = static function (\PDO $pdo) use ($mailQueueFor, $mailSettingsFor, $
     return new Mailer($mailQueueFor($pdo), $mailSettingsFor($pdo), new MailTemplates($paths->viewsDir() . '/mail'));
 };
 
+// Second factor (M3-4, issue #17, docs/spec/01-sicherheit.md section 3):
+// one small factory, shared by the login (trusted-device check only), the
+// confirmation controller and the account's own security page.
+$mfaServiceFor = static fn(\PDO $pdo): MfaService => new MfaService(
+    new MfaTotpRepository($pdo),
+    new MfaEmailCodeRepository($pdo),
+    new MfaBackupCodeRepository($pdo),
+    new TrustedDeviceRepository($pdo),
+    $serverCrypto,
+    new RateLimiter(new RateLimitRepository($pdo), MfaService::WINDOW_SECONDS),
+);
+
 $updates = static fn(): UpdateController => new UpdateController(
     $view,
     new Session(),
@@ -192,6 +216,8 @@ $cron = static fn(): CronController => new CronController($config, static functi
             new RateLimitCleanupTask(
                 new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
             ),
+            // M3-4: remembered devices whose 30 days are over.
+            new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
         ],
         logger: $logger,
     );
@@ -248,13 +274,16 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
     );
 };
 
-// Login and vault unlock (M3-3, issue #16). Built lazily like the rest: the
-// login FORM needs no database, only the attempt behind it does - and the
-// guard reads the timeout settings only once a protected route matched.
+// Login and vault unlock (M3-3/M3-4, issues #16/#17). Built lazily like the
+// rest: the login FORM needs no database, only the attempt behind it does -
+// and the guard reads the timeout settings only once a protected route
+// matched.
 $auth = static fn(): AuthController => new AuthController(
     $view,
     new Session(),
     new SessionVault(),
+    new PendingLogin(),
+    new LoginCompleter(new Session(), new SessionVault()),
     static function () use ($connections, $serverCrypto): LoginService {
         $pdo = $connections->pdo();
 
@@ -268,7 +297,41 @@ $auth = static fn(): AuthController => new AuthController(
             new PasswordHasher(),
         );
     },
+    static fn(): MfaService => $mfaServiceFor($connections->pdo()),
 );
+
+// The second factor's own confirmation controller (M3-4, issue #17): built
+// lazily the same way, for the same reason - the confirmation FORM needs no
+// database either.
+$mfaController = static fn(): MfaController => new MfaController(
+    $view,
+    new Session(),
+    new PendingLogin(),
+    new LoginCompleter(new Session(), new SessionVault()),
+    static function () use ($connections, $serverCrypto, $mfaServiceFor, $mailerFor): MfaToolbox {
+        $pdo = $connections->pdo();
+
+        return new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $serverCrypto);
+    },
+);
+
+// Managing an already set-up (or not-yet-set-up) second factor (M3-4, issue
+// #17). Built lazily like $storage/$mail below - every route here is
+// already behind $guard, but the controller still should not open a
+// connection before a matched route needs one.
+$sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaServiceFor, $mailerFor): SecurityController {
+    $pdo = $connections->pdo();
+
+    return new SecurityController(
+        $view,
+        new Session(),
+        $mfaServiceFor($pdo),
+        new MfaEnrollment(new MfaTotpRepository($pdo), new MfaBackupCodeRepository($pdo), new UserRepository($pdo), $serverCrypto),
+        new UserRepository($pdo),
+        $mailerFor($pdo),
+        $serverCrypto,
+    );
+};
 
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
@@ -284,7 +347,19 @@ $guard = static fn(): LoginGuard => new LoginGuard(
 );
 
 $router = new Router();
-(require __DIR__ . '/routes.php')($router, $view, $auth, $guard, $updates, $cron, $uploads, $storage, $mail);
+(require __DIR__ . '/routes.php')(
+    $router,
+    $view,
+    $auth,
+    $guard,
+    $mfaController,
+    $sicherheit,
+    $updates,
+    $cron,
+    $uploads,
+    $storage,
+    $mail,
+);
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
 // actually needs the database (and reopens it after a long external call,

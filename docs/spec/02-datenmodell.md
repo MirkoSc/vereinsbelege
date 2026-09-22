@@ -13,7 +13,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten (Auszug) | Verschl. |
 |---|---|---|
-| `user` | email_enc, email_bi UNIQUE, display_name_enc, password_hash, status (`eingeladen`/`aktiv`/`gesperrt`), expires_at NULL, mfa_required, created_at, last_login_at (Migration 006, M3-2) | S |
+| `user` | email_enc, email_bi UNIQUE, display_name_enc, password_hash, status (`eingeladen`/`aktiv`/`gesperrt`), expires_at NULL, mfa_required, mfa_method NULL (`totp`/`email`, Migration 008, M3-4), created_at, last_login_at (Migration 006, M3-2) | S |
 | `role` | name, is_system, permissions JSON (M3-6) | – |
 | `user_role` | user_id, role_id (M3-6) | – |
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher") | – |
@@ -21,10 +21,10 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
-| `mfa_totp` | user_id, secret_enc, confirmed_at | S |
-| `mfa_email_code` | user_id, code_hash, expires_at, attempts | – |
-| `mfa_backup_code` | user_id, code_hash, used_at | – |
-| `trusted_device` | user_id, token_hash, label, expires_at | – |
+| `mfa_totp` | user_id, secret_enc, confirmed_at, created_at (Migration 008, M3-4) | S |
+| `mfa_email_code` | user_id, code_hash, expires_at, attempts, created_at (Migration 008, M3-4) | – |
+| `mfa_backup_code` | id, user_id, code_hash, used_at NULL, created_at (Migration 008, M3-4) | – |
+| `trusted_device` | id, user_id, token_hash UNIQUE, label, created_at, last_used_at NULL, expires_at (Migration 008, M3-4) | – |
 | `auth_token` | user_id, typ (`reset`/`invite`), token_hash, expires_at, used_at | – |
 | `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin | – |
 | `audit_log` | ts, user_id NULL, action, entity, entity_id, ip_hash, details_enc, dek_sealed, prev_hash, hash | T (details) |
@@ -40,18 +40,29 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
   legt die Rollentabellen an und weist der bestehenden Zeile die Admin-Rolle
   zu, ohne diese Migration zu ändern.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login
-  (`App\Service\Account\LoginService`): die Anmeldezeit bei jedem Erfolg,
-  den Hash nur dann neu, wenn `password_needs_rehash()` angehobene
-  Kostenfaktoren meldet – der Klartext liegt in genau diesem Moment ohnehin
-  vor. `user_key` bleibt dabei unberührt: das KEK-Salt ist bewusst vom
-  Passwort-Hash getrennt (01 §3), die Umhüllung wird erst beim echten
-  Passwortwechsel erneuert (M3-5).
+  (`App\Service\Account\LoginService`): den Hash nur dann neu, wenn
+  `password_needs_rehash()` angehobene Kostenfaktoren meldet – der Klartext
+  liegt in genau diesem Moment ohnehin vor. `user_key` bleibt dabei
+  unberührt: das KEK-Salt ist bewusst vom Passwort-Hash getrennt (01 §3),
+  die Umhüllung wird erst beim echten Passwortwechsel erneuert (M3-5). Seit
+  M3-4 (issue #17) ist „Passwort stimmt" nicht mehr dasselbe wie „Anmeldung
+  abgeschlossen" – `last_login_at` wird deshalb nicht mehr in `attempt()`
+  gesetzt, sondern in `LoginService::registerSuccess()`, das
+  `App\App\AuthController` bzw. `App\App\MfaController` erst aufrufen, wenn
+  kein zweiter Faktor mehr aussteht.
+- Die `*_hash`-Spalten von `mfa_email_code`, `mfa_backup_code` und
+  `trusted_device` sind kein neues Primitiv: derselbe Blind-Index-HMAC wie
+  `user.email_bi` (`App\Service\Crypto\ServerCrypto::blindIndex()`), mit
+  eigenem Zweck (`mfa.email_code`, `mfa.backup_code`,
+  `trusted_device.token`) und der Benutzer-ID im gehashten Wert, damit
+  derselbe Code oder Token bei zwei Konten nie denselben Hash ergibt
+  (`App\Service\Account\MfaService`).
 
 ## Betrieb
 
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
-| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s`; Speicher (M2-3): `speicher_backend` (`fs`/`db`); Mail (M3-1, 06 §3): `mail_transport` (`smtp`/`php_mail`), `mail_smtp_host`, `mail_smtp_port`, `mail_smtp_sicherheit` (`implizit`/`starttls`/`keine`), `mail_smtp_benutzer`, `mail_smtp_passwort_enc` (Base64 von `ServerCrypto::encrypt()` – die einzige Spalte hier, die kein Klartext ist), `mail_absender`, `mail_antwort_an`, `mail_vereinsname`; Anmeldung (M3-3, 01 §2): `session_idle_timeout_s` (Vorgabe 1800), `session_absolute_timeout_s` (Vorgabe 43200) – ohne Zeile gilt die Vorgabe, ein unbrauchbarer Wert ebenso | – (außer `mail_smtp_passwort_enc`: S) |
+| `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s`; Speicher (M2-3): `speicher_backend` (`fs`/`db`); Mail (M3-1, 06 §3): `mail_transport` (`smtp`/`php_mail`), `mail_smtp_host`, `mail_smtp_port`, `mail_smtp_sicherheit` (`implizit`/`starttls`/`keine`), `mail_smtp_benutzer`, `mail_smtp_passwort_enc` (Base64 von `ServerCrypto::encrypt()` – die einzige Spalte hier, die kein Klartext ist), `mail_absender`, `mail_antwort_an`, `mail_vereinsname`; Anmeldung (M3-3, 01 §2): `session_idle_timeout_s` (Vorgabe 1800), `session_absolute_timeout_s` (Vorgabe 43200) – ohne Zeile gilt die Vorgabe, ein unbrauchbarer Wert ebenso; zweiter Faktor (M3-4, 01 §3): `mfa_geraet_merken_tage` (Vorgabe 30, dieselbe Fallback-Regel) | – (außer `mail_smtp_passwort_enc`: S) |
 | `mail_queue` | to_enc, subject_enc, body_enc, status (`offen`/`laeuft`/`gesendet`/`fehler`), attempts, next_try_at, last_error – keine eigene Sperrspalte: ein Claim setzt `laeuft` und schiebt `next_try_at` als Platzhalter vor, bis der Versuch den echten Termin schreibt (06 §3) | S |
 | `ai_provider` | name, base_url, api_key_enc, model, caps JSON (`vision`, `json_schema`, `max_images`, `max_tokens`), timeout_s, active, is_default | S (api_key) |
 | `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at, updated_at (M1-5; `executor`/`status` als VARCHAR, die PHP-Enums sind maßgeblich; `last_error` nur die Exception-Klasse) | – (state ohne Klartext-Fachdaten) |
