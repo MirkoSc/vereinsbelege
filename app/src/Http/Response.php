@@ -8,11 +8,16 @@ final readonly class Response implements ResponseInterface
 {
     /**
      * @param array<string, string> $headers
+     * @param list<Cookie> $additionalCookies a second, third, ... cookie
+     *        beyond the one $headers['Set-Cookie'] can hold - see
+     *        withCookie(). Empty for every response that sets at most one,
+     *        which is still almost all of them.
      */
     public function __construct(
         public int $status = 200,
         public array $headers = [],
         public string $body = '',
+        public array $additionalCookies = [],
     ) {
     }
 
@@ -36,13 +41,27 @@ final readonly class Response implements ResponseInterface
     }
 
     /**
-     * The same response plus one `Set-Cookie`. One cookie per response is
-     * all this application ever sets (the vault key, App\Http\Cookie), so
-     * the header map stays a simple name => value map.
+     * The same response plus one more `Set-Cookie`. Almost every response
+     * that sets a cookie sets exactly one (the vault key, App\Http\Cookie),
+     * so the first call still goes into the simple name => value header map
+     * everything else (App\Http\CookieTest, the login flow tests) already
+     * reads it from. Since M3-4 (issue #17) a login that also remembers the
+     * device needs a second, independent cookie in the same response
+     * (`__Host-vk` and `__Host-td`) - a further call appends to
+     * $additionalCookies instead of overwriting the first.
      */
     public function withCookie(Cookie $cookie): self
     {
-        return new self($this->status, [...$this->headers, 'Set-Cookie' => $cookie->header()], $this->body);
+        if (!isset($this->headers['Set-Cookie'])) {
+            return new self(
+                $this->status,
+                [...$this->headers, 'Set-Cookie' => $cookie->header()],
+                $this->body,
+                $this->additionalCookies,
+            );
+        }
+
+        return new self($this->status, $this->headers, $this->body, [...$this->additionalCookies, $cookie]);
     }
 
     public function send(): void
@@ -50,6 +69,12 @@ final readonly class Response implements ResponseInterface
         http_response_code($this->status);
         foreach ($this->headers as $name => $value) {
             header($name . ': ' . $value);
+        }
+        foreach ($this->additionalCookies as $cookie) {
+            // false = add a further header line instead of replacing the one
+            // the loop above (or an earlier iteration of this one) already
+            // sent - PHP's header() replaces same-named headers by default.
+            header('Set-Cookie: ' . $cookie->header(), false);
         }
         echo $this->body;
     }

@@ -66,6 +66,56 @@ final readonly class Mailer
     }
 
     /**
+     * The e-mail second factor / login code (issue #17/M3-4,
+     * docs/spec/01-sicherheit.md section 3). Same immediate-attempt pattern
+     * as sendeTestmail(): the confirmation page needs to know right away
+     * whether the code actually went out.
+     */
+    public function sendeMfaCode(
+        string $empfaenger,
+        string $code,
+        int $gueltigMinuten,
+        ?\DateTimeImmutable $now = null,
+    ): MailAttemptResult {
+        $now ??= new \DateTimeImmutable();
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('mfa-code', ['code' => $code, 'gueltigMinuten' => $gueltigMinuten]);
+        $id = $this->queue->enqueue($empfaenger, 'Anmeldecode für Vereinsbelege', $body, $now);
+
+        $mail = $this->queue->claimById($id, $now);
+        if ($mail === null) {
+            return new MailAttemptResult(false, 'Die Mail konnte nicht aus der Warteschlange geholt werden.');
+        }
+
+        return $this->attempt($mail, $settings, $now);
+    }
+
+    /**
+     * "Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
+     * geändert, Tresor-Freigabe erteilt/entzogen" (docs/spec/01-sicherheit.md
+     * section 3). $ereignis is one sentence from a fixed list the caller
+     * chooses - never user input, so the "no business content" rule
+     * (CLAUDE.md section 4) holds without this class having to check.
+     */
+    public function sendeSicherheitshinweis(string $empfaenger, string $ereignis, ?\DateTimeImmutable $now = null): MailAttemptResult
+    {
+        $now ??= new \DateTimeImmutable();
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('sicherheitshinweis', [
+            'ereignis' => $ereignis,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $id = $this->queue->enqueue($empfaenger, 'Sicherheitshinweis Vereinsbelege', $body, $now);
+
+        $mail = $this->queue->claimById($id, $now);
+        if ($mail === null) {
+            return new MailAttemptResult(false, 'Die Mail konnte nicht aus der Warteschlange geholt werden.');
+        }
+
+        return $this->attempt($mail, $settings, $now);
+    }
+
+    /**
      * Cron entry point (App\Service\Cron\MailQueueTask): works through
      * everything due right now, one attempt each.
      */

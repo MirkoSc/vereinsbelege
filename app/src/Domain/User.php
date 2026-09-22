@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain;
 
+use App\Service\Account\MfaMethod;
+
 /**
  * One row of the `user` table, as App\Repository\UserRepository reads it
  * back (docs/spec/02-datenmodell.md "Benutzer und Sicherheit").
@@ -26,9 +28,23 @@ final readonly class User
         public UserStatus $status,
         public ?\DateTimeImmutable $expiresAt,
         public bool $mfaRequired,
+        public ?MfaMethod $mfaMethod,
         public \DateTimeImmutable $createdAt,
         public ?\DateTimeImmutable $lastLoginAt,
     ) {
+    }
+
+    /**
+     * Whether a second factor is actually usable, not merely required
+     * (docs/spec/01-sicherheit.md section 3, issue #17): `mfa_required`
+     * defaults to true for every account from the moment it is created
+     * (migrations/006_user.sql), long before anybody set a factor up.
+     * App\Http\LoginGuard uses this to force enrollment instead of letting a
+     * required-but-absent factor quietly mean "none".
+     */
+    public function mfaEingerichtet(): bool
+    {
+        return $this->mfaMethod !== null;
     }
 
     /**
@@ -56,6 +72,7 @@ final readonly class User
             'status' => $this->status->value,
             'expiresAt' => $this->expiresAt?->format('c'),
             'mfaRequired' => $this->mfaRequired,
+            'mfaMethod' => $this->mfaMethod?->value,
         ];
     }
 }

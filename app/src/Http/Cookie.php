@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http;
 
+use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionVault;
 
 /**
@@ -29,6 +30,9 @@ final readonly class Cookie
      * vaultKey(). Development only.
      */
     public const string INSECURE_NAME = 'vk';
+
+    /** Development-only name for the remembered-device cookie, see trustedDevice(). */
+    private const string INSECURE_TRUSTED_DEVICE_NAME = 'td';
 
     /**
      * @param int|null $maxAge null = a session cookie, which is what the
@@ -91,6 +95,53 @@ final readonly class Cookie
     public static function vaultKeyFrom(Request $request): ?string
     {
         return $request->cookie(SessionVault::COOKIE) ?? $request->cookie(self::INSECURE_NAME);
+    }
+
+    /**
+     * The session key K_s of a pending login
+     * (App\Service\Account\PendingLogin) - same shape as vaultKey(), same
+     * `__Host-`/plain-HTTP split, same Strict same-site rule: a second
+     * factor answered from a cross-site navigation is exactly what this
+     * cookie must never allow.
+     */
+    public static function pendingLoginKey(#[\SensitiveParameter] string $value, bool $secure): self
+    {
+        return new self(
+            name: $secure ? PendingLogin::COOKIE : PendingLogin::INSECURE_COOKIE,
+            value: $value,
+            secure: $secure,
+            sameSite: 'Strict',
+        );
+    }
+
+    public static function pendingLoginKeyFrom(Request $request): ?string
+    {
+        return $request->cookie(PendingLogin::COOKIE) ?? $request->cookie(PendingLogin::INSECURE_COOKIE);
+    }
+
+    /**
+     * "Dieses Gerät 30 Tage merken" (docs/spec/01-sicherheit.md section 3).
+     * Unlike the other two, this one is meant to outlive the browser
+     * session - `maxAge` in days, converted here so callers pass the same
+     * unit the setting (`mfa_geraet_merken_tage`) is stored in - and SameSite
+     * stays Lax: it has to be sent on the plain top-level navigation to
+     * `/anmelden` that starts a new login, which a cross-site POST could
+     * never trigger anyway (App\App\MfaController never reads it from
+     * anything but a same-site GET/POST of its own forms).
+     */
+    public static function trustedDevice(#[\SensitiveParameter] string $value, bool $secure, int $days): self
+    {
+        return new self(
+            name: $secure ? '__Host-td' : self::INSECURE_TRUSTED_DEVICE_NAME,
+            value: $value,
+            secure: $secure,
+            maxAge: max(1, $days) * 86400,
+        );
+    }
+
+    public static function trustedDeviceFrom(Request $request): ?string
+    {
+        return $request->cookie('__Host-td') ?? $request->cookie(self::INSECURE_TRUSTED_DEVICE_NAME);
     }
 
     /**

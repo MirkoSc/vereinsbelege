@@ -14,24 +14,23 @@ use App\Service\Cron\MailQueueTask;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\MailException;
 use App\Service\Mail\Mailer;
-use App\Service\Mail\MailMessage;
-use App\Service\Mail\MailSettings;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\Mail\MailTransport;
 use App\Service\Mail\SmtpSecurity;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\FakeMailTransport;
 
 /**
  * App\Service\Mail\Mailer against a real server: the immediate attempt of
  * spec 06 section 3, the exponential backoff, the fifth failure giving up,
  * and the cron task that shares the same class (CLAUDE.md section 6a).
  *
- * The transport is a fake (FakeMailTransport, below) - no socket, no
- * network; what this suite exercises is the queue/backoff bookkeeping
- * around a transport, which SmtpTransportTest and MailQueueTest already
- * cover on their own.
+ * The transport is a fake (App\Tests\Support\FakeMailTransport) - no
+ * socket, no network; what this suite exercises is the queue/backoff
+ * bookkeeping around a transport, which SmtpTransportTest and MailQueueTest
+ * already cover on their own.
  */
 final class MailerTest extends DatabaseTestCase
 {
@@ -146,29 +145,33 @@ final class MailerTest extends DatabaseTestCase
         self::assertNull($this->queue->find($altGesendet));
         self::assertNotNull($this->queue->find($altFehler), 'failed mails stay for a human to look at');
     }
-}
 
-/**
- * In-memory MailTransport double: succeeds or throws MailException according
- * to a fixed script, and records every message it was asked to send.
- */
-final class FakeMailTransport implements MailTransport
-{
-    /** @var list<MailMessage> */
-    public array $gesendete = [];
+    // ------------------------------------------------------ M3-4 (issue #17)
 
-    /**
-     * @param list<bool> $ergebnisse true = succeeds, false = throws
-     */
-    public function __construct(private array $ergebnisse)
+    public function testMfaCodeIsAttemptedImmediatelyAndCarriesTheCode(): void
     {
+        $transport = new FakeMailTransport([true]);
+
+        $ergebnis = $this->mailer($transport)->sendeMfaCode('empfaenger@example.org', '123456', 10, $this->t0);
+
+        self::assertTrue($ergebnis->erfolg);
+        self::assertCount(1, $transport->gesendete);
+        self::assertSame('empfaenger@example.org', $transport->gesendete[0]->to);
+        self::assertStringContainsString('123456', $transport->gesendete[0]->body);
+        self::assertStringContainsString('10', $transport->gesendete[0]->body);
     }
 
-    public function send(MailMessage $mail, MailSettings $settings): void
+    public function testSicherheitshinweisTraegtDasEreignisAberKeineFachlichenDaten(): void
     {
-        $this->gesendete[] = $mail;
-        if (!array_shift($this->ergebnisse)) {
-            throw new MailException('Testfehler.');
-        }
+        $transport = new FakeMailTransport([true]);
+
+        $ergebnis = $this->mailer($transport)->sendeSicherheitshinweis(
+            'empfaenger@example.org',
+            'Ein neues Gerät wurde gemerkt.',
+            $this->t0,
+        );
+
+        self::assertTrue($ergebnis->erfolg);
+        self::assertStringContainsString('Ein neues Gerät wurde gemerkt.', $transport->gesendete[0]->body);
     }
 }
