@@ -143,6 +143,27 @@ final readonly class UserRepository
     }
 
     /**
+     * The end date of an external account (docs/spec/01-sicherheit.md
+     * section 4); `null` for a regular one. App\Domain\User::mayLogIn()
+     * refuses the account from that moment on, and App\Http\LoginGuard ends
+     * a session that outlives it (issue #19/M3-6).
+     */
+    public function updateExpiry(int $id, ?\DateTimeImmutable $expiresAt): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET expires_at = ? WHERE id = ?');
+        $stmt->execute([$expiresAt?->format(self::FORMAT), $id]);
+    }
+
+    /** External accounts always need a second factor (01 section 4). */
+    public function updateMfaRequired(int $id, bool $required): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET mfa_required = ? WHERE id = ?');
+        $stmt->bindValue(1, $required, \PDO::PARAM_BOOL);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * Whether any account already exists - the installer refuses a fresh
      * admin once one does (docs/spec/06-betrieb.md section 1).
      */

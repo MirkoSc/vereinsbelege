@@ -27,11 +27,9 @@ use App\View\View;
  * StorageController and UpdateController in that respect.
  *
  * ---------------------------------------------------------------------
- * LOGIN REQUIRED since M3-3, exactly like those two: the routes are wrapped
- * in App\Http\LoginGuard (app/src/routes.php). Roles and the Permission
- * enum are still M3-6 (docs/spec/01-sicherheit.md section 4), so until then
- * every account that can log in can send mail through the club's SMTP
- * account from here. CSRF is enforced regardless.
+ * RIGHT REQUIRED: `admin.settings` (docs/spec/01-sicherheit.md section 4,
+ * M3-6), declared on the routes and checked by App\Http\LoginGuard
+ * (app/src/routes.php). CSRF is enforced on top.
  * ---------------------------------------------------------------------
  */
 final readonly class MailController

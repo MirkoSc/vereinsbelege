@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Account;
 
+use App\Domain\Berechtigungen;
 use App\Domain\User;
 
 /**
@@ -17,6 +18,9 @@ use App\Domain\User;
  * at the next login, and a user deleted underneath a live session must stop
  * being one.
  *
+ * Together with the row come its rights (App\Domain\Berechtigungen), for
+ * the same reason: the guard checks them per request, per route.
+ *
  * The decrypted name lives for the length of one request. It is deliberately
  * not put into the session, which is a file on disk
  * (docs/spec/01-sicherheit.md section 2).
@@ -26,6 +30,12 @@ final readonly class SessionUser
     public function __construct(
         public User $user,
         public string $anzeigename,
+        /**
+         * The account's rights and scopes (issue #19/M3-6), loaded on
+         * every request together with the row - taking a role away takes
+         * effect on the next click.
+         */
+        public Berechtigungen $berechtigungen,
     ) {
     }
 

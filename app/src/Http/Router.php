@@ -4,24 +4,40 @@ declare(strict_types=1);
 
 namespace App\Http;
 
+/**
+ * Every route carries its access declaration (App\Http\Zugriff) as a
+ * required argument - there is no way to register one without
+ * (docs/spec/01-sicherheit.md section 4, issue #19/M3-6).
+ */
 final class Router
 {
     /** @var list<Route> */
     private array $routes = [];
 
-    public function get(string $pattern, \Closure $handler): void
+    public function get(string $pattern, Zugriff $zugriff, \Closure $handler): void
     {
-        $this->add(HttpMethod::Get, $pattern, $handler);
+        $this->add(HttpMethod::Get, $pattern, $zugriff, $handler);
     }
 
-    public function post(string $pattern, \Closure $handler): void
+    public function post(string $pattern, Zugriff $zugriff, \Closure $handler): void
     {
-        $this->add(HttpMethod::Post, $pattern, $handler);
+        $this->add(HttpMethod::Post, $pattern, $zugriff, $handler);
     }
 
-    public function add(HttpMethod $method, string $pattern, \Closure $handler): void
+    public function add(HttpMethod $method, string $pattern, Zugriff $zugriff, \Closure $handler): void
     {
-        $this->routes[] = new Route($method, $pattern, $handler);
+        $this->routes[] = new Route($method, $pattern, $zugriff, $handler);
+    }
+
+    /**
+     * All registered routes with their declarations - for the permission
+     * matrix test (tests/Http/RoutePermissionMatrixTest.php).
+     *
+     * @return list<Route>
+     */
+    public function routes(): array
+    {
+        return $this->routes;
     }
 
     public function match(HttpMethod $method, string $path): RouteMatch

@@ -9,8 +9,10 @@
  * @var string|null $angemeldet display name of the logged-in user, set by
  *      App\Http\LoginGuard through App\View\View - null on every public page
  * @var string|null $csrfToken
+ * @var \App\Domain\Berechtigungen|null $berechtigungen rights of the logged-in
+ *      account - the navigation lists only what it may open (M3-6)
  */
-$eintraege = $bereich->navigation();
+$eintraege = $bereich->navigation($berechtigungen ?? null);
 // The logout is a POST with a CSRF token, not a link: a GET that ends a
 // session can be triggered by any image tag on any page.
 $zeigeAbmelden = ($angemeldet ?? null) !== null && ($csrfToken ?? null) !== null;
@@ -50,19 +52,3 @@ $zeigeAbmelden = ($angemeldet ?? null) !== null && ($csrfToken ?? null) !== null
         </nav>
     <?php endif; ?>
 </header>
-
-<?php if ($bereich === \App\View\Area::Admin): ?>
-    <?php /* Part of the admin chrome, not of a single page: since M3-3 every
-             admin route needs a login (app/src/routes.php), but WHICH
-             logged-in user may do what is still open - roles and the
-             Permission enum are M3-6. Until then anybody with an account is
-             an administrator here, and the chrome says so. */ ?>
-    <div class="inhalt">
-        <p class="hinweis hinweis-warnung">
-            <strong>Rollen und Rechte fehlen noch.</strong> Diese Seiten verlangen seit
-            Meilenstein M3-3 eine Anmeldung, unterscheiden aber noch nicht zwischen
-            Rollen – jeder angemeldete Zugang darf hier alles. Die Rechteprüfung kommt
-            mit M3-6.
-        </p>
-    </div>
-<?php endif; ?>

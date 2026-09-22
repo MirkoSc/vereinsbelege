@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Installer;
 
+use App\Domain\SystemRole;
+use App\Repository\RoleRepository;
 use App\Repository\UserKeyRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
@@ -88,6 +90,13 @@ final readonly class FirstAdminSetup
             // The installer grants to itself - there is no other admin yet
             // to attribute the grant to (migrations/006_user.sql: granted_by NULL).
             new VaultGrantRepository($this->pdo)->insert($userId, $grant, grantedBy: null);
+
+            // The first account is the administrator (docs/spec/
+            // 01-sicherheit.md section 4, issue #19/M3-6). The role row comes
+            // from migrations/010_role.sql, which the installer ran before.
+            $admin = new RoleRepository($this->pdo)->findSystem(SystemRole::Admin)
+                ?? throw new \RuntimeException('Die Admin-Rolle fehlt – sind alle Migrationen gelaufen?');
+            new RoleRepository($this->pdo)->assignToUser($userId, [$admin->id]);
 
             $this->pdo->commit();
         } catch (\Throwable $e) {

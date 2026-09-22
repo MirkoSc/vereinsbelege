@@ -29,6 +29,7 @@ use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
 use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
+use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
@@ -681,7 +682,11 @@ final class PasswordFlowTest extends DatabaseTestCase
 
                 return $user === null
                     ? null
-                    : new SessionUser($user, $this->crypto->decrypt($user->displayNameEnc));
+                    : new SessionUser(
+                        $user,
+                        $this->crypto->decrypt($user->displayNameEnc),
+                        new UserAccessRepository($pdo)->berechtigungen($userId),
+                    );
             },
         );
 
@@ -701,6 +706,7 @@ final class PasswordFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $passwort,
+            $unerreichbar,
         );
 
         return new Kernel(

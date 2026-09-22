@@ -28,12 +28,11 @@ use App\Support\FileLogger;
  * texts the browser shows are German like everywhere else.
  *
  * ---------------------------------------------------------------------
- * Rights at this milestone: a login (M3-3), not yet a permission (M3-6).
- * The routes are wrapped in App\Http\LoginGuard (app/src/routes.php), which
- * answers 401 JSON rather than redirecting - these endpoints are driven
+ * Rights: `document.submit_internal` (M3-6, issue #19), declared on the
+ * routes and checked by App\Http\LoginGuard (app/src/routes.php), which
+ * answers 401/403 JSON rather than redirecting - these endpoints are driven
  * from fetch(), where a login page would arrive as garbage. The CSRF token
- * is checked on top of that. From M3-6 on these routes get
- * `document.submit_internal`.
+ * is checked on top of that.
  *
  * The public submission (/einreichen, M5) has no session by design and
  * therefore cannot use this route as it stands: it needs the invisible proof

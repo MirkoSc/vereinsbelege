@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\View;
 
+use App\Domain\Berechtigungen;
+use App\Domain\Permission;
+use App\Domain\PermissionScope;
+use App\Domain\Role;
 use App\View\Area;
 use App\View\Flash;
 use App\View\FlashArt;
@@ -194,17 +198,24 @@ final class ViewTest extends TestCase
     }
 
     /**
-     * Part of the admin chrome, so it holds on every admin page instead of
-     * only on the one that happens to render the banner itself. Since M3-3
-     * the gap it names is the rights check, not the login: every admin route
-     * is behind App\Http\LoginGuard, but every account that gets through it
-     * may still do everything (M3-6).
+     * The navigation shows what the account may open (issue #19/M3-6) -
+     * filtered on the server, from the rights the guard hands the View. A
+     * Kassenprüfer holds no `admin.*` right and never gets this far into
+     * /admin; within the area an account with only `admin.settings` does not
+     * see the update page.
      */
-    public function testTheAdminAreaWarnsThatRolesAreStillMissing(): void
+    public function testTheNavigationListsOnlyWhatTheAccountMayOpen(): void
     {
-        $html = $this->render('admin/designsystem', ['title' => ''], Area::Admin);
+        $rolle = new Role(1, 'Nur Einstellungen', null, false, [Permission::AdminSettings->value => PermissionScope::Alle]);
+        $view = new View(dirname(__DIR__, 2) . '/app/views', '1.2.3');
+        $view->setAnmeldung('Test', 'token', new Berechtigungen([$rolle]));
 
-        self::assertStringContainsString('Rollen und Rechte fehlen noch', $html);
+        $html = $view->render('admin/designsystem', ['title' => ''], Area::Admin);
+
+        self::assertStringContainsString('href="/admin/mail"', $html);
+        self::assertStringNotContainsString('href="/admin/update"', $html);
+        self::assertStringNotContainsString('href="/admin/rollen"', $html);
+        self::assertStringNotContainsString('Rollen und Rechte fehlen noch', $html, 'Der Übergangshinweis aus M3-3 ist weg.');
     }
 
     /** A template must not be able to shadow the frame it renders into. */

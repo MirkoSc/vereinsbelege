@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\View;
 
+use App\Domain\Berechtigungen;
+use App\Domain\Permission;
+
 /**
  * One entry of an area's navigation.
  *
@@ -17,7 +20,18 @@ final readonly class NavItem
         public string $label,
         public ?string $href = null,
         public ?string $meilenstein = null,
+        /**
+         * The right the page behind the entry needs (issue #19/M3-6); null
+         * for pages every account of the area may open. Hiding the entry is
+         * courtesy - the route checks the same right itself.
+         */
+        public ?Permission $recht = null,
     ) {
+    }
+
+    public function sichtbarFuer(Berechtigungen $berechtigungen): bool
+    {
+        return $this->recht === null || $berechtigungen->darf($this->recht);
     }
 
     public function verfuegbar(): bool

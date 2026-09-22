@@ -127,7 +127,10 @@ zu erfinden.
   Prüfsumme in dessen `README.md`. htmx wird über
   `<meta name="htmx-config">` konfiguriert, nicht per Skript.
 - Rechte werden **serverseitig pro Aktion** geprüft (`Permission`-Enum),
-  nie nur in der UI ausgeblendet.
+  nie nur in der UI ausgeblendet. Jede Route deklariert ihren Zugriff
+  (`App\Http\Zugriff`, Pflichtargument von `Router::get/post`); Scopes
+  (Kostenstelle, Zeitraum) filtern Repositories per
+  `Zugriffsbereich::sqlBedingung()` in SQL (01 §4).
 
 ## 5. Datenhaltung
 

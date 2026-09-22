@@ -10,6 +10,7 @@ use App\Http\Request;
 use App\Http\ResponseInterface;
 use App\Http\Router;
 use App\Http\StaticFileHandler;
+use App\Http\Zugriff;
 use App\Support\FileLogger;
 use App\View\View;
 use PHPUnit\Framework\TestCase;
@@ -38,7 +39,7 @@ final class KernelErrorLogTest extends TestCase
     private static function routerLeakingArgument(string $secret): Router
     {
         $router = new Router();
-        $router->post('/anmelden', static function (Request $r, array $p) use ($secret): ResponseInterface {
+        $router->post('/anmelden', Zugriff::oeffentlich(), static function (Request $r, array $p) use ($secret): ResponseInterface {
             $attempt = static function (string $email, string $password): ResponseInterface {
                 throw new \RuntimeException('database unavailable');
             };
@@ -140,7 +141,7 @@ final class KernelErrorLogTest extends TestCase
 
         try {
             $router = new Router();
-            $router->get('/kaputt', static function (): ResponseInterface {
+            $router->get('/kaputt', Zugriff::oeffentlich(), static function (): ResponseInterface {
                 throw new \RuntimeException('interne Details');
             });
 

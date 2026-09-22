@@ -335,6 +335,63 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   nicht in der View.
 - Adminseite `/admin/*` nur mit mindestens einem `admin.*`-Recht erreichbar.
 
+### Umsetzung (M3-6, issue #19)
+
+- **Rechte:** `App\Domain\Permission` (Werte wie in der Tabelle, zugleich das
+  Speicherformat in `role.permissions`). Je Recht speichert eine Rolle die
+  Reichweite `alle` oder `kostenstelle` (`App\Domain\PermissionScope`);
+  „eigene Kostenstelle" gibt es nur für `inbox.view` und `report.view`.
+- **Mitgelieferte Rollen:** `App\Domain\SystemRole` (Matrix oben =
+  `standardRechte()` = Seed in Migration 010, ein Test hält alle drei
+  zusammen). Systemrollen sind nicht umbenennbar und nicht löschbar; ihre
+  Rechte sind anpassbar – **außer Admin: hat immer alle Rechte**, auch
+  künftig hinzukommende, egal was in der Zeile steht. Kassenprüfer und
+  Steuerberater sind *extern* (`role.is_external`).
+- **Mehrere Rollen je Konto:** Rechte = Vereinigung; gewährt mehr als eine
+  Rolle dasselbe Recht, gilt die weitere Reichweite
+  (`App\Domain\Berechtigungen`, pro Request frisch geladen – Rollenentzug
+  wirkt beim nächsten Klick).
+- **Rollen-CRUD:** `/admin/rollen` (Recht `admin.users`), Regeln in
+  `App\Service\Account\RoleService`: Name Pflicht/eindeutig; externe
+  Rollen nur lesende Rechte (`Permission::istLesend()`: `inbox.view`,
+  `bank.view`, `report.view`, `export.*`, `audit.view`); eine noch
+  zugewiesene Rolle wird nicht gelöscht und wechselt nicht zwischen
+  intern/extern; `admin.users` kann der letzten Rolle, über die es jemand
+  hat, nicht entzogen werden.
+- **Zuweisung** (`App\Service\Account\AccessAssignment`, Oberfläche mit
+  M3-7): externe Rollen nicht mit internen kombinierbar; externes Konto →
+  `expires_at` Pflicht (Default heute + 60 Tage, per `verlaengern()`
+  verschiebbar) und `mfa_required = 1`; internes Konto → kein Ablaufdatum.
+  Der letzte Verwalter (`admin.users`) behält sein Recht. Das Ablaufdatum
+  greift über `User::mayLogIn()` bei Login **und** bei jedem Request
+  (`LoginGuard`).
+- **Scopes:** `App\Domain\Zugriffsbereich` = Kostenstellen
+  (`user_cost_center`, nur für Rechte mit Reichweite `kostenstelle`) +
+  Zeitraum (`user_scope`, beide Grenzen inklusive, gilt für alle Rechte des
+  Kontos). Repositories holen ihn über
+  `Berechtigungen::zugriffsbereich(Permission)` und filtern mit
+  `sqlBedingung($datumsSpalte, $kostenstellenSpalte)` **in SQL**;
+  `erlaubt()` prüft eine einzeln geladene Zeile (Detailseite per ID). Ein
+  Kostenstellen-Scope ohne zugewiesene Kostenstelle sieht nichts, eine
+  Zeile ohne Kostenstelle liegt außerhalb jedes Kostenstellen-Scopes.
+- **Deklaration je Route:** `Router::get/post($muster, Zugriff, $handler)` –
+  `App\Http\Zugriff` ist Pflichtargument: `oeffentlich()`, `cron()`,
+  `angemeldet()`, `recht(Permission)`, `adminBereich()` (irgendein
+  `admin.*`), optional `->alsApi()` (401/403 als JSON). `app/src/routes.php`
+  leitet aus demselben Wert den Guard-Wrapper ab
+  (`LoginGuard::pruefe()`), Deklaration und Prüfung können also nicht
+  auseinanderlaufen. Fehlt das Recht: **403** (Fehlerseite bzw. JSON), nicht
+  die Anmeldeseite. Zusätzlich gilt für jeden Pfad unter `/admin` die
+  Untergrenze „mindestens ein `admin.*`-Recht". `/admin` leitet auf die
+  erste Admin-Seite, die das Konto öffnen darf.
+- **Navigation** wird serverseitig nach Rechten gefiltert (`NavItem::$recht`)
+  – reine Höflichkeit, die Route prüft selbst.
+- Bestehende Routen: `/app`, `/app/sicherheit*` = angemeldet;
+  `/api/upload*` = `document.submit_internal`; `/admin/designsystem` =
+  `admin.*`; `/admin/speicher*`, `/admin/mail*` = `admin.settings`;
+  `/admin/update*`, `/admin/wartung/aufheben` = `admin.system`;
+  `/admin/rollen*` = `admin.users`.
+
 ## 5. Öffentliche Einreichung – Schutz
 
 - Rate-Limit je IP (z. B. 10 Einreichungen/Stunde, Setting).

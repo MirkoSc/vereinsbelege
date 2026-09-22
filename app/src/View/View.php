@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\View;
 
+use App\Domain\Berechtigungen;
+
 /**
  * Minimal template renderer: plain PHP templates inside the shared layout.
  * Data keys become local variables in the template (EXTR_SKIP: the
@@ -39,6 +41,14 @@ final class View
 
     private ?string $csrfToken = null;
 
+    /**
+     * The rights of the logged-in account, set together with the name - the
+     * navigation shows only what the account may open (issue #19/M3-6).
+     * That is courtesy, not protection: every route checks for itself
+     * (App\Http\LoginGuard).
+     */
+    private ?Berechtigungen $berechtigungen = null;
+
     public function __construct(
         private readonly string $viewsDir,
         private readonly string $version,
@@ -55,10 +65,21 @@ final class View
      * @param string|null $anzeigename decrypted display name, or null when
      *                                 nobody is logged in
      */
-    public function setAnmeldung(?string $anzeigename, ?string $csrfToken): void
+    public function setAnmeldung(?string $anzeigename, ?string $csrfToken, ?Berechtigungen $berechtigungen = null): void
     {
         $this->angemeldet = $anzeigename;
         $this->csrfToken = $csrfToken;
+        $this->berechtigungen = $berechtigungen;
+    }
+
+    /**
+     * The logged-in account's rights, as the guard set them for this
+     * request - null outside the login. For handlers that only pick a
+     * target (/admin -> the first admin page the account may open).
+     */
+    public function berechtigungen(): ?Berechtigungen
+    {
+        return $this->berechtigungen;
     }
 
     /**
@@ -80,6 +101,7 @@ final class View
                 // After the spread, so a template cannot shadow the frame
                 // it renders into.
                 'angemeldet' => $this->angemeldet,
+                'berechtigungen' => $this->berechtigungen,
                 'content' => $content,
                 'bereich' => $bereich,
                 'pfad' => $this->currentPath,
