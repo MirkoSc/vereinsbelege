@@ -13,14 +13,14 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 
 | Tabelle | Spalten (Auszug) | Verschl. |
 |---|---|---|
-| `user` | email_enc, email_bi UNIQUE, display_name_enc, password_hash, status (`eingeladen`/`aktiv`/`gesperrt`), expires_at NULL, mfa_required, created_at, last_login_at | S |
-| `role` | name, is_system, permissions JSON | – |
-| `user_role` | user_id, role_id | – |
+| `user` | email_enc, email_bi UNIQUE, display_name_enc, password_hash, status (`eingeladen`/`aktiv`/`gesperrt`), expires_at NULL, mfa_required, created_at, last_login_at (Migration 006, M3-2) | S |
+| `role` | name, is_system, permissions JSON (M3-6) | – |
+| `user_role` | user_id, role_id (M3-6) | – |
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher") | – |
 | `user_scope` | user_id, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten) | – |
-| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem | – (selbst gewrappt) |
+| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
-| `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at | – (versiegelt) |
+| `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at | S |
 | `mfa_email_code` | user_id, code_hash, expires_at, attempts | – |
 | `mfa_backup_code` | user_id, code_hash, used_at | – |
@@ -29,11 +29,16 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `rate_limit` | key_hash, window_start, count (übernommen) | – |
 | `audit_log` | ts, user_id NULL, action, entity, entity_id, ip_hash, details_enc, dek_sealed, prev_hash, hash | T (details) |
 
-- `vault` steht als einzige dieser Tabellen schon (Migration 004, M2-4): der
-  Chunk-Upload ist der erste Schreiber, der einen Datenschlüssel versiegeln
-  muss, und dafür braucht er `public_key`. Die Zeile schreibt der Installer
-  mit M3-2; bis dahin ist die Tabelle leer und der Upload-Abschluss antwortet
-  503 (03 §4).
+- `vault` stand als einzige dieser Tabellen schon vor `user`/`user_key`/
+  `vault_grant` (Migration 004, M2-4): der Chunk-Upload ist der erste
+  Schreiber, der einen Datenschlüssel versiegeln muss, und dafür braucht er
+  nur `public_key`. Die Zeile schreibt seit M3-2 der Installer
+  (`App\Installer\FirstAdminSetup`, 06 §1); vor der ersten Installation ist
+  die Tabelle leer und der Upload-Abschluss antwortet 503 (03 §4).
+- `role`/`user_role` kommen erst mit M3-6 (01 §4): bis dahin ist der
+  Installer-Benutzer schlicht der einzige mit einem `vault_grant` – M3-6
+  legt die Rollentabellen an und weist der bestehenden Zeile die Admin-Rolle
+  zu, ohne diese Migration zu ändern.
 
 ## Betrieb
 

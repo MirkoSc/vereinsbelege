@@ -194,6 +194,29 @@ final class RecoveryKeyTest extends TestCase
     }
 
     /**
+     * The installer's confirmation step (docs/spec/01-sicherheit.md section 2)
+     * compares only the last group, typed back the way people actually type -
+     * same tolerance as parse() applied to the whole key.
+     */
+    public function testNormalizeGroupAppliesTheSameToleranceAsParsing(): void
+    {
+        $gruppe = RecoveryKey::forVault(Vault::create())->lastGroup();
+
+        self::assertSame($gruppe, RecoveryKey::normalizeGroup($gruppe));
+        self::assertSame($gruppe, RecoveryKey::normalizeGroup(strtolower($gruppe)));
+        self::assertSame($gruppe, RecoveryKey::normalizeGroup(" $gruppe \n"));
+        self::assertSame(
+            $gruppe,
+            RecoveryKey::normalizeGroup(strtr($gruppe, ['0' => 'O', '1' => 'l'])),
+        );
+    }
+
+    public function testNormalizeGroupDropsSeparatorsButNotOtherCharacters(): void
+    {
+        self::assertSame('AB12CD34', RecoveryKey::normalizeGroup('ab-12 cd34'));
+    }
+
+    /**
      * The 56 characters without the group separators - the form a test can
      * change a single character of.
      */

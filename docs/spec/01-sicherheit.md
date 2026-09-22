@@ -126,6 +126,12 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   (Crockford-Base32, 7 Gruppen à 8, Prüfsumme – Format siehe
   „Speicherformate") + als druckbare Seite. Installation erst
   abschließbar nach Eingabe der letzten Gruppe (Beweis, dass notiert).
+  Umgesetzt mit M3-2 (`App\Installer\FirstAdminSetup`, 06 §1): Tresor und
+  Admin stehen schon in der Datenbank, sobald der Schlüssel angezeigt wird –
+  `VK_priv` darf ja nie unverschlüsselt in der Session liegen –, nur der Hash
+  der letzten Gruppe wartet dort auf die Bestätigung. Bricht der Vorgang vorher
+  ab (Browser zu), bietet `/install` „Neu beginnen“ an und entfernt die
+  halbfertige Zeile wieder, statt eine leere Datenbank zu verlangen.
 
 ## 3. Anmeldung
 
@@ -133,7 +139,10 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   (Fallback `PASSWORD_BCRYPT`, falls Hosting-Check Argon2 verneint).
   Passwort-Hash und KEK-Salt sind getrennt.
 - Passwortregeln: min. 12 Zeichen, Abgleich gegen eine mitgelieferte Liste
-  häufiger Passwörter, keine Zusammensetzungsregeln.
+  häufiger Passwörter, keine Zusammensetzungsregeln. Umgesetzt als
+  `App\Service\Account\PasswordPolicy` (M3-2), Liste unter
+  `app/data/haeufige-passwoerter.txt` (CLAUDE.md §2) – eine eigene
+  Zusammenstellung, keine separat lizenzierte Fremdliste (CLAUDE.md §8).
 - **Zweiter Faktor** (pro Rolle erzwingbar, Default: Pflicht für alle):
   - **TOTP** (Authenticator-App, RFC 6238, QR-Code serverseitig in reinem
     PHP) – empfohlen.
@@ -152,7 +161,8 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 - Session-ID-Regeneration bei Login und Rechtewechsel.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
-  Wiederherstellungsschlüssel im selben Flow.
+  Wiederherstellungsschlüssel im selben Flow. Umgesetzt mit M3-2 (06 §1);
+  Login selbst folgt erst mit M3-3.
 
 ## 4. Rollen und Rechte
 

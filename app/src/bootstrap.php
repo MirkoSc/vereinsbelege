@@ -94,6 +94,8 @@ if (!is_file($configFile)) {
     $router = new Router();
     $router->get('/install', $installer->form(...));
     $router->post('/install', $installer->submit(...));
+    $router->post('/install/schluessel', $installer->confirmKey(...));
+    $router->post('/install/neu', $installer->restart(...));
     $router->post('/install/wiederherstellen', $installer->restoreStep(...));
     // Registered last: the router takes the first matching route, and this
     // one matches everything.

@@ -67,11 +67,7 @@ final readonly class RecoveryKey
      */
     public static function parse(#[\SensitiveParameter] string $input): self
     {
-        $normalized = strtr(strtoupper(preg_replace('/[^0-9A-Za-z]/', '', $input) ?? ''), [
-            'O' => '0',
-            'I' => '1',
-            'L' => '1',
-        ]);
+        $normalized = self::normalizeGroup($input);
 
         if (strlen($normalized) !== self::ENCODED_LENGTH) {
             throw new CryptoException(sprintf(
@@ -94,6 +90,25 @@ final readonly class RecoveryKey
         }
 
         return new self(substr($body, 1));
+    }
+
+    /**
+     * The same forgiving normalisation parse() applies to the whole key,
+     * usable on a single group: upper/lower case and separators are dropped,
+     * `O` reads as `0`, `I`/`L` as `1` (Crockford Base32, see the class
+     * docblock). The installer's confirmation step
+     * (docs/spec/01-sicherheit.md section 2, "Wiederherstellungsschlüssel")
+     * uses it to compare only the last group without ever storing the
+     * recovery key itself - the caller hashes the result and compares
+     * hashes.
+     */
+    public static function normalizeGroup(#[\SensitiveParameter] string $input): string
+    {
+        return strtr(strtoupper(preg_replace('/[^0-9A-Za-z]/', '', $input) ?? ''), [
+            'O' => '0',
+            'I' => '1',
+            'L' => '1',
+        ]);
     }
 
     /**

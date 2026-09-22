@@ -77,12 +77,67 @@ async function initRestore() {
     }
 }
 
+// Which of the two optional fieldsets applies for a chosen `modus`
+// ("frisch"/"restore", the /install radio group): the other one is both
+// hidden and disabled, so a browser's native `required` validation never
+// blocks submitting the form over fields that do not apply, and nothing in
+// the hidden fieldset is even sent (docs/spec/06-betrieb.md section 1).
+function feldgruppenFuer(modus) {
+    return {
+        ersterZugangVerdeckt: modus !== 'frisch',
+        backupVerdeckt: modus !== 'restore',
+    };
+}
+
+function schalteFeldgruppe(element, verdeckt) {
+    if (element === null) {
+        return;
+    }
+    element.hidden = verdeckt;
+    element.querySelectorAll('input').forEach((feld) => {
+        feld.disabled = verdeckt;
+    });
+}
+
+function wendeModusAn(modus) {
+    const stand = feldgruppenFuer(modus);
+    schalteFeldgruppe(document.querySelector('#erster-zugang'), stand.ersterZugangVerdeckt);
+    schalteFeldgruppe(document.querySelector('#backup-upload'), stand.backupVerdeckt);
+}
+
+function initModusUmschalter() {
+    const radios = document.querySelectorAll('input[name="modus"]');
+    if (radios.length === 0) {
+        return;
+    }
+    // The server already rendered the right hidden/disabled state for the
+    // preselected radio (progressive enhancement); this only keeps it in
+    // sync when the admin switches.
+    radios.forEach((radio) => {
+        radio.addEventListener('change', () => wendeModusAn(radio.value));
+    });
+}
+
+/**
+ * The recovery key page's "drucken" button - a real click handler and not
+ * an inline onclick, which the CSP (script-src 'self' without
+ * 'unsafe-inline', CLAUDE.md section 4) would silently drop.
+ */
+function initSchluesselDrucken() {
+    const knopf = document.querySelector('#schluessel-drucken');
+    if (knopf !== null) {
+        knopf.addEventListener('click', () => window.print());
+    }
+}
+
 if (typeof document !== 'undefined') {
     initRestore();
+    initModusUmschalter();
+    initSchluesselDrucken();
 }
 
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { fortschrittProzent, statusText };
+    module.exports = { fortschrittProzent, statusText, feldgruppenFuer };
 }

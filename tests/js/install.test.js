@@ -5,7 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { fortschrittProzent, statusText } = require('../../public/js/install.js');
+const { fortschrittProzent, statusText, feldgruppenFuer } = require('../../public/js/install.js');
 
 test('progress is the share of statements applied, in whole percent', () => {
     assert.equal(fortschrittProzent(0, 400), 0);
@@ -45,4 +45,27 @@ test('the blob phase counts files, not statements', () => {
         statusText({ fertig: true, phase: 'blobs', offset: 12, gesamt: 12 }),
         'Fertig. Das Backup ist eingespielt.',
     );
+});
+
+test('a fresh install shows the admin fieldset and hides the backup upload', () => {
+    assert.deepEqual(feldgruppenFuer('frisch'), {
+        ersterZugangVerdeckt: false,
+        backupVerdeckt: true,
+    });
+});
+
+test('a restore shows the backup upload and hides the admin fieldset', () => {
+    assert.deepEqual(feldgruppenFuer('restore'), {
+        ersterZugangVerdeckt: true,
+        backupVerdeckt: false,
+    });
+});
+
+test('an unknown mode is treated like a restore, not a fresh install', () => {
+    // Whatever the server did not preselect must not accidentally reveal
+    // the admin fieldset - the safer default is "hidden".
+    assert.deepEqual(feldgruppenFuer('irgendwas'), {
+        ersterZugangVerdeckt: true,
+        backupVerdeckt: true,
+    });
 });

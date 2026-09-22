@@ -660,3 +660,77 @@ textarea[aria-invalid="true"] {
     padding-left: 1.25rem;
     font-size: var(--schrift-klein);
 }
+
+/* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
+
+/* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).
+   Mobile first (CLAUDE.md-Konvention dieser Datei): zwei feste Spalten ab
+   360 px, vier ab 30rem (etwa Tablet) - bewusst feste Spaltenzahlen statt
+   `auto-fit`/`minmax()`, weil die acht ungetrennten Monospace-Zeichen je
+   Gruppe ein Grid-Item sonst nicht unter seine eigene Inhaltsbreite
+   schrumpfen lassen (`min-width: auto`) und ein Rundenfehler bei der
+   Spaltenzahl zu horizontalem Scrollen führen könnte; `.schluessel-gruppe`
+   bekommt zusätzlich `overflow-x: auto`, das laut Grid-Spezifikation genau
+   diese automatische Mindestbreite auf 0 setzt. Mit 360×800 geprüft
+   (Screenshot-Prüfliste im PR). */
+.schluessel-gruppen {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--abstand-2);
+    margin: var(--abstand-4) 0;
+    padding: var(--abstand-4);
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand-stark);
+    border-radius: var(--radius-gross);
+}
+
+@media (min-width: 30rem) {
+    .schluessel-gruppen {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+.schluessel-gruppe {
+    padding: var(--abstand-2);
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: var(--schrift-gross);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.05em;
+    text-align: center;
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+/* Nur beim Ausdrucken sichtbar - Gegenstück zu .nicht-drucken. */
+.nur-druck {
+    display: none;
+}
+
+/* Der Ausdruck ist für den Vereinstresor (docs/spec/01-sicherheit.md
+   Abschnitt 2): nur Überschrift und Schlüssel, keine Navigation, kein
+   Formular, keine Bedienelemente - sonst nichts, was fachlich falsch am
+   Papier wäre. */
+@media print {
+    .kopf,
+    .fuss,
+    .sprungmarke,
+    .flash,
+    .nicht-drucken {
+        display: none;
+    }
+
+    .nur-druck {
+        display: block;
+    }
+
+    .schluessel-gruppen {
+        background: none;
+        border-color: #000;
+    }
+
+    .schluessel-gruppe {
+        border-color: #000;
+    }
+}

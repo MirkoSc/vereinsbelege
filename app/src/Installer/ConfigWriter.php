@@ -26,6 +26,19 @@ final class ConfigWriter
     public const int SERVER_KEY_BYTES = ServerCrypto::KEY_BYTES;
 
     /**
+     * The server key alone, base64 encoded - for the fresh-install flow
+     * (M3-2), which needs the key one request earlier than write(): it seals
+     * the first admin's email/display name before config.php exists, and
+     * config.php is only written once the recovery key is confirmed. Kept
+     * between the two requests in the session, the same way the restore
+     * chain already carries a server key in $_SESSION['install_restore'].
+     */
+    public static function generateServerKey(): string
+    {
+        return base64_encode(random_bytes(self::SERVER_KEY_BYTES));
+    }
+
+    /**
      * @param array<string, mixed> $db host/port/name/user/password
      * @param ?string $serverKey base64 server key to keep (restore); null generates a new one
      */
@@ -42,7 +55,7 @@ final class ConfigWriter
             ],
             // A restore passes the key of the backed-up installation: data
             // encrypted with it (M3: mail addresses, API keys) stays readable.
-            'server_key' => $serverKey ?? base64_encode(random_bytes(self::SERVER_KEY_BYTES)),
+            'server_key' => $serverKey ?? self::generateServerKey(),
             'cron_token' => bin2hex(random_bytes(24)),
         ];
 

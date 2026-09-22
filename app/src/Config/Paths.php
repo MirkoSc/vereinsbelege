@@ -45,6 +45,12 @@ final readonly class Paths
         return $this->releaseRoot . '/migrations';
     }
 
+    /** Small, dependency-free data files shipped in the release (e.g. the common-password list). */
+    public function dataDir(): string
+    {
+        return $this->releaseRoot . '/app/data';
+    }
+
     public function versionFile(): string
     {
         return $this->releaseRoot . '/VERSION';

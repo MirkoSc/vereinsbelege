@@ -51,4 +51,18 @@ final readonly class VaultRepository
         $stmt->bindValue(3, ($now ?? new \DateTimeImmutable())->format(self::FORMAT));
         $stmt->execute();
     }
+
+    /**
+     * "Neu beginnen" on the installer's key confirmation page
+     * (docs/spec/01-sicherheit.md section 2): the browser was closed before
+     * the recovery key was confirmed, so the half-finished generation - this
+     * row plus, via the foreign keys in migrations/006_user.sql, its user and
+     * grant - is removed. Safe only before config.php exists: nothing else
+     * ever deletes a vault generation.
+     */
+    public function delete(int $version): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM vault WHERE version = ?');
+        $stmt->execute([$version]);
+    }
 }
