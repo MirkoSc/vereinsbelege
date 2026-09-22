@@ -13,6 +13,13 @@
 <section class="schmal">
     <h2>Sicherheit</h2>
 
+    <h3>Passwort</h3>
+    <p>
+        Beim Ändern bleibt Ihre Tresor-Freigabe erhalten; andere angemeldete
+        Sitzungen werden beendet.
+    </p>
+    <p><a class="knopf" href="/app/sicherheit/passwort">Passwort ändern</a></p>
+
     <h3>Zweiter Faktor</h3>
     <p>
         Aktuelle Methode:

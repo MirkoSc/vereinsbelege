@@ -11,6 +11,8 @@ use App\App\AuthController;
 use App\App\LoginCompleter;
 use App\App\MfaController;
 use App\App\MfaToolbox;
+use App\App\PasswordController;
+use App\App\PasswordToolbox;
 use App\App\SecurityController;
 use App\Config\Config;
 use App\Config\Paths;
@@ -21,6 +23,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\InstallController;
+use App\Repository\AuthTokenRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
@@ -38,7 +41,10 @@ use App\Repository\VaultRepository;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
+use App\Service\Account\PasswordPolicy;
+use App\Service\Account\PasswordReset;
 use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
@@ -46,6 +52,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
+use App\Service\Cron\AuthTokenCleanupTask;
 use App\Service\Cron\JobCleanupTask;
 use App\Service\Cron\MailCleanupTask;
 use App\Service\Cron\MailQueueTask;
@@ -218,6 +225,8 @@ $cron = static fn(): CronController => new CronController($config, static functi
             ),
             // M3-4: remembered devices whose 30 days are over.
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
+            // M3-5: password reset links whose 30 minutes are over.
+            new AuthTokenCleanupTask(new AuthTokenRepository($pdo)),
         ],
         logger: $logger,
     );
@@ -319,7 +328,7 @@ $mfaController = static fn(): MfaController => new MfaController(
 // #17). Built lazily like $storage/$mail below - every route here is
 // already behind $guard, but the controller still should not open a
 // connection before a matched route needs one.
-$sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaServiceFor, $mailerFor): SecurityController {
+$sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaServiceFor, $mailerFor, $paths): SecurityController {
     $pdo = $connections->pdo();
 
     return new SecurityController(
@@ -330,8 +339,40 @@ $sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaSe
         new UserRepository($pdo),
         $mailerFor($pdo),
         $serverCrypto,
+        new PasswordChange(
+            $pdo,
+            new PasswordHasher(),
+            new PasswordPolicy($paths->dataDir() . '/haeufige-passwoerter.txt'),
+            new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+        ),
     );
 };
+
+// "Passwort vergessen" (M3-5, issue #18): built lazily like $auth - the
+// forms need no database, only a submitted form or a checked link does.
+$passwort = static fn(): PasswordController => new PasswordController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger): PasswordToolbox {
+        $pdo = $connections->pdo();
+
+        return new PasswordToolbox(
+            new PasswordReset(
+                $pdo,
+                $serverCrypto,
+                new PasswordHasher(),
+                new PasswordPolicy($paths->dataDir() . '/haeufige-passwoerter.txt'),
+                new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+            ),
+            new UserRepository($pdo),
+            $mailerFor($pdo),
+            $mailSettingsFor($pdo),
+            $serverCrypto,
+            $logger,
+        );
+    },
+);
 
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
@@ -359,6 +400,7 @@ $router = new Router();
     $uploads,
     $storage,
     $mail,
+    $passwort,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

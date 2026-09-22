@@ -109,6 +109,18 @@ final class MailSettingsTest extends DatabaseTestCase
         self::assertSame('', $settings->passwort);
     }
 
+    /**
+     * The link base of M3-5 (issue #18): stored when given, kept when a
+     * caller from before it passes nothing.
+     */
+    public function testThePublicUrlIsStoredAndKeptWhenNotPassed(): void
+    {
+        $this->repo->save('smtp', 'h', 587, SmtpSecurity::Starttls, '', null, 'a@example.org', '', '', 'https://belege.example.org');
+        $this->repo->save('smtp', 'h', 587, SmtpSecurity::Starttls, '', null, 'a@example.org', '', '');
+
+        self::assertSame('https://belege.example.org', $this->repo->get()->oeffentlicheUrl);
+    }
+
     public function testDebugOutputMasksThePassword(): void
     {
         $this->repo->save('smtp', 'h', 587, SmtpSecurity::Starttls, '', 'sehr-geheim', 'a@example.org', '', '');

@@ -36,9 +36,20 @@ final readonly class LoginCompleter
     ) {
     }
 
-    public function complete(int $userId, ?Vault $vault, VaultAccess $vaultAccess, ?string $weiter): ResponseInterface
-    {
-        $this->session->login($userId);
+    /**
+     * @param int $sessionEpoch `user.session_epoch` from the moment the
+     *        password was checked, not re-read here: a reset that happened
+     *        in between (while a second factor was pending) must end this
+     *        session too, not be silently adopted by it (issue #18/M3-5).
+     */
+    public function complete(
+        int $userId,
+        ?Vault $vault,
+        VaultAccess $vaultAccess,
+        ?string $weiter,
+        int $sessionEpoch = 0,
+    ): ResponseInterface {
+        $this->session->login($userId, epoch: $sessionEpoch);
 
         $antwort = Response::redirect($weiter ?? '/app');
 

@@ -22,6 +22,7 @@ use App\Service\Crypto\Vault;
  *     $_SESSION['mfa_pending'] = [
  *         'user_id' => int, 'vault_access' => string (VaultAccess::name),
  *         'weiter' => ?string, 'created_at' => int (unix time),
+ *         'session_epoch' => int (`user.session_epoch` at the password check),
  *         'vault' => null | version(1) | nonce(24) | secretbox(VK_priv, K_s) + public_key + version,
  *     ]
  *     Cookie __Host-2fa = K_s, base64url
@@ -63,6 +64,7 @@ final class PendingLogin
         MfaMethod $mfaMethod,
         ?string $weiter,
         ?\DateTimeImmutable $now = null,
+        int $sessionEpoch = 0,
     ): string {
         $sessionKey = random_bytes(self::KEY_BYTES);
 
@@ -83,6 +85,7 @@ final class PendingLogin
             'weiter' => $weiter,
             'created_at' => ($now ?? new \DateTimeImmutable())->getTimestamp(),
             'vault' => $vaultEntry,
+            'session_epoch' => $sessionEpoch,
         ];
 
         $cookieValue = sodium_bin2base64($sessionKey, SODIUM_BASE64_VARIANT_URLSAFE_NO_PADDING);
@@ -145,7 +148,9 @@ final class PendingLogin
             }
         }
 
-        return new PendingLoginData($userId, $vault, $vaultAccess, $mfaMethod, $weiter);
+        $sessionEpoch = is_int($stored['session_epoch'] ?? null) ? $stored['session_epoch'] : 0;
+
+        return new PendingLoginData($userId, $vault, $vaultAccess, $mfaMethod, $weiter, $sessionEpoch);
     }
 
     public function clear(): void

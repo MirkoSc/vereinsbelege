@@ -48,6 +48,35 @@ final class SessionLoginTest extends TestCase
     }
 
     /**
+     * `user.session_epoch` at the time of the login (issue #18/M3-5) - the
+     * value App\Http\LoginGuard compares against the account's current one.
+     */
+    public function testLoginRecordsTheSessionEpoch(): void
+    {
+        $this->session->login(42, epoch: 3);
+
+        self::assertSame(3, $this->session->epoch());
+    }
+
+    /** A session from before migration 009 carries no epoch and reads as 0. */
+    public function testASessionWithoutEpochReadsAsTheColumnDefault(): void
+    {
+        $_SESSION = ['user_id' => 42];
+
+        self::assertSame(0, $this->session->epoch());
+    }
+
+    public function testAdoptEpochKeepsTheSessionLoggedIn(): void
+    {
+        $this->session->login(42, epoch: 1);
+
+        $this->session->adoptEpoch(2);
+
+        self::assertSame(42, $this->session->userId());
+        self::assertSame(2, $this->session->epoch());
+    }
+
+    /**
      * The CSRF token of the anonymous login form must not stay valid for the
      * session that form created (session fixation, section 3).
      */

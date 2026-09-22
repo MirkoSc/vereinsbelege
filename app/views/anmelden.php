@@ -47,6 +47,8 @@
         <p><button type="submit" class="knopf knopf-primaer">Anmelden</button></p>
     </form>
 
+    <p><a href="/anmelden/passwort-vergessen">Passwort vergessen?</a></p>
+
     <p class="feld-hilfe">
         Nach der Anmeldung wird der Tresor in Ihrer Sitzung entsperrt – nur
         so sind Belege lesbar. Er schließt sich beim Abmelden, nach

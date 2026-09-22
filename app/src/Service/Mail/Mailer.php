@@ -91,6 +91,36 @@ final readonly class Mailer
     }
 
     /**
+     * The password reset link (issue #18/M3-5, docs/spec/01-sicherheit.md
+     * section 3). Same immediate-attempt pattern as the other security
+     * mails. $link carries the plain token - it exists in this mail body and
+     * nowhere else on the server (the queue row is server-key ciphertext and
+     * is swept after sending, 06 section 3).
+     */
+    public function sendePasswortReset(
+        string $empfaenger,
+        #[\SensitiveParameter] string $link,
+        int $gueltigMinuten,
+        ?\DateTimeImmutable $now = null,
+    ): MailAttemptResult {
+        $now ??= new \DateTimeImmutable();
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('passwort-reset', [
+            'link' => $link,
+            'gueltigMinuten' => $gueltigMinuten,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $id = $this->queue->enqueue($empfaenger, 'Neues Passwort für Vereinsbelege', $body, $now);
+
+        $mail = $this->queue->claimById($id, $now);
+        if ($mail === null) {
+            return new MailAttemptResult(false, 'Die Mail konnte nicht aus der Warteschlange geholt werden.');
+        }
+
+        return $this->attempt($mail, $settings, $now);
+    }
+
+    /**
      * "Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
      * geändert, Tresor-Freigabe erteilt/entzogen" (docs/spec/01-sicherheit.md
      * section 3). $ereignis is one sentence from a fixed list the caller

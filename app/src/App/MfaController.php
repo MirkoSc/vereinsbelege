@@ -188,7 +188,7 @@ final readonly class MfaController
         $tools->users->touchLastLogin($pending->userId);
         $this->pendingLogin->clear();
 
-        $antwort = $this->completer->complete($pending->userId, $pending->vault, $pending->vaultAccess, $pending->weiter)
+        $antwort = $this->completer->complete($pending->userId, $pending->vault, $pending->vaultAccess, $pending->weiter, $pending->sessionEpoch)
             ->withCookie(Cookie::pendingLoginKey('', Request::httpsFromGlobals())->expired());
 
         if (isset($request->post['geraet_merken']) && !$backupCodeVerwendet) {

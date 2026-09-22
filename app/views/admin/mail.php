@@ -110,6 +110,17 @@ $maskiere = static function (string $adresse): string {
             <input type="text" id="mail-vereinsname" name="vereinsname" value="<?= e($einstellungen->vereinsname) ?>">
         </label>
 
+        <label for="mail-oeffentliche-url">Adresse dieser Installation
+            <input type="url" id="mail-oeffentliche-url" name="oeffentliche_url"
+                   value="<?= e($einstellungen->oeffentlicheUrl) ?>" placeholder="z. B. https://belege.example.org"
+                   autocomplete="off" spellcheck="false">
+        </label>
+        <p class="feld-hilfe">
+            Grundlage für Links in Mails (z. B. „Passwort vergessen“). Bleibt das
+            Feld leer, wird die aufgerufene Adresse nur verwendet, wenn sie zur
+            Domain der Absenderadresse gehört – sonst wird kein Link versendet.
+        </p>
+
         <p class="knopfreihe">
             <button type="submit" class="knopf knopf-primaer">Einstellungen speichern</button>
         </p>

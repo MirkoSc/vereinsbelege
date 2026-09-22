@@ -11,6 +11,7 @@ use App\Http\Session;
 use App\Repository\UserRepository;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\PasswordChange;
 use App\Service\Account\Totp;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\Mailer;
@@ -50,6 +51,7 @@ final readonly class SecurityController
         private UserRepository $users,
         private Mailer $mailer,
         private ServerCrypto $crypto,
+        private PasswordChange $passwordChange,
     ) {
     }
 
@@ -183,6 +185,61 @@ final readonly class SecurityController
         $this->session->flash('Das Gerät wurde entfernt.', FlashArt::Ok);
 
         return Response::redirect('/app/sicherheit');
+    }
+
+    /**
+     * Password change with the old password known (issue #18/M3-5,
+     * docs/spec/01-sicherheit.md section 2): the key is re-wrapped, the
+     * vault grant stays, the account's other sessions end.
+     */
+    public function passwort(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        $this->requireUserId();
+
+        return $this->passwortSeite();
+    }
+
+    public function passwortAendern(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->passwortSeite(['Die Sitzung ist abgelaufen – bitte erneut versuchen.']);
+        }
+        $userId = $this->requireUserId();
+
+        $ergebnis = $this->passwordChange->change(
+            $userId,
+            (string) ($request->post['passwort_alt'] ?? ''),
+            (string) ($request->post['passwort'] ?? ''),
+            (string) ($request->post['passwort_wiederholung'] ?? ''),
+        );
+
+        if (!$ergebnis->istErfolg()) {
+            return $this->passwortSeite($ergebnis->fehler);
+        }
+
+        // Every other session of the account ends at its next request
+        // (App\Http\LoginGuard); this one takes the new value and stays.
+        assert($ergebnis->sessionEpoch !== null);
+        $this->session->adoptEpoch($ergebnis->sessionEpoch);
+
+        $this->hinweisSenden($userId, 'Ihr Passwort wurde geändert. Andere angemeldete Sitzungen wurden beendet.');
+        $this->session->flash('Ihr Passwort wurde geändert. Andere angemeldete Sitzungen wurden beendet.', FlashArt::Ok);
+
+        return Response::redirect('/app/sicherheit');
+    }
+
+    /**
+     * @param list<string> $fehler
+     */
+    private function passwortSeite(array $fehler = []): ResponseInterface
+    {
+        return Response::html($this->view->render('app/sicherheit-passwort', [
+            'title' => 'Passwort ändern',
+            'csrf' => $this->session->csrfToken(),
+            'fehler' => $fehler,
+        ], Area::App));
     }
 
     private function hinweisSenden(int $userId, string $ereignis): void

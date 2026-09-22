@@ -234,7 +234,10 @@ echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
   `app/views/mail/mfa-code.php`) und `Mailer::sendeSicherheitshinweis()`
   (ein fester Satz aus einer Liste im Aufrufer, Vorlage
   `app/views/mail/sicherheitshinweis.php`, für „neues Gerät gemerkt" und
-  „2FA geändert" – Passwort/Tresor-Freigabe folgen mit M3-5/M3-7). Bis zum
+  „2FA geändert", seit M3-5 auch „Passwort geändert/zurückgesetzt" –
+  Tresor-Freigabe folgt mit M3-7). Seit M3-5 (issue #18) außerdem
+  `Mailer::sendePasswortReset()` (Vorlage `app/views/mail/passwort-reset.php`,
+  nur Link und Gültigkeit). Bis zum
   Aufräumen (`MailCleanupTask`) steht ein versendeter Code damit
   server-schlüssel-verschlüsselt in `mail_queue`, wie jede andere Mail auch.
 - Mail-Vorlagen (Deutsch) als eigene Views unter `app/views/mail/`, gerendert
@@ -242,6 +245,11 @@ echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
   das immer das HTML-Layout (Navigation, CSS) davorsetzt; eine Mail ist weder
   HTML noch Teil eines Bereichs. **Keine fachlichen Inhalte** (keine Beträge,
   Lieferanten, IBANs) in Mails – nur Hinweise mit Link.
+- Links in Mails brauchen eine absolute Adresse: Setting `oeffentliche_url`
+  auf `/admin/mail` (nur `https://host[:port]`, `http://` nur für
+  `localhost`). Ohne das Setting wird der Host der Anfrage nur übernommen,
+  wenn er zur Domain der Absenderadresse gehört – sonst geht die Mail nicht
+  raus (Host-Header-Injection, 01 §3, `App\Service\Mail\PublicUrl`).
 - Absender, Reply-To, Vereinsname als Settings (`mail_absender`,
   `mail_antwort_an`, `mail_vereinsname`). SPF/DKIM beim Hoster einrichten
   (Doku in `docs/betrieb.md`, Folge-Issue zu #14).

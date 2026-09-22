@@ -31,6 +31,14 @@ final readonly class User
         public ?MfaMethod $mfaMethod,
         public \DateTimeImmutable $createdAt,
         public ?\DateTimeImmutable $lastLoginAt,
+        /**
+         * Copied into every session at login and compared on every request
+         * (App\Http\LoginGuard): raising it ends the sessions that carry
+         * the old value - a password reset ends all of them, a password
+         * change all but the one that made it (issue #18/M3-5,
+         * migrations/009_password_reset.sql).
+         */
+        public int $sessionEpoch = 0,
     ) {
     }
 
@@ -73,6 +81,7 @@ final readonly class User
             'expiresAt' => $this->expiresAt?->format('c'),
             'mfaRequired' => $this->mfaRequired,
             'mfaMethod' => $this->mfaMethod?->value,
+            'sessionEpoch' => $this->sessionEpoch,
         ];
     }
 }

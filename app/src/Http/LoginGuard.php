@@ -87,13 +87,16 @@ final readonly class LoginGuard
         $timeouts = ($this->timeouts)();
         $benutzer = ($this->benutzer)($userId);
 
-        // Three ways a live session stops being one: it ran out, the account
-        // behind it is gone, or the account is no longer allowed in. All
-        // three end the session here and now.
+        // Four ways a live session stops being one: it ran out, the account
+        // behind it is gone, the account is no longer allowed in, or its
+        // password was reset or changed elsewhere since this session logged
+        // in (`user.session_epoch`, issue #18/M3-5). All four end the
+        // session here and now.
         if (
             $this->session->isExpired($timeouts->idleSeconds, $timeouts->absoluteSeconds)
             || $benutzer === null
             || !$benutzer->user->mayLogIn(new \DateTimeImmutable())
+            || $this->session->epoch() !== $benutzer->user->sessionEpoch
         ) {
             new SessionVault()->clear();
             $this->session->destroy();

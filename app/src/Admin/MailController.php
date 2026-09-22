@@ -11,6 +11,7 @@ use App\Http\Session;
 use App\Repository\MailQueueRepository;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\PublicUrl;
 use App\Service\Mail\SmtpSecurity;
 use App\View\Area;
 use App\View\FlashArt;
@@ -79,8 +80,16 @@ final readonly class MailController
         $absender = trim((string) ($request->post['absender'] ?? ''));
         $antwortAn = trim((string) ($request->post['antwort_an'] ?? ''));
         $vereinsname = trim((string) ($request->post['vereinsname'] ?? ''));
+        $oeffentlicheUrlEingabe = trim((string) ($request->post['oeffentliche_url'] ?? ''));
 
         $fehler = $this->validate($transport, $host, $port, $sicherheit, $absender, $antwortAn);
+        // The base of links in mails (M3-5, issue #18): only scheme, host and
+        // port - App\Service\Mail\PublicUrl explains why the request's own
+        // Host header is not good enough.
+        $oeffentlicheUrl = $oeffentlicheUrlEingabe === '' ? '' : PublicUrl::normalize($oeffentlicheUrlEingabe);
+        if ($fehler === null && $oeffentlicheUrl === null) {
+            $fehler = 'Die Adresse der Installation muss mit https:// beginnen und darf nur aus Schema, Host und ggf. Port bestehen.';
+        }
         if ($fehler !== null) {
             $this->session->flash($fehler, FlashArt::Fehler);
 
@@ -106,6 +115,7 @@ final readonly class MailController
             absender: $absender,
             antwortAn: $antwortAn,
             vereinsname: $vereinsname,
+            oeffentlicheUrl: $oeffentlicheUrl,
         );
         $this->session->flash('Mail-Einstellungen gespeichert.');
 

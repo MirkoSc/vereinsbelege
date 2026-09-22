@@ -115,6 +115,7 @@ final readonly class AuthController
                 $ergebnis->vaultAccess,
                 $user->mfaMethod,
                 $weiter,
+                sessionEpoch: $user->sessionEpoch,
             );
 
             return Response::redirect('/anmelden/bestaetigen')->withCookie(
@@ -126,7 +127,7 @@ final readonly class AuthController
         $login = ($this->login)();
         $login->registerSuccess($user->id);
 
-        return $this->completer->complete($user->id, $ergebnis->vault, $ergebnis->vaultAccess, $weiter);
+        return $this->completer->complete($user->id, $ergebnis->vault, $ergebnis->vaultAccess, $weiter, $user->sessionEpoch);
     }
 
     private function deviceIsTrusted(Request $request, int $userId): bool

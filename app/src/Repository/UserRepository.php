@@ -114,6 +114,23 @@ final readonly class UserRepository
     }
 
     /**
+     * Ends the account's sessions (issue #18/M3-5): every session carries
+     * the value from its login, and App\Http\LoginGuard turns away the
+     * ones that no longer match. Returns the new value so that the one
+     * session that changed the password can adopt it and stay.
+     */
+    public function bumpSessionEpoch(int $id): int
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET session_epoch = session_epoch + 1 WHERE id = ?');
+        $stmt->execute([$id]);
+
+        $stmt = $this->pdo->prepare('SELECT session_epoch FROM `user` WHERE id = ?');
+        $stmt->execute([$id]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * Records which second factor an account has committed to
      * (docs/spec/01-sicherheit.md section 3, issue #17). `null` clears it -
      * used when a method is abandoned mid-setup or replaced by another one
@@ -167,6 +184,7 @@ final readonly class UserRepository
             mfaMethod: is_string($row['mfa_method'] ?? null) ? MfaMethod::tryFrom($row['mfa_method']) : null,
             createdAt: self::time($row['created_at']) ?? new \DateTimeImmutable(),
             lastLoginAt: self::time($row['last_login_at']),
+            sessionEpoch: (int) ($row['session_epoch'] ?? 0),
         );
     }
 

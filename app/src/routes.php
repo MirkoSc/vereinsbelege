@@ -9,6 +9,7 @@ use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuthController;
 use App\App\MfaController;
+use App\App\PasswordController;
 use App\App\SecurityController;
 use App\Http\LoginGuard;
 use App\Http\Request;
@@ -54,6 +55,10 @@ use App\View\View;
  * @param \Closure(): MailController $mail built lazily, same reason as
  *        $updates: only the mail page and the cron need the database, and
  *        the cron builds its own Mailer instead (bootstrap.php).
+ * @param \Closure(): PasswordController $passwort built lazily like $auth -
+ *        "Passwort vergessen" (M3-5, issue #18); the controller itself
+ *        defers its database work until a form is submitted or a link is
+ *        checked.
  */
 return static function (
     Router $router,
@@ -67,6 +72,7 @@ return static function (
     \Closure $uploads,
     \Closure $storage,
     \Closure $mail,
+    \Closure $passwort,
 ): void {
     // The guard is built once per request and only where a protected route
     // was actually matched: page()/api() return a wrapper, they do not run
@@ -99,6 +105,18 @@ return static function (
     $router->post('/anmelden/bestaetigen', static fn(Request $r) => $mfa()->submitCode($r));
     $router->post('/anmelden/code-senden', static fn(Request $r) => $mfa()->sendEmailCode($r));
     $router->post('/anmelden/backup-code', static fn(Request $r) => $mfa()->submitBackupCode($r));
+
+    // Password reset by mail link (M3-5, issue #18, docs/spec/
+    // 01-sicherheit.md sections 2 and 3). Permission: none, same reasoning as
+    // /anmelden - the way back in for somebody who cannot log in. Public
+    // pages with a session (CSRF on both writes). Protection: rate limit per
+    // IP and per address inside App\Service\Account\PasswordReset, one and
+    // the same answer whether an account exists, and a token that is 32
+    // random bytes, stored only as a hash, 30 minutes, single use.
+    $router->get('/anmelden/passwort-vergessen', static fn(Request $r) => $passwort()->vergessenForm($r));
+    $router->post('/anmelden/passwort-vergessen', static fn(Request $r) => $passwort()->vergessenSubmit($r));
+    $router->get('/anmelden/passwort-neu', static fn(Request $r) => $passwort()->neuForm($r));
+    $router->post('/anmelden/passwort-neu', static fn(Request $r) => $passwort()->neuSubmit($r));
 
     // Start page of the user area. The areas behind it (Posteingang, Belege,
     // Konten, ...) arrive from milestone M4 on; they are already in the
@@ -171,6 +189,13 @@ return static function (
         '/app/sicherheit/geraete/{id:\d+}/widerrufen',
         $geschuetzt(static fn(Request $r, array $params) => $sicherheit()->geraetWiderrufen($r, $params)),
     );
+
+    // Password change with the old password known (M3-5, issue #18).
+    // Permission: logged in (M3-3); every account changes its own password,
+    // no administration needed. CSRF on the write; wrong old passwords are
+    // rate limited per account (App\Service\Account\PasswordChange).
+    $router->get('/app/sicherheit/passwort', $geschuetzt(static fn(Request $r) => $sicherheit()->passwort($r)));
+    $router->post('/app/sicherheit/passwort', $geschuetzt(static fn(Request $r) => $sicherheit()->passwortAendern($r)));
 
     $router->get('/admin', $geschuetzt(static fn(): Response => Response::redirect('/admin/update')));
 

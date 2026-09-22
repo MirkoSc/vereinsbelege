@@ -34,7 +34,9 @@ use App\Repository\VaultRepository;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
+use App\Service\Account\PasswordPolicy;
 use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
@@ -594,6 +596,12 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             new UserRepository($pdo),
             $mailerFor($pdo),
             $crypto,
+            new PasswordChange(
+                $pdo,
+                new PasswordHasher(),
+                new PasswordPolicy(dirname(__DIR__, 2) . '/app/data/haeufige-passwoerter.txt'),
+                new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+            ),
         );
 
         $guard = fn(): LoginGuard => new LoginGuard(
@@ -620,6 +628,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             $guard,
             $mfaController,
             $sicherheit,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,
