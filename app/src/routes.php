@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\MailController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
@@ -33,6 +34,9 @@ use App\View\View;
  *        and storing a chunk needs no database at all.
  * @param \Closure(): StorageController $storage built lazily, same reason as
  *        $updates: the storage page is the only thing that needs it.
+ * @param \Closure(): MailController $mail built lazily, same reason as
+ *        $updates: only the mail page and the cron need the database, and
+ *        the cron builds its own Mailer instead (bootstrap.php).
  */
 return static function (
     Router $router,
@@ -41,6 +45,7 @@ return static function (
     \Closure $cron,
     \Closure $uploads,
     \Closure $storage,
+    \Closure $mail,
 ): void {
     $router->get('/', static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
@@ -107,6 +112,14 @@ return static function (
         '/admin/speicher/schritt/{schritt:[a-z]+}',
         static fn(Request $r, array $params) => $storage()->step($r, $params),
     );
+
+    // Mail (06 §3, issue #14): SMTP settings, a test mail, the retry queue.
+    // The controller and the cron share one Mailer - the queue holds only
+    // server-key ciphertext, so sending never needs a vault.
+    // Permission: administration, from M3-6 on; CSRF on all writes today.
+    $router->get('/admin/mail', static fn(Request $r) => $mail()->page($r));
+    $router->post('/admin/mail/einstellungen', static fn(Request $r) => $mail()->save($r));
+    $router->post('/admin/mail/testmail', static fn(Request $r) => $mail()->test($r));
 
     $router->get('/admin/update', static fn(Request $r) => $updates()->page($r));
     $router->post('/admin/update/kanal', static fn(Request $r) => $updates()->setChannel($r));
