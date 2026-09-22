@@ -52,4 +52,17 @@ final readonly class VaultGrantRepository
 
         return $sealed === false ? null : VaultGrant::fromStorage((string) $sealed);
     }
+
+    /**
+     * Revokes every grant of a user, all generations (docs/spec/
+     * 01-sicherheit.md section 2): used by the password reset of M3-5,
+     * whose new key pair could not open the old grants anyway - deleting
+     * them keeps the state honest ("Freigabe ausstehend") instead of leaving
+     * rows behind that look valid and are not.
+     */
+    public function deleteForUser(int $userId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM vault_grant WHERE user_id = ?');
+        $stmt->execute([$userId]);
+    }
 }

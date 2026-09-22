@@ -25,6 +25,13 @@ final readonly class MailSettings
         public string $absender,
         public string $antwortAn,
         public string $vereinsname,
+        /**
+         * Public address of this installation, e.g. https://belege.verein.de
+         * - the base of every link a mail carries (password reset, M3-5).
+         * Empty means "derive it from the request, but only when the host
+         * matches the sender's domain" (App\Service\Mail\PublicUrl).
+         */
+        public string $oeffentlicheUrl = '',
     ) {
     }
 
@@ -55,6 +62,7 @@ final readonly class MailSettings
             'absender' => $this->absender,
             'antwortAn' => $this->antwortAn,
             'vereinsname' => $this->vereinsname,
+            'oeffentlicheUrl' => $this->oeffentlicheUrl,
         ];
     }
 }

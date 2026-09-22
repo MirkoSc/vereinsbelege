@@ -134,10 +134,28 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 - **Freigabe**: Jeder angemeldete Admin (mit entsperrtem Tresor) sieht ein
   Banner „N Freigaben ausstehend" → ein Klick versiegelt `VK_priv` an
   `U_pub`. Admins bekommen dazu eine Mail (ohne fachlichen Inhalt).
-- **Passwort ändern** (altes bekannt): `U_priv` neu wrappen, sonst nichts.
+- **Passwort ändern** (altes bekannt): `U_priv` neu wrappen; Schlüsselpaar
+  und Grant bleiben. Zusätzlich enden die **anderen** Sitzungen des Kontos,
+  die ändernde bleibt (Entscheidung zu issue #18 – wer ändert, weil das
+  alte Passwort bekannt sein könnte, will genau das). Umgesetzt mit M3-5
+  (`App\Service\Account\PasswordChange`, `/app/sicherheit/passwort`);
+  falsche alte Passwörter zählen je Konto (Zweck `passwort.account`, Limit
+  wie beim Login).
 - **Passwort vergessen** (Reset per Mail): `U_priv` ist verloren → neues
   Schlüsselpaar, alte Grant-Zeile gelöscht → erneute Freigabe durch einen
-  Admin nötig. UI erklärt das vorab.
+  Admin nötig. UI erklärt das vorab. Umgesetzt mit M3-5
+  (`App\Service\Account\PasswordReset`, `/anmelden/passwort-vergessen` und
+  `/anmelden/passwort-neu`): beide Seiten und die Mail nennen die Folge vor
+  dem Absenden, das Formular verlangt dafür ein Häkchen; danach sagt ein
+  Hinweis auf der Anmeldeseite und – wie bei jedem Konto ohne Grant – der
+  Login selbst, dass die Freigabe aussteht.
+- **Sitzungen beenden** ohne Sitzungsregister: `user.session_epoch`
+  (Migration 009). Jede Sitzung übernimmt den Wert beim Login
+  (`App\Http\Session::login()`, bei 2FA schon zum Zeitpunkt der
+  Passwortprüfung über `PendingLogin`), `App\Http\LoginGuard` beendet jede
+  Sitzung, deren Wert abweicht. Reset und Ändern erhöhen ihn; beim Ändern
+  übernimmt die eigene Sitzung den neuen Wert (`Session::adoptEpoch()`, mit
+  neuer Session-ID).
 - **Letzter Admin hat Passwort vergessen**: Wiederherstellung im Installer-
   ähnlichen Flow `/admin/wiederherstellen` mit Wiederherstellungsschlüssel.
 - **Sperren/Entfernen**: Grant-Zeile löschen. Echte Schlüsselrotation
@@ -237,13 +255,29 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   zusätzlich sein eigenes Fünf-Versuche-Limit in der eigenen Zeile
   (`mfa_email_code.attempts`).
 - **Passwort-Reset**: Token 32 Byte, nur Hash gespeichert, 30 min,
-  einmalig; beendet alle Sessions des Nutzers.
+  einmalig; beendet alle Sessions des Nutzers. Umgesetzt mit M3-5
+  (issue #18, Tabelle `auth_token`, Typ `reset`): Token hex-kodiert im
+  Link, gespeichert nur `token_hash` = Blind-Index-HMAC des
+  Server-Schlüssels mit Zweck `auth_token.reset`; eine neue Anforderung
+  ersetzt den alten Link; verbraucht wird der Link erst, wenn das neue
+  Passwort die Regeln erfüllt. Anforderungen zählen je IP (10) und je
+  Adresse (3) im 15-Minuten-Fenster – jede Anforderung, nicht nur
+  Fehlschläge, weil jede eine Mail auslösen kann. Unbekannte, gesperrte und
+  abgelaufene Konten bekommen dieselbe Antwort und keine Mail. Die Mail geht
+  wie alle Sicherheitsmails sofort raus (06 §3); die dadurch messbar längere
+  Antwort bei existierenden Konten ist bewusst in Kauf genommen. Die Seite
+  hinter dem Link sendet `Referrer-Policy: no-referrer`.
+- **Link-Basis in Mails** (Schutz vor Host-Header-Injection): das Setting
+  `oeffentliche_url` (Admin „Mail") gilt immer; ohne es wird der Host der
+  Anfrage nur verwendet, wenn er die Domain der Absenderadresse oder eine
+  Subdomain davon ist – sonst geht keine Mail raus, und `app.log` bekommt
+  eine Zeile ohne Adresse und Token (`App\Service\Mail\PublicUrl`).
 - Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
   geändert, Tresor-Freigabe erteilt/entzogen. Umgesetzt für „neues Gerät"
   und „2FA geändert" mit M3-4 (`App\Service\Mail\Mailer::
   sendeSicherheitshinweis()`, Vorlage `app/views/mail/sicherheitshinweis.php`
   – ein fester Satz aus dem Aufrufer, nie Nutzereingabe); „Passwort geändert"
-  kommt mit M3-5, „Tresor-Freigabe" mit M3-7.
+  und „Passwort zurückgesetzt" mit M3-5, „Tresor-Freigabe" kommt mit M3-7.
 - Session-ID-Regeneration bei Login und Rechtewechsel.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
@@ -257,9 +291,11 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   seit M3-4, die Bestätigungsseite des zweiten Faktors
   (`/anmelden/bestaetigen`, `/anmelden/code-senden`, `/anmelden/backup-code`)
   – dort ist noch keine `App\Http\Session` angemeldet, nur ein
-  `PendingLogin` unterwegs (siehe oben). Die Anmeldeseite und die
-  Bestätigungsseite sind die einzigen öffentlichen Seiten mit einer Session;
-  beide brauchen ein CSRF-Token. `App\App\SecurityController`
+  `PendingLogin` unterwegs (siehe oben) – und, seit M3-5, die beiden Seiten
+  von „Passwort vergessen" (`/anmelden/passwort-vergessen`,
+  `/anmelden/passwort-neu`). Anmelde-, Bestätigungs- und Reset-Seiten sind
+  die einzigen öffentlichen Seiten mit einer Session; alle brauchen ein
+  CSRF-Token. `App\App\SecurityController`
   (`/app/sicherheit*`) liegt hinter dem Guard wie jede andere Seite in
   `/app` – der Guard nimmt diese Routen nur von seiner eigenen
   Einrichtungspflicht aus, nicht vom Login selbst. **Welcher** angemeldete

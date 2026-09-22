@@ -116,6 +116,19 @@ final class PendingLoginTest extends TestCase
         self::assertNotNull($pending->open($cookie, $kurzVorher));
     }
 
+    /**
+     * The epoch from the password check travels through the pending state
+     * unchanged (issue #18/M3-5): a reset during the 2FA step must end the
+     * session this login is about to become, not be adopted by it.
+     */
+    public function testDieSitzungsEpocheReistUnveraendertMit(): void
+    {
+        $pending = new PendingLogin();
+        $cookie = $pending->store(1, null, VaultAccess::KeineFreigabe, MfaMethod::Totp, null, sessionEpoch: 5);
+
+        self::assertSame(5, $pending->open($cookie)?->sessionEpoch);
+    }
+
     public function testClearVergisstDenZustand(): void
     {
         $pending = new PendingLogin();

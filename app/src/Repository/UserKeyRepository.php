@@ -37,6 +37,28 @@ final readonly class UserKeyRepository
     }
 
     /**
+     * Swaps the whole row for a new wrapping (issue #18/M3-5): after a
+     * password change the same key pair under a new KEK
+     * (App\Service\Crypto\UserKey::rewrap()), after a reset an entirely new
+     * key pair - the public key is overwritten too, which is what makes any
+     * grant sealed to the old one worthless.
+     */
+    public function replace(int $userId, UserKey $key): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_key SET public_key = ?, wrapped_private_key = ?, kdf_salt = ?, kdf_ops = ?, kdf_mem = ?
+             WHERE user_id = ?',
+        );
+        $stmt->bindValue(1, $key->publicKey(), \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $key->wrappedPrivateKey(), \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $key->kdf()->salt, \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $key->kdf()->opsLimit, \PDO::PARAM_INT);
+        $stmt->bindValue(5, $key->kdf()->memLimit, \PDO::PARAM_INT);
+        $stmt->bindValue(6, $userId, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * For the login (M3-3) and for tests that prove the wrapped key actually
      * unwraps with the password it was created with.
      */

@@ -19,6 +19,8 @@ final readonly class PendingLoginData
         public VaultAccess $vaultAccess,
         public MfaMethod $mfaMethod,
         public ?string $weiter,
+        /** `user.session_epoch` when the password was checked (issue #18/M3-5). */
+        public int $sessionEpoch = 0,
     ) {
     }
 }

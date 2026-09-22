@@ -37,6 +37,8 @@ final readonly class MailSettingsRepository
 
     private const string VEREINSNAME = 'mail_vereinsname';
 
+    private const string OEFFENTLICHE_URL = 'oeffentliche_url';
+
     public function __construct(
         private SettingRepository $settings,
         private ServerCrypto $crypto,
@@ -70,6 +72,7 @@ final readonly class MailSettingsRepository
             absender: $this->settings->get(self::ABSENDER),
             antwortAn: $this->settings->get(self::ANTWORT_AN),
             vereinsname: $this->settings->get(self::VEREINSNAME),
+            oeffentlicheUrl: $this->settings->get(self::OEFFENTLICHE_URL),
         );
     }
 
@@ -78,6 +81,8 @@ final readonly class MailSettingsRepository
      *        it, anything else replaces it. The form never carries the
      *        stored password back (MailController::page()), so there is no
      *        other way to say "leave it as is".
+     * @param ?string $oeffentlicheUrl null keeps the stored value (issue
+     *        #18/M3-5 added it; callers from before that do not pass it).
      */
     public function save(
         string $transport,
@@ -89,6 +94,7 @@ final readonly class MailSettingsRepository
         string $absender,
         string $antwortAn,
         string $vereinsname,
+        ?string $oeffentlicheUrl = null,
     ): void {
         $this->settings->set(self::TRANSPORT, $transport);
         $this->settings->set(self::HOST, $host);
@@ -104,5 +110,8 @@ final readonly class MailSettingsRepository
         $this->settings->set(self::ABSENDER, $absender);
         $this->settings->set(self::ANTWORT_AN, $antwortAn);
         $this->settings->set(self::VEREINSNAME, $vereinsname);
+        if ($oeffentlicheUrl !== null) {
+            $this->settings->set(self::OEFFENTLICHE_URL, $oeffentlicheUrl);
+        }
     }
 }

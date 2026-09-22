@@ -67,8 +67,12 @@ final class Session
      * afterwards - session fixation ends here. The CSRF token is dropped
      * with it, for the same reason: the token of the anonymous form must not
      * stay valid for the logged-in one.
+     *
+     * $epoch is the account's `user.session_epoch` as it was when the
+     * password was checked (issue #18/M3-5): App\Http\LoginGuard ends the
+     * session once the account's value moves on.
      */
-    public function login(int $userId, ?\DateTimeImmutable $now = null): void
+    public function login(int $userId, ?\DateTimeImmutable $now = null, int $epoch = 0): void
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_regenerate_id(true);
@@ -79,6 +83,34 @@ final class Session
         $_SESSION['user_id'] = $userId;
         $_SESSION['login_at'] = $zeit;
         $_SESSION['last_seen_at'] = $zeit;
+        $_SESSION['session_epoch'] = $epoch;
+    }
+
+    /**
+     * The `user.session_epoch` this session logged in with. A session from
+     * before migration 009 has none and reads as 0 - the column's default,
+     * so it survives the update (issue #18/M3-5).
+     */
+    public function epoch(): int
+    {
+        $epoch = $_SESSION['session_epoch'] ?? 0;
+
+        return is_int($epoch) ? $epoch : -1;
+    }
+
+    /**
+     * Keeps THIS session alive across a change that ends all others (the
+     * password change, issue #18/M3-5): it takes over the account's new
+     * epoch. The id is regenerated as well - a credential change is a
+     * "Rechtewechsel" in the sense of docs/spec/01-sicherheit.md section 3.
+     */
+    public function adoptEpoch(int $epoch): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+
+        $_SESSION['session_epoch'] = $epoch;
     }
 
     /**
