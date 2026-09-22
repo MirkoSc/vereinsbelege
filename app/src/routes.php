@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Admin\MailController;
+use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
@@ -11,10 +12,14 @@ use App\App\AuthController;
 use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\SecurityController;
+use App\Domain\Berechtigungen;
+use App\Domain\Permission;
+use App\Http\HttpMethod;
 use App\Http\LoginGuard;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
+use App\Http\Zugriff;
 use App\View\Area;
 use App\View\View;
 
@@ -25,19 +30,20 @@ use App\View\View;
  * decides whether the page may have a session at all - the public area never
  * starts one (App\Http\Session).
  *
- * Rights: every route that does more than render a public page gets its
- * permission declared here once the Permission enum exists (CLAUDE.md
- * section 4, milestone M3-6) - checked server side per action, never only
- * hidden in the UI. Since M3-3 the coarse half of that is real: everything
- * behind the login is wrapped in $guard (App\Http\LoginGuard), visibly, on
- * the route itself. M3-6 refines those wrappers into per-action permissions;
- * it does not have to go looking for the routes that need one.
+ * Rights (docs/spec/01-sicherheit.md section 4, issue #19/M3-6): every
+ * route declares who may call it - an App\Http\Zugriff, a required
+ * argument of Router::get()/post(), so a route without one cannot be
+ * registered. $route below registers the declaration AND derives the guard
+ * wrapper from the very same value, so what a route declares is what is
+ * checked, server side, per action (App\Http\LoginGuard::pruefe()).
+ * tests/Http/RoutePermissionMatrixTest.php runs every route against every
+ * shipped role.
  *
  * @param \Closure(): AuthController $auth built lazily like the rest - the
  *        login form itself renders without a database, only the attempt
  *        behind it needs one.
  * @param \Closure(): LoginGuard $guard the gate in front of /app, /admin and
- *        the upload API.
+ *        the upload API; checks each route's declared right.
  * @param \Closure(): MfaController $mfa built lazily: the confirmation form
  *        itself needs no database, only submitting a code does (M3-4,
  *        issue #17).
@@ -59,6 +65,8 @@ use App\View\View;
  *        "Passwort vergessen" (M3-5, issue #18); the controller itself
  *        defers its database work until a form is submitted or a link is
  *        checked.
+ * @param \Closure(): RoleController $rollen built lazily, same reason as
+ *        $mail: only the role pages need the database (M3-6, issue #19).
  */
 return static function (
     Router $router,
@@ -73,168 +81,195 @@ return static function (
     \Closure $storage,
     \Closure $mail,
     \Closure $passwort,
+    \Closure $rollen,
 ): void {
-    // The guard is built once per request and only where a protected route
-    // was actually matched: page()/api() return a wrapper, they do not run
-    // anything yet.
-    $geschuetzt = static fn(\Closure $handler): \Closure => static fn(Request $r, array $p = [])
-        => $guard()->page($handler)($r, $p);
-    $geschuetzteApi = static fn(\Closure $handler): \Closure => static fn(Request $r, array $p = [])
-        => $guard()->api($handler)($r, $p);
+    // Registers a route with its declaration and wraps the handler in the
+    // guard check that declaration asks for - one value, both jobs. The
+    // guard is built once per request and only where a protected route was
+    // actually matched: pruefe() returns a wrapper, it runs nothing yet.
+    $route = static function (HttpMethod $methode, string $muster, Zugriff $zugriff, \Closure $handler) use ($router, $guard): void {
+        $router->add(
+            $methode,
+            $muster,
+            $zugriff,
+            $zugriff->brauchtAnmeldung()
+                ? static fn(Request $r, array $p = []) => $guard()->pruefe($zugriff, $handler)($r, $p)
+                : $handler,
+        );
+    };
+    $get = static fn(string $muster, Zugriff $zugriff, \Closure $handler) => $route(HttpMethod::Get, $muster, $zugriff, $handler);
+    $post = static fn(string $muster, Zugriff $zugriff, \Closure $handler) => $route(HttpMethod::Post, $muster, $zugriff, $handler);
 
-    $router->get('/', static fn(Request $request, array $params): Response => Response::html(
+    $oeffentlich = Zugriff::oeffentlich();
+    $angemeldet = Zugriff::angemeldet();
+
+    // Permission: public - the start page.
+    $get('/', $oeffentlich, static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
     ));
 
     // Login and logout (M3-3, docs/spec/01-sicherheit.md section 3).
-    // Permission: none - these are the way in. They are the only public
+    // Permission: public - these are the way in. They are the only public
     // pages with a session (they need a CSRF token), and both writes carry
     // it; the brute force protection is the rate limit inside LoginService,
     // per IP and per account.
-    $router->get('/anmelden', static fn(Request $r) => $auth()->form($r));
-    $router->post('/anmelden', static fn(Request $r) => $auth()->submit($r));
-    $router->post('/abmelden', static fn(Request $r) => $auth()->logout($r));
+    $get('/anmelden', $oeffentlich, static fn(Request $r) => $auth()->form($r));
+    $post('/anmelden', $oeffentlich, static fn(Request $r) => $auth()->submit($r));
+    $post('/abmelden', $oeffentlich, static fn(Request $r) => $auth()->logout($r));
 
     // Second factor (M3-4, docs/spec/01-sicherheit.md section 3, issue #17).
-    // Permission: none, same reasoning as /anmelden - the account is not
+    // Permission: public, same reasoning as /anmelden - the account is not
     // logged in yet in the App\Http\Session sense, only in the pending-login
     // sense (App\Service\Account\PendingLogin). Rate limiting is
     // App\Service\Account\MfaService's own counters, per IP and per account,
     // the same shape as LoginService's.
-    $router->get('/anmelden/bestaetigen', static fn(Request $r) => $mfa()->form($r));
-    $router->post('/anmelden/bestaetigen', static fn(Request $r) => $mfa()->submitCode($r));
-    $router->post('/anmelden/code-senden', static fn(Request $r) => $mfa()->sendEmailCode($r));
-    $router->post('/anmelden/backup-code', static fn(Request $r) => $mfa()->submitBackupCode($r));
+    $get('/anmelden/bestaetigen', $oeffentlich, static fn(Request $r) => $mfa()->form($r));
+    $post('/anmelden/bestaetigen', $oeffentlich, static fn(Request $r) => $mfa()->submitCode($r));
+    $post('/anmelden/code-senden', $oeffentlich, static fn(Request $r) => $mfa()->sendEmailCode($r));
+    $post('/anmelden/backup-code', $oeffentlich, static fn(Request $r) => $mfa()->submitBackupCode($r));
 
     // Password reset by mail link (M3-5, issue #18, docs/spec/
-    // 01-sicherheit.md sections 2 and 3). Permission: none, same reasoning as
-    // /anmelden - the way back in for somebody who cannot log in. Public
+    // 01-sicherheit.md sections 2 and 3). Permission: public, same reasoning
+    // as /anmelden - the way back in for somebody who cannot log in. Public
     // pages with a session (CSRF on both writes). Protection: rate limit per
     // IP and per address inside App\Service\Account\PasswordReset, one and
     // the same answer whether an account exists, and a token that is 32
     // random bytes, stored only as a hash, 30 minutes, single use.
-    $router->get('/anmelden/passwort-vergessen', static fn(Request $r) => $passwort()->vergessenForm($r));
-    $router->post('/anmelden/passwort-vergessen', static fn(Request $r) => $passwort()->vergessenSubmit($r));
-    $router->get('/anmelden/passwort-neu', static fn(Request $r) => $passwort()->neuForm($r));
-    $router->post('/anmelden/passwort-neu', static fn(Request $r) => $passwort()->neuSubmit($r));
+    $get('/anmelden/passwort-vergessen', $oeffentlich, static fn(Request $r) => $passwort()->vergessenForm($r));
+    $post('/anmelden/passwort-vergessen', $oeffentlich, static fn(Request $r) => $passwort()->vergessenSubmit($r));
+    $get('/anmelden/passwort-neu', $oeffentlich, static fn(Request $r) => $passwort()->neuForm($r));
+    $post('/anmelden/passwort-neu', $oeffentlich, static fn(Request $r) => $passwort()->neuSubmit($r));
 
     // Start page of the user area. The areas behind it (Posteingang, Belege,
     // Konten, ...) arrive from milestone M4 on; they are already in the
-    // navigation as inactive entries (App\View\Area::navigation()).
-    // Permission: logged in. Which role may see what follows is M3-6.
-    $router->get('/app', $geschuetzt(static fn(): Response => Response::html(
+    // navigation as inactive entries (App\View\Area::navigation()), each with
+    // the right its page will need. Permission: any logged-in account.
+    $get('/app', $angemeldet, static fn(): Response => Response::html(
         $view->render('app/start', ['title' => ''], Area::App),
-    )));
+    ));
 
     // Cron entry point for the host's control panel (06 section 4, issue #99).
-    // Permission: none in the Permission sense - no session, no login. The
-    // shared secret cron_token from shared/config.php is the only credential,
-    // compared with hash_equals. The cron never decrypts (CLAUDE.md section 4).
-    $router->get('/cron', static fn(Request $r) => $cron()->run($r));
+    // Permission: cron token - no session, no login. The shared secret
+    // cron_token from shared/config.php is the only credential, compared with
+    // hash_equals. The cron never decrypts (CLAUDE.md section 4).
+    $get('/cron', Zugriff::cron(), static fn(Request $r) => $cron()->run($r));
 
     // Chunk upload (03 section 4, issue #11). Files arrive in 2 MiB pieces so
     // that no request runs long and the hoster's upload limit stops mattering.
-    // Permission: logged in (M3-3); from M3-6 on `document.submit_internal`.
-    // The guard answers 401 JSON here instead of redirecting - these routes
-    // are driven from fetch(), where a login page would arrive as garbage.
-    // The public submission (/einreichen, M5) has no session and needs the
-    // proof of work and the rate limit of 01 before it may open an upload
-    // without a token; it will not go through this guard.
+    // Permission: `document.submit_internal`. The guard answers 401/403 JSON
+    // here instead of redirecting - these routes are driven from fetch(),
+    // where a login page would arrive as garbage. The public submission
+    // (/einreichen, M5) has no session and needs the proof of work and the
+    // rate limit of 01 before it may open an upload without a token; it will
+    // not go through this guard.
     //
     // The id placeholder is [0-9a-f]+ and not [0-9a-f]{32}: Route::compile()
     // reads a placeholder's regex up to the first brace, so a quantifier in
     // there would not compile. The exact length is checked where it has to be
     // anyway - UploadService validates the id before it becomes a path, and
     // anything else is a 404.
-    $router->post('/api/upload', $geschuetzteApi(static fn(Request $r) => $uploads()->create($r)));
-    $router->post(
+    $hochladen = Zugriff::recht(Permission::DocumentSubmitInternal)->alsApi();
+    $post('/api/upload', $hochladen, static fn(Request $r) => $uploads()->create($r));
+    $post(
         '/api/upload/{id:[0-9a-f]+}/chunk/{n:\d+}',
-        $geschuetzteApi(static fn(Request $r, array $params) => $uploads()->chunk($r, $params)),
+        $hochladen,
+        static fn(Request $r, array $params) => $uploads()->chunk($r, $params),
     );
-    $router->post(
+    $post(
         '/api/upload/{id:[0-9a-f]+}/finish',
-        $geschuetzteApi(static fn(Request $r, array $params) => $uploads()->finish($r, $params)),
+        $hochladen,
+        static fn(Request $r, array $params) => $uploads()->finish($r, $params),
     );
-    $router->post(
+    $post(
         '/api/upload/{id:[0-9a-f]+}/abort',
-        $geschuetzteApi(static fn(Request $r, array $params) => $uploads()->abort($r, $params)),
+        $hochladen,
+        static fn(Request $r, array $params) => $uploads()->abort($r, $params),
     );
 
     // Managing an already logged-in account's second factor (M3-4, issue
-    // #17). Permission: logged in (M3-3); administration is not needed -
-    // every account manages its own factor. CSRF on all writes. The guard
-    // (App\Http\LoginGuard) sends here on its own, to `/app/sicherheit/
-    // einrichten`, whenever `mfa_required` has no configured method yet -
-    // these routes are exactly what it exempts from that redirect.
-    $router->get('/app/sicherheit', $geschuetzt(static fn(Request $r) => $sicherheit()->page($r)));
-    $router->get('/app/sicherheit/einrichten', $geschuetzt(static fn(Request $r) => $sicherheit()->einrichten($r)));
-    $router->post(
-        '/app/sicherheit/einrichten/totp/starten',
-        $geschuetzt(static fn(Request $r) => $sicherheit()->totpStarten($r)),
-    );
-    $router->post(
-        '/app/sicherheit/einrichten/totp/bestaetigen',
-        $geschuetzt(static fn(Request $r) => $sicherheit()->totpBestaetigen($r)),
-    );
-    $router->post(
-        '/app/sicherheit/einrichten/email/starten',
-        $geschuetzt(static fn(Request $r) => $sicherheit()->emailStarten($r)),
-    );
-    $router->post(
-        '/app/sicherheit/einrichten/email/bestaetigen',
-        $geschuetzt(static fn(Request $r) => $sicherheit()->emailBestaetigen($r)),
-    );
-    $router->post('/app/sicherheit/backup-codes/neu', $geschuetzt(static fn(Request $r) => $sicherheit()->backupCodesNeu($r)));
-    $router->post(
+    // #17). Permission: any logged-in account - every account manages its
+    // own factor. CSRF on all writes. The guard (App\Http\LoginGuard) sends
+    // here on its own, to `/app/sicherheit/einrichten`, whenever
+    // `mfa_required` has no configured method yet - these routes are exactly
+    // what it exempts from that redirect.
+    $get('/app/sicherheit', $angemeldet, static fn(Request $r) => $sicherheit()->page($r));
+    $get('/app/sicherheit/einrichten', $angemeldet, static fn(Request $r) => $sicherheit()->einrichten($r));
+    $post('/app/sicherheit/einrichten/totp/starten', $angemeldet, static fn(Request $r) => $sicherheit()->totpStarten($r));
+    $post('/app/sicherheit/einrichten/totp/bestaetigen', $angemeldet, static fn(Request $r) => $sicherheit()->totpBestaetigen($r));
+    $post('/app/sicherheit/einrichten/email/starten', $angemeldet, static fn(Request $r) => $sicherheit()->emailStarten($r));
+    $post('/app/sicherheit/einrichten/email/bestaetigen', $angemeldet, static fn(Request $r) => $sicherheit()->emailBestaetigen($r));
+    $post('/app/sicherheit/backup-codes/neu', $angemeldet, static fn(Request $r) => $sicherheit()->backupCodesNeu($r));
+    $post(
         '/app/sicherheit/geraete/{id:\d+}/widerrufen',
-        $geschuetzt(static fn(Request $r, array $params) => $sicherheit()->geraetWiderrufen($r, $params)),
+        $angemeldet,
+        static fn(Request $r, array $params) => $sicherheit()->geraetWiderrufen($r, $params),
     );
 
     // Password change with the old password known (M3-5, issue #18).
-    // Permission: logged in (M3-3); every account changes its own password,
-    // no administration needed. CSRF on the write; wrong old passwords are
-    // rate limited per account (App\Service\Account\PasswordChange).
-    $router->get('/app/sicherheit/passwort', $geschuetzt(static fn(Request $r) => $sicherheit()->passwort($r)));
-    $router->post('/app/sicherheit/passwort', $geschuetzt(static fn(Request $r) => $sicherheit()->passwortAendern($r)));
+    // Permission: any logged-in account; every account changes its own
+    // password. CSRF on the write; wrong old passwords are rate limited per
+    // account (App\Service\Account\PasswordChange).
+    $get('/app/sicherheit/passwort', $angemeldet, static fn(Request $r) => $sicherheit()->passwort($r));
+    $post('/app/sicherheit/passwort', $angemeldet, static fn(Request $r) => $sicherheit()->passwortAendern($r));
 
-    $router->get('/admin', $geschuetzt(static fn(): Response => Response::redirect('/admin/update')));
+    // Permission: any `admin.*` right; sends the account to the first admin
+    // page it may open (App\View\Area::adminStartFuer()).
+    $get('/admin', Zugriff::adminBereich(), static fn(): Response => Response::redirect(
+        Area::adminStartFuer($view->berechtigungen() ?? Berechtigungen::keine()),
+    ));
 
     // Pattern page of the design system - the reference for new pages and
     // the place where the light/dark and 360 px checks happen.
-    // Permission: logged in (M3-3); administration, from M3-6 on.
-    $router->get('/admin/designsystem', $geschuetzt(static fn(): Response => Response::html(
+    // Permission: any `admin.*` right.
+    $get('/admin/designsystem', Zugriff::adminBereich(), static fn(): Response => Response::html(
         $view->render('admin/designsystem', ['title' => 'Designsystem'], Area::Admin),
-    )));
+    ));
+
+    // Roles (M3-6, issue #19, docs/spec/01-sicherheit.md section 4): the
+    // shipped six and the club's own. Permission: `admin.users` - who may
+    // do what is part of managing accounts. CSRF on all writes; the rules
+    // live in App\Service\Account\RoleService.
+    $rollenVerwalten = Zugriff::recht(Permission::AdminUsers);
+    $get('/admin/rollen', $rollenVerwalten, static fn(Request $r) => $rollen()->liste($r));
+    $get('/admin/rollen/neu', $rollenVerwalten, static fn(Request $r) => $rollen()->neu($r));
+    $post('/admin/rollen', $rollenVerwalten, static fn(Request $r) => $rollen()->anlegen($r));
+    $get('/admin/rollen/{id:\d+}', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->bearbeiten($r, $params));
+    $post('/admin/rollen/{id:\d+}', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->speichern($r, $params));
+    $post('/admin/rollen/{id:\d+}/loeschen', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->loeschen($r, $params));
 
     // Blob storage (02 "Dateien", issue #12): which backend new files go to,
     // moving the stock over, integrity check. The chain copies ciphertext and
     // never decrypts, so it needs no vault - but it moves every stored file.
-    // Permission: logged in (M3-3), administration from M3-6 on; CSRF on
-    // all writes.
-    $router->get('/admin/speicher', $geschuetzt(static fn(Request $r) => $storage()->page($r)));
-    $router->post('/admin/speicher/ziel', $geschuetzt(static fn(Request $r) => $storage()->setTarget($r)));
-    $router->post(
+    // Permission: `admin.settings` ("Speicher", 01 section 4); CSRF on all
+    // writes.
+    $einstellungen = Zugriff::recht(Permission::AdminSettings);
+    $get('/admin/speicher', $einstellungen, static fn(Request $r) => $storage()->page($r));
+    $post('/admin/speicher/ziel', $einstellungen, static fn(Request $r) => $storage()->setTarget($r));
+    $post(
         '/admin/speicher/schritt/{schritt:[a-z]+}',
-        $geschuetzt(static fn(Request $r, array $params) => $storage()->step($r, $params)),
+        $einstellungen,
+        static fn(Request $r, array $params) => $storage()->step($r, $params),
     );
 
     // Mail (06 §3, issue #14): SMTP settings, a test mail, the retry queue.
     // The controller and the cron share one Mailer - the queue holds only
     // server-key ciphertext, so sending never needs a vault.
-    // Permission: logged in (M3-3), administration from M3-6 on; CSRF on
-    // all writes.
-    $router->get('/admin/mail', $geschuetzt(static fn(Request $r) => $mail()->page($r)));
-    $router->post('/admin/mail/einstellungen', $geschuetzt(static fn(Request $r) => $mail()->save($r)));
-    $router->post('/admin/mail/testmail', $geschuetzt(static fn(Request $r) => $mail()->test($r)));
+    // Permission: `admin.settings` ("Mail", 01 section 4); CSRF on all
+    // writes.
+    $get('/admin/mail', $einstellungen, static fn(Request $r) => $mail()->page($r));
+    $post('/admin/mail/einstellungen', $einstellungen, static fn(Request $r) => $mail()->save($r));
+    $post('/admin/mail/testmail', $einstellungen, static fn(Request $r) => $mail()->test($r));
 
-    // Permission: logged in (M3-3), administration from M3-6 on; CSRF on
-    // all writes.
-    $router->get('/admin/update', $geschuetzt(static fn(Request $r) => $updates()->page($r)));
-    $router->post('/admin/update/kanal', $geschuetzt(static fn(Request $r) => $updates()->setChannel($r)));
-    $router->post('/admin/update/reset', $geschuetzt(static fn(Request $r) => $updates()->resetState($r)));
-    $router->post(
+    // Update and maintenance. Permission: `admin.system` ("Backup, Update,
+    // Wartung", 01 section 4); CSRF on all writes.
+    $system = Zugriff::recht(Permission::AdminSystem);
+    $get('/admin/update', $system, static fn(Request $r) => $updates()->page($r));
+    $post('/admin/update/kanal', $system, static fn(Request $r) => $updates()->setChannel($r));
+    $post('/admin/update/reset', $system, static fn(Request $r) => $updates()->resetState($r));
+    $post(
         '/admin/update/schritt/{schritt:[a-z]+}',
-        $geschuetzt(static fn(Request $r, array $params) => $updates()->step($r, $params)),
+        $system,
+        static fn(Request $r, array $params) => $updates()->step($r, $params),
     );
-    $router->post('/admin/wartung/aufheben', $geschuetzt(static fn(Request $r) => $updates()->releaseMaintenance($r)));
+    $post('/admin/wartung/aufheben', $system, static fn(Request $r) => $updates()->releaseMaintenance($r));
 };

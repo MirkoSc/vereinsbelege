@@ -29,9 +29,8 @@ use App\View\View;
  * M3-4, the guard also sends here (specifically to `einrichten()`) whenever
  * `mfa_required` is set but nothing is configured yet
  * (App\Domain\User::mfaEingerichtet()), before any other page in `/app` or
- * `/admin` is reachable. Roles and the `Permission` enum are still M3-6, so
- * for now every logged-in account manages its own second factor here and
- * nothing else.
+ * `/admin` is reachable. No right beyond the login (M3-6): every account
+ * manages its own second factor here and nothing else.
  *
  * The setup flow is one view (`app/sicherheit-einrichten`) with several
  * steps rendered directly from a POST response rather than a redirect -

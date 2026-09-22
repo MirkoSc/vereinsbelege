@@ -4,21 +4,28 @@ declare(strict_types=1);
 
 namespace App\Http;
 
+use App\Domain\Berechtigungen;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
+use App\View\Area;
 use App\View\View;
 
 /**
  * The gate in front of everything that is not public (M3-3, issue #16):
  * /app, /admin and the chunk upload.
  *
- * It answers one question - may this request happen at all? - and it answers
- * it server side, for the route, not by hiding a link
- * (CLAUDE.md section 4). What it does NOT do is decide what a logged-in user
- * may then do: rights are the `Permission` enum of M3-6, and the wrappers in
- * app/src/routes.php are where those will be declared. Until then "logged
- * in" is the whole check, and every protected route carries it visibly.
+ * It answers two questions - may this request happen at all, and may THIS
+ * account do what the route does? - server side, for the route, not by
+ * hiding a link (CLAUDE.md section 4). The second question is the route's
+ * access declaration (App\Http\Zugriff, issue #19/M3-6): app/src/routes.php
+ * builds each protected route's wrapper from that declaration through
+ * pruefe(), so what a route declares is what is checked. On top of any
+ * declaration, every path under /admin needs at least one `admin.*` right
+ * (docs/spec/01-sicherheit.md section 4).
+ *
+ * A logged-in account without the right gets 403, not the login form - it
+ * is logged in; logging in again would not change anything.
  *
  * Expiry is part of the gate, because a session that has run out is not
  * logged in anymore (docs/spec/01-sicherheit.md section 2): the session is
@@ -46,37 +53,29 @@ final readonly class LoginGuard
     }
 
     /**
-     * Wraps a page handler. The wrapper is what app/src/routes.php
-     * registers, so the protection is visible on the route itself.
+     * Wraps a handler in the check its route declares. The wrapper is what
+     * app/src/routes.php registers, built from the same Zugriff value the
+     * route carries.
      *
      * @param \Closure(Request, array<string, string>): ResponseInterface $handler
      * @return \Closure(Request, array<string, string>): ResponseInterface
      */
-    public function page(\Closure $handler): \Closure
+    public function pruefe(Zugriff $zugriff, \Closure $handler): \Closure
     {
-        return fn(Request $request, array $params = []): ResponseInterface => $this->check($request)
-            ?? $handler($request, $params);
-    }
-
-    /**
-     * Wraps a JSON handler. Same check, different answer: the upload runs
-     * from fetch(), and a redirect to the login form would arrive there as
-     * an HTML page where JSON was expected.
-     *
-     * @param \Closure(Request, array<string, string>): ResponseInterface $handler
-     * @return \Closure(Request, array<string, string>): ResponseInterface
-     */
-    public function api(\Closure $handler): \Closure
-    {
-        return fn(Request $request, array $params = []): ResponseInterface => $this->check($request, api: true)
+        return fn(Request $request, array $params = []): ResponseInterface => $this->check($request, $zugriff)
             ?? $handler($request, $params);
     }
 
     /**
      * @return ResponseInterface|null null when the request may proceed
      */
-    private function check(Request $request, bool $api = false): ?ResponseInterface
+    private function check(Request $request, Zugriff $zugriff): ?ResponseInterface
     {
+        // The JSON routes (the upload runs from fetch()) answer in JSON: a
+        // redirect to the login form would arrive there as an HTML page where
+        // JSON was expected.
+        $api = $zugriff->api;
+
         $this->session->start();
 
         $userId = $this->session->userId();
@@ -110,7 +109,7 @@ final readonly class LoginGuard
         // the token their logout form needs. Not for the JSON routes - they
         // render nothing.
         if (!$api) {
-            $this->view->setAnmeldung($benutzer->anzeigename, $this->session->csrfToken());
+            $this->view->setAnmeldung($benutzer->anzeigename, $this->session->csrfToken(), $benutzer->berechtigungen);
         }
 
         // M3-4 (issue #17): `mfa_required` without a configured factor is
@@ -125,7 +124,34 @@ final readonly class LoginGuard
             return Response::redirect('/app/sicherheit/einrichten');
         }
 
-        return null;
+        return $this->darf($request, $zugriff, $benutzer->berechtigungen) ? null : $this->verweigern($api);
+    }
+
+    private function darf(Request $request, Zugriff $zugriff, Berechtigungen $berechtigungen): bool
+    {
+        $pfad = $request->path;
+        if (($pfad === '/admin' || str_starts_with($pfad, '/admin/')) && !$berechtigungen->darfAdminBereich()) {
+            return false;
+        }
+
+        return match ($zugriff->art) {
+            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Angemeldet => true,
+            ZugriffArt::AdminBereich => $berechtigungen->darfAdminBereich(),
+            ZugriffArt::Recht => $zugriff->recht !== null && $berechtigungen->darf($zugriff->recht),
+        };
+    }
+
+    private function verweigern(bool $api): ResponseInterface
+    {
+        if ($api) {
+            return Response::json(['fehler' => 'Keine Berechtigung.'], 403);
+        }
+
+        return Response::html($this->view->render('error', [
+            'title' => 'Keine Berechtigung',
+            'message' => 'Für diese Seite fehlt Ihrem Zugang das nötige Recht. Wenden Sie sich an die Vereinsverwaltung, wenn Sie es brauchen.',
+            'startseite' => '/app',
+        ], Area::App), 403);
     }
 
     private function abweisen(Request $request, bool $api, bool $abgelaufen): ResponseInterface

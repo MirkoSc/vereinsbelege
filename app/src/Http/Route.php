@@ -9,6 +9,7 @@ final readonly class Route
     public function __construct(
         public HttpMethod $method,
         public string $pattern,
+        public Zugriff $zugriff,
         public \Closure $handler,
     ) {
     }

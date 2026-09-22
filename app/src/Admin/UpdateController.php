@@ -25,13 +25,10 @@ use App\View\View;
  * it would be FTP.
  *
  * ---------------------------------------------------------------------
- * LOGIN REQUIRED since M3-3, rights still missing. Every route below is
- * wrapped in App\Http\LoginGuard (app/src/routes.php), so no anonymous
- * visitor can switch a release or roll one back anymore. What is not there
- * yet is WHICH account may: roles and the Permission enum are M3-6
- * (docs/spec/01-sicherheit.md section 4), so until then every account that
- * can log in can do this. CSRF is enforced regardless, so no foreign page
- * can trigger a step in a logged-in user's browser.
+ * RIGHT REQUIRED: `admin.system` (docs/spec/01-sicherheit.md section 4,
+ * M3-6), declared on every route below and checked by App\Http\LoginGuard
+ * (app/src/routes.php). CSRF is enforced on top, so no foreign page can
+ * trigger a step in a logged-in user's browser.
  * ---------------------------------------------------------------------
  */
 final readonly class UpdateController

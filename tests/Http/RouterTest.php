@@ -8,6 +8,7 @@ use App\Http\HttpMethod;
 use App\Http\MatchType;
 use App\Http\Response;
 use App\Http\Router;
+use App\Http\Zugriff;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
@@ -20,7 +21,7 @@ final class RouterTest extends TestCase
     public function testMatchesStaticRoute(): void
     {
         $router = new Router();
-        $router->get('/', self::handler());
+        $router->get('/', Zugriff::oeffentlich(), self::handler());
 
         $match = $router->match(HttpMethod::Get, '/');
 
@@ -31,7 +32,7 @@ final class RouterTest extends TestCase
     public function testExtractsParamBeforeLiteralSuffix(): void
     {
         $router = new Router();
-        $router->get('/beleg/{id}.pdf', self::handler());
+        $router->get('/beleg/{id}.pdf', Zugriff::oeffentlich(), self::handler());
 
         $match = $router->match(HttpMethod::Get, '/beleg/42.pdf');
 
@@ -42,7 +43,7 @@ final class RouterTest extends TestCase
     public function testCustomConstraintRejectsNonMatchingParam(): void
     {
         $router = new Router();
-        $router->get('/beleg/{id:\d+}', self::handler());
+        $router->get('/beleg/{id:\d+}', Zugriff::oeffentlich(), self::handler());
 
         self::assertSame(MatchType::Matched, $router->match(HttpMethod::Get, '/beleg/7')->type);
         self::assertSame(MatchType::NotFound, $router->match(HttpMethod::Get, '/beleg/abc')->type);
@@ -51,7 +52,7 @@ final class RouterTest extends TestCase
     public function testUnknownPathIsNotFound(): void
     {
         $router = new Router();
-        $router->get('/', self::handler());
+        $router->get('/', Zugriff::oeffentlich(), self::handler());
 
         self::assertSame(MatchType::NotFound, $router->match(HttpMethod::Get, '/gibtsnicht')->type);
     }
@@ -59,7 +60,7 @@ final class RouterTest extends TestCase
     public function testWrongMethodIsMethodNotAllowedWithAllowHeaderData(): void
     {
         $router = new Router();
-        $router->get('/posteingang', self::handler());
+        $router->get('/posteingang', Zugriff::oeffentlich(), self::handler());
 
         $match = $router->match(HttpMethod::Post, '/posteingang');
 
@@ -70,7 +71,7 @@ final class RouterTest extends TestCase
     public function testDecodesExtractedParams(): void
     {
         $router = new Router();
-        $router->get('/beleg/{id}.pdf', self::handler());
+        $router->get('/beleg/{id}.pdf', Zugriff::oeffentlich(), self::handler());
 
         $match = $router->match(HttpMethod::Get, '/beleg/%C3%A4bc.pdf');
 

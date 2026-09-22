@@ -14,10 +14,10 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | Tabelle | Spalten (Auszug) | Verschl. |
 |---|---|---|
 | `user` | email_enc, email_bi UNIQUE, display_name_enc, password_hash, status (`eingeladen`/`aktiv`/`gesperrt`), expires_at NULL, mfa_required, mfa_method NULL (`totp`/`email`, Migration 008, M3-4), session_epoch (Migration 009, M3-5), created_at, last_login_at (Migration 006, M3-2) | S |
-| `role` | name, is_system, permissions JSON (M3-6) | – |
-| `user_role` | user_id, role_id (M3-6) | – |
-| `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher") | – |
-| `user_scope` | user_id, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten) | – |
+| `role` | system_key NULL UNIQUE (`admin`/`vorstand`/… für die sechs mitgelieferten), name UNIQUE, is_system, is_external, permissions JSON `{recht: "alle"\|"kostenstelle"}`, created_at (Migration 010, M3-6) | – |
+| `user_role` | user_id, role_id – PK beide; Rolle `ON DELETE RESTRICT` (Migration 010, M3-6) | – |
+| `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher"; Migration 010, M3-6) | – |
+| `user_scope` | user_id PK, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten, Grenzen inklusive; Migration 010, M3-6) | – |
 | `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
@@ -35,10 +35,17 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
   nur `public_key`. Die Zeile schreibt seit M3-2 der Installer
   (`App\Installer\FirstAdminSetup`, 06 §1); vor der ersten Installation ist
   die Tabelle leer und der Upload-Abschluss antwortet 503 (03 §4).
-- `role`/`user_role` kommen erst mit M3-6 (01 §4): bis dahin ist der
-  Installer-Benutzer schlicht der einzige mit einem `vault_grant` – M3-6
-  legt die Rollentabellen an und weist der bestehenden Zeile die Admin-Rolle
-  zu, ohne diese Migration zu ändern.
+- `role`/`user_role` kamen mit M3-6 (01 §4, Migration 010): sie legt die
+  sechs mitgelieferten Rollen an und weist allen bis dahin bestehenden
+  Konten (= dem Installer-Admin) die Admin-Rolle zu; seitdem tut das
+  `App\Installer\FirstAdminSetup` beim Anlegen selbst. `is_external` ist
+  eine Ergänzung gegenüber dem ersten Entwurf (Pflicht-Ablaufdatum, 2FA,
+  nur lesend – auch für vereinseigene externe Rollen), `system_key` der
+  stabile Schlüssel, über den der Code Systemrollen findet – der Name ist
+  Anzeige. Rechte werden pro Request aus diesen Tabellen gelesen
+  (`App\Repository\UserAccessRepository::berechtigungen()`).
+- `cost_center` legt ebenfalls schon Migration 010 an, weil
+  `user_cost_center` darauf verweist; die Pflegeseite kommt mit M4-1.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login
   (`App\Service\Account\LoginService`): den Hash nur dann neu, wenn
   `password_needs_rehash()` angehobene Kostenfaktoren meldet – der Klartext
@@ -164,7 +171,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `supplier` | dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number}, name_bi, iban_bi (Mehrfach → Tabelle `supplier_key`), default_category_id, default_sphere, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL | T |
 | `supplier_key` | supplier_id, kind (`name`/`iban`/`vat_id`/`creditor_id`/`mandate`), value_bi | – (nur BI) |
 | `category` | name, parent_id NULL, default_sphere, color, sort, active, ai_hint (Beschreibung für den Prompt) | – |
-| `cost_center` | name (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active | – |
+| `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege M4-1) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
 | `bank_account` | kind (`bank`/`kasse`), dek_sealed, data_enc {name, iban, bic, bank}, iban_bi, opening_balance_enc, active | T |
 | `bank_import` | account_id, format (`mt940`/`csv:<profil>`), file_blob_id, imported_by, imported_at, stats JSON (neu/duplikat/fehler), balance_check (`ok`/`abweichung`/`n.v.`) | – |

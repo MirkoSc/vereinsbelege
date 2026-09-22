@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Admin\MailController;
+use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
@@ -22,6 +23,7 @@ use App\Http\LoginGuard;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AuthTokenRepository;
 use App\Repository\CronLockRepository;
@@ -32,9 +34,11 @@ use App\Repository\MfaBackupCodeRepository;
 use App\Repository\MfaEmailCodeRepository;
 use App\Repository\MfaTotpRepository;
 use App\Repository\RateLimitRepository;
+use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
 use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
+use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
@@ -46,6 +50,7 @@ use App\Service\Account\PasswordHasher;
 use App\Service\Account\PasswordPolicy;
 use App\Service\Account\PasswordReset;
 use App\Service\Account\PendingLogin;
+use App\Service\Account\RoleService;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
@@ -123,15 +128,18 @@ $view = new View($paths->viewsDir(), $version->value);
 if (!is_file($configFile)) {
     $installer = new InstallController($view, $paths, new Session());
 
+    // Permission: public - there is no account yet. What locks /install is
+    // the config file this chain writes last.
+    $offen = Zugriff::oeffentlich();
     $router = new Router();
-    $router->get('/install', $installer->form(...));
-    $router->post('/install', $installer->submit(...));
-    $router->post('/install/schluessel', $installer->confirmKey(...));
-    $router->post('/install/neu', $installer->restart(...));
-    $router->post('/install/wiederherstellen', $installer->restoreStep(...));
+    $router->get('/install', $offen, $installer->form(...));
+    $router->post('/install', $offen, $installer->submit(...));
+    $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
+    $router->post('/install/neu', $offen, $installer->restart(...));
+    $router->post('/install/wiederherstellen', $offen, $installer->restoreStep(...));
     // Registered last: the router takes the first matching route, and this
     // one matches everything.
-    $router->get('/{rest:.*}', static fn(): \App\Http\Response => \App\Http\Response::redirect('/install'));
+    $router->get('/{rest:.*}', $offen, static fn(): \App\Http\Response => \App\Http\Response::redirect('/install'));
 
     return new Kernel(
         router: $router,
@@ -283,6 +291,15 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
     );
 };
 
+// Roles (M3-6, issue #19): plaintext operating data, no vault - only the
+// role pages open the connection.
+$rollen = static function () use ($connections, $view): RoleController {
+    $pdo = $connections->pdo();
+    $repository = new RoleRepository($pdo);
+
+    return new RoleController($view, new Session(), $repository, new RoleService($repository));
+};
+
 // Login and vault unlock (M3-3/M3-4, issues #16/#17). Built lazily like the
 // rest: the login FORM needs no database, only the attempt behind it does -
 // and the guard reads the timeout settings only once a protected route
@@ -383,7 +400,11 @@ $guard = static fn(): LoginGuard => new LoginGuard(
 
         return $user === null
             ? null
-            : new SessionUser($user, $serverCrypto->decrypt($user->displayNameEnc));
+            : new SessionUser(
+                $user,
+                $serverCrypto->decrypt($user->displayNameEnc),
+                new UserAccessRepository($connections->pdo())->berechtigungen($userId),
+            );
     },
 );
 
@@ -401,6 +422,7 @@ $router = new Router();
     $storage,
     $mail,
     $passwort,
+    $rollen,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
