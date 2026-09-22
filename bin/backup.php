@@ -13,10 +13,14 @@ use App\Support\Version;
 // so this is how a backup is made by hand until then. The update chain
 // creates one on its own before every switch.
 //
-//   php bin/backup.php [--mit-config]
+//   php bin/backup.php [--mit-config] [--ohne-blobs]
 //
 // --mit-config puts shared/config.php into the ZIP. It holds the server key
 // (CLAUDE.md section 4): only do that for a ZIP that stays somewhere safe.
+//
+// The encrypted blobs of storage backend `fs` travel by default; --ohne-blobs
+// leaves them out for a quick schema-only snapshot. The chunks of backend
+// `db` are in the dump either way.
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit(1);
@@ -33,6 +37,7 @@ require $releaseRoot . '/vendor/autoload.php';
 
 $paths = new Paths($releaseRoot);
 $mitConfig = in_array('--mit-config', $argv, true);
+$mitBlobs = !in_array('--ohne-blobs', $argv, true);
 
 try {
     $config = Config::fromFile(getenv('APP_CONFIG_FILE') ?: $paths->configFile());
@@ -43,9 +48,16 @@ try {
         $paths->backupDir(),
         $paths->configFile(),
         $version->value,
-    )->create($mitConfig);
+        $paths->blobDir(),
+    )->create($mitConfig, $mitBlobs);
 
-    echo sprintf("Backup created: %s/%s%s\n", $paths->backupDir(), $name, $mitConfig ? ' (with config.php)' : '');
+    echo sprintf(
+        "Backup created: %s/%s%s%s\n",
+        $paths->backupDir(),
+        $name,
+        $mitConfig ? ' (with config.php)' : '',
+        $mitBlobs ? '' : ' (without blobs)',
+    );
     exit(0);
 } catch (Throwable $e) {
     fwrite(STDERR, 'Backup failed: ' . $e->getMessage() . "\n");

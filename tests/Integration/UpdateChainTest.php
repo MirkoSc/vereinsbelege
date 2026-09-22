@@ -101,6 +101,7 @@ final class UpdateChainTest extends DatabaseTestCase
                 $this->paths()->backupDir(),
                 $this->paths()->configFile(),
                 $version,
+                $this->paths()->blobDir(),
             ),
         );
     }
@@ -207,10 +208,16 @@ final class UpdateChainTest extends DatabaseTestCase
 
     /**
      * The point of the step: a restorable copy has to exist BEFORE the
-     * release is switched, and it must not carry the server key.
+     * release is switched. It must not carry the server key - and not the
+     * blobs either: this is one short request, and an update never touches
+     * shared/var/blobs/ (docs/spec/06-betrieb.md section 2).
      */
     public function testTheBackupStepRunsBeforeTheSwitchAndLeavesTheConfigOut(): void
     {
+        $blobDir = $this->paths()->blobDir() . '/ab';
+        mkdir($blobDir, 0775, true);
+        file_put_contents($blobDir . '/' . str_repeat('ab', 16), 'Chiffrat');
+
         self::assertSame(
             ['backup', 'switch'],
             array_slice(UpdateService::STEPS, array_search('backup', UpdateService::STEPS, true), 2),
@@ -237,6 +244,10 @@ final class UpdateChainTest extends DatabaseTestCase
         self::assertTrue($archiv->open($backups[0]));
         self::assertNotFalse($archiv->getFromName('dump.sql'));
         self::assertFalse($archiv->getFromName('config.php'), 'the automatic backup never carries the server key');
+        self::assertFalse(
+            $archiv->getFromName('blobs/ab/' . str_repeat('ab', 16)),
+            'the automatic backup never carries the blobs',
+        );
         $archiv->close();
     }
 

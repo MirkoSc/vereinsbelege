@@ -86,24 +86,56 @@ Wiederholung ab dem fehlgeschlagenen Schritt).
   nur als Chiffrat enthalten** → Backup darf heruntergeladen/extern
   abgelegt werden. `config.php` (Server-Schlüssel) kommt nur mit, wenn der
   Admin das ausdrücklich wählt (Hinweis: dann sind Betriebsdaten lesbar).
-- Große Backups als Schrittkette (Blobs in Teilen), Rotation 10.
+- Restore als Schrittkette (Blobs in Teilen), Rotation 10.
 - Restore im Installer; danach Anmeldung mit bisherigem Konto (Grants
   liegen in der DB) oder per Wiederherstellungsschlüssel.
 
-**Stand M1-4** (ohne Blobs, die kommen mit M2-6): `manifest.json` enthält
-`app_version`, `schema_version`, `erstellt_am` und `config_enthalten`.
+**Stand M2-6** (mit Blobs): `manifest.json` enthält `app_version`,
+`schema_version`, `erstellt_am`, `config_enthalten`, `blob_dateien` und
+`blob_bytes` – nur Zahlen und Versionen, nichts Fachliches.
 
-- *Erstellen:* `BackupService::create(mitConfig)`; ohne Angabe **ohne**
-  `config.php`. Die Update-Kette sichert nie mit `config.php`. Von Hand:
-  `php bin/backup.php [--mit-config]`. Eine **Admin-Seite mit Download
-  gibt es noch nicht**: bis zur Anmeldung (M3-3) wäre sie ein offener
-  Download des kompletten Dumps. Sie kommt mit M3, zusammen mit der Wahl
-  „config.php mitsichern“.
+- *Blobs beider Backends:* Backend `db` liegt ohnehin im Dump
+  (`file_blob_chunk`); Backend `fs` kommt als `blobs/<2 Zeichen>/<Zufalls-ID>`
+  ins ZIP, im selben Layout wie `shared/var/blobs/`. Gepackt wird, **was im
+  Verzeichnis liegt**, nicht was `speicher_backend` gerade sagt: nach einem
+  Backend-Wechsel (02 „Backend umstellen") ist der Mischzustand normal.
+  `.part`-Dateien (abgebrochene Schreibvorgänge) bleiben draußen, die
+  Blob-Einträge werden ungepackt abgelegt (Chiffrat komprimiert nicht).
+- *Binärspalten im Dump:* `dek_sealed`, `header`, `cipher_sha256` und
+  `file_blob_chunk.data` schreibt `MysqlDumper` als Hex-Literale (`X'…'`).
+  Der Dump trägt `SET NAMES utf8mb4`, Chiffrat ist kein gültiges UTF-8 –
+  Hex bedeutet in jedem Zeichensatz dieselben Bytes. Die Zeilen werden
+  ungepuffert gelesen und ein INSERT zusätzlich nach Byte-Budget
+  abgeschlossen, damit weder der Speicher noch `max_allowed_packet` an der
+  Chunk-Tabelle scheitert.
+- *Erstellen:* `BackupService::create(mitConfig, mitBlobs)`; ohne Angabe
+  **ohne** `config.php` und **mit** Blobs. Von Hand:
+  `php bin/backup.php [--mit-config] [--ohne-blobs]`. Eine **Admin-Seite mit
+  Download gibt es noch nicht**: bis zur Anmeldung (M3-3) wäre sie ein
+  offener Download des kompletten Dumps. Sie kommt mit M3, zusammen mit der
+  Wahl „config.php mitsichern“.
+- *Update-Kette:* sichert nie mit `config.php` und **nie mit Blobs**. Der
+  `backup`-Schritt ist ein einzelner kurzer Request, ein Update fasst
+  `shared/var/blobs/` gar nicht an, und kaputtgehen kann dabei das Schema –
+  genau das holt der Dump zurück. Ein ZIP über Gigabytes an Belegdateien
+  passt auf dem Zielhost in keinen Request.
+- *Platzbedarf:* mit Blobs ist ein Backup so groß wie der Belegbestand;
+  Rotation 10 heißt dann zehnmal so viel. Die Admin-Seite in M3 weist darauf
+  hin.
 - *Einspielen:* Installer-Schritt 6, „Backup einspielen“ mit hochgeladenem
-  ZIP. Der Dump wird in Blöcken zu 200 Anweisungen eingespielt (ein Request
-  je Block, Stand in der Session, `public/js/install.js`), danach laufen nur
-  die Migrationen, die neuer sind als das Backup. DB-Zugangsdaten kommen aus
-  dem Formular, der Kanal ebenfalls; der `cron_token` wird neu erzeugt.
+  ZIP, in zwei Phasen (ein Request je Block, Stand in der Session,
+  `public/js/install.js`): erst der Dump in Blöcken zu 200 Anweisungen, dann
+  die Blob-Dateien in Portionen (200 Dateien bzw. 8 MiB je Request).
+  Migrationen und `config.php` kommen **zuletzt**, damit ein Abbruch in der
+  Blob-Phase den Installer offen lässt statt eine halb gefüllte Installation
+  für fertig zu erklären. Trägt das ZIP Blobs, liegt es bis zum Ende als
+  `shared/var/install_restore_<id>.zip` (0600) – der Upload überlebt den
+  Request nicht. DB-Zugangsdaten kommen aus dem Formular, der Kanal
+  ebenfalls; der `cron_token` wird neu erzeugt.
+- *Blob-Namen aus dem ZIP:* nichts wird mit `extractTo()` entpackt.
+  Geschrieben wird nur, was `blobs/<2 Hex>/<32 Hex>` ist und dessen
+  Unterverzeichnis zum Namen passt; alles andere (`..`, absoluter Pfad,
+  fremder Name) wird gezählt und verworfen. Das ZIP ist ein Upload.
 - *Server-Schlüssel:* Enthält das ZIP eine `config.php`, wird **nur** deren
   `server_key` übernommen – gelesen per regulärem Ausdruck, nie per
   `include`, denn das ZIP ist ein Upload und dürfte sonst Code ausführen.
@@ -120,13 +152,20 @@ Wiederholung ab dem fehlgeschlagenen Schritt).
 **Pflicht-Tests:** `BackupRestoreRoundtripTest` (Backup → alle Tabellen
 löschen → einspielen → byte-gleich; Sonderzeichen, NULL, mehr Zeilen als ein
 INSERT fasst; Manifest; `config.php` nur auf Wunsch; Rotation; kein
-Traversal über den Dateinamen; keine Zwischendatei übrig);
+Traversal über den Dateinamen; keine Zwischendatei übrig; **je Backend
+`db`/`fs`**: Blobs samt Binärspalten byte-gleich zurück, Prüfsumme passt,
+Klartext über den Tresor identisch, im ZIP steht nichts Lesbares, `.part`
+bleibt draußen, Blobs auf Wunsch weglassbar);
 `RestoreServiceTest` (ZIP ohne `dump.sql`, Server-Schlüssel wird gelesen,
-**eine hochgeladene `config.php` wird nie ausgeführt**, ungültiger Schlüssel);
-`UpdateChainTest` (`backup` direkt vor `switch`, ohne `config.php`, bei Fehler
-kein Umschalten); `InstallFlowTest` (Restore mit und ohne Schlüssel im
-Backup, ZIP ohne Dump, Pfad ohne echten Upload, CSRF, Schritt ohne aktive
-Wiederherstellung); `tests/js/install.test.js` (Fortschritt, Statuszeile).
+**eine hochgeladene `config.php` wird nie ausgeführt**, ungültiger Schlüssel;
+Blobs landen unter ihrem eigenen Namen, **nur** `blobs/<2 Hex>/<32 Hex>` wird
+geschrieben, Portionierung nach Byte-Budget, ZIP ohne Blobs braucht keine
+Blob-Phase);
+`UpdateChainTest` (`backup` direkt vor `switch`, ohne `config.php` und ohne
+Blobs, bei Fehler kein Umschalten); `InstallFlowTest` (Restore mit und ohne
+Schlüssel im Backup, Restore **mit Blob-Dateien**, ZIP ohne Dump, Pfad ohne
+echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
+`tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen).
 
 ## 3. Mail
 

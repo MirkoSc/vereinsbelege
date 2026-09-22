@@ -31,8 +31,9 @@ use App\View\View;
  * its config.php.
  *
  * A restore is a step chain of short requests (CLAUDE.md section 1): submit
- * stores the dump in shared/var/ and the progress in the session, the page's
- * JavaScript then calls restoreStep() until it reports "fertig".
+ * stores the dump - and, for a backup with blobs, the ZIP itself - in
+ * shared/var/ and the progress in the session, the page's JavaScript then
+ * calls restoreStep() until it reports "fertig".
  */
 final readonly class InstallController
 {
@@ -126,7 +127,14 @@ final readonly class InstallController
 
     /**
      * One block of the restore, called by install.js until "fertig". State
-     * (credentials, offset) lives in the session, the dump in shared/var/.
+     * (credentials, phase, offset) lives in the session, the dump and - if
+     * the backup carries blobs - the ZIP in shared/var/.
+     *
+     * Two phases: first the statements of dump.sql, then the encrypted blob
+     * files of storage backend `fs` (M2-6). Migrations and config.php come
+     * last, so a restore that breaks off in the blob phase leaves the
+     * installer open instead of a half-filled installation that calls itself
+     * finished.
      */
     public function restoreStep(Request $request): ResponseInterface
     {
@@ -143,17 +151,55 @@ final readonly class InstallController
         /** @var array<string, string> $values */
         $values = $stand['values'];
         $dumpDatei = (string) ($stand['dump_datei'] ?? '');
+        $zipDatei = is_string($stand['zip_datei'] ?? null) ? $stand['zip_datei'] : null;
+        $phase = ($stand['phase'] ?? 'sql') === 'blobs' ? 'blobs' : 'sql';
 
         try {
             $pdo = $this->connect($values);
-            $fortschritt = new RestoreService()->anwenden($pdo, $dumpDatei, (int) ($stand['offset'] ?? 0));
-            $_SESSION['install_restore']['offset'] = $fortschritt['offset'];
+            $restore = new RestoreService();
 
-            if ($fortschritt['offset'] < $fortschritt['gesamt']) {
-                return Response::json(['fertig' => false, ...$fortschritt]);
+            if ($phase === 'sql') {
+                $fortschritt = $restore->anwenden($pdo, $dumpDatei, (int) ($stand['offset'] ?? 0));
+                $_SESSION['install_restore']['offset'] = $fortschritt['offset'];
+
+                if ($fortschritt['offset'] < $fortschritt['gesamt']) {
+                    return Response::json(['fertig' => false, 'phase' => 'sql', ...$fortschritt]);
+                }
+
+                // Dump through: the blob files follow, if there are any. The
+                // switch is its own answer so that neither phase has to share
+                // a request budget with the other.
+                if ($zipDatei !== null) {
+                    $_SESSION['install_restore']['phase'] = 'blobs';
+                    $_SESSION['install_restore']['offset'] = 0;
+
+                    return Response::json([
+                        'fertig' => false,
+                        'phase' => 'blobs',
+                        'offset' => 0,
+                        'gesamt' => $restore->blobAnzahlImZip($zipDatei),
+                    ]);
+                }
+                $gesamt = $fortschritt['gesamt'];
+            } elseif ($zipDatei === null) {
+                // Cannot happen - the blob phase is only entered with a ZIP.
+                $gesamt = 0;
+            } else {
+                $blobs = $restore->blobsAusZip($zipDatei, $this->paths->blobDir(), (int) ($stand['offset'] ?? 0));
+                $_SESSION['install_restore']['offset'] = $blobs['offset'];
+
+                if ($blobs['offset'] < $blobs['gesamt']) {
+                    return Response::json([
+                        'fertig' => false,
+                        'phase' => 'blobs',
+                        'offset' => $blobs['offset'],
+                        'gesamt' => $blobs['gesamt'],
+                    ]);
+                }
+                $gesamt = $blobs['gesamt'];
             }
 
-            // Dump imported: only migrations newer than the backup remain.
+            // Everything is in: only migrations newer than the backup remain.
             $migriert = new Migrator($pdo, $this->paths->migrationsDir())->migrate();
             new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
@@ -161,13 +207,17 @@ final readonly class InstallController
             ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
 
             @unlink($dumpDatei);
+            if ($zipDatei !== null) {
+                @unlink($zipDatei);
+            }
             unset($_SESSION['install_restore']);
             $this->cleanUpSetupLeftovers();
 
             return Response::json([
                 'fertig' => true,
-                'offset' => $fortschritt['gesamt'],
-                'gesamt' => $fortschritt['gesamt'],
+                'phase' => $phase,
+                'offset' => $gesamt,
+                'gesamt' => $gesamt,
                 'migrationen' => count($migriert->applied),
             ]);
         } catch (\PDOException $e) {
@@ -200,15 +250,31 @@ final readonly class InstallController
         if (!is_dir($varDir)) {
             mkdir($varDir, 0775, true);
         }
-        $dumpDatei = $varDir . '/install_restore_' . bin2hex(random_bytes(8)) . '.sql';
+        $kennung = bin2hex(random_bytes(8));
+        $dumpDatei = $varDir . '/install_restore_' . $kennung . '.sql';
+        $zipDatei = null;
 
         $restore = new RestoreService();
         try {
             $restore->dumpAusZip($upload['tmp_name'], $dumpDatei);
             $serverSchluessel = $restore->serverSchluesselAusZip($upload['tmp_name']);
             $manifest = $restore->manifestAusZip($upload['tmp_name']);
+
+            // The upload is gone at the end of this request, so a backup with
+            // blobs has to keep its ZIP until the blob phase is through. Only
+            // then - otherwise every restore would double the disk it needs.
+            if ($restore->blobAnzahlImZip($upload['tmp_name']) > 0) {
+                $zipDatei = $varDir . '/install_restore_' . $kennung . '.zip';
+                if (!copy($upload['tmp_name'], $zipDatei)) {
+                    throw new \RuntimeException('Das Backup konnte nicht zwischengespeichert werden.');
+                }
+                @chmod($zipDatei, 0600);
+            }
         } catch (\RuntimeException $e) {
             @unlink($dumpDatei);
+            if ($zipDatei !== null) {
+                @unlink($zipDatei);
+            }
 
             return $this->render(['errors' => ['backup' => $e->getMessage()], 'values' => $values], 422);
         }
@@ -216,6 +282,8 @@ final readonly class InstallController
         $_SESSION['install_restore'] = [
             'values' => $values,
             'dump_datei' => $dumpDatei,
+            'zip_datei' => $zipDatei,
+            'phase' => 'sql',
             'offset' => 0,
             'server_key' => $serverSchluessel,
         ];

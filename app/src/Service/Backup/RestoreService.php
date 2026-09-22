@@ -13,12 +13,25 @@ use App\Service\Migration\SqlSplitter;
  *
  * The ZIP is an upload and therefore untrusted. Nothing in it is ever
  * executed: config.php is only searched for the server key with a regular
- * expression, never included.
+ * expression, never included, and the blob files are written under names
+ * this application builds itself, never under the ones in the archive.
  */
 final readonly class RestoreService
 {
     /** Statements per request - no single request may run long (CLAUDE.md section 1). */
     public const int STATEMENTS_PER_STEP = 200;
+
+    /** Blob files per request, for the same reason. */
+    public const int BLOBS_PER_STEP = 200;
+
+    /** ... and a byte budget on top: 200 scans are not 200 receipt lines. */
+    public const int BLOB_BYTES_PER_STEP = 8 * 1024 * 1024;
+
+    /**
+     * Name of a blob inside the backup: blobs/<2 chars>/<random id>, the
+     * layout of Service\Storage\FsBlobBackend and nothing else.
+     */
+    private const string BLOB_ENTRY = '#^' . BackupService::BLOB_PREFIX . '([0-9a-f]{2})/([0-9a-f]{32})$#';
 
     /**
      * Copies dump.sql out of the ZIP.
@@ -108,6 +121,115 @@ final readonly class RestoreService
         }
 
         return ['offset' => $offset + count($block), 'gesamt' => count($statements)];
+    }
+
+    /**
+     * Writes the next portion of blob files into `$zielDir` and returns the
+     * new offset. Counting and budget are per request, so a backup with
+     * thousands of receipts restores in short steps like the dump does.
+     *
+     * Nothing is unpacked with extractTo(): the ZIP is an upload, and the
+     * only names that are written are the ones this application itself
+     * produces (blobs/<2 chars>/<32 hex>). Everything else - a path with
+     * "..", an absolute name, a backslash, a stray file - is counted and
+     * dropped, never written.
+     *
+     * @return array{offset: int, gesamt: int, abgelehnt: int}
+     */
+    public function blobsAusZip(string $zipPfad, string $zielDir, int $offset): array
+    {
+        $zip = $this->open($zipPfad);
+        try {
+            $eintraege = $this->blobEintraege($zip);
+            $gesamt = count($eintraege);
+            $abgelehnt = 0;
+            $bytes = 0;
+            $getan = 0;
+
+            for ($i = $offset; $i < $gesamt; $i++) {
+                [$name, $groesse] = $eintraege[$i];
+                $offset = $i + 1;
+
+                if (preg_match(self::BLOB_ENTRY, $name, $treffer) !== 1
+                    || $treffer[1] !== substr($treffer[2], 0, 2)
+                ) {
+                    $abgelehnt++;
+                    continue;
+                }
+
+                $this->blobSchreiben($zip, $name, $zielDir . '/' . $treffer[1] . '/' . $treffer[2]);
+
+                $getan++;
+                $bytes += $groesse;
+                if ($getan >= self::BLOBS_PER_STEP || $bytes >= self::BLOB_BYTES_PER_STEP) {
+                    break;
+                }
+            }
+
+            return ['offset' => $offset, 'gesamt' => $gesamt, 'abgelehnt' => $abgelehnt];
+        } finally {
+            $zip->close();
+        }
+    }
+
+    /**
+     * How many blob files the backup carries - only the central directory is
+     * read, no content. Zero means the ZIP needs no blob phase at all.
+     */
+    public function blobAnzahlImZip(string $zipPfad): int
+    {
+        $zip = $this->open($zipPfad);
+        try {
+            return count($this->blobEintraege($zip));
+        } finally {
+            $zip->close();
+        }
+    }
+
+    /**
+     * Every entry below blobs/, in the order of the central directory - the
+     * same order in every request, which is what makes the offset work.
+     *
+     * @return list<array{string, int}> name and ciphertext size
+     */
+    private function blobEintraege(\ZipArchive $zip): array
+    {
+        $eintraege = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if ($stat === false || !str_starts_with((string) $stat['name'], BackupService::BLOB_PREFIX)) {
+                continue;
+            }
+            $eintraege[] = [(string) $stat['name'], (int) $stat['size']];
+        }
+
+        return $eintraege;
+    }
+
+    private function blobSchreiben(\ZipArchive $zip, string $eintrag, string $zielDatei): void
+    {
+        $dir = dirname($zielDatei);
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new \RuntimeException('Blob-Verzeichnis kann nicht angelegt werden.');
+        }
+
+        $quelle = $zip->getStream($eintrag);
+        if ($quelle === false) {
+            throw new \RuntimeException('Blob aus dem Backup nicht lesbar.');
+        }
+        $ziel = fopen($zielDatei, 'wb');
+        if ($ziel === false) {
+            fclose($quelle);
+            throw new \RuntimeException('Blob-Verzeichnis nicht beschreibbar: ' . $dir);
+        }
+
+        try {
+            stream_copy_to_stream($quelle, $ziel);
+        } finally {
+            fclose($quelle);
+            fclose($ziel);
+        }
+        @chmod($zielDatei, 0664);
     }
 
     private function open(string $zipPfad): \ZipArchive

@@ -227,7 +227,15 @@ final class InstallFlowTest extends DatabaseTestCase
         $db = self::configData()['db'];
         ConfigWriter::write($quelle, $db);
 
-        $service = new BackupService($this->pdo(), $this->base . '/backups', $quelle, '0.0.9-alt');
+        // The blob directory of the installation the backup came from - not
+        // the one of the installation being restored into.
+        $service = new BackupService(
+            $this->pdo(),
+            $this->base . '/backups',
+            $quelle,
+            '0.0.9-alt',
+            $this->base . '/quelle_blobs',
+        );
 
         return $this->base . '/backups/' . $service->create($mitConfig);
     }
@@ -317,6 +325,38 @@ final class InstallFlowTest extends DatabaseTestCase
 
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary dump removed');
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
+    }
+
+    /**
+     * A backup with blobs restores in two phases (M2-6): the statements of
+     * dump.sql first, then the encrypted files - and the files land under the
+     * names the application builds, below shared/var/blobs/.
+     */
+    public function testARestoreBringsBackTheBlobFiles(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+
+        $name = str_repeat('7f', 16);
+        mkdir($this->base . '/quelle_blobs/' . substr($name, 0, 2), 0775, true);
+        file_put_contents($this->base . '/quelle_blobs/' . substr($name, 0, 2) . '/' . $name, 'Chiffrat einer Rechnung');
+
+        $zip = $this->makeBackup(mitConfig: false);
+        $this->wipeDatabase();
+
+        self::assertSame(200, $this->submitRestore($zip)->status);
+        $ende = $this->runRestoreSteps();
+
+        self::assertTrue($ende['fertig']);
+        self::assertSame('blobs', $ende['phase'], 'the blob phase is the last one');
+        self::assertSame(
+            'Chiffrat einer Rechnung',
+            file_get_contents($this->paths()->blobDir() . '/' . substr($name, 0, 2) . '/' . $name),
+        );
+        self::assertSame(
+            [],
+            glob($this->paths()->varDir() . '/install_restore_*') ?: [],
+            'neither the temporary dump nor the temporary ZIP is left behind',
+        );
     }
 
     public function testARestoreWithoutConfigInTheBackupGetsANewServerKey(): void

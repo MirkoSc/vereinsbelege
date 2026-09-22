@@ -15,13 +15,19 @@ function fortschrittProzent(offset, gesamt) {
     return Math.min(100, Math.floor((offset / gesamt) * 100));
 }
 
-/** Status line for the page. */
+/**
+ * Status line for the page. The restore runs in two phases: the statements
+ * of dump.sql first, then the encrypted files of the blob storage.
+ */
 function statusText(antwort) {
     if (antwort && antwort.fertig) {
         return 'Fertig. Das Backup ist eingespielt.';
     }
     if (!antwort || !(antwort.gesamt > 0)) {
         return 'Starte …';
+    }
+    if (antwort.phase === 'blobs') {
+        return 'Datei ' + antwort.offset + ' von ' + antwort.gesamt + ' …';
     }
 
     return 'Anweisung ' + antwort.offset + ' von ' + antwort.gesamt + ' …';

@@ -72,6 +72,9 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
   `.part`-Datei und erst am Ende umbenannt.
 - Backend-Wahl über das Setting `speicher_backend` (Default `fs`, E-06);
   das Umstellen ist eine Schrittkette (M2-5).
+- Ins Backup kommen beide Backends (M2-6, 06 §2): `db` über den Dump – die
+  Binärspalten als Hex-Literale, sonst zerlegt die Zeichensatz-Behandlung das
+  Chiffrat –, `fs` als Dateien unter `blobs/` im ZIP.
 
 ### Backend umstellen (M2-5)
 
