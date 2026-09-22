@@ -34,15 +34,56 @@ Erweiterungen im `/install`-Flow:
 5. Mail-Einstellungen (SMTP) + Testmail – überspringbar
 6. „Frische Installation" oder „Backup einspielen"
 
-Stand M1-4: Schritt 1, 2 und 6 sind umgesetzt, dazu alle Migrationen ab 0
-und der Release-Kanal. 3 und 4 kommen mit M3-2 (Benutzer und Tresor), 5 mit
-M3-1 (Mail). Den Kanal wählt der Admin schon in
+Stand M3-2 (issue #15): Schritt 1, 3, 4 und 6 sind umgesetzt, dazu alle
+Migrationen ab 0 und der Release-Kanal. 5 kommt mit M3-1 (Mail) – Schritt 2,
+den Server-Schlüssel, erzeugt der fertige Flow schon eine Anfrage vor Schritt
+3, weil `ServerCrypto` das Sperren der E-Mail-Adresse des ersten Admins
+braucht, bevor `config.php` geschrieben werden darf (siehe unten). Den Kanal
+wählt der Admin schon in
 `setup.php` – dort gibt es noch keine Datenbank, also legt `setup.php` die
 Antwort als `shared/setup_kanal.txt` ab; der Installer übernimmt sie als
 Einstellung `update_kanal` und löscht die Datei. Ohne diese Übergabe würde
 eine aus einer Vorabversion installierte Testinstanz danach stillschweigend
 auf `stable` nach Updates suchen. Am Ende löscht der Installer `setup.php`;
 klappt das nicht (Dateieigentümer FTP), sagt die Abschlussseite Bescheid.
+
+**Frische Installation als eigene Schrittkette** (`App\Installer\InstallController`,
+`App\Installer\FirstAdminSetup`, M3-2): `VK_priv` darf nach 01 §2 nie im
+Klartext auf Platte liegen – auch nicht in der PHP-Session-Datei. Deshalb
+schreibt schon das Absenden des Formulars Tresor, ersten Admin, `user_key`
+und `vault_grant` in die Datenbank; `config.php` und damit der Abschluss
+kommen erst, wenn die letzte Gruppe des angezeigten Wiederherstellungs-
+schlüssels bestätigt ist. Drei Requests:
+1. `POST /install` (`modus=frisch`): Migrationen, Kanal-Setting, `Vault::create()`,
+   `UserKeyPair::create()`, `UserKey::wrap()`, `VaultGrant::seal()`,
+   `password_hash()` (`PASSWORD_ARGON2ID`, Fallback `PASSWORD_BCRYPT`, 01 §3).
+   Nur der Hash der letzten Gruppe (nicht der Schlüssel selbst) und der noch
+   unverschlüsselte Server-Schlüssel landen in der Session
+   (`$_SESSION['install_admin']`, wie schon `install_restore` bei der
+   Wiederherstellung). Die Seite zeigt den Schlüssel **einmalig**.
+2. `POST /install/schluessel`: stimmt die eingetippte Gruppe (verglichen als
+   Hash, über `RecoveryKey::normalizeGroup()`), schreibt `ConfigWriter::write()`
+   den Server-Schlüssel nach `config.php` – das schließt den Installer. Sonst
+   422, der Schlüssel wird nicht erneut angezeigt.
+3. `POST /install/neu` („Neu beginnen“): für den Fall, dass der Browser vor
+   der Bestätigung geschlossen wurde – entfernt Admin und Tresor wieder
+   (`FirstAdminSetup::remove()`, über die Fremdschlüssel aus
+   `migrations/006_user.sql` kaskadierend), danach ist das Formular erneut
+   nutzbar. Ein erneutes Absenden von `POST /install`, während ein Schritt
+   offen ist, legt keinen zweiten Tresor an, sondern zeigt die
+   Bestätigungsseite erneut.
+
+Ein bereits vorhandener Tresor (`vault`-Tabelle nicht leer, ohne aktiven
+Sitzungsstand – etwa eine wiederverwendete Datenbank) lässt die frische
+Installation mit einer Fehlermeldung abbrechen, statt einen zweiten Tresor zu
+versiegeln, den niemand freigeben könnte.
+
+Die Passwortregel (min. 12 Zeichen, Abgleich gegen eine mitgelieferte Liste
+häufiger Passwörter, 01 §3) steckt in `App\Service\Account\PasswordPolicy`
+und wird von Anmeldung/Reset (M3-3, M3-5) wiederverwendet; die Liste liegt
+als `app/data/haeufige-passwoerter.txt` im Release (CLAUDE.md §2), eine
+eigene Zusammenstellung statt einer separat lizenzierten Fremdliste
+(CLAUDE.md §8).
 
 Update-Schrittkette, Kanäle stable/beta, Pre-Releases, Rollback,
 Wartungsmodus inkl. Banner: unverändert übernommen. Die Schritte sind
@@ -75,9 +116,18 @@ des Assets, curl-Zweig); `MaintenanceModeTest`; `ConfigWriterTest`
 (Server-Schlüssel, je Installation eigene Geheimnisse); `UpdateChainTest`
 (ganze Kette gegen ein lokales Release-ZIP, manipuliertes ZIP, falsche
 `VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück);
-`InstallFlowTest` (Schema, `config.php`, Kanal-Übernahme, CSRF, abgelehnte
-Zugangsdaten); `tests/js/update.test.js` (Reihenfolge der Schritte,
-Wiederholung ab dem fehlgeschlagenen Schritt).
+`InstallFlowTest` (Schema, `config.php` erst nach Bestätigung, Kanal-Übernahme,
+CSRF, abgelehnte Zugangsdaten, sieben Gruppen zu acht Zeichen, falsche letzte
+Gruppe verrät den Schlüssel nicht erneut, Admin-Zeile per Server-Schlüssel
+verschlüsselt und über den Blind Index auffindbar, `vault_grant` öffnet mit
+dem Passwort denselben Tresor wie `vault.public_key`, der
+Wiederherstellungsschlüssel ebenso und landet in keiner Spalte, erneutes
+Absenden legt keinen zweiten Admin an, „Neu beginnen“ räumt auf, bereits
+vorhandener Tresor wird abgelehnt, ungültige E-Mail/zu kurzes/bekanntes/nicht
+übereinstimmendes Passwort); `PasswordPolicyTest` (Mindestlänge in Zeichen
+nicht Bytes, Liste vorhanden); `tests/js/update.test.js` (Reihenfolge der
+Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.js`
+(welches Formularfeld je nach `modus` sichtbar ist).
 
 ## 2. Backup & Restore
 

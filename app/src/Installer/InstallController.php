@@ -10,7 +10,9 @@ use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\SettingRepository;
+use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
+use App\Service\Crypto\RecoveryKey;
 use App\Service\Migration\Migrator;
 use App\Service\Update\UpdateService;
 use App\View\View;
@@ -19,21 +21,35 @@ use App\View\View;
  * /install - reachable only while shared/config.php is missing (the
  * bootstrap registers these routes in install mode only). Takes the
  * database credentials, tests the connection and then either installs fresh
- * (every migration from 0) or restores an uploaded backup ZIP. Writing the
- * config is the last thing either path does, which closes the installer for
- * good.
+ * (every migration from 0, first admin, vault, recovery key) or restores an
+ * uploaded backup ZIP. Writing the config is the last thing either path
+ * does, which closes the installer for good.
  *
- * Steps 3 to 5 of the flow in docs/spec/06-betrieb.md section 1 - first
- * admin, vault plus recovery key, mail settings - need the crypto core and
- * the user management and arrive with milestones M2 and M3-2. Step 6, fresh
- * or restore, is here. The server key is created here too, because only the
- * installer can (ConfigWriter) - or taken over from a backup that carried
- * its config.php.
+ * Steps 3 and 4 of the flow in docs/spec/06-betrieb.md section 1 - first
+ * admin, vault plus recovery key - are M3-2 (issue #15) and live in
+ * App\Installer\FirstAdminSetup, which this controller only orchestrates.
+ * The server key is created here (ConfigWriter), because only the installer
+ * can - or taken over from a backup that carried its config.php.
  *
- * A restore is a step chain of short requests (CLAUDE.md section 1): submit
- * stores the dump - and, for a backup with blobs, the ZIP itself - in
- * shared/var/ and the progress in the session, the page's JavaScript then
- * calls restoreStep() until it reports "fertig".
+ * The fresh-install path is itself a short step chain of three requests, for
+ * the same reason as the restore below: VK_priv must never touch a session
+ * file in the clear (docs/spec/01-sicherheit.md section 2), so the vault and
+ * the admin are written to the database right away, and only the recovery
+ * key's confirmation - proof that it was written down - releases config.php.
+ *
+ *   submit()     modus=frisch: migrate, create vault + admin, show the
+ *                recovery key once, remember its hash in the session as
+ *                $_SESSION['install_admin'].
+ *   confirmKey() the last group typed back; right hash -> config.php written,
+ *                install closed; wrong hash -> ask again, key never re-shown.
+ *   restart()    "Neu beginnen": browser was closed before confirming: the
+ *                half-finished vault/admin are removed so the form can be
+ *                submitted again.
+ *
+ * A restore is the same kind of step chain: submit stores the dump - and,
+ * for a backup with blobs, the ZIP itself - in shared/var/ and the progress
+ * in the session, the page's JavaScript then calls restoreStep() until it
+ * reports "fertig".
  */
 final readonly class InstallController
 {
@@ -55,6 +71,10 @@ final readonly class InstallController
     {
         $this->session->start();
 
+        if (is_array($_SESSION['install_admin'] ?? null)) {
+            return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+        }
+
         return $this->render(['errors' => [], 'values' => ['kanal' => $this->channelFromSetup()]]);
     }
 
@@ -69,6 +89,13 @@ final readonly class InstallController
             ], 403);
         }
 
+        // A resubmission (double click, browser back button) must not create
+        // a second vault/admin - the pending confirmation step is shown
+        // again instead of processing the form a second time.
+        if (is_array($_SESSION['install_admin'] ?? null)) {
+            return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+        }
+
         $values = [
             'db_host' => trim((string) ($request->post['db_host'] ?? 'localhost')),
             'db_port' => trim((string) ($request->post['db_port'] ?? '3306')),
@@ -77,11 +104,20 @@ final readonly class InstallController
             'db_password' => (string) ($request->post['db_password'] ?? ''),
             'kanal' => ((string) ($request->post['kanal'] ?? '')) === 'beta' ? 'beta' : 'stable',
             'modus' => ((string) ($request->post['modus'] ?? '')) === 'restore' ? 'restore' : 'frisch',
+            // Kept for re-display only - never the password (see below).
+            'admin_email' => trim((string) ($request->post['admin_email'] ?? '')),
+            'admin_name' => trim((string) ($request->post['admin_name'] ?? '')),
         ];
+        $adminPassword = (string) ($request->post['admin_password'] ?? '');
+        $adminPasswordWiederholung = (string) ($request->post['admin_password_wiederholung'] ?? '');
 
         $errors = [];
         if ($values['db_host'] === '' || $values['db_name'] === '' || $values['db_user'] === '') {
             $errors['db'] = 'Bitte Host, Datenbankname und Benutzer angeben.';
+        }
+
+        if ($values['modus'] === 'frisch') {
+            $errors = [...$errors, ...$this->adminErrors($values, $adminPassword, $adminPasswordWiederholung)];
         }
 
         $pdo = null;
@@ -113,16 +149,138 @@ final readonly class InstallController
         }
 
         // Fresh install: every migration from 0. The channel setting is
-        // written before the config, so a failure here leaves the installer
+        // written before the vault, so a failure here leaves the installer
         // open instead of a half-configured installation behind.
         new Migrator($pdo, $this->paths->migrationsDir())->migrate();
         new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
-        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values));
+        $setup = new FirstAdminSetup($pdo);
+        if ($setup->vaultExists()) {
+            // Every migration from 0 ran above regardless (harmless, they
+            // are idempotent) - but a vault already exists, so this is not
+            // an empty database: refuse rather than seal a second one nobody
+            // could ever be granted access to.
+            return $this->render([
+                'errors' => ['db' => 'Diese Datenbank enthält bereits eine Installation (ein Tresor ist schon vorhanden). Bitte eine leere Datenbank verwenden oder ein Backup einspielen.'],
+                'values' => $values,
+            ], 422);
+        }
 
+        $serverKey = ConfigWriter::generateServerKey();
+        $ergebnis = $setup->create($values['admin_email'], $values['admin_name'], $adminPassword, $serverKey);
+        $recoveryKey = $ergebnis['recoveryKey'];
+
+        $_SESSION['install_admin'] = [
+            'db' => $values,
+            'server_key' => $serverKey,
+            'user_id' => $ergebnis['userId'],
+            'vault_version' => $ergebnis['vaultVersion'],
+            // Only the hash of the last group is kept - the recovery key
+            // itself is never stored anywhere (docs/spec/01-sicherheit.md
+            // section 2).
+            'confirm_hash' => hash('sha256', RecoveryKey::normalizeGroup($recoveryKey->lastGroup())),
+        ];
+
+        return $this->render([
+            'schritt' => 'schluessel',
+            'schluesselGruppen' => $recoveryKey->groups(),
+            'errors' => [],
+            'values' => $values,
+        ]);
+    }
+
+    /**
+     * Step 2 of the fresh-install chain: the admin types back the last group
+     * of the printed recovery key - proof that it was written down
+     * (docs/spec/01-sicherheit.md section 2). Only then is config.php
+     * written, which is what closes /install for good.
+     */
+    public function confirmKey(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->render([
+                'schritt' => 'schluessel_offen',
+                'errors' => ['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'],
+                'values' => [],
+            ], 403);
+        }
+
+        $stand = $_SESSION['install_admin'] ?? null;
+        if (!is_array($stand) || !is_array($stand['db'] ?? null)) {
+            return $this->render([
+                'errors' => [],
+                'values' => ['kanal' => $this->channelFromSetup()],
+            ], 409);
+        }
+
+        $eingabe = RecoveryKey::normalizeGroup((string) ($request->post['schluessel_letzte_gruppe'] ?? ''));
+        $stimmtUeberein = hash_equals((string) $stand['confirm_hash'], hash('sha256', $eingabe));
+
+        if (!$stimmtUeberein) {
+            return $this->render([
+                'schritt' => 'schluessel_offen',
+                'errors' => ['schluessel' => 'Die eingegebene Gruppe stimmt nicht. Bitte die letzte Gruppe des ausgedruckten Wiederherstellungsschlüssels genau eingeben.'],
+                'values' => [],
+            ], 422);
+        }
+
+        /** @var array<string, string> $dbValues */
+        $dbValues = $stand['db'];
+        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+
+        unset($_SESSION['install_admin']);
         $this->cleanUpSetupLeftovers();
 
         return $this->render(['fertig' => true, 'errors' => [], 'values' => []]);
+    }
+
+    /**
+     * "Neu beginnen": the browser was closed (or the group was mistyped too
+     * often) before the recovery key was confirmed. Removes the half-finished
+     * vault and admin (App\Installer\FirstAdminSetup::remove()) so the form
+     * can be submitted again - nothing was ever written to config.php, so
+     * nothing else is affected.
+     */
+    public function restart(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->render([
+                'schritt' => 'schluessel_offen',
+                'errors' => ['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'],
+                'values' => [],
+            ], 403);
+        }
+
+        $stand = $_SESSION['install_admin'] ?? null;
+        if (!is_array($stand) || !is_array($stand['db'] ?? null)) {
+            return $this->render([
+                'errors' => [],
+                'values' => ['kanal' => $this->channelFromSetup()],
+            ], 409);
+        }
+
+        /** @var array<string, string> $dbValues */
+        $dbValues = $stand['db'];
+
+        try {
+            $pdo = $this->connect($dbValues);
+        } catch (\PDOException $e) {
+            // The PDO message names host and database, never the password.
+            return $this->render([
+                'schritt' => 'schluessel_offen',
+                'errors' => ['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()],
+                'values' => [],
+            ], 422);
+        }
+
+        new FirstAdminSetup($pdo)->remove((int) $stand['user_id'], (int) $stand['vault_version']);
+        unset($_SESSION['install_admin']);
+
+        return $this->render(['errors' => [], 'values' => ['kanal' => $dbValues['kanal'] ?? $this->channelFromSetup()]]);
     }
 
     /**
@@ -235,6 +393,38 @@ final readonly class InstallController
                 'fehler' => $e instanceof \RuntimeException ? $e->getMessage() : 'Unerwarteter Fehler beim Einspielen.',
             ], 500);
         }
+    }
+
+    /**
+     * Validates the "erster Zugang" fieldset (docs/spec/01-sicherheit.md
+     * section 3): a plausible email, a non-empty display name, and a
+     * password that satisfies App\Service\Account\PasswordPolicy and matches
+     * its repetition. The password itself never ends up in the returned
+     * error/value arrays.
+     *
+     * @param array<string, string> $values
+     * @return array<string, string>
+     */
+    private function adminErrors(array $values, #[\SensitiveParameter] string $password, #[\SensitiveParameter] string $repeat): array
+    {
+        $errors = [];
+
+        if ($values['admin_email'] === '' || filter_var($values['admin_email'], \FILTER_VALIDATE_EMAIL) === false) {
+            $errors['admin_email'] = 'Bitte eine gültige E-Mail-Adresse angeben.';
+        }
+        if ($values['admin_name'] === '') {
+            $errors['admin_name'] = 'Bitte einen Namen angeben.';
+        }
+
+        $policy = new PasswordPolicy($this->paths->dataDir() . '/haeufige-passwoerter.txt');
+        $violations = $policy->violations($password);
+        if ($violations !== []) {
+            $errors['admin_password'] = implode(' ', $violations);
+        } elseif ($password !== $repeat) {
+            $errors['admin_password_wiederholung'] = 'Die Passwörter stimmen nicht überein.';
+        }
+
+        return $errors;
     }
 
     /**
