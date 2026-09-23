@@ -61,6 +61,25 @@ Feld-Fehlern je Angabe.
 (`App\Service\Submission\Spamschutz`) laufen jetzt vor
 `SubmissionService::einreichen()` bzw. vor jedem Seiten-Upload.
 
+**Stand M4-5** (issue #27): Posteingang unter `/app/posteingang`
+(`App\App\InboxController`, Fachlogik `App\Service\Inbox\Posteingang`).
+Ansehen mit `inbox.view` im Zugriffsbereich des Kontos (Kostenstelle über
+`document.cost_center_id`, Zeitraum über `created_at`, beides in SQL), Entscheiden
+(Annehmen, Ablehnen mit Grund, Wiedervorlage – 02 „Statusmodell“) und
+Kostenstelle ändern mit `document.edit`. Liste mit Filtern Ansicht
+(Offen/Wiedervorlage/Angenommen/Abgelehnt/Alle), Mannschaft/Bereich,
+Eingangszeitraum und Suche in Name/Beschreibung (nach dem Entschlüsseln in PHP,
+nur mit entsperrtem Tresor). Die Mannschaftswahl der Einreichung setzt
+`document.cost_center_id`. Seiten werden über
+`/app/posteingang/{id}/datei/{blob}` gestreamt entschlüsselt ausgeliefert
+(`StreamResponse`, `Cache-Control: no-store`, Dateiname nur aus der
+Referenz, keine Temp-Datei); Bilder erscheinen direkt, PDFs öffnen im
+Browser-Viewer in einem neuen Tab – die CSP (`object-src 'none'`,
+`frame-ancestors 'none'`) verbietet Einbetten, Seitenbilder kommen mit
+pdf.js (M4-8). Nach jeder Einreichung reiht
+`App\Service\Mail\EinreichungBenachrichtigung` eine Mail an alle aktiven
+Konten mit `document.edit` ein – nur Referenz und Link, keine Fachdaten.
+
 ## 2. Bildaufbereitung (im Browser)
 
 Eigenes Modul `public/js/scanner/` mit reinen, testbaren Funktionen:

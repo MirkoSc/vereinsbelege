@@ -8,6 +8,8 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Repository\CostCenterRepository;
 use App\Repository\VaultRepository;
+use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\PublicUrl;
 use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
@@ -44,6 +46,8 @@ final readonly class EinreichungController
         private SubmissionService $submissions,
         private Spamschutz $spamschutz,
         private EinreichungsEinstellungen $einstellungen,
+        /** For the link in the notice to the inbox (issue #27/M4-5). */
+        private ?MailSettingsRepository $mailSettings = null,
     ) {
     }
 
@@ -88,7 +92,14 @@ final readonly class EinreichungController
             return Response::json(['fehler' => self::VAULT_MESSAGE], 503);
         }
 
-        $ergebnis = $this->submissions->einreichen($request->post, $tokenData->hash(), $vault);
+        $ergebnis = $this->submissions->einreichen(
+            $request->post,
+            $tokenData->hash(),
+            $vault,
+            linkBasis: $this->mailSettings === null
+                ? null
+                : PublicUrl::resolve($this->mailSettings->get(), $request->header('host') ?? '', Request::httpsFromGlobals()),
+        );
         if (!$ergebnis->istErfolg()) {
             return Response::json(['fehler' => $ergebnis->fehler], 422);
         }

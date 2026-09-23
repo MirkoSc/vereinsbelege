@@ -112,8 +112,8 @@ final readonly class CostCenterRepository
     }
 
     /**
-     * Fails on the foreign key (RESTRICT, migrations/012_cost_center_restrict.sql)
-     * if any account is still assigned to this cost center - the caller
+     * Fails on the foreign key (RESTRICT, migrations/012_cost_center_restrict.sql
+     * and 014_inbox.sql) if any account or receipt still carries this cost center - the caller
      * (App\Service\MasterData\CostCenterService) checks that first so it can
      * give a German message instead of a PDOException.
      */
@@ -126,6 +126,19 @@ final readonly class CostCenterRepository
     public function userCount(int $id): int
     {
         $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM user_cost_center WHERE cost_center_id = ?');
+        $stmt->execute([$id]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Receipts carrying this cost center (`document.cost_center_id`, issue
+     * #27/M4-5) - RESTRICT like the account assignment, so deleting one
+     * would fail in the schema too.
+     */
+    public function documentCount(int $id): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document WHERE cost_center_id = ?');
         $stmt->execute([$id]);
 
         return (int) $stmt->fetchColumn();

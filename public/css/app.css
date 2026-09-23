@@ -756,6 +756,74 @@ textarea[aria-invalid="true"] {
     overflow: hidden;
 }
 
+/* --- Posteingang (Issue #27, M4-5) --- */
+
+/* Angaben einer Einreichung: Begriff über Wert auf schmalen Bildschirmen,
+   ab 30rem nebeneinander. Freitext behält seine Zeilenumbrüche. */
+.posteingang-angaben dl {
+    margin: 0;
+}
+
+.posteingang-angaben dt {
+    margin-top: var(--abstand-3);
+    font-weight: 600;
+}
+
+.posteingang-angaben dt:first-child {
+    margin-top: 0;
+}
+
+.posteingang-angaben dd {
+    margin: var(--abstand-1) 0 0;
+    overflow-wrap: anywhere;
+}
+
+@media (min-width: 30rem) {
+    .posteingang-angaben dl {
+        display: grid;
+        grid-template-columns: minmax(8rem, max-content) 1fr;
+        gap: var(--abstand-2) var(--abstand-4);
+    }
+
+    .posteingang-angaben dt,
+    .posteingang-angaben dd {
+        margin: 0;
+    }
+}
+
+.posteingang-freitext {
+    white-space: pre-line;
+}
+
+/* Seitenvorschau: gestreamt entschlüsselte Bilder (nie eine Temp-Datei),
+   auf 360 px eine Spalte, darüber so viele, wie passen. */
+.posteingang-seiten {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+    gap: var(--abstand-3);
+    margin: var(--abstand-4) 0;
+    padding: 0;
+    list-style: none;
+}
+
+.posteingang-seite {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--abstand-2);
+    padding: var(--abstand-2);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+.posteingang-seite img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    background: var(--farbe-flaeche-still);
+}
+
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
 
 /* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).

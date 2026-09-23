@@ -447,7 +447,14 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   (M4-1) = `admin.settings`; `/admin/update*`, `/admin/wartung/aufheben` =
   `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
   `/admin/tresor*` = `admin.vault_grant` (M3-7); `/anmelden/einladung` =
-  öffentlich (M3-7); `/app/audit*` = `audit.view` (M3-8).
+  öffentlich (M3-7); `/app/audit*` = `audit.view` (M3-8);
+  `/app/posteingang`, `/app/posteingang/{id}`,
+  `/app/posteingang/{id}/datei/{blob}` = `inbox.view`,
+  `/app/posteingang/{id}/(annehmen|ablehnen|wiedervorlage|kostenstelle)` =
+  `document.edit` (M4-5). Der Posteingang ist der erste echte Aufrufer von
+  `sqlBedingung()`: `document.cost_center_id` / `document.created_at`
+  (`App\Repository\DocumentRepository::inbox()`/`inboxItem()`); eine ID
+  außerhalb des Scopes antwortet 404 wie eine unbekannte.
 
 ## 5. Öffentliche Einreichung – Schutz
 

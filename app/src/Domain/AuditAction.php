@@ -54,6 +54,11 @@ enum AuditAction: string
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
+    // The inbox (issue #27/M4-5): status changes and the cost center.
+    case BelegAngenommen = 'beleg.angenommen';
+    case BelegAbgelehnt = 'beleg.abgelehnt';
+    case BelegWiedervorlage = 'beleg.wiedervorlage';
+    case BelegKostenstelle = 'beleg.kostenstelle';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -95,6 +100,10 @@ enum AuditAction: string
             self::KostenstelleGeaendert => 'Kostenstelle geändert',
             self::KostenstelleGeloescht => 'Kostenstelle gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
+            self::BelegAngenommen => 'Beleg angenommen',
+            self::BelegAbgelehnt => 'Beleg abgelehnt',
+            self::BelegWiedervorlage => 'Beleg auf Wiedervorlage gelegt',
+            self::BelegKostenstelle => 'Kostenstelle des Belegs geändert',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -122,7 +131,8 @@ enum AuditAction: string
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
-            self::EinreichungEingegangen => 'document',
+            self::EinreichungEingegangen,
+            self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung,

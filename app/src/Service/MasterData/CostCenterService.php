@@ -58,6 +58,9 @@ final readonly class CostCenterService
         if ($this->kostenstellen->userCount($id) > 0) {
             throw new CostCenterRuleViolation('Die Kostenstelle ist noch Benutzern zugewiesen. Bitte zuerst die Zuweisungen entfernen oder die Kostenstelle deaktivieren.');
         }
+        if ($this->kostenstellen->documentCount($id) > 0) {
+            throw new CostCenterRuleViolation('Der Kostenstelle sind Belege zugeordnet. Sie lässt sich nur noch deaktivieren.');
+        }
 
         $this->kostenstellen->delete($id);
     }
