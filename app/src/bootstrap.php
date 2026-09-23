@@ -443,6 +443,7 @@ $einreichen = static function () use (
             $mailerFor($pdo),
             $auditFor($pdo),
             $einstellungen,
+            new JobRepository($pdo),
         ),
         $spamschutzFor($pdo),
         $einstellungen,
