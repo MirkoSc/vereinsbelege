@@ -8,6 +8,7 @@ use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
+use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuditController;
@@ -63,6 +64,7 @@ use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Account\UserAdministration;
+use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\ServerCrypto;
@@ -386,6 +388,29 @@ $tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor
     );
 };
 
+// Vault recovery with the paper recovery key (M3-9, issue #22): the same
+// collaborators as $tresor, plus the rate limiter every account-scoped limit
+// in this file uses (RateLimiter::LOGIN_WINDOW_SECONDS).
+$wiederherstellung = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRecoveryController {
+    $pdo = $connections->pdo();
+
+    return new VaultRecoveryController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new VaultRecovery(
+            new VaultRepository($pdo),
+            new VaultGrantRepository($pdo),
+            $verwaltungFor($pdo),
+            new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+        ),
+        $verwaltungFor($pdo),
+        $mailerFor($pdo),
+        $serverCrypto,
+        $auditFor($pdo),
+    );
+};
+
 // Accepting an invitation: a public page, built lazily like $passwort.
 $einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor, $auditFor): InvitationController {
     $pdo = $connections->pdo();
@@ -565,6 +590,7 @@ $router = new Router();
     $rollen,
     $benutzer,
     $tresor,
+    $wiederherstellung,
     $einladung,
     $auditSeite,
 );

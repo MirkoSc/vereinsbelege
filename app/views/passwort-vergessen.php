@@ -37,8 +37,9 @@
                 den nur Ihr bisheriges Passwort öffnet. Nach dem Zurücksetzen erhält Ihr Zugang einen
                 neuen Schlüssel – Belege sehen Sie erst wieder, wenn ein Administrator Ihren Zugang
                 für den Tresor erneut freigibt.</p>
-            <p>Sind Sie der einzige Administrator, kann Sie niemand mehr freigeben. Verwenden Sie dann
-                stattdessen den Wiederherstellungsschlüssel des Vereins.</p>
+            <p>Sind Sie der einzige Administrator, kann Sie niemand mehr freigeben. Setzen Sie das
+                Passwort trotzdem zurück und entsperren Sie den Tresor danach unter Administration →
+                Tresor mit dem Wiederherstellungsschlüssel des Vereins.</p>
         </div>
 
         <form method="post" action="/anmelden/passwort-vergessen" class="formular">

@@ -70,23 +70,29 @@ final readonly class RecoveryKey
         $normalized = self::normalizeGroup($input);
 
         if (strlen($normalized) !== self::ENCODED_LENGTH) {
-            throw new CryptoException(sprintf(
+            throw new RecoveryKeyException(sprintf(
                 'A recovery key has %d characters, got %d.',
                 self::ENCODED_LENGTH,
                 strlen($normalized),
-            ));
+            ), RecoveryKeyProblem::Laenge);
         }
 
         $payload = self::decode($normalized);
 
         $version = ord($payload[0]);
         if ($version !== self::VERSION) {
-            throw new CryptoException(sprintf('The recovery key has unknown format version %d.', $version));
+            throw new RecoveryKeyException(
+                sprintf('The recovery key has unknown format version %d.', $version),
+                RecoveryKeyProblem::Version,
+            );
         }
 
         $body = substr($payload, 0, -self::CHECKSUM_BYTES);
         if (!hash_equals(self::checksum($body), substr($payload, -self::CHECKSUM_BYTES))) {
-            throw new CryptoException('The recovery key is mistyped (checksum does not match).');
+            throw new RecoveryKeyException(
+                'The recovery key is mistyped (checksum does not match).',
+                RecoveryKeyProblem::Pruefsumme,
+            );
         }
 
         return new self(substr($body, 1));
@@ -149,7 +155,7 @@ final readonly class RecoveryKey
     public function openVault(string $vaultPublicKey, int $vaultVersion = Vault::FIRST_VERSION): Vault
     {
         if (!hash_equals($vaultPublicKey, sodium_crypto_box_publickey_from_secretkey($this->secretKey))) {
-            throw new CryptoException('The recovery key belongs to another vault.');
+            throw new RecoveryKeyException('The recovery key belongs to another vault.', RecoveryKeyProblem::FremderTresor);
         }
 
         return Vault::unlocked($vaultPublicKey, $this->secretKey, $vaultVersion);
@@ -192,7 +198,10 @@ final readonly class RecoveryKey
         foreach (str_split($encoded) as $character) {
             $value = strpos(self::ALPHABET, $character);
             if ($value === false) {
-                throw new CryptoException(sprintf('"%s" is not a recovery key character.', $character));
+                throw new RecoveryKeyException(
+                    sprintf('"%s" is not a recovery key character.', $character),
+                    RecoveryKeyProblem::Zeichen,
+                );
             }
 
             $buffer = ($buffer << 5) | $value;

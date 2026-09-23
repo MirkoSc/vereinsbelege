@@ -7,6 +7,8 @@ namespace App\Tests\Service\Crypto;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\RecoveryKey;
+use App\Service\Crypto\RecoveryKeyException;
+use App\Service\Crypto\RecoveryKeyProblem;
 use App\Service\Crypto\Vault;
 use PHPUnit\Framework\TestCase;
 
@@ -69,10 +71,13 @@ final class RecoveryKeyTest extends TestCase
         $typed = self::unformatted(RecoveryKey::forVault(Vault::create()));
         $typed[30] = $typed[30] === 'A' ? 'B' : 'A';
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('mistyped');
-
-        RecoveryKey::parse($typed);
+        try {
+            RecoveryKey::parse($typed);
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('mistyped', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::Pruefsumme, $e->problem);
+        }
     }
 
     /**
@@ -90,10 +95,13 @@ final class RecoveryKeyTest extends TestCase
         $typed[30] = $typed[31];
         $typed[31] = $swapped;
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('mistyped');
-
-        RecoveryKey::parse($typed);
+        try {
+            RecoveryKey::parse($typed);
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('mistyped', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::Pruefsumme, $e->problem);
+        }
     }
 
     public function testAMissingGroupIsRejected(): void
@@ -101,20 +109,26 @@ final class RecoveryKeyTest extends TestCase
         $groups = RecoveryKey::forVault(Vault::create())->groups();
         array_pop($groups);
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('56 characters');
-
-        RecoveryKey::parse(implode(' ', $groups));
+        try {
+            RecoveryKey::parse(implode(' ', $groups));
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('56 characters', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::Laenge, $e->problem);
+        }
     }
 
     public function testACharacterOutsideTheAlphabetIsRejected(): void
     {
         $formatted = RecoveryKey::forVault(Vault::create())->formatted();
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('not a recovery key character');
-
-        RecoveryKey::parse(substr($formatted, 0, -1) . 'U');
+        try {
+            RecoveryKey::parse(substr($formatted, 0, -1) . 'U');
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('not a recovery key character', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::Zeichen, $e->problem);
+        }
     }
 
     public function testUnknownFormatVersionIsRejected(): void
@@ -132,10 +146,13 @@ final class RecoveryKeyTest extends TestCase
 
         self::assertNotSame($foreign, str_replace(' ', '', $key->formatted()));
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('unknown format version');
-
-        RecoveryKey::parse($foreign);
+        try {
+            RecoveryKey::parse($foreign);
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('unknown format version', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::Version, $e->problem);
+        }
     }
 
     /**
@@ -146,10 +163,13 @@ final class RecoveryKeyTest extends TestCase
     {
         $foreign = RecoveryKey::forVault(Vault::create());
 
-        $this->expectException(CryptoException::class);
-        $this->expectExceptionMessage('another vault');
-
-        $foreign->openVault(Vault::create()->publicKey());
+        try {
+            $foreign->openVault(Vault::create()->publicKey());
+            self::fail('Expected a RecoveryKeyException.');
+        } catch (RecoveryKeyException $e) {
+            self::assertStringContainsString('another vault', $e->getMessage());
+            self::assertSame(RecoveryKeyProblem::FremderTresor, $e->problem);
+        }
     }
 
     /**
