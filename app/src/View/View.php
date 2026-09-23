@@ -49,6 +49,13 @@ final class View
      */
     private ?Berechtigungen $berechtigungen = null;
 
+    /**
+     * Accounts waiting for a vault grant, for the banner of an admin who
+     * can grant (issue #20/M3-7) - 0 for everybody else. Set with the
+     * rest of the chrome by App\Http\LoginGuard.
+     */
+    private int $ausstehendeFreigaben = 0;
+
     public function __construct(
         private readonly string $viewsDir,
         private readonly string $version,
@@ -65,11 +72,16 @@ final class View
      * @param string|null $anzeigename decrypted display name, or null when
      *                                 nobody is logged in
      */
-    public function setAnmeldung(?string $anzeigename, ?string $csrfToken, ?Berechtigungen $berechtigungen = null): void
-    {
+    public function setAnmeldung(
+        ?string $anzeigename,
+        ?string $csrfToken,
+        ?Berechtigungen $berechtigungen = null,
+        int $ausstehendeFreigaben = 0,
+    ): void {
         $this->angemeldet = $anzeigename;
         $this->csrfToken = $csrfToken;
         $this->berechtigungen = $berechtigungen;
+        $this->ausstehendeFreigaben = $ausstehendeFreigaben;
     }
 
     /**
@@ -102,6 +114,7 @@ final class View
                 // it renders into.
                 'angemeldet' => $this->angemeldet,
                 'berechtigungen' => $this->berechtigungen,
+                'ausstehendeFreigaben' => $this->ausstehendeFreigaben,
                 'content' => $content,
                 'bereich' => $bereich,
                 'pfad' => $this->currentPath,

@@ -6,9 +6,12 @@ use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
+use App\Admin\UserController;
+use App\Admin\VaultGrantController;
 use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuthController;
+use App\App\InvitationController;
 use App\App\LoginCompleter;
 use App\App\MfaController;
 use App\App\MfaToolbox;
@@ -26,6 +29,7 @@ use App\Http\StaticFileHandler;
 use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AuthTokenRepository;
+use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\JobRepository;
@@ -42,6 +46,8 @@ use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Service\Account\AccessAssignment;
+use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
@@ -54,6 +60,7 @@ use App\Service\Account\RoleService;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
+use App\Service\Account\UserAdministration;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
@@ -64,6 +71,7 @@ use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
@@ -300,6 +308,85 @@ $rollen = static function () use ($connections, $view): RoleController {
     return new RoleController($view, new Session(), $repository, new RoleService($repository));
 };
 
+// User management and vault grants (M3-7, issue #20). One small factory
+// for the collaborators the admin pages, the invitation page and the reset
+// share: the notice to the admins who can grant goes out from all three.
+$verwaltungFor = static fn(\PDO $pdo): UserAdministration => new UserAdministration($pdo, $serverCrypto);
+$freigabeHinweisFor = static fn(\PDO $pdo): FreigabeBenachrichtigung => new FreigabeBenachrichtigung(
+    $mailerFor($pdo),
+    $serverCrypto,
+    $verwaltungFor($pdo),
+);
+$zuweisungFor = static fn(\PDO $pdo): AccessAssignment => new AccessAssignment(
+    $pdo,
+    new RoleRepository($pdo),
+    new UserAccessRepository($pdo),
+    new UserRepository($pdo),
+);
+
+$benutzer = static function () use ($connections, $view, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $verwaltungFor, $freigabeHinweisFor, $zuweisungFor): UserController {
+    $pdo = $connections->pdo();
+
+    return new UserController(
+        $view,
+        new Session(),
+        new UserRepository($pdo),
+        new RoleRepository($pdo),
+        new UserAccessRepository($pdo),
+        new AuthTokenRepository($pdo),
+        new CostCenterRepository($pdo),
+        new Invitation(
+            $pdo,
+            $serverCrypto,
+            new PasswordHasher(),
+            new PasswordPolicy($paths->dataDir() . '/haeufige-passwoerter.txt'),
+            $zuweisungFor($pdo),
+        ),
+        $verwaltungFor($pdo),
+        $zuweisungFor($pdo),
+        $mailerFor($pdo),
+        $mailSettingsFor($pdo),
+        $serverCrypto,
+        $freigabeHinweisFor($pdo),
+        $logger,
+    );
+};
+
+$tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor): VaultGrantController {
+    $pdo = $connections->pdo();
+
+    return new VaultGrantController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new UserRepository($pdo),
+        new VaultRepository($pdo),
+        new VaultGrantRepository($pdo),
+        $verwaltungFor($pdo),
+        $mailerFor($pdo),
+        $serverCrypto,
+    );
+};
+
+// Accepting an invitation: a public page, built lazily like $passwort.
+$einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor): InvitationController {
+    $pdo = $connections->pdo();
+
+    return new InvitationController(
+        $view,
+        new Session(),
+        new Invitation(
+            $pdo,
+            $serverCrypto,
+            new PasswordHasher(),
+            new PasswordPolicy($paths->dataDir() . '/haeufige-passwoerter.txt'),
+            $zuweisungFor($pdo),
+        ),
+        $freigabeHinweisFor($pdo),
+        $mailSettingsFor($pdo),
+    );
+};
+
 // Login and vault unlock (M3-3/M3-4, issues #16/#17). Built lazily like the
 // rest: the login FORM needs no database, only the attempt behind it does -
 // and the guard reads the timeout settings only once a protected route
@@ -371,7 +458,7 @@ $passwort = static fn(): PasswordController => new PasswordController(
     $view,
     new Session(),
     new SessionVault(),
-    static function () use ($connections, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger): PasswordToolbox {
+    static function () use ($connections, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $freigabeHinweisFor): PasswordToolbox {
         $pdo = $connections->pdo();
 
         return new PasswordToolbox(
@@ -387,6 +474,7 @@ $passwort = static fn(): PasswordController => new PasswordController(
             $mailSettingsFor($pdo),
             $serverCrypto,
             $logger,
+            $freigabeHinweisFor($pdo),
         );
     },
 );
@@ -406,6 +494,13 @@ $guard = static fn(): LoginGuard => new LoginGuard(
                 new UserAccessRepository($connections->pdo())->berechtigungen($userId),
             );
     },
+    // The banner "N Freigaben ausstehend" (M3-7, issue #20): one COUNT,
+    // asked only for an account that may grant.
+    static function () use ($connections): int {
+        $vault = new VaultRepository($connections->pdo())->current();
+
+        return $vault === null ? 0 : new VaultGrantRepository($connections->pdo())->countPending($vault->version, new \DateTimeImmutable());
+    },
 );
 
 $router = new Router();
@@ -423,6 +518,9 @@ $router = new Router();
     $mail,
     $passwort,
     $rollen,
+    $benutzer,
+    $tresor,
+    $einladung,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

@@ -16,16 +16,17 @@ use App\Repository\UserRepository;
  *
  * - An account with an external role (Kassenprüfer, Steuerberater) gets an
  *   end date - 60 days unless one is given, extendable - and `mfa_required`
- *   always on. The end date itself is enforced where every login and every
- *   request is: App\Domain\User::mayLogIn(), via App\Http\LoginGuard.
+ *   always on. An internal account MAY have one (a helper for one season,
+ *   issue #20/M3-7), it does not need one. The end date itself is enforced
+ *   where every login and every request is: App\Domain\User::mayLogIn(),
+ *   via App\Http\LoginGuard.
  * - External roles are not mixed with internal ones: "ausschließlich
  *   lesend" would not hold otherwise.
  * - The last account that can manage accounts (`admin.users`) keeps that
  *   right - nobody locks the club out of its own administration.
  *
- * The page that calls this for a chosen account is the user management of
- * M3-7; the installer (App\Installer\FirstAdminSetup) and the tests use it
- * directly until then.
+ * Called by the user management (App\Admin\UserController, App\Service\
+ * Account\Invitation, M3-7).
  */
 final readonly class AccessAssignment
 {
@@ -43,9 +44,9 @@ final readonly class AccessAssignment
      * @param list<int> $roleIds
      * @param list<int> $kostenstellen cost centers for rights with scope
      *        `kostenstelle`
-     * @param \DateTimeImmutable|null $ablauf end date of an external account;
-     *        null = the default of 60 days. Ignored for internal accounts,
-     *        whose end date is cleared.
+     * @param \DateTimeImmutable|null $ablauf end date of the account. For an
+     *        external account null means the default of 60 days; for an
+     *        internal one null means none.
      * @throws RoleRuleViolation
      */
     public function zuweisen(
@@ -75,12 +76,11 @@ final readonly class AccessAssignment
             throw new RoleRuleViolation('Der Zeitraum endet vor seinem Beginn.');
         }
 
-        $ablaufdatum = null;
-        if ($extern !== []) {
-            $ablaufdatum = $ablauf ?? $now->modify('+' . self::EXTERN_STANDARD_TAGE . ' days');
-            if ($ablaufdatum <= $now) {
-                throw new RoleRuleViolation('Das Ablaufdatum muss in der Zukunft liegen.');
-            }
+        $ablaufdatum = $extern !== []
+            ? $ablauf ?? $now->modify('+' . self::EXTERN_STANDARD_TAGE . ' days')
+            : $ablauf;
+        if ($ablaufdatum !== null && $ablaufdatum <= $now) {
+            throw new RoleRuleViolation('Das Ablaufdatum muss in der Zukunft liegen.');
         }
 
         $verwalterVorher = $this->gibtVerwalter();
@@ -107,15 +107,15 @@ final readonly class AccessAssignment
     }
 
     /**
-     * Extends (or shortens) an external account's access. Only for
-     * external accounts - a regular account has no end date to move.
+     * Extends (or shortens) an account's access - external or, since M3-7,
+     * internal (issue #20).
      *
      * @throws RoleRuleViolation
      */
     public function verlaengern(int $userId, \DateTimeImmutable $bis, ?\DateTimeImmutable $now = null): void
     {
-        if (!$this->zugriff->berechtigungen($userId)->istExtern()) {
-            throw new RoleRuleViolation('Nur externe Zugänge haben ein Ablaufdatum.');
+        if ($this->benutzer->findById($userId) === null) {
+            throw new RoleRuleViolation('Diesen Benutzer gibt es nicht.');
         }
         if ($bis <= ($now ?? new \DateTimeImmutable())) {
             throw new RoleRuleViolation('Das Ablaufdatum muss in der Zukunft liegen.');

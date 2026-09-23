@@ -236,6 +236,9 @@ final class RoleAdminFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $rollen,
+            $unerreichbar,
+            $unerreichbar,
+            $unerreichbar,
         );
 
         return new Kernel(

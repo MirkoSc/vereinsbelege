@@ -25,7 +25,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `mfa_email_code` | user_id, code_hash, expires_at, attempts, created_at (Migration 008, M3-4) | – |
 | `mfa_backup_code` | id, user_id, code_hash, used_at NULL, created_at (Migration 008, M3-4) | – |
 | `trusted_device` | id, user_id, token_hash UNIQUE, label, created_at, last_used_at NULL, expires_at (Migration 008, M3-4) | – |
-| `auth_token` | id, user_id, typ (`reset`/`invite`), token_hash UNIQUE, expires_at, used_at NULL, created_at (Migration 009, M3-5 – bisher nur `reset`; `invite` kommt mit M3-7) | – |
+| `auth_token` | id, user_id, typ (`reset`/`invite`), token_hash UNIQUE, expires_at, used_at NULL, created_at (Migration 009, M3-5; `invite` seit M3-7) | – |
 | `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin | – |
 | `audit_log` | ts, user_id NULL, action, entity, entity_id, ip_hash, details_enc, dek_sealed, prev_hash, hash | T (details) |
 
@@ -65,9 +65,17 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
   `user.session_epoch`, den Zähler, gegen den `App\Http\LoginGuard` jede
   Sitzung prüft (01 §2 „Sitzungen beenden").
 - `auth_token.token_hash` ist derselbe Blind-Index-HMAC wie die
-  `*_hash`-Spalten unten, Zweck `auth_token.reset` – ohne Benutzer-ID im
-  Wert: das 32-Byte-Token ist allein eindeutig und muss ohne Konto
-  nachgeschlagen werden (`App\Service\Account\PasswordReset`).
+  `*_hash`-Spalten unten, Zweck `auth_token.reset` bzw. `auth_token.invite`
+  – ohne Benutzer-ID im Wert: das 32-Byte-Token ist allein eindeutig und
+  muss ohne Konto nachgeschlagen werden (`App\Service\Account\
+  PasswordReset`, `App\Service\Account\Invitation`).
+- Ein eingeladenes Konto (M3-7) ist eine `user`-Zeile mit Status
+  `eingeladen`, leerem `password_hash` und **ohne** `user_key` – das
+  Schlüsselpaar entsteht erst, wenn die eingeladene Person ihr Passwort
+  setzt. „Freigabe ausstehend" ist kein eigener Status, sondern abgeleitet:
+  `aktiv`, nicht abgelaufen, `user_key` vorhanden, keine `vault_grant`-Zeile
+  der aktuellen Tresor-Version (`VaultGrantRepository::pendingUserIds()`).
+  `vault_grant.granted_by` nennt den freigebenden Admin.
 - Die `*_hash`-Spalten von `mfa_email_code`, `mfa_backup_code` und
   `trusted_device` sind kein neues Primitiv: derselbe Blind-Index-HMAC wie
   `user.email_bi` (`App\Service\Crypto\ServerCrypto::blindIndex()`), mit

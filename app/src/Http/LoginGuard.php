@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http;
 
 use App\Domain\Berechtigungen;
+use App\Domain\Permission;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
@@ -43,12 +44,17 @@ final readonly class LoginGuard
      *        locking an account, letting an external account expire or
      *        deleting a user take effect at once instead of at the next
      *        login - a session is not a second, longer-lived permission.
+     * @param (\Closure(): int)|null $ausstehendeFreigaben how many accounts
+     *        wait for a vault grant - asked only for an account with
+     *        `admin.vault_grant`, for the banner "N Freigaben ausstehend"
+     *        (docs/spec/01-sicherheit.md section 2, issue #20/M3-7).
      */
     public function __construct(
         private Session $session,
         private View $view,
         private \Closure $timeouts,
         private \Closure $benutzer,
+        private ?\Closure $ausstehendeFreigaben = null,
     ) {
     }
 
@@ -109,7 +115,14 @@ final readonly class LoginGuard
         // the token their logout form needs. Not for the JSON routes - they
         // render nothing.
         if (!$api) {
-            $this->view->setAnmeldung($benutzer->anzeigename, $this->session->csrfToken(), $benutzer->berechtigungen);
+            $this->view->setAnmeldung(
+                $benutzer->anzeigename,
+                $this->session->csrfToken(),
+                $benutzer->berechtigungen,
+                $this->ausstehendeFreigaben !== null && $benutzer->berechtigungen->darf(Permission::AdminVaultGrant)
+                    ? ($this->ausstehendeFreigaben)()
+                    : 0,
+            );
         }
 
         // M3-4 (issue #17): `mfa_required` without a configured factor is

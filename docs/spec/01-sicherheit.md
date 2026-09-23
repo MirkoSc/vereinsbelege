@@ -158,7 +158,37 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   neuer Session-ID).
 - **Letzter Admin hat Passwort vergessen**: Wiederherstellung im Installer-
   ähnlichen Flow `/admin/wiederherstellen` mit Wiederherstellungsschlüssel.
-- **Sperren/Entfernen**: Grant-Zeile löschen. Echte Schlüsselrotation
+- Umgesetzt mit M3-7 (issue #20): **Einladung** über `/admin/benutzer`
+  (`App\Admin\UserController`, Recht `admin.users`,
+  `App\Service\Account\Invitation`): Zeile mit Status `eingeladen`, Rollen
+  und Scopes gleich über `AccessAssignment`, Link-Token wie beim Reset
+  (32 Byte hex, nur Hash mit Zweck `auth_token.invite` in `auth_token`,
+  Typ `invite`, 72 h, einmalig, „erneut senden" ersetzt den Link). Die Seite
+  hinter dem Link (`/anmelden/einladung`, öffentlich mit Session und CSRF,
+  `Referrer-Policy: no-referrer`) setzt das Passwort; erst dabei entsteht
+  das Schlüsselpaar, das Konto wird `aktiv`. Der zweite Faktor wird beim
+  ersten Login eingerichtet (erzwungen wie bei jedem Konto mit
+  `mfa_required`, §3). „Freigabe ausstehend" ist abgeleitet, kein Status
+  (02 „Benutzer und Sicherheit"). **Freigabe** über `/admin/tresor`
+  (`App\Admin\VaultGrantController`, Recht `admin.vault_grant`,
+  `App\Service\Account\UserAdministration`): versiegelt wird mit dem
+  entsperrten Tresor **der eigenen Sitzung** des Admins – ohne ihn bietet
+  die Seite keinen Knopf an. Das Banner steht auf jeder Seite hinter der
+  Anmeldung für Konten mit `admin.vault_grant` (`App\Http\LoginGuard`,
+  `partials/freigaben.php`). Die Mail an die Admins (Einladung angenommen,
+  Passwort-Reset, Entsperren) geht an jedes aktive Konto mit
+  `admin.vault_grant` **und** eigener Freigabe
+  (`App\Service\Mail\FreigabeBenachrichtigung`); sie wird nur in die
+  Queue gestellt, der Cron verschickt sie.
+- **Sperren/Entfernen**: Grant-Zeile löschen. Umgesetzt mit M3-7: Sperren
+  setzt den Status `gesperrt`, löscht den Grant und erhöht
+  `user.session_epoch` (alle Sitzungen enden sofort); Entsperren führt
+  zurück nach `aktiv` **ohne** Grant – das Konto ist wieder „Freigabe
+  ausstehend" (eine nie angenommene Einladung wieder `eingeladen`).
+  **Entziehen** löscht den Grant und erhöht ebenfalls `session_epoch`, sonst
+  behielte eine laufende Sitzung `VK_priv`. Niemand sperrt oder entzieht
+  sich selbst, und das letzte aktive Konto mit `admin.users` bzw. mit
+  `admin.vault_grant` und eigener Freigabe bleibt erhalten. Echte Schlüsselrotation
   (neuer VK, alles umschlüsseln per Schrittkette) ist Backlog, der Pfad wird
   aber im Datenmodell vorgesehen (`vault.version`, `dek_sealed` mit
   Versionspräfix).
@@ -277,7 +307,8 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   und „2FA geändert" mit M3-4 (`App\Service\Mail\Mailer::
   sendeSicherheitshinweis()`, Vorlage `app/views/mail/sicherheitshinweis.php`
   – ein fester Satz aus dem Aufrufer, nie Nutzereingabe); „Passwort geändert"
-  und „Passwort zurückgesetzt" mit M3-5, „Tresor-Freigabe" kommt mit M3-7.
+  und „Passwort zurückgesetzt" mit M3-5, „Tresor-Freigabe erteilt/entzogen"
+  mit M3-7 (dazu „Zugang gesperrt").
 - Session-ID-Regeneration bei Login und Rechtewechsel.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
@@ -359,9 +390,12 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   intern/extern; `admin.users` kann der letzten Rolle, über die es jemand
   hat, nicht entzogen werden.
 - **Zuweisung** (`App\Service\Account\AccessAssignment`, Oberfläche mit
-  M3-7): externe Rollen nicht mit internen kombinierbar; externes Konto →
-  `expires_at` Pflicht (Default heute + 60 Tage, per `verlaengern()`
-  verschiebbar) und `mfa_required = 1`; internes Konto → kein Ablaufdatum.
+  M3-7 unter `/admin/benutzer`): externe Rollen nicht mit internen
+  kombinierbar; externes Konto → `expires_at` Pflicht (Default heute + 60
+  Tage, per `verlaengern()` verschiebbar) und `mfa_required = 1`; internes
+  Konto → Ablaufdatum **optional** (seit M3-7, z. B. befristete Helfer;
+  leer = unbefristet). Die Oberfläche fragt den letzten Zugangstag ab und
+  speichert ihn als 23:59:59 dieses Tages.
   Der letzte Verwalter (`admin.users`) behält sein Recht. Das Ablaufdatum
   greift über `User::mayLogIn()` bei Login **und** bei jedem Request
   (`LoginGuard`).
@@ -390,7 +424,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `/api/upload*` = `document.submit_internal`; `/admin/designsystem` =
   `admin.*`; `/admin/speicher*`, `/admin/mail*` = `admin.settings`;
   `/admin/update*`, `/admin/wartung/aufheben` = `admin.system`;
-  `/admin/rollen*` = `admin.users`.
+  `/admin/rollen*`, `/admin/benutzer*` = `admin.users`; `/admin/tresor*` =
+  `admin.vault_grant` (M3-7); `/anmelden/einladung` = öffentlich (M3-7).
 
 ## 5. Öffentliche Einreichung – Schutz
 

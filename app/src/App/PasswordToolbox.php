@@ -7,6 +7,7 @@ namespace App\App;
 use App\Repository\UserRepository;
 use App\Service\Account\PasswordReset;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Support\FileLogger;
@@ -25,6 +26,8 @@ final readonly class PasswordToolbox
         public MailSettingsRepository $mailSettings,
         public ServerCrypto $crypto,
         public ?FileLogger $logger = null,
+        /** Tells the admins who can grant that the account waits again (M3-7). */
+        public ?FreigabeBenachrichtigung $freigabeHinweis = null,
     ) {
     }
 }
