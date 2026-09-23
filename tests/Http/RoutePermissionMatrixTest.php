@@ -212,6 +212,15 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/audit/pruefen', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/app/audit', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/audit/pruefen', false],
+            // Posteingang (M4-5): reading is `inbox.view` (every shipped
+            // role), deciding `document.edit` (Admin, Finanzen).
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/posteingang', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/posteingang/7', true],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/posteingang/7/datei/3', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/posteingang/7/ablehnen', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/posteingang/7/wiedervorlage', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/posteingang/7/annehmen', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/posteingang/7/kostenstelle', false],
         ];
 
         foreach ($faelle as [$rolle, $methode, $pfad, $darf]) {
@@ -375,6 +384,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

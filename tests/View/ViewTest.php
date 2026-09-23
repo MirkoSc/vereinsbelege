@@ -91,7 +91,9 @@ final class ViewTest extends TestCase
         $html = $this->render('app/start', ['title' => ''], Area::App);
 
         self::assertStringContainsString('<span class="navi-spaeter"', $html);
-        self::assertStringNotContainsString('href="/app/posteingang"', $html);
+        self::assertStringNotContainsString('href="/app/belege"', $html);
+        // The inbox has its page since M4-5 (issue #27) - a link now.
+        self::assertStringContainsString('href="/app/posteingang"', $html);
     }
 
     /**

@@ -21,6 +21,7 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
 use App\Service\Document\PdfErzeugung;
+use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\Mailer;
 
 /**
@@ -28,7 +29,8 @@ use App\Service\Mail\Mailer;
  * section 1, issue #24/M4-2): validates the form, checks the uploaded pages
  * belong to this visit, then writes `submission` and `document`, queues the
  * `pdf_erzeugen` job (issue #26/M4-4), all in one transaction, and hands back
- * a reference number.
+ * a reference number. After the commit it queues the confirmation to the
+ * submitter and the notice to everyone who works the inbox (issue #27/M4-5).
  *
  * Framework-free like the other Account/MasterData services: no Http, no
  * Session - the caller (App\PublicPages\EinreichungController) has already
@@ -58,14 +60,22 @@ final readonly class SubmissionService
         private AuditLog $audit,
         private EinreichungsEinstellungen $einstellungen,
         private JobRepository $jobs,
+        private ?EinreichungBenachrichtigung $benachrichtigung = null,
     ) {
     }
 
     /**
      * @param array<string, mixed> $eingabe the decoded JSON body
+     * @param string|null $linkBasis checked base URL for the link in the
+     *        notice to the inbox (App\Service\Mail\PublicUrl::resolve())
      */
-    public function einreichen(array $eingabe, string $formHash, Vault $vault, ?\DateTimeImmutable $now = null): SubmissionResult
-    {
+    public function einreichen(
+        array $eingabe,
+        string $formHash,
+        Vault $vault,
+        ?\DateTimeImmutable $now = null,
+        ?string $linkBasis = null,
+    ): SubmissionResult {
         $now ??= new \DateTimeImmutable();
 
         // A retried request (the browser resent it after a lost response) -
@@ -101,6 +111,7 @@ final readonly class SubmissionService
                 $blobIds,
                 $vault->sealDataKey(DataKey::generate()),
                 $now,
+                costCenterId: $angaben->kostenstelleId,
             );
 
             // Building the PDF working copy needs an unlocked vault, so it
@@ -128,6 +139,7 @@ final readonly class SubmissionService
         if ($angaben->email !== null) {
             $this->mailer->reiheEinreichungsbestaetigungEin($angaben->email, $referenz, $now);
         }
+        $this->benachrichtigung?->senden($referenz, $documentId, $linkBasis, $now);
         $this->audit->record(AuditAction::EinreichungEingegangen, null, '', $documentId, [], $now);
 
         return SubmissionResult::erfolg($referenz);

@@ -1,11 +1,22 @@
+<?php
+
+/**
+ * Start page of the user area. Everything behind it arrives milestone by
+ * milestone; the inbox is the first (issue #27/M4-5).
+ *
+ * @var bool $posteingang whether the account may open the inbox
+ */
+?>
 <section class="schmal">
     <h2>Belegverwaltung</h2>
     <p>
-        Anmeldung, Rollen und der Tresor kommen mit Meilenstein M3 – bis dahin
-        ist dieser Bereich offen und leer. Die Fachbereiche aus der Navigation
-        füllen sich mit den darauf folgenden Meilensteinen.
+        Die Fachbereiche aus der Navigation füllen sich mit den folgenden Meilensteinen.
     </p>
-    <div class="leer">
-        Noch keine Belege. Der Posteingang kommt mit Meilenstein M4.
-    </div>
+    <?php if ($posteingang ?? false): ?>
+        <p class="knopfreihe">
+            <a class="knopf knopf-primaer" href="/app/posteingang">Zum Posteingang</a>
+        </p>
+    <?php else: ?>
+        <div class="leer">Noch keine Belege.</div>
+    <?php endif; ?>
 </section>

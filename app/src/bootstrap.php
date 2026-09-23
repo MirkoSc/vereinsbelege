@@ -16,6 +16,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\LoginCompleter;
 use App\App\MfaController;
@@ -83,6 +84,8 @@ use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Inbox\Posteingang;
+use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
@@ -419,9 +422,11 @@ $einreichen = static function () use (
     $formToken,
     $proofOfWork,
     $mailerFor,
+    $mailSettingsFor,
     $auditFor,
     $einreichungEinstellungenFor,
     $spamschutzFor,
+    $serverCrypto,
 ): EinreichungController {
     $pdo = $connections->pdo();
     $kostenstellen = new CostCenterRepository($pdo);
@@ -444,9 +449,17 @@ $einreichen = static function () use (
             $auditFor($pdo),
             $einstellungen,
             new JobRepository($pdo),
+            // M4-5: the notice to everyone who works the inbox.
+            new EinreichungBenachrichtigung(
+                $mailerFor($pdo),
+                $serverCrypto,
+                new UserRepository($pdo),
+                new UserAccessRepository($pdo),
+            ),
         ),
         $spamschutzFor($pdo),
         $einstellungen,
+        $mailSettingsFor($pdo),
     );
 };
 
@@ -684,6 +697,27 @@ $auditSeite = static function () use ($connections, $view, $serverCrypto, $audit
     );
 };
 
+// The inbox (M4-5, issue #27): list, detail, streamed pages and the
+// decisions. Built lazily like the other pages.
+$posteingangSeite = static function () use ($connections, $view, $paths, $auditFor): InboxController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $kostenstellen = new CostCenterRepository($pdo);
+
+    return new InboxController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Posteingang(
+            new DocumentRepository($pdo),
+            $kostenstellen,
+            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            $auditFor($pdo),
+        ),
+        $kostenstellen,
+    );
+};
+
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
     $view,
@@ -732,6 +766,7 @@ $router = new Router();
     $einreichenUploads,
     $einreichen,
     $einreichungAdmin,
+    $posteingangSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

@@ -16,6 +16,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\MfaController;
 use App\App\PasswordController;
@@ -100,6 +101,8 @@ use App\View\View;
  * @param \Closure(): SubmissionSettingsController $einreichungAdmin built
  *        lazily, same reason as $mail: only this admin page needs the
  *        database (issue #25/M4-3).
+ * @param \Closure(): InboxController $posteingang built lazily, same reason
+ *        as $mail: only the inbox pages need the database (issue #27/M4-5).
  */
 return static function (
     Router $router,
@@ -124,6 +127,7 @@ return static function (
     \Closure $einreichenUploads,
     \Closure $einreichen,
     \Closure $einreichungAdmin,
+    \Closure $posteingang,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -191,12 +195,16 @@ return static function (
     $get('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->form($r));
     $post('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->submit($r));
 
-    // Start page of the user area. The areas behind it (Posteingang, Belege,
-    // Konten, ...) arrive from milestone M4 on; they are already in the
+    // Start page of the user area. The areas behind it (Belege, Konten, ...)
+    // arrive milestone by milestone - the Posteingang since M4-5; the rest are
+    // already in the
     // navigation as inactive entries (App\View\Area::navigation()), each with
     // the right its page will need. Permission: any logged-in account.
     $get('/app', $angemeldet, static fn(): Response => Response::html(
-        $view->render('app/start', ['title' => ''], Area::App),
+        $view->render('app/start', [
+            'title' => '',
+            'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
+        ], Area::App),
     ));
 
     // Cron entry point for the host's control panel (06 section 4, issue #99).
@@ -304,6 +312,22 @@ return static function (
     // with CSRF because it is a step chain driven by fetch() (JSON 401/403).
     $get('/app/audit', Zugriff::recht(Permission::AuditView), static fn(Request $r) => $audit()->liste($r));
     $post('/app/audit/pruefen', Zugriff::recht(Permission::AuditView)->alsApi(), static fn(Request $r) => $audit()->pruefen($r));
+
+    // The inbox (M4-5, issue #27, docs/spec/02-datenmodell.md "Statusmodell").
+    // Permission: reading `inbox.view` (every shipped role, the
+    // Vereinsverantwortlicher only for his cost centers - filtered in SQL by
+    // App\Repository\DocumentRepository); deciding and the cost center
+    // `document.edit` (Admin, Finanzen). CSRF on every write. The page route
+    // streams one decrypted page, never a file (CLAUDE.md section 4).
+    $inboxView = Zugriff::recht(Permission::InboxView);
+    $documentEdit = Zugriff::recht(Permission::DocumentEdit);
+    $get('/app/posteingang', $inboxView, static fn(Request $r) => $posteingang()->liste($r));
+    $get('/app/posteingang/{id:\d+}', $inboxView, static fn(Request $r, array $params) => $posteingang()->detail($r, $params));
+    $get('/app/posteingang/{id:\d+}/datei/{blob:\d+}', $inboxView, static fn(Request $r, array $params) => $posteingang()->datei($r, $params));
+    $post('/app/posteingang/{id:\d+}/annehmen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->annehmen($r, $params));
+    $post('/app/posteingang/{id:\d+}/ablehnen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->ablehnen($r, $params));
+    $post('/app/posteingang/{id:\d+}/wiedervorlage', $documentEdit, static fn(Request $r, array $params) => $posteingang()->wiedervorlage($r, $params));
+    $post('/app/posteingang/{id:\d+}/kostenstelle', $documentEdit, static fn(Request $r, array $params) => $posteingang()->kostenstelle($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

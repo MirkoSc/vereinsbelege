@@ -181,7 +181,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
 | `submission` (öffentliche Einreichung) | reference_code UNIQUE NULL (zweistufig geschrieben wie `file_blob`, s. u.), form_hash (SHA-256 des Formular-Token-Nonce, UNIQUE – macht ein wiederholtes Absenden idempotent), received_at, status, dek_sealed, payload_enc {name, email, erstattung: {art: `ueberweisung`/`bar`/`keine`, iban, kontoinhaber}, freitext, kostenstelle_hinweis} | T |
-| `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, original_blob_ids JSON, pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), content_bi (Duplikaterkennung), dek_sealed, created_by NULL, created_at | T |
+| `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, cost_center_id NULL (Klartext-Strukturfeld wie bei `invoice`, FK `RESTRICT`; aus der Mannschaftswahl der Einreichung, im Posteingang änderbar – Filter und Scope „eigene Kostenstelle“ von `inbox.view`, seit M4-5/Migration 014), original_blob_ids JSON, pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), resubmit_on DATE NULL (Wiedervorlage-Datum), status_note_enc NULL (Ablehnungsgrund bzw. Wiedervorlage-Notiz, AEAD mit Zeilen-DEK), status_changed_at/by NULL, content_bi (Duplikaterkennung), dek_sealed, created_by NULL, created_at | T |
 | `submission_upload` | blob_id (FK `file_blob`, `ON DELETE CASCADE`), form_hash, created_at – Blobs, die das Formular-Token hochgeladen hat, bis eine Einreichung sie beansprucht (Zeile gelöscht) oder der Cron sie nach 24 h abräumt (`App\Service\Cron\SubmissionUploadCleanupTask`, M4-2) | – (nur IDs/Hash) |
 | `document_artifact` | document_id, kind (`page_image`/`pdfa`/`text`/`extraction`), seq, blob_id NULL, dek_sealed, data_enc NULL, producer (`session`/`browser`/`worker`), job_attempt_id, created_at – jedes Artefakt mit eigenem DEK, damit auch der Worker (ohne Zeilen-DEK des Dokuments) Ergebnisse ablegen kann; das jeweils neueste je kind gilt | T |
 | `invoice` (fachlicher Beleg) | document_id, doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`), supplier_id NULL, invoice_date, due_date NULL, service_from/to NULL, category_id NULL, sphere NULL, cost_center_id NULL, recurring_series_id NULL, direction (`ausgabe`/`einnahme`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[], currency, purpose_short, notes, payment_hint}, number_bi | T |
@@ -200,13 +200,41 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 ## Statusmodell `document.status`
 
 ```
-eingegangen ──(Aufbereitung fertig)──► bereit_zur_auswertung
+eingegangen ──(Annehmen im Posteingang)──► bereit_zur_auswertung
      │                                        │ (KI-Job)
      │                                        ▼
      │                                  ausgewertet ──► in_pruefung ──► geprueft ──► festgeschrieben
      │                                        │               │
-     └──► ki_fehler / wiedervorlage ◄─────────┘               └──► abgelehnt (mit Grund, bleibt erhalten)
+     ├──► wiedervorlage ◄─────────────────────┤               └──► abgelehnt (mit Grund, bleibt erhalten)
+     │                                        │
+     └──► abgelehnt              ki_fehler ◄──┘ (auch aus bereit_zur_auswertung)
 ```
+
+Übergänge vollständig (maßgeblich ist `App\Domain\DocumentStatus::uebergaenge()`,
+Test `tests/Domain/DocumentStatusTest.php`; seit M4-5/issue #27):
+
+| von | nach |
+|---|---|
+| `eingegangen` | `bereit_zur_auswertung`, `wiedervorlage`, `abgelehnt` |
+| `bereit_zur_auswertung` | `ausgewertet`, `ki_fehler` |
+| `ausgewertet` | `in_pruefung`, `ki_fehler`, `wiedervorlage` |
+| `in_pruefung` | `geprueft`, `abgelehnt` |
+| `geprueft` | `festgeschrieben` |
+| `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage` |
+| `wiedervorlage` | `bereit_zur_auswertung`, `abgelehnt` |
+| `festgeschrieben`, `abgelehnt` | – (Endzustände) |
+
+Aktionen im Posteingang (`App\Domain\InboxAction`, Recht `document.edit`):
+**Annehmen** aus `eingegangen`/`wiedervorlage` → `bereit_zur_auswertung`;
+**Ablehnen** (Grund Pflicht) aus `eingegangen`/`wiedervorlage`/`in_pruefung`
+→ `abgelehnt` – so lässt sich Spam oder ein nicht zuständiger Beleg schon im
+Posteingang aussortieren; **Wiedervorlage** (Datum Pflicht, ab heute; Notiz
+optional) aus `eingegangen`/`ausgewertet`/`ki_fehler` → `wiedervorlage`. Eine
+Wiedervorlage erscheint ab ihrem Datum wieder unter „Offen“ (keine Mail).
+Grund und Notiz liegen verschlüsselt in `status_note_enc`, im Audit-Log als
+versiegelte Details. Ein Statuswechsel gilt nur, wenn der Beleg noch im
+erwarteten Ausgangsstatus ist (`UPDATE … WHERE status = ?`) – zwei
+gleichzeitige Entscheidungen gewinnen nicht beide.
 
 `duplikat_verdacht` ist ein Flag (content_bi gleich oder Lieferant +
 Rechnungsnummer gleich), kein Status.

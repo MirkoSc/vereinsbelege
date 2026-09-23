@@ -214,6 +214,23 @@ final readonly class Mailer
     }
 
     /**
+     * The notice to the people who work the inbox about a new submission
+     * (issue #27/M4-5, App\Service\Mail\EinreichungBenachrichtigung). Only
+     * the reference number and a link - the submitter's name, text or
+     * amounts never go into a mail (CLAUDE.md section 4). Queued only.
+     */
+    public function reiheNeueEinreichungEin(string $empfaenger, string $referenz, ?string $link, ?\DateTimeImmutable $now = null): void
+    {
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('einreichung-neu', [
+            'referenz' => $referenz,
+            'link' => $link,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $this->queue->enqueue($empfaenger, sprintf('Neue Einreichung %s', $referenz), $body, $now ?? new \DateTimeImmutable());
+    }
+
+    /**
      * Cron entry point (App\Service\Cron\MailQueueTask): works through
      * everything due right now, one attempt each.
      */

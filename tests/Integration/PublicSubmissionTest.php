@@ -7,6 +7,7 @@ namespace App\Tests\Integration;
 use App\Api\EinreichungUploadController;
 use App\Domain\AuditAction;
 use App\Domain\BlobStorage;
+use App\Domain\SystemRole;
 use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Http\Response;
@@ -18,15 +19,19 @@ use App\Repository\DocumentRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\RateLimitRepository;
+use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
+use App\Repository\UserAccessRepository;
+use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\Mail\Mailer;
@@ -256,6 +261,46 @@ final class PublicSubmissionTest extends DatabaseTestCase
         self::assertSame('empfaenger@example.test', $mails[0]->to);
         self::assertStringContainsString($referenz, $mails[0]->subject . ' ' . $mails[0]->body);
         self::assertStringNotContainsString('Streng geheimer Verwendungszweck', $mails[0]->subject . ' ' . $mails[0]->body);
+    }
+
+    /**
+     * Issue #27/M4-5: the chosen team becomes the document's cost center
+     * (plaintext, for the inbox filter and scope), and everyone with
+     * `document.edit` gets a notice with nothing but the reference.
+     */
+    public function testASubmissionCarriesItsCostCenterAndNotifiesTheInbox(): void
+    {
+        $kostenstelle = new CostCenterRepository($this->pdo())->create('E-Jugend');
+        $rollen = new RoleRepository($this->pdo());
+        $finanzen = new UserRepository($this->pdo())->insert(
+            $this->serverKey->encrypt('kasse@example.test'),
+            random_bytes(32),
+            $this->serverKey->encrypt('Kasse'),
+            'hash',
+            mfaRequired: false,
+        );
+        $rollen->assignToUser($finanzen, [(int) $rollen->findSystem(SystemRole::Finanzen)?->id]);
+
+        $token = $this->issuedToken();
+        $seite = $this->hochladen($token, '%PDF-1.7 kostenstelle');
+        $angaben = $this->minimalAngaben([$seite]);
+        $angaben['kostenstelle'] = (string) $kostenstelle;
+        $angaben['name'] = 'Ganz Geheimer Name';
+        $angaben['freitext'] = 'Streng geheimer Verwendungszweck';
+
+        $referenz = $this->json($this->absenden($token, $angaben), 201)['referenz'];
+
+        $dokument = $this->pdo()->query('SELECT id, cost_center_id FROM document')->fetch();
+        self::assertNotFalse($dokument);
+        self::assertSame($kostenstelle, (int) $dokument['cost_center_id']);
+
+        $mails = new MailQueueRepository($this->pdo(), $this->serverKey)->recent();
+        self::assertCount(1, $mails);
+        self::assertSame('kasse@example.test', $mails[0]->to);
+        self::assertStringContainsString($referenz, $mails[0]->subject);
+        foreach (['Ganz Geheimer Name', 'Streng geheimer Verwendungszweck', 'E-Jugend'] as $geheim) {
+            self::assertStringNotContainsString($geheim, $mails[0]->subject . ' ' . $mails[0]->body);
+        }
     }
 
     public function testNoEmailMeansNoMail(): void
@@ -525,9 +570,11 @@ final class PublicSubmissionTest extends DatabaseTestCase
                 $audit,
                 $einstellungen,
                 new JobRepository($pdo),
+                new EinreichungBenachrichtigung($mailer, $this->serverKey, new UserRepository($pdo), new UserAccessRepository($pdo)),
             ),
             $this->spamschutz(),
             $einstellungen,
+            new MailSettingsRepository(new SettingRepository($pdo), $this->serverKey),
         );
     }
 
