@@ -138,6 +138,11 @@ final class AccessScopeTest extends DatabaseTestCase
         $id = $this->konto();
         $this->zuweisung->zuweisen($id, [$this->rolle(SystemRole::Vereinsverantwortlicher)], [$this->kostenstellen['Vereinsheim']]);
 
+        // A cost center still assigned to somebody cannot be deleted any
+        // more (migrations/012_cost_center_restrict.sql, issue #23/M4-1) -
+        // the assignment goes first, the same order the admin page enforces
+        // (App\Service\MasterData\CostCenterService::loeschen()).
+        $this->zugriff->setCostCenters($id, []);
         $this->pdo()->prepare('DELETE FROM scope_probe WHERE cost_center_id = ?')->execute([$this->kostenstellen['Vereinsheim']]);
         $this->pdo()->prepare('DELETE FROM cost_center WHERE id = ?')->execute([$this->kostenstellen['Vereinsheim']]);
 

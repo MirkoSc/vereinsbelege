@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\CostCenterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
@@ -81,6 +82,7 @@ use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
+use App\Service\MasterData\CostCenterService;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
@@ -324,6 +326,15 @@ $rollen = static function () use ($connections, $view, $auditFor): RoleControlle
     $repository = new RoleRepository($pdo);
 
     return new RoleController($view, new Session(), $repository, new RoleService($repository), $auditFor($pdo));
+};
+
+// Cost centers (M4-1, issue #23): plaintext operating data, no vault -
+// only the cost-center pages open the connection.
+$kostenstellen = static function () use ($connections, $view, $auditFor): CostCenterController {
+    $pdo = $connections->pdo();
+    $repository = new CostCenterRepository($pdo);
+
+    return new CostCenterController($view, new Session(), $repository, new CostCenterService($repository), $auditFor($pdo));
 };
 
 // User management and vault grants (M3-7, issue #20). One small factory
@@ -593,6 +604,7 @@ $router = new Router();
     $wiederherstellung,
     $einladung,
     $auditSeite,
+    $kostenstellen,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

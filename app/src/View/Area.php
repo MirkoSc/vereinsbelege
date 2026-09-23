@@ -83,6 +83,7 @@ enum Area: string
                 new NavItem('Rollen', '/admin/rollen', recht: Permission::AdminUsers),
                 new NavItem('Tresor', '/admin/tresor', recht: Permission::AdminVaultGrant),
                 new NavItem('KI-Anbieter', meilenstein: 'M7', recht: Permission::AdminSettings),
+                new NavItem('Kostenstellen', '/admin/kostenstellen', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', meilenstein: 'M6', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),

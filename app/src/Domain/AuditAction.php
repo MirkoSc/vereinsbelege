@@ -48,6 +48,10 @@ enum AuditAction: string
     case RolleGeaendert = 'rolle.geaendert';
     case RolleGeloescht = 'rolle.geloescht';
 
+    case KostenstelleAngelegt = 'kostenstelle.angelegt';
+    case KostenstelleGeaendert = 'kostenstelle.geaendert';
+    case KostenstelleGeloescht = 'kostenstelle.geloescht';
+
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
@@ -83,6 +87,9 @@ enum AuditAction: string
             self::RolleAngelegt => 'Rolle angelegt',
             self::RolleGeaendert => 'Rolle geändert',
             self::RolleGeloescht => 'Rolle gelöscht',
+            self::KostenstelleAngelegt => 'Kostenstelle angelegt',
+            self::KostenstelleGeaendert => 'Kostenstelle geändert',
+            self::KostenstelleGeloescht => 'Kostenstelle gelöscht',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -108,6 +115,7 @@ enum AuditAction: string
             self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen => 'user',
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
+            self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
@@ -123,6 +131,7 @@ enum AuditAction: string
             'user' => 'Benutzer',
             'trusted_device' => 'Gerät',
             'role' => 'Rolle',
+            'cost_center' => 'Kostenstelle',
             default => $entity,
         };
     }

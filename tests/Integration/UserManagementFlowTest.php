@@ -582,6 +582,43 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertSame(404, $this->alsAdmin($admin, fn() => $this->dispatch($this->get('/admin/benutzer/999999')))->status);
     }
 
+    /**
+     * Deactivating a cost center (M4-1, issue #23) must not silently drop an
+     * already-assigned account's scope: the form still shows and keeps it,
+     * marked "(inaktiv)".
+     */
+    public function testEineDeaktivierteZugewieseneKostenstelleBleibtImFormular(): void
+    {
+        $kostenstellen = new CostCenterRepository($this->pdo());
+        $jugendId = $kostenstellen->create('Jugend');
+
+        $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
+        $id = $this->einladen(self::NEU, SystemRole::Vereinsverantwortlicher);
+        $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'rolle' => [(string) $this->rolle(SystemRole::Vereinsverantwortlicher)],
+            'kostenstelle' => [(string) $jugendId],
+        ]));
+        self::assertSame([$jugendId], new UserAccessRepository($this->pdo())->costCenters($id));
+
+        $kostenstellen->update($jugendId, 'Jugend', false);
+
+        $seite = $this->alsAdmin($admin, fn() => $this->dispatch($this->get('/admin/benutzer/' . $id)));
+        self::assertStringContainsString('Jugend (inaktiv)', $seite->body);
+        self::assertMatchesRegularExpression(
+            '/name="kostenstelle\[\]" value="' . $jugendId . '"\s+checked/',
+            $seite->body,
+        );
+
+        // Saving again (the browser resubmits the checked box) keeps it.
+        $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'rolle' => [(string) $this->rolle(SystemRole::Vereinsverantwortlicher)],
+            'kostenstelle' => [(string) $jugendId],
+        ]));
+        self::assertSame([$jugendId], new UserAccessRepository($this->pdo())->costCenters($id), 'assignment survives a deactivated cost center');
+    }
+
     // ----------------------------------------------------------- scaffolding
 
     /**
@@ -963,6 +1000,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $tresor,
             $unerreichbar,
             $einladung,
+            $unerreichbar,
             $unerreichbar,
         );
 

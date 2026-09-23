@@ -350,7 +350,7 @@ final readonly class UserController
             'fehler' => $fehler,
             'flash' => $this->session->pullFlash(),
             'alleRollen' => $this->rollen->all(),
-            'alleKostenstellen' => $this->kostenstellen->active(),
+            'alleKostenstellen' => $this->kostenstellen->activeOrAssigned($user?->id),
             'status' => $user === null ? null : self::status($user, $jetzt, $this->tokens->hasUsable($user->id, Invitation::TYP, $jetzt)),
             'tresor' => $user === null ? null : self::tresor($user, in_array($user->id, $this->verwaltung->ausstehend($jetzt), true), $jetzt),
             'eigenesKonto' => $user !== null && $user->id === $this->session->userId(),
