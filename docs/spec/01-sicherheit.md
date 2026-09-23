@@ -425,7 +425,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `admin.*`; `/admin/speicher*`, `/admin/mail*` = `admin.settings`;
   `/admin/update*`, `/admin/wartung/aufheben` = `admin.system`;
   `/admin/rollen*`, `/admin/benutzer*` = `admin.users`; `/admin/tresor*` =
-  `admin.vault_grant` (M3-7); `/anmelden/einladung` = öffentlich (M3-7).
+  `admin.vault_grant` (M3-7); `/anmelden/einladung` = öffentlich (M3-7);
+  `/app/audit*` = `audit.view` (M3-8).
 
 ## 5. Öffentliche Einreichung – Schutz
 
@@ -452,7 +453,61 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 - Geloggt: Login/Logout/Fehlversuche, 2FA-/Passwort-Änderungen,
   Freigaben, jede Änderung an Beleg/Lieferant/Buchung/Abgleich,
   Festschreibung, Export, Import, Einstellungsänderungen.
-- Admin-Seite „Integrität prüfen" rechnet die Kette nach.
+- Seite „Integrität prüfen" rechnet die Kette nach.
+
+### Umsetzung (M3-8, issue #21)
+
+- **Ort:** `/app/audit` (Liste mit Filtern) und `/app/audit/pruefen`
+  (Schrittkette der Prüfung), beide Recht `audit.view`. Bewusst in `/app`,
+  nicht `/admin`: `audit.view` haben laut §4 auch Vorstand und
+  Kassenprüfer, `/admin` verlangt aber ein `admin.*`-Recht.
+- **Schreiben:** `App\Service\Audit\AuditLog::record()` – aufgerufen von
+  den Controllern nach erfolgreicher Aktion (dort liegen Akteur und IP).
+  Jede Zeile ist **ein** `INSERT`, nie ein `UPDATE`
+  (`App\Repository\AuditLogRepository` hat keine Änderungs- oder
+  Löschmethode). Die ID ist Kopf-ID + 1 und wird vor dem Insert bestimmt,
+  weil AAD und Hash sie brauchen; kollidieren zwei Schreiber auf dem
+  Primärschlüssel, liest der Verlierer den Kopf neu (bis zu 5 Versuche) –
+  ohne `SELECT … FOR UPDATE` (Hosting-Befund #98).
+- **Kette:** `App\Service\Audit\AuditChain`. Erste Zeile: `prev_hash` =
+  32 Nullbytes. Kanonisches JSON mit fester Schlüsselreihenfolge `id, ts,
+  user_id, action, entity, entity_id, ip_hash (hex), details_enc (base64),
+  dek_sealed (base64)`, `JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE` –
+  ein Speicherformat, nie ändern. Die Kette deckt nur Gespeichertes
+  (Chiffrat) ab; die Prüfung braucht daher keinen Tresor. Sie erkennt
+  geänderte (Inhalt), gelöschte/umsortierte (Lücke in den IDs) und
+  eingeschobene/vertauschte Zeilen (Verkettung).
+- **Grenze der Kette:** Am Ende abgeschnittene Zeilen oder eine ab einem
+  Punkt komplett neu berechnete Kette fallen allein nicht auf. Deshalb
+  zeigt die Prüfung am Ende den Hash des letzten Eintrags als
+  **Kontrollwert**; wer ihn außerhalb der Datenbank notiert (z. B. im
+  Kassenprüfungsbericht), erkennt bei der nächsten Prüfung beides.
+- **Details** (Tresor, AAD `audit_log|id|details_enc`): nur kleine
+  skalare Fakten – Grund, Rollen-/Kostenstellen-IDs, Datumsgrenzen, Namen
+  geänderter Felder. **Nie** Passwörter, Tokens, Codes, Mail-Adressen,
+  Namen von Personen oder Beträge. Lesbar nur in einer Sitzung mit
+  entsperrtem Tresor; sonst zeigt die Liste „verschlüsselt".
+- **IP:** nur als `ip_hash` = HMAC-SHA256 mit dem Server-Schlüssel (Zweck
+  `audit.ip`), Teil der Kette und dauerhaft gespeichert – die Liste zeigt
+  eine gekürzte Kennung („gleiche Adresse wie …"), nie die Adresse. Nicht
+  per Durchprobieren aller IPv4-Adressen umkehrbar, weil der Schlüssel
+  nicht in der DB liegt. (Die 7-Tage-Regel aus §5 gilt für den
+  Rate-Limit-Hash der Einreichung, nicht hierfür.)
+- **Fehlversuch beim Login:** ohne Konto-ID und ohne Adresse – das Log
+  darf nicht verraten, was die generische Fehlermeldung verschweigt.
+- **Aktionen** (`App\Domain\AuditAction`, Wert = gespeicherter
+  `action`-String, nie umbenennen): Anmeldung (Erfolg, Fehlschlag, zweiter
+  Faktor fehlgeschlagen), Abmeldung, 2FA eingerichtet (TOTP/E-Mail),
+  Backup-Codes neu, gemerktes Gerät entfernt, Passwort geändert,
+  Passwort-Reset angefordert/abgeschlossen, Benutzer eingeladen/Einladung
+  erneut/angenommen/geändert/gesperrt/entsperrt, Tresor freigegeben/
+  entzogen, Rolle angelegt/geändert/gelöscht, Mail-/Speicher-/Update-
+  Kanal-Einstellungen, Update eingespielt/zurückgerollt, Wartung
+  aufgehoben. Belege, Lieferanten, Buchungen, Abgleich, Festschreibung,
+  Export und Import ergänzen ihre Aktionen, wenn es sie gibt (ab M4).
+- **Prüfung:** `public/js/audit.js` ruft `/app/audit/pruefen` je 2000
+  Zeilen auf; jeder Schritt liest seinen Startwert aus der Zeile, bei der
+  der vorige endete (zustandslos, jeder Request kurz).
 
 ## 7. Festschreibung
 

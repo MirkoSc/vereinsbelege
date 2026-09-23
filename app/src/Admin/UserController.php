@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Domain\Role;
 use App\Domain\User;
 use App\Domain\UserStatus;
@@ -21,6 +22,7 @@ use App\Service\Account\Invitation;
 use App\Service\Account\RoleRuleViolation;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -63,6 +65,7 @@ final readonly class UserController
         private MailSettingsRepository $mailSettings,
         private ServerCrypto $crypto,
         private FreigabeBenachrichtigung $freigabeHinweis,
+        private AuditLog $audit,
         private ?FileLogger $logger = null,
     ) {
     }
@@ -126,6 +129,13 @@ final readonly class UserController
             return $this->formular(null, $eingabe, $e->getMessage(), 422);
         }
 
+        $this->audit->record(
+            AuditAction::BenutzerEingeladen,
+            $this->session->userId(),
+            $request->ip,
+            $ergebnis['userId'],
+            self::zugriffDetails($eingabe['rollen'], $eingabe['kostenstellen'], $von, $bis, $ablauf),
+        );
         $this->einladungSenden($request, $eingabe['email'], $ergebnis['token'], 'Einladung an „' . trim($eingabe['name']) . '“');
 
         return Response::redirect('/admin/benutzer/' . $ergebnis['userId']);
@@ -183,6 +193,16 @@ final readonly class UserController
             return $this->formular($user, $eingabe, $e->getMessage(), 422);
         }
 
+        $this->audit->record(
+            AuditAction::BenutzerGeaendert,
+            $this->session->userId(),
+            $request->ip,
+            $id,
+            [
+                ...self::zugriffDetails($eingabe['rollen'], $eingabe['kostenstellen'], $von, $bis, $ablauf),
+                'name_geaendert' => $name !== $this->crypto->decrypt($user->displayNameEnc),
+            ],
+        );
         $this->session->flash(sprintf('Benutzer „%s“ gespeichert.', $name));
 
         return Response::redirect('/admin/benutzer/' . $id);
@@ -208,6 +228,7 @@ final readonly class UserController
             return Response::redirect($user === null ? '/admin/benutzer' : '/admin/benutzer/' . $id);
         }
 
+        $this->audit->record(AuditAction::BenutzerGesperrt, $this->session->userId(), $request->ip, $id);
         if ($user?->status === UserStatus::Aktiv) {
             $this->mailer->sendeSicherheitshinweis(
                 $this->crypto->decrypt($user->emailEnc),
@@ -237,6 +258,7 @@ final readonly class UserController
 
             return Response::redirect('/admin/benutzer/' . $id);
         }
+        $this->audit->record(AuditAction::BenutzerEntsperrt, $this->session->userId(), $request->ip, $id);
 
         if (in_array($id, $this->verwaltung->ausstehend(), true)) {
             $this->freigabeHinweis->senden($this->basis($request));
@@ -269,6 +291,7 @@ final readonly class UserController
         }
         assert($user !== null);
 
+        $this->audit->record(AuditAction::EinladungErneut, $this->session->userId(), $request->ip, $id);
         $this->einladungSenden($request, $this->crypto->decrypt($user->emailEnc), $token, 'Neue Einladung');
 
         return Response::redirect('/admin/benutzer/' . $id);
@@ -362,6 +385,30 @@ final readonly class UserController
         return $user->mayLogIn($jetzt) && $user->status === UserStatus::Aktiv
             ? ['Freigegeben', 'marke-ok']
             : ['Keine Freigabe', ''];
+    }
+
+    /**
+     * What the audit log keeps of an account's access: ids and dates only,
+     * never the name or the address.
+     *
+     * @param list<int> $rollen
+     * @param list<int> $kostenstellen
+     * @return array{rollen: list<int>, kostenstellen: list<int>, zeitraum_von: ?string, zeitraum_bis: ?string, zugang_bis: ?string}
+     */
+    private static function zugriffDetails(
+        array $rollen,
+        array $kostenstellen,
+        ?\DateTimeImmutable $von,
+        ?\DateTimeImmutable $bis,
+        ?\DateTimeImmutable $ablauf,
+    ): array {
+        return [
+            'rollen' => $rollen,
+            'kostenstellen' => $kostenstellen,
+            'zeitraum_von' => $von?->format('Y-m-d'),
+            'zeitraum_bis' => $bis?->format('Y-m-d'),
+            'zugang_bis' => $ablauf?->format('Y-m-d'),
+        ];
     }
 
     /**

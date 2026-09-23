@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\MailQueueRepository;
+use App\Service\Audit\AuditLog;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\PublicUrl;
@@ -40,6 +42,7 @@ final readonly class MailController
         private MailSettingsRepository $settingsRepo,
         private Mailer $mailer,
         private MailQueueRepository $queue,
+        private AuditLog $audit,
     ) {
     }
 
@@ -103,6 +106,7 @@ final readonly class MailController
             default => null,
         };
 
+        $vorher = $this->settingsRepo->get();
         $this->settingsRepo->save(
             transport: $transport,
             host: $host,
@@ -115,6 +119,24 @@ final readonly class MailController
             vereinsname: $vereinsname,
             oeffentlicheUrl: $oeffentlicheUrl,
         );
+
+        // Which fields changed, never their values: the password is a
+        // secret, the addresses are personal data (CLAUDE.md section 4).
+        $geaendert = array_keys(array_filter([
+            'versandweg' => $vorher->transport !== $transport,
+            'server' => $vorher->host !== $host,
+            'port' => $vorher->port !== $port,
+            'verschluesselung' => $vorher->sicherheit !== ($sicherheit ?? SmtpSecurity::Starttls),
+            'benutzer' => $vorher->benutzer !== $benutzer,
+            'passwort' => $neuesPasswort !== null && ($neuesPasswort !== '' || $vorher->passwortGesetzt),
+            'absender' => $vorher->absender !== $absender,
+            'antwort_an' => $vorher->antwortAn !== $antwortAn,
+            'vereinsname' => $vorher->vereinsname !== $vereinsname,
+            'oeffentliche_adresse' => $oeffentlicheUrl !== null && $vorher->oeffentlicheUrl !== $oeffentlicheUrl,
+        ]));
+        $this->audit->record(AuditAction::EinstellungMail, $this->session->userId(), $request->ip, details: [
+            'felder' => $geaendert,
+        ]);
         $this->session->flash('Mail-Einstellungen gespeichert.');
 
         return Response::redirect('/admin/mail');

@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Domain\BlobStorage;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Service\Audit\AuditLog;
 use App\Service\Storage\StorageSwitchService;
 use App\View\Area;
 use App\View\FlashArt;
@@ -36,6 +38,7 @@ final readonly class StorageController
         private View $view,
         private Session $session,
         private StorageSwitchService $storage,
+        private AuditLog $audit,
     ) {
     }
 
@@ -74,6 +77,9 @@ final readonly class StorageController
         }
 
         $state = $this->storage->setTarget($ziel);
+        $this->audit->record(AuditAction::EinstellungSpeicher, $this->session->userId(), $request->ip, details: [
+            'ziel' => $ziel->value,
+        ]);
         $this->session->flash($state->fertig()
             ? sprintf('Speicher-Backend „%s" ist gesetzt – es liegt bereits alles dort.', $ziel->bezeichnung())
             : sprintf(

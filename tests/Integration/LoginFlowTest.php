@@ -7,6 +7,8 @@ namespace App\Tests\Integration;
 use App\App\AuthController;
 use App\App\LoginCompleter;
 use App\Config\Paths;
+use App\Domain\AuditAction;
+use App\Domain\AuditEntry;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
 use App\Http\Kernel;
@@ -18,6 +20,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\FirstAdminSetup;
+use App\Repository\AuditLogRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
 use App\Repository\UserKeyRepository;
@@ -31,6 +34,9 @@ use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
+use App\Service\Audit\AuditChain;
+use App\Service\Audit\AuditFilter;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
@@ -226,6 +232,14 @@ final class LoginFlowTest extends DatabaseTestCase
             'Jeder Fehlschlag sagt dasselbe.',
         );
         self::assertNull(new Session()->userId());
+
+        // The audit row says the same as the page: that an attempt failed,
+        // not which account it was aimed at (issue #21/M3-8).
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 10);
+        self::assertCount(1, $zeilen);
+        self::assertSame(AuditAction::LoginFehlgeschlagen->value, $zeilen[0]->action);
+        self::assertNull($zeilen[0]->userId);
+        self::assertNull($zeilen[0]->entityId);
     }
 
     /**
@@ -303,6 +317,37 @@ final class LoginFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Max-Age=0', (string) ($antwort->headers['Set-Cookie'] ?? ''));
         self::assertNull(new Session()->userId());
         self::assertFalse(new SessionVault()->isStored());
+    }
+
+    /**
+     * Login, failed login and logout end up in the audit log, chained, and
+     * without the address in any column (issue #21/M3-8, docs/spec/
+     * 01-sicherheit.md section 6).
+     */
+    public function testLoginAndLogoutAreAudited(): void
+    {
+        $this->anmelden(self::EMAIL, 'ganz-sicher-nicht-das-passwort');
+        $this->anmelden(self::EMAIL, self::PASSWORT);
+        $session = new Session();
+        $session->start();
+        $this->dispatch(new Request(HttpMethod::Post, '/abmelden', post: ['_csrf' => $session->csrfToken()], ip: '198.51.100.7'));
+
+        $zeilen = array_reverse(new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 10));
+
+        self::assertSame(
+            [AuditAction::LoginFehlgeschlagen->value, AuditAction::LoginErfolg->value, AuditAction::Logout->value],
+            array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
+        );
+        self::assertSame([null, $this->userId, $this->userId], array_map(static fn(AuditEntry $e): ?int => $e->userId, $zeilen));
+        self::assertTrue(AuditChain::verify($zeilen)->intakt());
+
+        $roh = implode("\n", array_map(
+            static fn(array $zeile): string => implode("\n", array_map(static fn(mixed $w): string => (string) $w, $zeile)),
+            $this->pdo()->query('SELECT * FROM audit_log')->fetchAll(),
+        ));
+        self::assertStringNotContainsString(self::EMAIL, $roh);
+        self::assertStringNotContainsString(self::PASSWORT, $roh);
+        self::assertStringNotContainsString('198.51.100.7', $roh);
     }
 
     public function testLogoutWithoutATokenChangesNothing(): void
@@ -497,6 +542,7 @@ final class LoginFlowTest extends DatabaseTestCase
             // (setUp()), so App\App\AuthController::deviceIsTrusted() short-
             // circuits before it would use this.
             static fn(): never => throw new \LogicException('MfaService hätte hier nicht gebraucht werden dürfen.'),
+            fn(): AuditLog => new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $this->crypto),
         );
 
         $guard = fn(): LoginGuard => new LoginGuard(
@@ -526,6 +572,7 @@ final class LoginFlowTest extends DatabaseTestCase
             $view,
             $auth,
             $guard,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

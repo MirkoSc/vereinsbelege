@@ -20,6 +20,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\FirstAdminSetup;
+use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
@@ -44,6 +45,7 @@ use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
@@ -630,6 +632,8 @@ final class PasswordFlowTest extends DatabaseTestCase
             $this->mailTransport,
         );
 
+        $audit = new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $crypto);
+
         $auth = fn(): AuthController => new AuthController(
             $view,
             new Session(),
@@ -646,6 +650,7 @@ final class PasswordFlowTest extends DatabaseTestCase
                 new PasswordHasher(),
             ),
             fn(): MfaService => $mfaService,
+            fn(): AuditLog => $audit,
         );
 
         $sicherheit = fn(): SecurityController => new SecurityController(
@@ -657,6 +662,7 @@ final class PasswordFlowTest extends DatabaseTestCase
             $mailer,
             $crypto,
             new PasswordChange($pdo, new PasswordHasher(), $policy, $limiter),
+            $audit,
         );
 
         $passwort = fn(): PasswordController => new PasswordController(
@@ -669,6 +675,7 @@ final class PasswordFlowTest extends DatabaseTestCase
                 $mailer,
                 $this->mailSettings(),
                 $crypto,
+                $audit,
                 new FileLogger($this->logFile),
             ),
         );
@@ -706,6 +713,7 @@ final class PasswordFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $passwort,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

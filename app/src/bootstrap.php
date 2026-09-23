@@ -10,6 +10,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Api\CronController;
 use App\Api\UploadController;
+use App\App\AuditController;
 use App\App\AuthController;
 use App\App\InvitationController;
 use App\App\LoginCompleter;
@@ -28,6 +29,7 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Http\Zugriff;
 use App\Installer\InstallController;
+use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
@@ -61,6 +63,7 @@ use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Account\UserAdministration;
+use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
@@ -187,6 +190,16 @@ $mailerFor = static function (\PDO $pdo) use ($mailQueueFor, $mailSettingsFor, $
     return new Mailer($mailQueueFor($pdo), $mailSettingsFor($pdo), new MailTemplates($paths->viewsDir() . '/mail'));
 };
 
+// Audit log (M3-8, issue #21, docs/spec/01-sicherheit.md section 6): every
+// controller that changes an account, a right or a setting writes through
+// the same small factory. Writing needs no vault - the details are sealed to
+// its public key.
+$auditFor = static fn(\PDO $pdo): AuditLog => new AuditLog(
+    new AuditLogRepository($pdo),
+    new VaultRepository($pdo),
+    $serverCrypto,
+);
+
 // Second factor (M3-4, issue #17, docs/spec/01-sicherheit.md section 3):
 // one small factory, shared by the login (trusted-device check only), the
 // confirmation controller and the account's own security page.
@@ -218,6 +231,7 @@ $updates = static fn(): UpdateController => new UpdateController(
         ),
     ),
     $maintenance,
+    $auditFor($connections->pdo()),
 );
 
 // Cron: like $updates, built only once the token was right.
@@ -270,7 +284,7 @@ $uploads = static fn(): UploadController => new UploadController(
 // Storage administration (issue #12): the backend for new blobs and the step
 // chain that carries the existing ones over. Built lazily like $updates - it
 // needs the database, the public pages must not pay for that.
-$storage = static function () use ($connections, $paths, $view): StorageController {
+$storage = static function () use ($connections, $paths, $view, $auditFor): StorageController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -282,12 +296,13 @@ $storage = static function () use ($connections, $paths, $view): StorageControll
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             new SettingRepository($pdo),
         ),
+        $auditFor($pdo),
     );
 };
 
 // Mail admin page (issue #14): built lazily like $storage - it needs the
 // database, the public pages must not pay for that.
-$mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFor, $mailQueueFor): MailController {
+$mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFor, $mailQueueFor, $auditFor): MailController {
     $pdo = $connections->pdo();
 
     return new MailController(
@@ -296,16 +311,17 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
         $mailSettingsFor($pdo),
         $mailerFor($pdo),
         $mailQueueFor($pdo),
+        $auditFor($pdo),
     );
 };
 
 // Roles (M3-6, issue #19): plaintext operating data, no vault - only the
 // role pages open the connection.
-$rollen = static function () use ($connections, $view): RoleController {
+$rollen = static function () use ($connections, $view, $auditFor): RoleController {
     $pdo = $connections->pdo();
     $repository = new RoleRepository($pdo);
 
-    return new RoleController($view, new Session(), $repository, new RoleService($repository));
+    return new RoleController($view, new Session(), $repository, new RoleService($repository), $auditFor($pdo));
 };
 
 // User management and vault grants (M3-7, issue #20). One small factory
@@ -324,7 +340,7 @@ $zuweisungFor = static fn(\PDO $pdo): AccessAssignment => new AccessAssignment(
     new UserRepository($pdo),
 );
 
-$benutzer = static function () use ($connections, $view, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $verwaltungFor, $freigabeHinweisFor, $zuweisungFor): UserController {
+$benutzer = static function () use ($connections, $view, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $verwaltungFor, $freigabeHinweisFor, $zuweisungFor, $auditFor): UserController {
     $pdo = $connections->pdo();
 
     return new UserController(
@@ -348,11 +364,12 @@ $benutzer = static function () use ($connections, $view, $serverCrypto, $paths, 
         $mailSettingsFor($pdo),
         $serverCrypto,
         $freigabeHinweisFor($pdo),
+        $auditFor($pdo),
         $logger,
     );
 };
 
-$tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor): VaultGrantController {
+$tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultGrantController {
     $pdo = $connections->pdo();
 
     return new VaultGrantController(
@@ -365,11 +382,12 @@ $tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor
         $verwaltungFor($pdo),
         $mailerFor($pdo),
         $serverCrypto,
+        $auditFor($pdo),
     );
 };
 
 // Accepting an invitation: a public page, built lazily like $passwort.
-$einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor): InvitationController {
+$einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor, $auditFor): InvitationController {
     $pdo = $connections->pdo();
 
     return new InvitationController(
@@ -384,6 +402,7 @@ $einladung = static function () use ($connections, $view, $serverCrypto, $paths,
         ),
         $freigabeHinweisFor($pdo),
         $mailSettingsFor($pdo),
+        $auditFor($pdo),
     );
 };
 
@@ -411,6 +430,7 @@ $auth = static fn(): AuthController => new AuthController(
         );
     },
     static fn(): MfaService => $mfaServiceFor($connections->pdo()),
+    static fn(): AuditLog => $auditFor($connections->pdo()),
 );
 
 // The second factor's own confirmation controller (M3-4, issue #17): built
@@ -421,10 +441,17 @@ $mfaController = static fn(): MfaController => new MfaController(
     new Session(),
     new PendingLogin(),
     new LoginCompleter(new Session(), new SessionVault()),
-    static function () use ($connections, $serverCrypto, $mfaServiceFor, $mailerFor): MfaToolbox {
+    static function () use ($connections, $serverCrypto, $mfaServiceFor, $mailerFor, $auditFor): MfaToolbox {
         $pdo = $connections->pdo();
 
-        return new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $serverCrypto);
+        return new MfaToolbox(
+            $mfaServiceFor($pdo),
+            new UserRepository($pdo),
+            $mailerFor($pdo),
+            new SettingRepository($pdo),
+            $serverCrypto,
+            $auditFor($pdo),
+        );
     },
 );
 
@@ -432,7 +459,7 @@ $mfaController = static fn(): MfaController => new MfaController(
 // #17). Built lazily like $storage/$mail below - every route here is
 // already behind $guard, but the controller still should not open a
 // connection before a matched route needs one.
-$sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaServiceFor, $mailerFor, $paths): SecurityController {
+$sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaServiceFor, $mailerFor, $paths, $auditFor): SecurityController {
     $pdo = $connections->pdo();
 
     return new SecurityController(
@@ -449,6 +476,7 @@ $sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaSe
             new PasswordPolicy($paths->dataDir() . '/haeufige-passwoerter.txt'),
             new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
         ),
+        $auditFor($pdo),
     );
 };
 
@@ -458,7 +486,7 @@ $passwort = static fn(): PasswordController => new PasswordController(
     $view,
     new Session(),
     new SessionVault(),
-    static function () use ($connections, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $freigabeHinweisFor): PasswordToolbox {
+    static function () use ($connections, $serverCrypto, $paths, $mailerFor, $mailSettingsFor, $logger, $freigabeHinweisFor, $auditFor): PasswordToolbox {
         $pdo = $connections->pdo();
 
         return new PasswordToolbox(
@@ -473,11 +501,28 @@ $passwort = static fn(): PasswordController => new PasswordController(
             $mailerFor($pdo),
             $mailSettingsFor($pdo),
             $serverCrypto,
+            $auditFor($pdo),
             $logger,
             $freigabeHinweisFor($pdo),
         );
     },
 );
+
+// The audit log page (M3-8, issue #21): reads only; built lazily like the
+// other pages.
+$auditSeite = static function () use ($connections, $view, $serverCrypto, $auditFor): AuditController {
+    $pdo = $connections->pdo();
+
+    return new AuditController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new AuditLogRepository($pdo),
+        $auditFor($pdo),
+        new UserRepository($pdo),
+        $serverCrypto,
+    );
+};
 
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
@@ -521,6 +566,7 @@ $router = new Router();
     $benutzer,
     $tresor,
     $einladung,
+    $auditSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

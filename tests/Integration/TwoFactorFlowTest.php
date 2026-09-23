@@ -20,6 +20,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\FirstAdminSetup;
+use App\Repository\AuditLogRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
 use App\Repository\MfaEmailCodeRepository;
@@ -43,6 +44,7 @@ use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Account\Totp;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
@@ -563,6 +565,8 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             $mailTransport,
         );
 
+        $audit = new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $crypto);
+
         $auth = fn(): AuthController => new AuthController(
             $view,
             new Session(),
@@ -579,6 +583,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
                 new PasswordHasher(),
             ),
             fn(): MfaService => $mfaServiceFor($pdo),
+            fn(): AuditLog => $audit,
         );
 
         $mfaController = fn(): MfaController => new MfaController(
@@ -586,7 +591,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             new Session(),
             new PendingLogin(),
             new LoginCompleter(new Session(), new SessionVault()),
-            fn(): MfaToolbox => new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $crypto),
+            fn(): MfaToolbox => new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $crypto, $audit),
         );
 
         $sicherheit = fn(): SecurityController => new SecurityController(
@@ -603,6 +608,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
                 new PasswordPolicy(dirname(__DIR__, 2) . '/app/data/haeufige-passwoerter.txt'),
                 new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
             ),
+            $audit,
         );
 
         $guard = fn(): LoginGuard => new LoginGuard(
@@ -633,6 +639,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             $guard,
             $mfaController,
             $sicherheit,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

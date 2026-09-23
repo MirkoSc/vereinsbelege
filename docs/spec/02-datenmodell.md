@@ -27,7 +27,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `trusted_device` | id, user_id, token_hash UNIQUE, label, created_at, last_used_at NULL, expires_at (Migration 008, M3-4) | – |
 | `auth_token` | id, user_id, typ (`reset`/`invite`), token_hash UNIQUE, expires_at, used_at NULL, created_at (Migration 009, M3-5; `invite` seit M3-7) | – |
 | `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin | – |
-| `audit_log` | ts, user_id NULL, action, entity, entity_id, ip_hash, details_enc, dek_sealed, prev_hash, hash | T (details) |
+| `audit_log` | id (vom Schreiber gesetzt, kein AUTO_INCREMENT), ts, user_id NULL (kein FK), action, entity NULL, entity_id NULL, ip_hash NULL (HMAC, Server-Schlüssel), details_enc NULL, dek_sealed NULL, prev_hash, hash (Migration 011, M3-8) | T (details) |
 
 - `vault` stand als einzige dieser Tabellen schon vor `user`/`user_key`/
   `vault_grant` (Migration 004, M2-4): der Chunk-Upload ist der erste
@@ -44,6 +44,14 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
   stabile Schlüssel, über den der Code Systemrollen findet – der Name ist
   Anzeige. Rechte werden pro Request aus diesen Tabellen gelesen
   (`App\Repository\UserAccessRepository::berechtigungen()`).
+- `audit_log` (Migration 011, M3-8, 01 §6): append-only, genau ein
+  `INSERT` je Zeile. Die `id` setzt der Schreiber (Kopf + 1), weil AAD der
+  Details und Hash sie vor dem Insert brauchen; ein Wettlauf zweier
+  Schreiber endet als Primärschlüssel-Konflikt und wird wiederholt.
+  `user_id` ohne Fremdschlüssel – das Log überlebt die Konten, die es
+  nennt. `ip_hash` ist ein HMAC mit dem Server-Schlüssel (nicht der
+  unverschlüsselte SHA-256 von `rate_limit`) und bleibt, weil er Teil der
+  Hash-Kette ist. Ohne Details sind `details_enc`/`dek_sealed` NULL.
 - `cost_center` legt ebenfalls schon Migration 010 an, weil
   `user_cost_center` darauf verweist; die Pflegeseite kommt mit M4-1.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login

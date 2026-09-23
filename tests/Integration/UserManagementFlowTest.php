@@ -13,6 +13,8 @@ use App\App\PasswordController;
 use App\App\PasswordToolbox;
 use App\App\SecurityController;
 use App\Config\Paths;
+use App\Domain\AuditAction;
+use App\Domain\AuditEntry;
 use App\Domain\SystemRole;
 use App\Domain\UserStatus;
 use App\Http\Cookie;
@@ -25,6 +27,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Installer\FirstAdminSetup;
+use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\MailQueueRepository;
@@ -55,6 +58,9 @@ use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
+use App\Service\Audit\AuditChain;
+use App\Service\Audit\AuditFilter;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
@@ -375,6 +381,24 @@ final class UserManagementFlowTest extends DatabaseTestCase
         $this->alsAdmin($admin, fn() => $this->post('/admin/tresor/' . $id . '/freigeben', [], $admin['vault']));
         $kasse = $this->anmelden(self::NEU, 'drittes-langes-passwort-fuer-karl');
         self::assertTrue($schluessel->equals($this->tresorVon($kasse)->openDataKey($versiegelt)));
+
+        // Every step is in the audit log, chained (issue #21/M3-8) - the
+        // logins in between left out here, LoginFlowTest covers them.
+        $zeilen = array_reverse(new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 100));
+        $schritte = array_values(array_filter(
+            array_map(static fn(AuditEntry $e): array => [$e->action, $e->userId, $e->entityId], $zeilen),
+            static fn(array $s): bool => !in_array($s[0], [AuditAction::LoginErfolg->value, AuditAction::Logout->value], true),
+        ));
+        self::assertSame([
+            [AuditAction::BenutzerEingeladen->value, $this->adminId, $id],
+            [AuditAction::EinladungAngenommen->value, $id, $id],
+            [AuditAction::TresorFreigegeben->value, $this->adminId, $id],
+            [AuditAction::PasswortGeaendert->value, $id, $id],
+            [AuditAction::PasswortResetAbgeschlossen->value, $id, $id],
+            [AuditAction::TresorFreigegeben->value, $this->adminId, $id],
+        ], $schritte);
+        self::assertTrue(AuditChain::verify($zeilen)->intakt());
+        self::assertStringNotContainsString(self::NEU, implode('', array_map(static fn(AuditEntry $e): string => (string) $e->detailsEnc, $zeilen)));
     }
 
     public function testOhneEntsperrtenTresorGibtEsKeineFreigabe(): void
@@ -440,6 +464,22 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertSame(UserStatus::Aktiv, new UserRepository($this->pdo())->findById($id)?->status);
         self::assertSame([$id], $this->verwaltung()->ausstehend());
         self::assertNull($this->anmelden(self::NEU, self::NEU_PW)['vault']);
+    }
+
+    public function testSperrenUndEntsperrenStehenImAuditLog(): void
+    {
+        $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
+        $id = $this->einladen(self::NEU, SystemRole::Finanzen);
+
+        $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id . '/sperren', []));
+        $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id . '/entsperren', []));
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'user', entityId: $id), null, 10);
+        self::assertSame(
+            [AuditAction::BenutzerEntsperrt->value, AuditAction::BenutzerGesperrt->value, AuditAction::BenutzerEingeladen->value],
+            array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
+        );
+        self::assertSame($this->adminId, $zeilen[0]->userId);
     }
 
     public function testDasEigeneKontoLaesstSichNichtSperren(): void
@@ -802,6 +842,8 @@ final class UserManagementFlowTest extends DatabaseTestCase
             new RateLimiter(new RateLimitRepository($pdo), MfaService::WINDOW_SECONDS),
         );
 
+        $audit = new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $crypto);
+
         $auth = fn(): AuthController => new AuthController(
             $view,
             new Session(),
@@ -818,6 +860,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
                 new PasswordHasher(),
             ),
             fn(): MfaService => $mfaService,
+            fn(): AuditLog => $audit,
         );
         $sicherheit = fn(): SecurityController => new SecurityController(
             $view,
@@ -828,6 +871,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $this->mailer(),
             $crypto,
             new PasswordChange($pdo, new PasswordHasher(), $this->policy(), $this->limiter()),
+            $audit,
         );
         $passwort = fn(): PasswordController => new PasswordController(
             $view,
@@ -839,6 +883,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
                 $this->mailer(),
                 $this->mailSettings(),
                 $crypto,
+                $audit,
                 null,
                 $this->freigabeHinweis(),
             ),
@@ -858,6 +903,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $this->mailSettings(),
             $crypto,
             $this->freigabeHinweis(),
+            $audit,
         );
         $tresor = fn(): VaultGrantController => new VaultGrantController(
             $view,
@@ -869,6 +915,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $this->verwaltung(),
             $this->mailer(),
             $crypto,
+            $audit,
         );
         $einladung = fn(): InvitationController => new InvitationController(
             $view,
@@ -876,6 +923,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $this->einladung(),
             $this->freigabeHinweis(),
             $this->mailSettings(),
+            $audit,
         );
         $guard = fn(): LoginGuard => new LoginGuard(
             new Session(),
@@ -914,6 +962,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $benutzer,
             $tresor,
             $einladung,
+            $unerreichbar,
         );
 
         return new Kernel(

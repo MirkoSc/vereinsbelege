@@ -6,6 +6,8 @@ namespace App\Tests\Integration;
 
 use App\Admin\RoleController;
 use App\Config\Paths;
+use App\Domain\AuditAction;
+use App\Domain\AuditEntry;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
 use App\Domain\Role;
@@ -18,12 +20,17 @@ use App\Http\Response;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Repository\AuditLogRepository;
 use App\Repository\RoleRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
+use App\Repository\VaultRepository;
 use App\Service\Account\RoleService;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
+use App\Service\Audit\AuditFilter;
+use App\Service\Audit\AuditLog;
+use App\Service\Crypto\ServerCrypto;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -98,6 +105,14 @@ final class RoleAdminFlowTest extends DatabaseTestCase
 
         $this->post('/admin/rollen/' . $rolle->id . '/loeschen', []);
         self::assertNull($this->rollen->find($rolle->id));
+
+        // Each change is audited, with the role as its object (M3-8).
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'role', entityId: $rolle->id), null, 10);
+        self::assertSame(
+            [AuditAction::RolleGeloescht->value, AuditAction::RolleGeaendert->value, AuditAction::RolleAngelegt->value],
+            array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
+        );
+        self::assertSame($this->userId, $zeilen[0]->userId);
     }
 
     public function testAValidationErrorKeepsTheForm(): void
@@ -218,6 +233,7 @@ final class RoleAdminFlowTest extends DatabaseTestCase
             new Session(),
             new RoleRepository($pdo),
             new RoleService(new RoleRepository($pdo)),
+            new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), new ServerCrypto(random_bytes(32))),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
@@ -236,6 +252,7 @@ final class RoleAdminFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $rollen,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

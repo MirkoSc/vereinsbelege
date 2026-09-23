@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Domain\AuditAction;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
@@ -13,6 +14,7 @@ use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\Totp;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\Mailer;
 use App\Support\QrCode;
@@ -51,6 +53,7 @@ final readonly class SecurityController
         private Mailer $mailer,
         private ServerCrypto $crypto,
         private PasswordChange $passwordChange,
+        private AuditLog $audit,
     ) {
     }
 
@@ -107,6 +110,7 @@ final readonly class SecurityController
             return $this->seite('totp', fehler: 'Der Code stimmt nicht. Bitte erneut versuchen.');
         }
 
+        $this->audit->record(AuditAction::TotpEingerichtet, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Anmeldung mit Authenticator-App (TOTP) wurde eingerichtet.');
 
         return $this->seite('codes', backupCodes: $codes);
@@ -150,6 +154,7 @@ final readonly class SecurityController
         }
 
         $codes = $this->enrollment->commitEmailMethod($userId);
+        $this->audit->record(AuditAction::EmailCodeEingerichtet, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Anmeldung mit Code per E-Mail wurde eingerichtet.');
 
         return $this->seite('codes', backupCodes: $codes);
@@ -164,6 +169,7 @@ final readonly class SecurityController
         $userId = $this->requireUserId();
 
         $codes = $this->enrollment->regenerateBackupCodes($userId);
+        $this->audit->record(AuditAction::BackupCodesNeu, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Backup-Codes wurden neu erzeugt; die vorherigen zehn gelten nicht mehr.');
 
         return $this->seite('codes', backupCodes: $codes);
@@ -180,7 +186,9 @@ final readonly class SecurityController
         }
         $userId = $this->requireUserId();
 
-        $this->mfa->revokeDevice((int) ($params['id'] ?? 0), $userId);
+        $geraet = (int) ($params['id'] ?? 0);
+        $this->mfa->revokeDevice($geraet, $userId);
+        $this->audit->record(AuditAction::GeraetWiderrufen, $userId, $request->ip, $geraet);
         $this->session->flash('Das Gerät wurde entfernt.', FlashArt::Ok);
 
         return Response::redirect('/app/sicherheit');
@@ -223,6 +231,7 @@ final readonly class SecurityController
         assert($ergebnis->sessionEpoch !== null);
         $this->session->adoptEpoch($ergebnis->sessionEpoch);
 
+        $this->audit->record(AuditAction::PasswortGeaendert, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Ihr Passwort wurde geändert. Andere angemeldete Sitzungen wurden beendet.');
         $this->session->flash('Ihr Passwort wurde geändert. Andere angemeldete Sitzungen wurden beendet.', FlashArt::Ok);
 

@@ -7,6 +7,7 @@ namespace App\App;
 use App\Repository\SettingRepository;
 use App\Repository\UserRepository;
 use App\Service\Account\MfaService;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\Mailer;
 
@@ -24,6 +25,7 @@ final readonly class MfaToolbox
         public Mailer $mailer,
         public SettingRepository $settings,
         public ServerCrypto $crypto,
+        public AuditLog $audit,
     ) {
     }
 }

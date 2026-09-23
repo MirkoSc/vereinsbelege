@@ -74,6 +74,7 @@ enum Area: string
                 new NavItem('Konten', meilenstein: 'M8', recht: Permission::BankView),
                 new NavItem('Abgleich', meilenstein: 'M10', recht: Permission::MatchingEdit),
                 new NavItem('Auswertungen', meilenstein: 'M11', recht: Permission::ReportView),
+                new NavItem('Audit-Log', '/app/audit', recht: Permission::AuditView),
             ],
             self::Admin => [
                 new NavItem('Update', '/admin/update', recht: Permission::AdminSystem),
@@ -86,7 +87,6 @@ enum Area: string
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),
                 new NavItem('Backup', meilenstein: 'M1', recht: Permission::AdminSystem),
-                new NavItem('Audit-Log', meilenstein: 'M3', recht: Permission::AuditView),
                 new NavItem('Einstellungen', meilenstein: 'M3', recht: Permission::AdminSettings),
             ],
         };

@@ -10,6 +10,7 @@ use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
+use App\App\AuditController;
 use App\App\AuthController;
 use App\App\InvitationController;
 use App\App\MfaController;
@@ -77,6 +78,9 @@ use App\View\View;
  * @param \Closure(): InvitationController $einladung built lazily like
  *        $passwort - a public page, but checking the link needs the
  *        database (M3-7, issue #20).
+ * @param \Closure(): AuditController $audit built lazily, same reason as
+ *        $mail: only the audit log page needs the database (M3-8, issue
+ *        #21).
  */
 return static function (
     Router $router,
@@ -95,6 +99,7 @@ return static function (
     \Closure $benutzer,
     \Closure $tresor,
     \Closure $einladung,
+    \Closure $audit,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -233,6 +238,15 @@ return static function (
     // account (App\Service\Account\PasswordChange).
     $get('/app/sicherheit/passwort', $angemeldet, static fn(Request $r) => $sicherheit()->passwort($r));
     $post('/app/sicherheit/passwort', $angemeldet, static fn(Request $r) => $sicherheit()->passwortAendern($r));
+
+    // Audit log (M3-8, issue #21, docs/spec/01-sicherheit.md section 6):
+    // the filtered list and the integrity check of the hash chain.
+    // Permission: `audit.view` - Admin, Vorstand, Kassenprüfer. In /app, not
+    // /admin: /admin needs an `admin.*` right, which Vorstand and
+    // Kassenprüfer do not have. Both routes only read; the check is a POST
+    // with CSRF because it is a step chain driven by fetch() (JSON 401/403).
+    $get('/app/audit', Zugriff::recht(Permission::AuditView), static fn(Request $r) => $audit()->liste($r));
+    $post('/app/audit/pruefen', Zugriff::recht(Permission::AuditView)->alsApi(), static fn(Request $r) => $audit()->pruefen($r));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Domain\AuditAction;
 use App\Http\Cookie;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Service\Account\LoginFailure;
+use App\Service\Audit\AuditLog;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaService;
 use App\Service\Account\PendingLogin;
@@ -53,6 +55,9 @@ final readonly class AuthController
         /** @var \Closure(): MfaService built lazily, like $login - only a
          *  successful password check ever needs the trusted-device check. */
         private \Closure $mfa,
+        /** @var \Closure(): AuditLog built lazily, like $login - the login
+         *  FORM needs no database. */
+        private \Closure $audit,
     ) {
     }
 
@@ -91,6 +96,12 @@ final readonly class AuthController
 
         if (!$ergebnis->istErfolg()) {
             $fehler = $ergebnis->failure ?? LoginFailure::Zugangsdaten;
+            // No account id and no address: which account was tried is
+            // exactly what the generic answer keeps to itself, and the
+            // log must not become the way around it.
+            $this->audit()->record(AuditAction::LoginFehlgeschlagen, null, $request->ip, details: [
+                'grund' => $fehler === LoginFailure::ZuVieleVersuche ? 'zu viele Versuche' : 'Zugangsdaten',
+            ]);
 
             // The address stays in the field so that a typo in the password
             // does not cost the whole form - it is what the user just typed,
@@ -126,8 +137,21 @@ final readonly class AuthController
         /** @var LoginService $login */
         $login = ($this->login)();
         $login->registerSuccess($user->id);
+        $this->audit()->record(AuditAction::LoginErfolg, $user->id, $request->ip, $user->id, [
+            'zweiter_faktor' => match (true) {
+                !$user->mfaRequired => 'nicht verlangt',
+                !$user->mfaEingerichtet() => 'noch nicht eingerichtet',
+                default => 'gemerktes Gerät',
+            },
+        ]);
 
         return $this->completer->complete($user->id, $ergebnis->vault, $ergebnis->vaultAccess, $weiter, $user->sessionEpoch);
+    }
+
+    private function audit(): AuditLog
+    {
+        /** @var AuditLog */
+        return ($this->audit)();
     }
 
     private function deviceIsTrusted(Request $request, int $userId): bool
@@ -148,6 +172,11 @@ final readonly class AuthController
         $this->session->start();
         if (!$this->session->checkCsrf($request)) {
             return Response::redirect('/app');
+        }
+
+        $userId = $this->session->userId();
+        if ($userId !== null) {
+            $this->audit()->record(AuditAction::Logout, $userId, $request->ip, $userId);
         }
 
         // Both halves, in this order: the ciphertext goes with the session

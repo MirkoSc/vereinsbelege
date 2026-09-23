@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Domain\AuditAction;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Service\Account\Invitation;
+use App\Service\Audit\AuditLog;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\PublicUrl;
@@ -37,6 +39,7 @@ final readonly class InvitationController
         private Invitation $einladung,
         private FreigabeBenachrichtigung $freigabeHinweis,
         private MailSettingsRepository $mailSettings,
+        private AuditLog $audit,
     ) {
     }
 
@@ -69,6 +72,10 @@ final readonly class InvitationController
 
             return $this->seite($ungueltig ? '' : $token, $ergebnis->fehler, $ungueltig);
         }
+
+        // The invited person is the actor: nobody is logged in yet, but the
+        // link proved whose account this is.
+        $this->audit->record(AuditAction::EinladungAngenommen, $ergebnis->userId, $request->ip, $ergebnis->userId);
 
         $this->freigabeHinweis->senden(
             PublicUrl::resolve($this->mailSettings->get(), $request->header('host') ?? '', Request::httpsFromGlobals()),
