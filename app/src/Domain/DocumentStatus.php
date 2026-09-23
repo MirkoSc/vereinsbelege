@@ -16,7 +16,8 @@ namespace App\Domain;
  *   erhalten)
  *
  * A freshly received document (issue #24/M4-2, either from the public
- * submission or, from M4-6 on, internal capture) starts at `Eingegangen`.
+ * submission or the internal capture of issue #28/M4-6) starts at
+ * `Eingegangen`.
  * uebergaenge() is the one table every status change is checked against
  * (issue #27/M4-5): the inbox (App\Domain\InboxAction) as well as the AI
  * pipeline later (M7). `Festgeschrieben` and `Abgelehnt` are final.

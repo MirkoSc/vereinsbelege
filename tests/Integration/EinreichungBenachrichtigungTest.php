@@ -74,6 +74,16 @@ final class EinreichungBenachrichtigungTest extends DatabaseTestCase
         self::assertStringContainsString('unter Posteingang', $mail->body);
     }
 
+    /** The internal capture (issue #28/M4-6) spares whoever captured it. */
+    public function testTheCapturingAccountIsLeftOut(): void
+    {
+        $erfasser = $this->konto('finanzen@example.test', SystemRole::Finanzen);
+        $this->konto('admin@example.test', SystemRole::Admin);
+
+        self::assertSame(1, $this->benachrichtigung()->senden('R-2026-0042', 17, null, ausser: $erfasser));
+        self::assertSame(['admin@example.test'], array_map(static fn($mail): string => $mail->to, $this->mails()));
+    }
+
     public function testNobodyToNotifyQueuesNothing(): void
     {
         $this->konto('vorstand@example.test', SystemRole::Vorstand);
@@ -82,7 +92,7 @@ final class EinreichungBenachrichtigungTest extends DatabaseTestCase
         self::assertSame([], $this->mails());
     }
 
-    private function konto(string $email, SystemRole $rolle, UserStatus $status = UserStatus::Aktiv): void
+    private function konto(string $email, SystemRole $rolle, UserStatus $status = UserStatus::Aktiv): int
     {
         $id = new UserRepository($this->pdo())->insert(
             $this->crypto->encrypt($email),
@@ -94,6 +104,8 @@ final class EinreichungBenachrichtigungTest extends DatabaseTestCase
         );
         $rollen = new RoleRepository($this->pdo());
         $rollen->assignToUser($id, [(int) $rollen->findSystem($rolle)?->id]);
+
+        return $id;
     }
 
     private function benachrichtigung(): EinreichungBenachrichtigung

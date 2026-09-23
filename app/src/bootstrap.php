@@ -16,6 +16,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\LoginCompleter;
@@ -102,6 +103,7 @@ use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
+use App\Service\Submission\InterneErfassung;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Update\ReleaseDownloader;
@@ -333,6 +335,8 @@ $uploads = static fn(): UploadController => new UploadController(
         );
     },
     logger: $logger,
+    // M4-6: the internal capture's blobs, recorded per account and page load.
+    vermerke: static fn(): SubmissionUploadRepository => new SubmissionUploadRepository($connections->pdo()),
 );
 
 // The public submission's own chunk upload (issue #24/M4-2): same shape as
@@ -718,6 +722,34 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
     );
 };
 
+// Internal capture (M4-6, issue #28): several receipts in one pass, straight
+// into the inbox. Built lazily like the other pages.
+$erfassungSeite = static function () use ($connections, $view, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto): ErfassungController {
+    $pdo = $connections->pdo();
+    $kostenstellen = new CostCenterRepository($pdo);
+    $users = new UserRepository($pdo);
+
+    return new ErfassungController(
+        $view,
+        new Session(),
+        new VaultRepository($pdo),
+        $kostenstellen,
+        $users,
+        $serverCrypto,
+        new InterneErfassung(
+            $pdo,
+            new SubmissionRepository($pdo),
+            new DocumentRepository($pdo),
+            new SubmissionUploadRepository($pdo),
+            $kostenstellen,
+            $auditFor($pdo),
+            new JobRepository($pdo),
+            new EinreichungBenachrichtigung($mailerFor($pdo), $serverCrypto, $users, new UserAccessRepository($pdo)),
+        ),
+        $mailSettingsFor($pdo),
+    );
+};
+
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
     $view,
@@ -767,6 +799,7 @@ $router = new Router();
     $einreichen,
     $einreichungAdmin,
     $posteingangSeite,
+    $erfassungSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

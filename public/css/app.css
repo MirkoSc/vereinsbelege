@@ -756,6 +756,35 @@ textarea[aria-invalid="true"] {
     overflow: hidden;
 }
 
+/* --- Interne Erfassung (Issue #28, M4-6) ---
+   Eine .karte je Beleg (app/views/app/belege-neu.php, public/js/erfassen.js);
+   die Seiten darin nutzen die Bausteine der Einreichung oben. */
+.erfassen-belege {
+    display: flex;
+    flex-direction: column;
+    gap: var(--abstand-4);
+    margin: var(--abstand-4) 0;
+    padding: 0;
+    list-style: none;
+}
+
+.erfassen-beleg-kopf {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--abstand-2);
+}
+
+.erfassen-beleg-kopf h3 {
+    margin: 0;
+}
+
+.erfassen-erstattung summary {
+    cursor: pointer;
+    margin-bottom: var(--abstand-2);
+}
+
 /* --- Posteingang (Issue #27, M4-5) --- */
 
 /* Angaben einer Einreichung: Begriff über Wert auf schmalen Bildschirmen,

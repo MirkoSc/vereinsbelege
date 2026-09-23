@@ -17,8 +17,6 @@ use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
-use App\Service\Crypto\FieldCipher;
-use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
@@ -43,11 +41,7 @@ final readonly class SubmissionService
     public const int KONTOINHABER_MAX = 200;
     public const int FREITEXT_MAX = 1000;
 
-    /** Reference candidates tried before giving up (mirrors App\Service\Audit\AuditLog::MAX_ATTEMPTS). */
-    private const int MAX_REFERENZ_VERSUCHE = 5;
-
-    private const string SUBMISSION_TABLE = 'submission';
-    private const string PAYLOAD_COLUMN = 'payload_enc';
+    private Referenzvergabe $referenzen;
 
     public function __construct(
         private \PDO $pdo,
@@ -62,6 +56,7 @@ final readonly class SubmissionService
         private JobRepository $jobs,
         private ?EinreichungBenachrichtigung $benachrichtigung = null,
     ) {
+        $this->referenzen = new Referenzvergabe($submissions);
     }
 
     /**
@@ -95,15 +90,7 @@ final readonly class SubmissionService
 
         $this->pdo->beginTransaction();
         try {
-            $id = $this->submissions->insertDraft($formHash, $now);
-
-            $key = DataKey::generate();
-            $payloadEnc = FieldCipher::encrypt(
-                $key,
-                json_encode($this->payload($angaben), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                new FieldContext(self::SUBMISSION_TABLE, $id, self::PAYLOAD_COLUMN),
-            );
-            $referenz = $this->reserviereReferenz($id, $vault->sealDataKey($key), $payloadEnc, $now);
+            [$id, $referenz] = $this->referenzen->anlegen($formHash, $angaben, $vault, $now);
 
             $documentId = $this->documents->insert(
                 DocumentSource::Einreichung,
@@ -228,32 +215,9 @@ final readonly class SubmissionService
      */
     private function pruefeSeiten(mixed $eingabe, string $formHash, array &$fehler): array
     {
-        if (!is_array($eingabe) || $eingabe === []) {
-            $fehler['seiten'] = 'Bitte mindestens eine Seite hinzufügen.';
-
-            return [];
-        }
-
-        if (count($eingabe) > $this->einstellungen->maxSeiten) {
-            $fehler['seiten'] = 'Zu viele Seiten in einer Einreichung.';
-
-            return [];
-        }
-
-        $blobIds = [];
-        foreach ($eingabe as $wert) {
-            $blobId = is_int($wert) ? $wert : (is_string($wert) && ctype_digit($wert) ? (int) $wert : null);
-            if ($blobId === null || $blobId < 1) {
-                $fehler['seiten'] = 'Eine Seite ist ungültig. Bitte erneut hochladen.';
-
-                return [];
-            }
-
-            $blobIds[] = $blobId;
-        }
-
-        if (count(array_unique($blobIds)) !== count($blobIds)) {
-            $fehler['seiten'] = 'Eine Seite wurde doppelt eingereicht.';
+        [$blobIds, $problem] = Seitenliste::lesen($eingabe, $this->einstellungen->maxSeiten);
+        if ($problem !== null) {
+            $fehler['seiten'] = $problem;
 
             return [];
         }
@@ -275,62 +239,6 @@ final readonly class SubmissionService
         }
 
         return $blobIds;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function payload(EinreichungsAngaben $angaben): array
-    {
-        $erstattung = ['art' => $angaben->erstattung->value];
-        if ($angaben->iban !== null) {
-            $erstattung['iban'] = $angaben->iban;
-        }
-        if ($angaben->kontoinhaber !== null) {
-            $erstattung['kontoinhaber'] = $angaben->kontoinhaber;
-        }
-
-        $payload = ['name' => $angaben->name, 'erstattung' => $erstattung, 'freitext' => $angaben->freitext];
-        if ($angaben->email !== null) {
-            $payload['email'] = $angaben->email;
-        }
-        if ($angaben->kostenstelleId !== null) {
-            $payload['kostenstelle_hinweis'] = $angaben->kostenstelleId;
-        }
-
-        return $payload;
-    }
-
-    /**
-     * Retries the reference candidate on a collision - the same shape as
-     * App\Service\Audit\AuditLog::record(), just an UPDATE instead of an
-     * INSERT: the row already exists (from insertDraft()), only its
-     * reference_code needs a value nobody else has taken yet. A duplicate
-     * key error does not abort the surrounding transaction on InnoDB, so the
-     * next candidate is simply tried within the same one.
-     */
-    private function reserviereReferenz(int $id, string $dekSealed, string $payloadEnc, \DateTimeImmutable $now): string
-    {
-        $jahr = (int) $now->format('Y');
-
-        for ($versuch = 1; ; $versuch++) {
-            $referenz = sprintf('R-%d-%04d', $jahr, $this->submissions->hoechsteLaufnummer($jahr) + 1);
-
-            try {
-                $this->submissions->complete($id, $referenz, $dekSealed, $payloadEnc);
-
-                return $referenz;
-            } catch (\PDOException $e) {
-                if ($versuch >= self::MAX_REFERENZ_VERSUCHE || !self::istDuplicateKey($e)) {
-                    throw $e;
-                }
-            }
-        }
-    }
-
-    private static function istDuplicateKey(\PDOException $e): bool
-    {
-        return $e->getCode() === '23000' || ($e->errorInfo[1] ?? null) === 1062;
     }
 
     private static function kostenstelleId(mixed $wert): ?int

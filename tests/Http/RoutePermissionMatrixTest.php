@@ -403,6 +403,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,
+            $stellvertreter,
         );
 
         return $router;

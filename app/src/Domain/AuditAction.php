@@ -54,6 +54,8 @@ enum AuditAction: string
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
+    /** Internal capture (issue #28/M4-6): the capturing account acts. */
+    case BelegErfasst = 'beleg.erfasst';
     // The inbox (issue #27/M4-5): status changes and the cost center.
     case BelegAngenommen = 'beleg.angenommen';
     case BelegAbgelehnt = 'beleg.abgelehnt';
@@ -100,6 +102,7 @@ enum AuditAction: string
             self::KostenstelleGeaendert => 'Kostenstelle geändert',
             self::KostenstelleGeloescht => 'Kostenstelle gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
+            self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
             self::BelegAbgelehnt => 'Beleg abgelehnt',
             self::BelegWiedervorlage => 'Beleg auf Wiedervorlage gelegt',
@@ -131,7 +134,7 @@ enum AuditAction: string
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
-            self::EinreichungEingegangen,
+            self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
