@@ -158,6 +158,24 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   neuer Session-ID).
 - **Letzter Admin hat Passwort vergessen**: Wiederherstellung im Installer-
   ähnlichen Flow `/admin/wiederherstellen` mit Wiederherstellungsschlüssel.
+  Umgesetzt mit M3-9 (issue #22): Recht `admin.vault_grant` wie
+  `/admin/tresor` – derselbe Vorgang, nur ohne fremden entsperrten Tresor
+  als Voraussetzung. Ablauf: Passwort per Mail zurücksetzen (siehe oben) →
+  anmelden (ohne Freigabe) → hier den Schlüssel eingeben
+  (`App\Service\Crypto\RecoveryKey::parse()->openVault()`). Erfolg versiegelt
+  den Tresor dauerhaft an den **eigenen** `user_key` – `freigeben()` kennt
+  keine Sperre gegen sich selbst – und entsperrt ihn zusätzlich sofort in
+  dieser Sitzung (`SessionVault`, `__Host-vk`), wie nach einem Login. Hat das
+  Konto schon eine Freigabe (nur die Sitzung war gesperrt), entsteht keine
+  zweite. Falsche oder mistippte Schlüssel zählen je Konto gegen
+  `RateLimiter::LOGIN_LIMIT_PER_ACCOUNT` im 15-Minuten-Fenster
+  (`App\Service\Account\VaultRecovery`); die Prüfsumme unterscheidet dabei
+  Tippfehler von falschem Format oder einem Schlüssel einer anderen
+  Installation (`App\Service\Crypto\RecoveryKeyException`,
+  `RecoveryKeyProblem`). Jeder Versuch, erfolgreich oder nicht, steht im
+  Audit-Log (unten); ein Erfolg löst zusätzlich die Sicherheitsmail an jeden
+  Admin mit `admin.vault_grant` und eigener Freigabe aus – auch an das
+  handelnde Konto selbst, damit ein missbrauchter Schlüssel auffällt.
 - Umgesetzt mit M3-7 (issue #20): **Einladung** über `/admin/benutzer`
   (`App\Admin\UserController`, Recht `admin.users`,
   `App\Service\Account\Invitation`): Zeile mit Status `eingeladen`, Rollen
@@ -303,12 +321,15 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   Subdomain davon ist – sonst geht keine Mail raus, und `app.log` bekommt
   eine Zeile ohne Adresse und Token (`App\Service\Mail\PublicUrl`).
 - Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
-  geändert, Tresor-Freigabe erteilt/entzogen. Umgesetzt für „neues Gerät"
+  geändert, Tresor-Freigabe erteilt/entzogen, Tresor per
+  Wiederherstellungsschlüssel entsperrt. Umgesetzt für „neues Gerät"
   und „2FA geändert" mit M3-4 (`App\Service\Mail\Mailer::
   sendeSicherheitshinweis()`, Vorlage `app/views/mail/sicherheitshinweis.php`
   – ein fester Satz aus dem Aufrufer, nie Nutzereingabe); „Passwort geändert"
   und „Passwort zurückgesetzt" mit M3-5, „Tresor-Freigabe erteilt/entzogen"
-  mit M3-7 (dazu „Zugang gesperrt").
+  mit M3-7 (dazu „Zugang gesperrt"), „Tresor per Wiederherstellungsschlüssel
+  entsperrt" mit M3-9 – geht an jeden Admin mit `admin.vault_grant` und
+  eigener Freigabe, das handelnde Konto eingeschlossen.
 - Session-ID-Regeneration bei Login und Rechtewechsel.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
@@ -501,7 +522,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   Backup-Codes neu, gemerktes Gerät entfernt, Passwort geändert,
   Passwort-Reset angefordert/abgeschlossen, Benutzer eingeladen/Einladung
   erneut/angenommen/geändert/gesperrt/entsperrt, Tresor freigegeben/
-  entzogen, Rolle angelegt/geändert/gelöscht, Mail-/Speicher-/Update-
+  entzogen/per Wiederherstellungsschlüssel entsperrt (auch der
+  Fehlschlag), Rolle angelegt/geändert/gelöscht, Mail-/Speicher-/Update-
   Kanal-Einstellungen, Update eingespielt/zurückgerollt, Wartung
   aufgehoben. Belege, Lieferanten, Buchungen, Abgleich, Festschreibung,
   Export und Import ergänzen ihre Aktionen, wenn es sie gibt (ab M4).

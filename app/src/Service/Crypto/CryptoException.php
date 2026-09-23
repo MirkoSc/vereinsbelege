@@ -10,7 +10,10 @@ namespace App\Service\Crypto;
  *
  * Messages carry only structural information (table, column, row id) - never
  * a key, never a plaintext (CLAUDE.md section 4).
+ *
+ * Not `final`: {@see RecoveryKeyException} extends it so existing callers
+ * that catch this base class keep working unchanged.
  */
-final class CryptoException extends \RuntimeException
+class CryptoException extends \RuntimeException
 {
 }

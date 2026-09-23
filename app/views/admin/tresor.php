@@ -28,7 +28,8 @@
     <?php if (!$entsperrt): ?>
         <p class="hinweis hinweis-warnung">
             Ihr Tresor ist in dieser Sitzung nicht entsperrt. Melden Sie sich ab und wieder an, um
-            Freigaben zu erteilen.
+            Freigaben zu erteilen. Hat Ihr Zugang selbst keine Freigabe, hilft nur der
+            <a href="/admin/wiederherstellen">Wiederherstellungsschlüssel</a> des Vereins.
         </p>
     <?php endif; ?>
 

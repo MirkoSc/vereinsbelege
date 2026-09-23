@@ -6,6 +6,7 @@ use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
+use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
@@ -75,6 +76,8 @@ use App\View\View;
  *        (M3-7, issue #20).
  * @param \Closure(): VaultGrantController $tresor built lazily, same reason
  *        (M3-7, issue #20).
+ * @param \Closure(): VaultRecoveryController $wiederherstellung built lazily,
+ *        same reason (M3-9, issue #22).
  * @param \Closure(): InvitationController $einladung built lazily like
  *        $passwort - a public page, but checking the link needs the
  *        database (M3-7, issue #20).
@@ -98,6 +101,7 @@ return static function (
     \Closure $rollen,
     \Closure $benutzer,
     \Closure $tresor,
+    \Closure $wiederherstellung,
     \Closure $einladung,
     \Closure $audit,
 ): void {
@@ -299,6 +303,16 @@ return static function (
     $get('/admin/tresor', $freigaben, static fn(Request $r) => $tresor()->seite($r));
     $post('/admin/tresor/{id:\d+}/freigeben', $freigaben, static fn(Request $r, array $params) => $tresor()->freigeben($r, $params));
     $post('/admin/tresor/{id:\d+}/entziehen', $freigaben, static fn(Request $r, array $params) => $tresor()->entziehen($r, $params));
+
+    // Vault recovery with the paper recovery key (M3-9, issue #22,
+    // docs/spec/01-sicherheit.md section 2 "Letzter Admin hat Passwort
+    // vergessen"). Same permission as /admin/tresor - it is the same act,
+    // unlocking the vault for an account, just self-service and without
+    // needing anyone else's unlocked vault first. CSRF on the write; wrong or
+    // mistyped keys are rate limited per account
+    // (App\Service\Account\VaultRecovery).
+    $get('/admin/wiederherstellen', $freigaben, static fn(Request $r) => $wiederherstellung()->seite($r));
+    $post('/admin/wiederherstellen', $freigaben, static fn(Request $r) => $wiederherstellung()->absenden($r));
 
     // Blob storage (02 "Dateien", issue #12): which backend new files go to,
     // moving the stock over, integrity check. The chain copies ciphertext and
