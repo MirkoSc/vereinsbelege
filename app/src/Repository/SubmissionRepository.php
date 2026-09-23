@@ -70,6 +70,21 @@ final readonly class SubmissionRepository
     }
 
     /**
+     * The reference number of a submission by its id - what
+     * App\Service\Document\PdfErzeugung puts into the generated PDF's title
+     * (issue #26/M4-4). Structural, plaintext column, no vault needed.
+     */
+    public function findReferenzById(int $id): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT reference_code FROM submission WHERE id = ?');
+        $stmt->bindValue(1, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        $wert = $stmt->fetchColumn();
+
+        return $wert === false || $wert === null ? null : (string) $wert;
+    }
+
+    /**
      * The highest reference serial already used this year, 0 when there is
      * none yet - the next candidate is this plus one
      * (App\Service\Submission\SubmissionService).

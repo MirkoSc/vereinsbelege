@@ -15,6 +15,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
@@ -158,6 +159,24 @@ final class PublicSubmissionTest extends DatabaseTestCase
         // The blobs are claimed - no leftover submission_upload rows.
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission_upload')->fetchColumn());
         self::assertSame([], self::entries($this->uploadDir), 'the plaintext chunks are gone');
+    }
+
+    public function testSubmittingQueuesExactlyOnePdfGenerationJob(): void
+    {
+        $token = $this->issuedToken();
+        $seite = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Seite");
+        $this->json($this->absenden($token, $this->minimalAngaben([$seite])), 201);
+
+        $dokument = $this->pdo()->query('SELECT id FROM document')->fetch();
+        self::assertNotFalse($dokument);
+
+        $jobs = $this->pdo()->query('SELECT * FROM job')->fetchAll();
+        self::assertCount(1, $jobs);
+        self::assertSame('pdf_erzeugen', $jobs[0]['typ']);
+        self::assertSame('session', $jobs[0]['executor']);
+        self::assertSame('document', $jobs[0]['ref_type']);
+        self::assertSame((int) $dokument['id'], (int) $jobs[0]['ref_id']);
+        self::assertSame('offen', $jobs[0]['status']);
     }
 
     public function testNoPlaintextOfTheFormLeaksIntoAnyColumn(): void
@@ -505,6 +524,7 @@ final class PublicSubmissionTest extends DatabaseTestCase
                 $mailer,
                 $audit,
                 $einstellungen,
+                new JobRepository($pdo),
             ),
             $this->spamschutz(),
             $einstellungen,

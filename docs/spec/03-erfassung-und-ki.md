@@ -109,6 +109,35 @@ graustufen + globale Schwelle; kein Entzerren.
   für Kategorie/Zweck. Bibliothek prüfen (horstoeko/zugferd o. ä.) oder
   schmaler eigener Parser für die benötigten Felder.
 
+**Stand M4-4** (issue #26): Aus reinen Bildbelegen (JPEG/PNG) erzeugt der Job
+`pdf_erzeugen` (Abschnitt 5) die Arbeitsfassung; ein einzeln eingereichtes PDF
+wird selbst zur Arbeitsfassung (`document.pdf_blob_id` zeigt dann auf den
+Original-Upload); eine Mischung aus Bildern und PDF(s) oder mehr als ein PDF
+bleibt ohne `pdf_blob_id` – die Originale sind dann die einzige Fassung
+(`App\Service\Document\PdfErzeugung`, `App\Service\Job\JobHandler`). Die
+Originale werden dabei nie verändert oder gelöscht (E-10).
+
+Der PDF-Writer (`App\Service\Processing\PdfAusBildern`) ist eine eigene,
+handgeschriebene Implementierung ohne Fremdbibliothek: jedes JPEG wird
+unverändert als `/DCTDecode`-XObject eingebettet, der Generator schreibt die
+PDF-Objekte einzeln und streamt sie direkt in `BlobService::store()` – nie
+liegt die ganze Datei oder mehr als eine Seite im Speicher. Seitenformat: A4,
+wenn das Bildseitenverhältnis (nach Anwendung der EXIF-Drehung) bis auf 3 %
+daran liegt, sonst A4-Breite (hochkant) bzw. A4-Höhe als Breite (querformatig)
+mit der Höhe des Bildes folgend (lange Kassenbons werden nicht beschnitten).
+Die EXIF-Drehung (`App\Service\Processing\JpegInfo`, aus den JPEG-Markern
+gelesen, kein `ext-exif`) wird ausschließlich über die Content-Stream-Matrix
+umgesetzt, nie durch Neukodieren des Bildes. Ein PNG-Beleg wird vorher über
+GD nach JPEG gewandelt (`App\Service\Processing\PngZuJpeg`, Transparenz auf
+Weiß geflacht) – der einzige Fall, in dem CLAUDE.md §1 den Server-Fallback für
+Bildarbeit vorsieht. Info-Dictionary trägt nur `/Producer` und, wenn
+vorhanden, `/Title` = Referenznummer – keine weiteren Metadaten.
+
+Der Job selbst läuft nur, weil ein angemeldeter Nutzer ihn abarbeitet: `POST
+/api/jobs/step` (Executor `session`) kommt erst mit M4-7 – bis dahin bleiben
+neu eingereichte Belege ohne `pdf_blob_id`, was die Originale nicht
+beeinträchtigt.
+
 ## 4. Upload
 
 - Generische Upload-Komponente: Dateien in Chunks à 2 MiB
@@ -209,6 +238,8 @@ Jeder Beleg durchläuft Jobs in `job` (siehe 06-betrieb.md,
 „Session-Worker", und 07-worker.md). Spalte „Executor": ohne / mit
 aktivem Worker-Modul.
 
+0. `pdf_erzeugen` (Abschnitt 3, issue #26/M4-4: PDF-Arbeitsfassung aus
+   Bildseiten) – `session`/`session`
 1. `extract_text` (Webhoster: PDF-Textlayer / E-Rechnungs-XML) –
    `session`/`session`
 2. `render_pages` (nur PDFs ohne Seitenbilder) – `browser`/`worker`
@@ -220,9 +251,14 @@ aktivem Worker-Modul.
 8. `detect_duplicate` – `session`
 9. `match_transactions` (siehe 04, falls Buchungen vorhanden) – `session`
 
-Die Logik von `render_pages` (Server-Variante), `ocr` und `ai_extract` liegt
-in `app/src/Service/Processing/` und ist framework-frei (siehe CLAUDE.md
-§6a). Ergebnisse werden immer als `document_artifact` gespeichert.
+Die Logik von `pdf_erzeugen`, `render_pages` (Server-Variante), `ocr` und
+`ai_extract` liegt in `app/src/Service/Processing/` und ist framework-frei
+(siehe CLAUDE.md §6a). Jeder Jobtyp implementiert `App\Service\Job\JobHandler`
+(`typ()`, `schritt()`) – das ist der Andockpunkt, den der Runner aus M4-7
+(`POST /api/jobs/step`) aufruft. Ergebnisse ab `extract_text` werden als
+`document_artifact` gespeichert; `pdf_erzeugen` schreibt direkt
+`document.pdf_blob_id`, weil es kein Auslese-Ergebnis, sondern die Datei
+selbst ist.
 
 Jeder Schritt idempotent, einzeln wiederholbar, Fehler landen am Beleg
 sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").

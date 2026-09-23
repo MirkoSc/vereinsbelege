@@ -8,9 +8,11 @@ use App\Domain\AuditAction;
 use App\Domain\DocumentSource;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
+use App\Domain\JobExecutor;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
 use App\Service\Audit\AuditLog;
@@ -18,13 +20,15 @@ use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
+use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\Mailer;
 
 /**
  * The rules of the public submission (docs/spec/03-erfassung-und-ki.md
  * section 1, issue #24/M4-2): validates the form, checks the uploaded pages
- * belong to this visit, then writes `submission` and `document` in one
- * transaction and hands back a reference number.
+ * belong to this visit, then writes `submission` and `document`, queues the
+ * `pdf_erzeugen` job (issue #26/M4-4), all in one transaction, and hands back
+ * a reference number.
  *
  * Framework-free like the other Account/MasterData services: no Http, no
  * Session - the caller (App\PublicPages\EinreichungController) has already
@@ -53,6 +57,7 @@ final readonly class SubmissionService
         private Mailer $mailer,
         private AuditLog $audit,
         private EinreichungsEinstellungen $einstellungen,
+        private JobRepository $jobs,
     ) {
     }
 
@@ -96,6 +101,17 @@ final readonly class SubmissionService
                 $blobIds,
                 $vault->sealDataKey(DataKey::generate()),
                 $now,
+            );
+
+            // Building the PDF working copy needs an unlocked vault, so it
+            // runs as a session job (issue #26/M4-4), never here where the
+            // vault is locked (CLAUDE.md section 4).
+            $this->jobs->enqueue(
+                PdfErzeugung::JOB_TYP,
+                JobExecutor::Session,
+                'document',
+                $documentId,
+                now: $now,
             );
 
             $this->submissionUploads->deleteForFormHash($formHash);

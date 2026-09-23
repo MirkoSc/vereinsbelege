@@ -13,6 +13,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
@@ -428,6 +429,7 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
                 $mailer,
                 $audit,
                 $einstellungen,
+                new JobRepository($pdo),
             ),
             $this->spamschutz(),
             $einstellungen,
