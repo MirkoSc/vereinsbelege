@@ -65,4 +65,69 @@ final readonly class VaultGrantRepository
         $stmt = $this->pdo->prepare('DELETE FROM vault_grant WHERE user_id = ?');
         $stmt->execute([$userId]);
     }
+
+    /**
+     * Accounts waiting for a grant of vault generation $vaultVersion
+     * (docs/spec/01-sicherheit.md section 2 "Freigabe", issue #20/M3-7):
+     * active, not expired, with a key pair - an invited account has none
+     * until it set its password - and no grant of this generation.
+     *
+     * "Freigabe ausstehend" is derived here, not stored: an account falls
+     * into it by accepting an invitation, by a password reset or by being
+     * unlocked, and out of it by a grant or a lock - one query instead of a
+     * status that every one of those paths would have to keep in step.
+     *
+     * @return list<int>
+     */
+    public function pendingUserIds(int $vaultVersion, \DateTimeImmutable $now): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT u.id FROM `user` u
+             JOIN user_key k ON k.user_id = u.id
+             LEFT JOIN vault_grant g ON g.user_id = u.id AND g.vault_version = ?
+             WHERE g.user_id IS NULL AND u.status = 'aktiv' AND (u.expires_at IS NULL OR u.expires_at > ?)
+             ORDER BY u.id",
+        );
+        $stmt->execute([$vaultVersion, $now->format(self::FORMAT)]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * The same set as pendingUserIds(), counted - the banner asks this on
+     * every page an admin with `admin.vault_grant` opens.
+     */
+    public function countPending(int $vaultVersion, \DateTimeImmutable $now): int
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT COUNT(*) FROM `user` u
+             JOIN user_key k ON k.user_id = u.id
+             LEFT JOIN vault_grant g ON g.user_id = u.id AND g.vault_version = ?
+             WHERE g.user_id IS NULL AND u.status = 'aktiv' AND (u.expires_at IS NULL OR u.expires_at > ?)",
+        );
+        $stmt->execute([$vaultVersion, $now->format(self::FORMAT)]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Who holds a grant of $vaultVersion, and since when.
+     *
+     * @return array<int, array{granted_at: \DateTimeImmutable, granted_by: int|null}> user id => grant
+     */
+    public function grantsFor(int $vaultVersion): array
+    {
+        $stmt = $this->pdo->prepare('SELECT user_id, granted_by, granted_at FROM vault_grant WHERE vault_version = ?');
+        $stmt->execute([$vaultVersion]);
+
+        $grants = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $grants[(int) $row['user_id']] = [
+                'granted_at' => new \DateTimeImmutable((string) $row['granted_at']),
+                'granted_by' => $row['granted_by'] === null ? null : (int) $row['granted_by'],
+            ];
+        }
+
+        return $grants;
+    }
 }

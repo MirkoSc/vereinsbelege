@@ -78,9 +78,9 @@ enum Area: string
             self::Admin => [
                 new NavItem('Update', '/admin/update', recht: Permission::AdminSystem),
                 new NavItem('Designsystem', '/admin/designsystem'),
-                new NavItem('Benutzer', meilenstein: 'M3', recht: Permission::AdminUsers),
+                new NavItem('Benutzer', '/admin/benutzer', recht: Permission::AdminUsers),
                 new NavItem('Rollen', '/admin/rollen', recht: Permission::AdminUsers),
-                new NavItem('Tresor', meilenstein: 'M3', recht: Permission::AdminVaultGrant),
+                new NavItem('Tresor', '/admin/tresor', recht: Permission::AdminVaultGrant),
                 new NavItem('KI-Anbieter', meilenstein: 'M7', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', meilenstein: 'M6', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),

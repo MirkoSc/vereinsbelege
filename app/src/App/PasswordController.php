@@ -149,6 +149,12 @@ final readonly class PasswordController
             );
         }
 
+        // The account now waits for a new grant - "Admins bekommen dazu eine
+        // Mail" (docs/spec/01-sicherheit.md section 2, M3-7).
+        $tools->freigabeHinweis?->senden(
+            PublicUrl::resolve($tools->mailSettings->get(), $request->header('host') ?? '', Request::httpsFromGlobals()),
+        );
+
         // Whatever session this browser still had is over - the reset ended
         // all of them (`user.session_epoch`), this one included. Starting a
         // fresh one here, instead of leaving it to the guard, keeps the

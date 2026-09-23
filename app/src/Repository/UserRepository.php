@@ -155,6 +155,40 @@ final readonly class UserRepository
     }
 
     /** External accounts always need a second factor (01 section 4). */
+    /**
+     * Invite, activate, lock, unlock (issue #20/M3-7). The rules around it -
+     * who may be locked, what a lock does to the vault grant - live in
+     * App\Service\Account\UserAdministration; this only writes the column.
+     */
+    public function updateStatus(int $id, UserStatus $status): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET status = ? WHERE id = ?');
+        $stmt->execute([$status->value, $id]);
+    }
+
+    /** $displayNameEnc is server-key ciphertext, like at insert(). */
+    public function updateDisplayName(int $id, string $displayNameEnc): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET display_name_enc = ? WHERE id = ?');
+        $stmt->bindValue(1, $displayNameEnc, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
+     * Every account, oldest first - for the user management (M3-7). The
+     * order cannot be by name: names are encrypted, the caller sorts after
+     * decrypting (a club has dozens of accounts, not thousands).
+     *
+     * @return list<User>
+     */
+    public function all(): array
+    {
+        $rows = $this->pdo->query('SELECT * FROM `user` ORDER BY id')->fetchAll();
+
+        return array_values(array_filter(array_map(self::hydrate(...), $rows)));
+    }
+
     public function updateMfaRequired(int $id, bool $required): void
     {
         $stmt = $this->pdo->prepare('UPDATE `user` SET mfa_required = ? WHERE id = ?');

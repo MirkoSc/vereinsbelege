@@ -59,6 +59,7 @@ final class RoutePermissionMatrixTest extends TestCase
         '/anmelden/backup-code',
         '/anmelden/passwort-vergessen',
         '/anmelden/passwort-neu',
+        '/anmelden/einladung',
         '/cron',
     ];
 
@@ -182,6 +183,11 @@ final class RoutePermissionMatrixTest extends TestCase
         $faelle = [
             [SystemRole::Admin, HttpMethod::Get, '/admin/update', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
+            [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/benutzer', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/benutzer/7/sperren', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/tresor', false],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/api/upload', true],
@@ -353,6 +359,9 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
+            $stellvertreter,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

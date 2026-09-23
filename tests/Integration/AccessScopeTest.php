@@ -215,13 +215,23 @@ final class AccessScopeTest extends DatabaseTestCase
         $this->zuweisung->zuweisen($this->konto(), [$this->rolle(SystemRole::Kassenpruefer)], ablauf: new \DateTimeImmutable('-1 day'));
     }
 
-    public function testOnlyExternalAccountsCanBeExtended(): void
+    /** M3-7 (issue #20): an internal account may have an end date, it need not. */
+    public function testAnInternalAccountMayHaveAnEndDate(): void
     {
         $id = $this->konto();
+        $bis = new \DateTimeImmutable('2030-03-31 00:00:00');
+        $this->zuweisung->zuweisen($id, [$this->rolle(SystemRole::Finanzen)], ablauf: $bis);
+        self::assertEquals($bis, $this->benutzer->findById($id)?->expiresAt);
+
+        $spaeter = new \DateTimeImmutable('2031-03-31 00:00:00');
+        $this->zuweisung->verlaengern($id, $spaeter);
+        self::assertEquals($spaeter, $this->benutzer->findById($id)?->expiresAt);
+
         $this->zuweisung->zuweisen($id, [$this->rolle(SystemRole::Finanzen)]);
+        self::assertNull($this->benutzer->findById($id)?->expiresAt, 'internal without a date = none');
 
         $this->expectException(RoleRuleViolation::class);
-        $this->zuweisung->verlaengern($id, new \DateTimeImmutable('+30 days'));
+        $this->zuweisung->zuweisen($id, [$this->rolle(SystemRole::Finanzen)], ablauf: new \DateTimeImmutable('-1 day'));
     }
 
     public function testExternalAndInternalRolesAreNotMixed(): void

@@ -121,6 +121,55 @@ final readonly class Mailer
     }
 
     /**
+     * The invitation link (issue #20/M3-7, docs/spec/01-sicherheit.md
+     * section 2 "Einladung"). Sent right away like the reset link, so the
+     * inviting admin sees at once whether it went out; a failure stays in
+     * the queue and the cron retries it. $link carries the plain token - it
+     * exists in this mail and nowhere else on the server.
+     */
+    public function sendeEinladung(
+        string $empfaenger,
+        #[\SensitiveParameter] string $link,
+        int $gueltigStunden,
+        ?\DateTimeImmutable $now = null,
+    ): MailAttemptResult {
+        $now ??= new \DateTimeImmutable();
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('einladung', [
+            'link' => $link,
+            'gueltigStunden' => $gueltigStunden,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $id = $this->queue->enqueue($empfaenger, 'Einladung zu Vereinsbelege', $body, $now);
+
+        $mail = $this->queue->claimById($id, $now);
+        if ($mail === null) {
+            return new MailAttemptResult(false, 'Die Mail konnte nicht aus der Warteschlange geholt werden.');
+        }
+
+        return $this->attempt($mail, $settings, $now);
+    }
+
+    /**
+     * "N Freigaben ausstehend" for the admins who can grant
+     * (docs/spec/01-sicherheit.md section 2 "Freigabe", issue #20/M3-7).
+     * Only queued, not sent in this request: it goes to several people,
+     * nobody waits for it on a page, and the request that caused it (an
+     * accepted invitation, a password reset) must stay short. The cron sends
+     * it within minutes. No names, no addresses - "somebody is waiting" and
+     * where to look.
+     */
+    public function reiheFreigabeHinweisEin(string $empfaenger, ?string $link, ?\DateTimeImmutable $now = null): void
+    {
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('freigabe-ausstehend', [
+            'link' => $link,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $this->queue->enqueue($empfaenger, 'Tresor-Freigabe ausstehend', $body, $now ?? new \DateTimeImmutable());
+    }
+
+    /**
      * "Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
      * geändert, Tresor-Freigabe erteilt/entzogen" (docs/spec/01-sicherheit.md
      * section 3). $ereignis is one sentence from a fixed list the caller

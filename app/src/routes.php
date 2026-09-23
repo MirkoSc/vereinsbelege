@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 use App\Admin\MailController;
 use App\Admin\RoleController;
+use App\Admin\UserController;
+use App\Admin\VaultGrantController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\UploadController;
 use App\App\AuthController;
+use App\App\InvitationController;
 use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\SecurityController;
@@ -67,6 +70,13 @@ use App\View\View;
  *        checked.
  * @param \Closure(): RoleController $rollen built lazily, same reason as
  *        $mail: only the role pages need the database (M3-6, issue #19).
+ * @param \Closure(): UserController $benutzer built lazily, same reason
+ *        (M3-7, issue #20).
+ * @param \Closure(): VaultGrantController $tresor built lazily, same reason
+ *        (M3-7, issue #20).
+ * @param \Closure(): InvitationController $einladung built lazily like
+ *        $passwort - a public page, but checking the link needs the
+ *        database (M3-7, issue #20).
  */
 return static function (
     Router $router,
@@ -82,6 +92,9 @@ return static function (
     \Closure $mail,
     \Closure $passwort,
     \Closure $rollen,
+    \Closure $benutzer,
+    \Closure $tresor,
+    \Closure $einladung,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -139,6 +152,15 @@ return static function (
     $post('/anmelden/passwort-vergessen', $oeffentlich, static fn(Request $r) => $passwort()->vergessenSubmit($r));
     $get('/anmelden/passwort-neu', $oeffentlich, static fn(Request $r) => $passwort()->neuForm($r));
     $post('/anmelden/passwort-neu', $oeffentlich, static fn(Request $r) => $passwort()->neuSubmit($r));
+
+    // Accepting an invitation (M3-7, issue #20, docs/spec/01-sicherheit.md
+    // section 2). Permission: public - the invited person has no password
+    // yet, so there is nothing to log in with. Public page with a session
+    // (CSRF on the write). Protection: the link token is 32 random bytes,
+    // stored only as a hash, 72 hours, single use, and only for an account
+    // still in status `eingeladen` (App\Service\Account\Invitation).
+    $get('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->form($r));
+    $post('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->submit($r));
 
     // Start page of the user area. The areas behind it (Posteingang, Belege,
     // Konten, ...) arrive from milestone M4 on; they are already in the
@@ -236,6 +258,33 @@ return static function (
     $get('/admin/rollen/{id:\d+}', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->bearbeiten($r, $params));
     $post('/admin/rollen/{id:\d+}', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->speichern($r, $params));
     $post('/admin/rollen/{id:\d+}/loeschen', $rollenVerwalten, static fn(Request $r, array $params) => $rollen()->loeschen($r, $params));
+
+    // Users (M3-7, issue #20, docs/spec/01-sicherheit.md sections 2 and 4):
+    // invite, change roles/scopes/end date, lock, unlock. Permission:
+    // `admin.users`. CSRF on all writes; the rules live in
+    // App\Service\Account\Invitation, AccessAssignment and
+    // UserAdministration.
+    $benutzerVerwalten = Zugriff::recht(Permission::AdminUsers);
+    $get('/admin/benutzer', $benutzerVerwalten, static fn(Request $r) => $benutzer()->liste($r));
+    $get('/admin/benutzer/neu', $benutzerVerwalten, static fn(Request $r) => $benutzer()->neu($r));
+    $post('/admin/benutzer', $benutzerVerwalten, static fn(Request $r) => $benutzer()->anlegen($r));
+    $get('/admin/benutzer/{id:\d+}', $benutzerVerwalten, static fn(Request $r, array $params) => $benutzer()->bearbeiten($r, $params));
+    $post('/admin/benutzer/{id:\d+}', $benutzerVerwalten, static fn(Request $r, array $params) => $benutzer()->speichern($r, $params));
+    $post('/admin/benutzer/{id:\d+}/sperren', $benutzerVerwalten, static fn(Request $r, array $params) => $benutzer()->sperren($r, $params));
+    $post('/admin/benutzer/{id:\d+}/entsperren', $benutzerVerwalten, static fn(Request $r, array $params) => $benutzer()->entsperren($r, $params));
+    $post(
+        '/admin/benutzer/{id:\d+}/einladung-erneut',
+        $benutzerVerwalten,
+        static fn(Request $r, array $params) => $benutzer()->einladungErneut($r, $params),
+    );
+
+    // Vault grants (M3-7, issue #20, docs/spec/01-sicherheit.md section 2
+    // "Freigabe"). Permission: `admin.vault_grant`. CSRF on all writes;
+    // granting additionally needs this session's own unlocked vault.
+    $freigaben = Zugriff::recht(Permission::AdminVaultGrant);
+    $get('/admin/tresor', $freigaben, static fn(Request $r) => $tresor()->seite($r));
+    $post('/admin/tresor/{id:\d+}/freigeben', $freigaben, static fn(Request $r, array $params) => $tresor()->freigeben($r, $params));
+    $post('/admin/tresor/{id:\d+}/entziehen', $freigaben, static fn(Request $r, array $params) => $tresor()->entziehen($r, $params));
 
     // Blob storage (02 "Dateien", issue #12): which backend new files go to,
     // moving the stock over, integrity check. The chain copies ciphertext and

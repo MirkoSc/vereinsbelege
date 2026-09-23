@@ -53,6 +53,7 @@ $csrfToken = ($bereich !== \App\View\Area::Oeffentlich && ($csrf ?? '') !== '') 
 <?php require $partialsDir . '/kopf.php'; ?>
 
 <main id="inhalt" class="inhalt">
+    <?php require $partialsDir . '/freigaben.php'; ?>
     <?php require $partialsDir . '/flash.php'; ?>
     <?= $content ?>
 </main>

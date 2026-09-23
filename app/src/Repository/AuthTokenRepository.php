@@ -94,4 +94,19 @@ final readonly class AuthTokenRepository
 
         return $stmt->rowCount();
     }
+
+    /**
+     * Whether $userId still has an unused, unexpired link of type $typ -
+     * the user list shows an invitation nobody answered in time
+     * (issue #20/M3-7).
+     */
+    public function hasUsable(int $userId, string $typ, \DateTimeImmutable $now): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT 1 FROM auth_token WHERE user_id = ? AND typ = ? AND used_at IS NULL AND expires_at > ? LIMIT 1',
+        );
+        $stmt->execute([$userId, $typ, $now->format(self::FORMAT)]);
+
+        return $stmt->fetchColumn() !== false;
+    }
 }
