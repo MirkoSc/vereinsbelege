@@ -196,6 +196,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/admin', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app', true],
+            // audit.view (M3-8): in /app so that Vorstand and Kassenprüfer,
+            // who hold no admin.* right, reach it.
+            [SystemRole::Admin, HttpMethod::Get, '/app/audit', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/audit', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/audit/pruefen', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/audit', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/audit/pruefen', false],
         ];
 
         foreach ($faelle as [$rolle, $methode, $pfad, $darf]) {
@@ -359,6 +366,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

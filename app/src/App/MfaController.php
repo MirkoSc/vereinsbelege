@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Domain\AuditAction;
 use App\Http\Cookie;
 use App\Http\Request;
 use App\Http\Response;
@@ -90,6 +91,7 @@ final readonly class MfaController
 
         if (!$verified) {
             $tools->mfa->registerFailure($ip, $pending->userId);
+            $tools->audit->record(AuditAction::ZweiterFaktorFehlgeschlagen, null, $ip, $pending->userId, ['art' => 'code']);
 
             return $this->seite($pending->mfaMethod, fehler: 'Der Code ist ungültig oder abgelaufen.');
         }
@@ -171,6 +173,7 @@ final readonly class MfaController
         $code = (string) ($request->post['code'] ?? '');
         if (!$tools->mfa->verifyBackupCode($pending->userId, $code)) {
             $tools->mfa->registerFailure($ip, $pending->userId);
+            $tools->audit->record(AuditAction::ZweiterFaktorFehlgeschlagen, null, $ip, $pending->userId, ['art' => 'backup_code']);
 
             return $this->seite($pending->mfaMethod, fehler: 'Dieser Backup-Code ist ungültig oder bereits verbraucht.');
         }
@@ -187,11 +190,16 @@ final readonly class MfaController
         $tools->mfa->resetLimit($request->ip, $pending->userId);
         $tools->users->touchLastLogin($pending->userId);
         $this->pendingLogin->clear();
+        $geraetMerken = isset($request->post['geraet_merken']) && !$backupCodeVerwendet;
+        $tools->audit->record(AuditAction::LoginErfolg, $pending->userId, $request->ip, $pending->userId, [
+            'zweiter_faktor' => $backupCodeVerwendet ? 'backup_code' : 'code',
+            'geraet_gemerkt' => $geraetMerken,
+        ]);
 
         $antwort = $this->completer->complete($pending->userId, $pending->vault, $pending->vaultAccess, $pending->weiter, $pending->sessionEpoch)
             ->withCookie(Cookie::pendingLoginKey('', Request::httpsFromGlobals())->expired());
 
-        if (isset($request->post['geraet_merken']) && !$backupCodeVerwendet) {
+        if ($geraetMerken) {
             $tage = MfaService::rememberDaysFromSettings($tools->settings);
             $label = 'Browser · ' . new \DateTimeImmutable()->format('d.m.Y');
             $token = $tools->mfa->rememberDevice($pending->userId, $label, $tage);

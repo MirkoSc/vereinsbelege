@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
 use App\Domain\Role;
@@ -14,6 +15,7 @@ use App\Http\Session;
 use App\Repository\RoleRepository;
 use App\Service\Account\RoleRuleViolation;
 use App\Service\Account\RoleService;
+use App\Service\Audit\AuditLog;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -37,6 +39,7 @@ final readonly class RoleController
         private Session $session,
         private RoleRepository $rollen,
         private RoleService $service,
+        private AuditLog $audit,
     ) {
     }
 
@@ -71,11 +74,12 @@ final readonly class RoleController
         $rechte = self::rechteAus($request);
 
         try {
-            $this->service->anlegen($name, $extern, $rechte);
+            $id = $this->service->anlegen($name, $extern, $rechte);
         } catch (RoleRuleViolation $e) {
             return $this->formular(null, $name, $extern, $rechte, $e->getMessage(), 422);
         }
 
+        $this->audit->record(AuditAction::RolleAngelegt, $this->session->userId(), $request->ip, $id, self::details(trim($name), $extern, $rechte));
         $this->session->flash(sprintf('Rolle „%s“ angelegt.', trim($name)));
 
         return Response::redirect('/admin/rollen');
@@ -120,6 +124,14 @@ final readonly class RoleController
             return $this->formular($rolle, $name, $extern, $rechte, $e->getMessage(), 422);
         }
 
+        $gespeichert = $this->rollen->find($id) ?? $rolle;
+        $this->audit->record(
+            AuditAction::RolleGeaendert,
+            $this->session->userId(),
+            $request->ip,
+            $id,
+            self::details($gespeichert->name, $gespeichert->extern, $gespeichert->rechte()),
+        );
         $this->session->flash(sprintf('Rolle „%s“ gespeichert.', $rolle->istSystem() ? $rolle->name : trim($name)));
 
         return Response::redirect('/admin/rollen');
@@ -145,6 +157,7 @@ final readonly class RoleController
             return Response::redirect($rolle === null ? '/admin/rollen' : '/admin/rollen/' . $id);
         }
 
+        $this->audit->record(AuditAction::RolleGeloescht, $this->session->userId(), $request->ip, $id, ['name' => (string) $rolle?->name]);
         $this->session->flash(sprintf('Rolle „%s“ gelöscht.', (string) $rolle?->name));
 
         return Response::redirect('/admin/rollen');
@@ -166,6 +179,23 @@ final readonly class RoleController
             'flash' => $this->session->pullFlash(),
             'anzahlKonten' => $rolle === null ? 0 : $this->rollen->countUsers($rolle->id),
         ], Area::Admin), $status);
+    }
+
+    /**
+     * What the audit log keeps of a role: its name, whether it is external,
+     * and its rights as `recht` or `recht (kostenstelle)`.
+     *
+     * @param array<string, PermissionScope> $rechte
+     * @return array{name: string, extern: bool, rechte: list<string>}
+     */
+    private static function details(string $name, bool $extern, array $rechte): array
+    {
+        $liste = [];
+        foreach ($rechte as $recht => $reichweite) {
+            $liste[] = $reichweite === PermissionScope::Alle ? $recht : $recht . ' (' . $reichweite->value . ')';
+        }
+
+        return ['name' => $name, 'extern' => $extern, 'rechte' => $liste];
     }
 
     /**

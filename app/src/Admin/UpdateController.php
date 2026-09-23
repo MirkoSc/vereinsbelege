@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Service\Audit\AuditLog;
 use App\Service\MaintenanceMode;
 use App\Service\Update\UpdateService;
 use App\Service\Update\UpdateState;
@@ -38,6 +40,7 @@ final readonly class UpdateController
         private Session $session,
         private UpdateService $updates,
         private MaintenanceMode $maintenance,
+        private AuditLog $audit,
     ) {
     }
 
@@ -69,6 +72,9 @@ final readonly class UpdateController
         $this->updates->setChannel((string) ($request->post['kanal'] ?? 'stable'));
         // A half-finished chain belongs to the old channel's release.
         $this->updates->reset();
+        $this->audit->record(AuditAction::EinstellungUpdateKanal, $this->session->userId(), $request->ip, details: [
+            'kanal' => $this->updates->channel(),
+        ]);
         $this->session->flash('Update-Kanal gespeichert.');
 
         return Response::redirect('/admin/update');
@@ -106,6 +112,29 @@ final readonly class UpdateController
             return Response::json(['fehler' => 'Unbekannter Schritt.'], 404);
         }
 
+        // Only the two steps that change which release runs are worth a
+        // row; the others prepare and are repeated freely. By the time
+        // `finish` runs, the new release's migrations are in, so the
+        // audit table exists even on an update from before M3-8.
+        $aktion = match (true) {
+            $state->fehler !== null => null,
+            $params['schritt'] === 'finish' && $state->fertig => AuditAction::UpdateUmgeschaltet,
+            $params['schritt'] === 'rollback' => AuditAction::UpdateZurueckgerollt,
+            default => null,
+        };
+        if ($aktion !== null) {
+            try {
+                $this->audit->record($aktion, $this->session->userId(), $request->ip, details: [
+                    'version' => $state->aktuelleVersion,
+                    'ziel' => $state->zielVersion,
+                ]);
+            } catch (\PDOException) {
+                // A rollback of an update that failed before its migrations
+                // ran may find no audit table yet. The rollback itself has
+                // happened; failing its answer now would only hide that.
+            }
+        }
+
         return Response::json($state->toArray(), $state->fehler !== null ? 500 : 200);
     }
 
@@ -130,6 +159,7 @@ final readonly class UpdateController
         }
 
         $this->maintenance->disable();
+        $this->audit->record(AuditAction::WartungAufgehoben, $this->session->userId(), $request->ip);
         $this->session->flash('Wartungsmodus aufgehoben – die Seite ist wieder öffentlich erreichbar.');
 
         // Fixed target, deliberately not a "back to where you came from"

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Domain\AuditAction;
 use App\Domain\User;
 use App\Http\Cookie;
 use App\Http\Request;
@@ -16,6 +17,7 @@ use App\Repository\VaultRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
+use App\Service\Audit\AuditLog;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
@@ -50,6 +52,7 @@ final readonly class VaultGrantController
         private UserAdministration $verwaltung,
         private Mailer $mailer,
         private ServerCrypto $crypto,
+        private AuditLog $audit,
     ) {
     }
 
@@ -128,6 +131,9 @@ final readonly class VaultGrantController
         if ($user !== null) {
             $this->hinweis($user, 'Ihr Zugang wurde für den Tresor freigegeben. Nach der nächsten Anmeldung sehen Sie die Belege, die Ihre Rollen erlauben.');
         }
+        $this->audit->record(AuditAction::TresorFreigegeben, $this->session->userId(), $request->ip, $id, [
+            'tresor_version' => $tresor->version,
+        ]);
         $this->session->flash('Freigabe erteilt. Sie wirkt ab der nächsten Anmeldung des Kontos.');
 
         return Response::redirect('/admin/tresor');
@@ -156,6 +162,7 @@ final readonly class VaultGrantController
         if ($user !== null) {
             $this->hinweis($user, 'Die Freigabe Ihres Zugangs für den Tresor wurde entzogen. Sie können sich weiter anmelden, sehen aber keine Belege mehr.');
         }
+        $this->audit->record(AuditAction::TresorEntzogen, $this->session->userId(), $request->ip, $id);
         $this->session->flash('Freigabe entzogen. Laufende Sitzungen des Kontos sind beendet.');
 
         return Response::redirect('/admin/tresor');

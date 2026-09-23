@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Domain\AuditAction;
 use App\Http\Cookie;
 use App\Http\Request;
 use App\Http\Response;
@@ -69,6 +70,10 @@ final readonly class PasswordController
             );
         }
 
+        if ($anfrage->userId !== null) {
+            // Nobody is logged in: no actor, only the account the link is for.
+            $tools->audit->record(AuditAction::PasswortResetAngefordert, null, $request->ip, $anfrage->userId);
+        }
         if ($anfrage->token !== null && $anfrage->emailEnc !== null) {
             $basis = PublicUrl::resolve(
                 $tools->mailSettings->get(),
@@ -140,6 +145,7 @@ final readonly class PasswordController
         }
 
         assert($ergebnis->userId !== null);
+        $tools->audit->record(AuditAction::PasswortResetAbgeschlossen, $ergebnis->userId, $request->ip, $ergebnis->userId);
         $user = $tools->users->findById($ergebnis->userId);
         if ($user !== null) {
             $tools->mailer->sendeSicherheitshinweis(
