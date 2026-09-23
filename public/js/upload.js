@@ -69,7 +69,11 @@ function fehlertext(antwort, daten) {
  * used of it. `basis` is the route prefix - '/api/upload' by default (the
  * internal capture, M3-6), '/einreichen/upload' for the public submission
  * (issue #24/M4-2, App\Api\EinreichungUploadController): same four requests,
- * same CSRF-token header, different credential behind it.
+ * same CSRF-token header, different credential behind it. `headers` adds
+ * further headers to every one of those requests - the public submission's
+ * proof-of-work solution (issue #25/M4-3, `X-Pow-Loesung`,
+ * public/js/einreichen.js), which only its opening request checks but every
+ * request may as well carry.
  */
 async function dateiHochladen(datei, optionen) {
     const einstellungen = optionen || {};
@@ -77,6 +81,7 @@ async function dateiHochladen(datei, optionen) {
     const basis = einstellungen.basis || '/api/upload';
     const holen = einstellungen.fetch || (typeof fetch === 'function' ? fetch : null);
     const melden = einstellungen.onFortschritt || function () {};
+    const zusatzHeader = einstellungen.headers || {};
 
     if (holen === null) {
         throw new Error('Kein fetch verfügbar.');
@@ -84,7 +89,7 @@ async function dateiHochladen(datei, optionen) {
 
     const senden = async function (pfad, optionenDerAnfrage) {
         const anfrage = Object.assign({ method: 'POST' }, optionenDerAnfrage);
-        anfrage.headers = Object.assign({ 'X-CSRF-Token': csrf }, anfrage.headers || {});
+        anfrage.headers = Object.assign({ 'X-CSRF-Token': csrf }, zusatzHeader, anfrage.headers || {});
 
         const antwort = await holen(pfad, anfrage);
         const daten = await antwort.json();

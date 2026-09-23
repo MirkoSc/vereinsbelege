@@ -9,6 +9,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
+use App\Admin\SubmissionSettingsController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
@@ -96,6 +97,9 @@ use App\View\View;
  * @param \Closure(): EinreichungController $einreichen built lazily, same
  *        reason as $mail: rendering the form and validating cost centers
  *        both need the database (issue #24/M4-2).
+ * @param \Closure(): SubmissionSettingsController $einreichungAdmin built
+ *        lazily, same reason as $mail: only this admin page needs the
+ *        database (issue #25/M4-3).
  */
 return static function (
     Router $router,
@@ -119,6 +123,7 @@ return static function (
     \Closure $kostenstellen,
     \Closure $einreichenUploads,
     \Closure $einreichen,
+    \Closure $einreichungAdmin,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -235,8 +240,10 @@ return static function (
     // session (App\Http\Session's class docblock), writes only into the
     // inbox. Permission: public - the credential is the stateless form token
     // (App\Service\Submission\FormToken), checked by the controllers
-    // themselves, not by the guard. Real spam protection (rate limit, proof
-    // of work, honeypot) is issue #25/M4-3.
+    // themselves, not by the guard. Spam protection (rate limit, proof of
+    // work, honeypot, minimum fill time - issue #25/M4-3, 01 section 5) is
+    // App\Service\Submission\Spamschutz, also checked by the controllers
+    // themselves.
     $get('/einreichen', $oeffentlich, static fn(Request $r) => $einreichen()->formular($r));
     $post('/einreichen', $oeffentlich->alsApi(), static fn(Request $r) => $einreichen()->absenden($r));
 
@@ -395,6 +402,14 @@ return static function (
     $post('/admin/kostenstellen/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->loeschen($r, $params));
     $post('/admin/kostenstellen/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachOben($r, $params));
     $post('/admin/kostenstellen/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachUnten($r, $params));
+
+    // Public submission's spam defence (01 §5, issue #25/M4-3): rate/size/
+    // page limits and the pause switch. Permission: `admin.settings`, same
+    // right as Mail/Speicher/Kostenstellen. CSRF on all writes.
+    $get('/admin/einreichung', $einstellungen, static fn(Request $r) => $einreichungAdmin()->page($r));
+    $post('/admin/einreichung', $einstellungen, static fn(Request $r) => $einreichungAdmin()->save($r));
+    $post('/admin/einreichung/pausieren', $einstellungen, static fn(Request $r) => $einreichungAdmin()->pausieren($r));
+    $post('/admin/einreichung/fortsetzen', $einstellungen, static fn(Request $r) => $einreichungAdmin()->fortsetzen($r));
 
     // Update and maintenance. Permission: `admin.system` ("Backup, Update,
     // Wartung", 01 section 4); CSRF on all writes.

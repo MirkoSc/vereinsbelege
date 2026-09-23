@@ -50,13 +50,16 @@ hochgeladen wurde. Nicht abgesendete Uploads räumt
 Abschnitt 4). Foto/Bild/PDF kommen über `<input capture>` bzw.
 `<input type=file multiple>` (public/js/einreichen.js), Reihenfolge per
 Pointer-Drag **und** ↑/↓-Knöpfen; Kamera-Live-Vorschau mit Rahmen-Overlay ist
-Backlog M5 (Scanner). Seitenobergrenze vorerst eine feste Konstante
-(`SubmissionService::MAX_SEITEN` = 20) – das eigentliche, einstellbare
-Seiten-/Größenlimit sowie Rate-Limit, Proof-of-Work und Honeypot sind
-issue #25/M4-3 (Abschnitt 5 von 01). Referenznummer `R-<Jahr>-<laufende
-Nummer>`, Bestätigungsmail nur mit der Referenz
+Backlog M5 (Scanner). Referenznummer `R-<Jahr>-<laufende Nummer>`,
+Bestätigungsmail nur mit der Referenz
 (`Mailer::reiheEinreichungsbestaetigungEin()`), Prüfung serverseitig mit
 Feld-Fehlern je Angabe.
+
+**Stand M4-3** (issue #25, Abschnitt 5 von 01): Seiten-/Größenlimit
+(`App\Service\Submission\EinreichungsEinstellungen`, einstellbar unter
+`/admin/einreichung`), Rate-Limit, Proof-of-Work und Honeypot
+(`App\Service\Submission\Spamschutz`) laufen jetzt vor
+`SubmissionService::einreichen()` bzw. vor jedem Seiten-Upload.
 
 ## 2. Bildaufbereitung (im Browser)
 

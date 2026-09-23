@@ -42,6 +42,15 @@ final readonly class RateLimiter
     /** docs/spec/01-sicherheit.md section 3: brute force, not a burst. */
     public const int LOGIN_WINDOW_SECONDS = 900;
 
+    /**
+     * The public submission's window (docs/spec/01-sicherheit.md section 5,
+     * issue #25/M4-3): "N Einreichungen/Stunde". The longest window any
+     * purpose uses - App\Service\Cron\RateLimitCleanupTask's own RateLimiter
+     * is built with this one so its sweep cutoff never falls inside a
+     * shorter-lived counter's still-active window (e.g. the login one's).
+     */
+    public const int SUBMISSION_WINDOW_SECONDS = 3600;
+
     private const string FORMAT = 'Y-m-d H:i:s';
 
     public function __construct(
@@ -92,6 +101,18 @@ final readonly class RateLimiter
         }
 
         $this->rows->increment($key);
+    }
+
+    /**
+     * Counts one more use of this key - the same increment as
+     * registerFailure(), under a name that fits a counter which is not
+     * about failures at all (the public submission's rate limit, issue
+     * #25/M4-3: every accepted upload or submission counts, not only a
+     * rejected one).
+     */
+    public function register(string $purpose, string $value, ?\DateTimeImmutable $now = null): void
+    {
+        $this->registerFailure($purpose, $value, $now);
     }
 
     /**

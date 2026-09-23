@@ -8,6 +8,7 @@ use App\Domain\BlobMeta;
 use App\Http\Request;
 use App\Http\Response;
 use App\Service\Submission\FormToken;
+use App\Service\Submission\Spamschutz;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadError;
@@ -29,6 +30,14 @@ use App\Support\FileLogger;
  * (App\Service\Submission\SubmissionUploadStore), so App\Service\Submission\
  * SubmissionService can later refuse a blob id that belongs to a different
  * visit.
+ *
+ * create() is also where App\Service\Submission\Spamschutz is checked
+ * (issue #25/M4-3, docs/spec/01-sicherheit.md section 5): proof of work
+ * (`X-Pow-Loesung`, the same header on every request the page sends,
+ * public/js/upload.js), the per-file size limit and the rate limit. Every
+ * accepted call counts against the budget immediately - chunk(), finish()
+ * and abort() only continue an upload create() already let through, so they
+ * check nothing but the token.
  */
 final readonly class EinreichungUploadController
 {
@@ -38,6 +47,9 @@ final readonly class EinreichungUploadController
     private const int MAX_NAME_LENGTH = 200;
 
     /**
+     * @param \Closure(): Spamschutz $spamschutz built lazily: it opens the
+     *        database connection (the rate limit), which only create() must
+     *        pay for.
      * @param \Closure(): SubmissionUploadStore $store built lazily: it opens
      *        the database connection, which the chunk requests must not pay
      *        for.
@@ -47,6 +59,7 @@ final readonly class EinreichungUploadController
     public function __construct(
         private FormToken $formToken,
         private UploadService $uploads,
+        private \Closure $spamschutz,
         private \Closure $store,
         private ?\Closure $body = null,
         private ?FileLogger $logger = null,
@@ -55,14 +68,27 @@ final readonly class EinreichungUploadController
 
     public function create(Request $request): Response
     {
-        return $this->guarded($request, function () use ($request): Response {
-            $groesse = $request->post['groesse'] ?? null;
-            if (!is_int($groesse) && !(is_string($groesse) && ctype_digit($groesse))) {
-                return Response::json(['fehler' => 'Ungültige Dateigröße.'], 422);
-            }
+        $tokenData = $this->formToken->pruefen($request->header('x-csrf-token') ?? '');
+        if ($tokenData === null) {
+            return Response::json(['fehler' => self::TOKEN_MESSAGE], 403);
+        }
 
-            return Response::json($this->uploads->create((int) $groesse)->toArray(), 201);
-        });
+        $groesse = $request->post['groesse'] ?? null;
+        if (!is_int($groesse) && !(is_string($groesse) && ctype_digit($groesse))) {
+            return Response::json(['fehler' => 'Ungültige Dateigröße.'], 422);
+        }
+
+        $abgelehnt = ($this->spamschutz)()->pruefeUpload(
+            $request->ip,
+            $tokenData,
+            $request->header('x-pow-loesung'),
+            (int) $groesse,
+        );
+        if ($abgelehnt !== null) {
+            return Response::json(['fehler' => $abgelehnt->message()], $abgelehnt->status());
+        }
+
+        return $this->ausgefuehrt($request, fn(): Response => Response::json($this->uploads->create((int) $groesse)->toArray(), 201));
     }
 
     /**
@@ -146,10 +172,10 @@ final readonly class EinreichungUploadController
     }
 
     /**
-     * Verifies the form token, then the JSON error contract for everything
-     * the handler can throw - the same shape as
-     * App\Api\UploadController::guarded(), CSRF/session replaced by the form
-     * token.
+     * Verifies the form token, then runs the handler through
+     * ausgefuehrt()'s exception mapping - chunk(), finish() and abort()
+     * check only the token: the spam defence already ran once, in
+     * create(), for the upload id they continue.
      *
      * @param \Closure(): Response $handler
      */
@@ -159,6 +185,18 @@ final readonly class EinreichungUploadController
             return Response::json(['fehler' => self::TOKEN_MESSAGE], 403);
         }
 
+        return $this->ausgefuehrt($request, $handler);
+    }
+
+    /**
+     * The JSON error contract for everything a handler can throw - the same
+     * shape as App\Api\UploadController::guarded(), CSRF/session replaced by
+     * the form token.
+     *
+     * @param \Closure(): Response $handler
+     */
+    private function ausgefuehrt(Request $request, \Closure $handler): Response
+    {
         try {
             return $handler();
         } catch (UploadException $e) {

@@ -6,6 +6,7 @@ use App\Admin\CostCenterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
+use App\Admin\SubmissionSettingsController;
 use App\Admin\UpdateController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -94,7 +95,10 @@ use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Storage\StorageSwitchService;
+use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
+use App\Service\Submission\ProofOfWork;
+use App\Service\Submission\Spamschutz;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Update\ReleaseDownloader;
@@ -195,6 +199,25 @@ $serverCrypto = new ServerCrypto($config->serverKey);
 // from the server key like $serverCrypto, needs no database either.
 $formToken = new FormToken($config->serverKey);
 
+// Its invisible proof of work (issue #25/M4-3, docs/spec/01-sicherheit.md
+// section 5): derived from the server key the same way, needs no database.
+$proofOfWork = new ProofOfWork($config->serverKey);
+
+// The rest of the spam defence's settings and the check itself: both need
+// the database (the limits live in `setting`, the rate limit in
+// `rate_limit`), so both are built per request from a given connection -
+// the same shape as $mailerFor/$auditFor above.
+$einreichungEinstellungenFor = static fn(\PDO $pdo): EinreichungsEinstellungen => EinreichungsEinstellungen::fromSettings(
+    new SettingRepository($pdo),
+);
+$spamschutzFor = static function (\PDO $pdo) use ($proofOfWork, $einreichungEinstellungenFor): Spamschutz {
+    return new Spamschutz(
+        new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
+        $proofOfWork,
+        $einreichungEinstellungenFor($pdo),
+    );
+};
+
 // Mail (docs/spec/06-betrieb.md section 3, issue #14): one small factory per
 // collaborator, shared between the admin page and the cron task so both
 // build the exact same Mailer stack from a given connection.
@@ -272,10 +295,14 @@ $cron = static fn(): CronController => new CronController($config, static functi
                 new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             ),
             new MailCleanupTask($mailQueueFor($pdo)),
-            // M3-3: the login counters. Same window the login uses, so a
-            // row is only ever swept once it can no longer block anybody.
+            // M3-3/M4-3: every rate-limit counter (login, MFA, the public
+            // submission) in one sweep. Built with the longest window of
+            // the three (RateLimiter::SUBMISSION_WINDOW_SECONDS) on
+            // purpose: cleanup()'s cutoff is this instance's own window
+            // times two, and it must never fall inside a shorter-lived
+            // counter's still-active window.
             new RateLimitCleanupTask(
-                new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+                new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
             ),
             // M3-4: remembered devices whose 30 days are over.
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
@@ -308,10 +335,12 @@ $uploads = static fn(): UploadController => new UploadController(
 // The public submission's own chunk upload (issue #24/M4-2): same shape as
 // $uploads, form token instead of session/CSRF, and finish() also records
 // which token the blob belongs to (App\Service\Submission\
-// SubmissionUploadStore).
+// SubmissionUploadStore). create() additionally runs the spam defence
+// (issue #25/M4-3) through $spamschutzFor, built only there.
 $einreichenUploads = static fn(): EinreichungUploadController => new EinreichungUploadController(
     $formToken,
     new UploadService($paths->uploadDir()),
+    static fn(): Spamschutz => $spamschutzFor($connections->pdo()),
     static function () use ($connections, $paths): SubmissionUploadStore {
         $pdo = $connections->pdo();
         $blobs = new BlobRepository($pdo);
@@ -384,13 +413,24 @@ $kostenstellen = static function () use ($connections, $view, $auditFor): CostCe
 // validates and stores what comes back. Built lazily like $mail - rendering
 // the cost-center dropdown and checking whether a vault exists both need the
 // database.
-$einreichen = static function () use ($connections, $view, $formToken, $mailerFor, $auditFor): EinreichungController {
+$einreichen = static function () use (
+    $connections,
+    $view,
+    $formToken,
+    $proofOfWork,
+    $mailerFor,
+    $auditFor,
+    $einreichungEinstellungenFor,
+    $spamschutzFor,
+): EinreichungController {
     $pdo = $connections->pdo();
     $kostenstellen = new CostCenterRepository($pdo);
+    $einstellungen = $einreichungEinstellungenFor($pdo);
 
     return new EinreichungController(
         $view,
         $formToken,
+        $proofOfWork,
         new VaultRepository($pdo),
         $kostenstellen,
         new SubmissionService(
@@ -398,11 +438,26 @@ $einreichen = static function () use ($connections, $view, $formToken, $mailerFo
             new SubmissionRepository($pdo),
             new DocumentRepository($pdo),
             new SubmissionUploadRepository($pdo),
+            new BlobRepository($pdo),
             $kostenstellen,
             $mailerFor($pdo),
             $auditFor($pdo),
+            $einstellungen,
         ),
+        $spamschutzFor($pdo),
+        $einstellungen,
     );
+};
+
+// The public submission's own admin page (issue #25/M4-3, docs/spec/
+// 01-sicherheit.md section 5): the rate/size/page limits above and the
+// pause switch. Permission: `admin.settings`, the same right as Mail,
+// Speicher and Kostenstellen. Built lazily like $mail - only this page
+// needs the database.
+$einreichungAdmin = static function () use ($connections, $view, $auditFor): SubmissionSettingsController {
+    $pdo = $connections->pdo();
+
+    return new SubmissionSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
 };
 
 // User management and vault grants (M3-7, issue #20). One small factory
@@ -675,6 +730,7 @@ $router = new Router();
     $kostenstellen,
     $einreichenUploads,
     $einreichen,
+    $einreichungAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

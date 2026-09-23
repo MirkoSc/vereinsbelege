@@ -56,7 +56,43 @@ function einreichenNutzlast(seiten, angaben) {
         freitext: angaben.freitext,
         kostenstelle: angaben.kostenstelle,
         datenschutz: angaben.datenschutz,
+        // Honeypot (issue #25/M4-3): a human never has anything to put
+        // here, so its value only ever carries what a bot filled in.
+        webseite: angaben.webseite,
     };
+}
+
+/**
+ * The invisible proof of work (issue #25/M4-3, docs/spec/01-sicherheit.md
+ * section 5, App\Service\Submission\ProofOfWork): brute-forces the secret
+ * number behind `challenge` by hashing `salt + candidate` for every
+ * candidate from 0 up, the ALTCHA principle. Solving takes real time (the
+ * point); checking a solution back costs the server nothing, because it
+ * derives the same number itself.
+ *
+ * Returns the solution as a decimal string, or null if `max` was exhausted
+ * without a match - the caller then sends no solution at all and lets the
+ * server's "please reload" answer explain why.
+ */
+async function powLoesen(salt, challenge, max) {
+    if (salt === '' || challenge === '' || !(max > 0)) {
+        return null;
+    }
+
+    for (let zahl = 0; zahl <= max; zahl++) {
+        const puffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + zahl));
+        const hex = Array.prototype.map
+            .call(new Uint8Array(puffer), function (byte) {
+                return byte.toString(16).padStart(2, '0');
+            })
+            .join('');
+
+        if (hex === challenge) {
+            return String(zahl);
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -77,6 +113,7 @@ async function seiteHochladen(datei, optionen) {
         csrf: einstellungen.token,
         fetch: einstellungen.fetch,
         basis: '/einreichen/upload',
+        headers: einstellungen.headers,
         onFortschritt: einstellungen.onFortschritt,
     });
 }
@@ -95,7 +132,10 @@ async function absenden(seiten, angaben, optionen) {
 
     const antwort = await holen('/einreichen', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': einstellungen.token || '' },
+        headers: Object.assign(
+            { 'Content-Type': 'application/json', 'X-CSRF-Token': einstellungen.token || '' },
+            einstellungen.headers || {},
+        ),
         body: JSON.stringify(einreichenNutzlast(seiten, angaben)),
     });
     const daten = await antwort.json();
@@ -113,6 +153,22 @@ function initEinreichen() {
 
     const token = wurzel.dataset.token || '';
     const maxSeiten = Number(wurzel.dataset.maxSeiten) || 20;
+    const maxDateiMb = Number(wurzel.dataset.maxDateiMb) || 10;
+    const maxDateiBytes = maxDateiMb * 1024 * 1024;
+
+    // Solved once in the background as soon as the page loads (issue
+    // #25/M4-3): every upload and the final submit share the same
+    // challenge for the life of this page load
+    // (App\Service\Submission\ProofOfWork derives it from the form token),
+    // so the visible wait is whatever is left of this promise by the time a
+    // person actually uploads or submits - usually nothing.
+    const powBereit = powLoesen(wurzel.dataset.powSalt || '', wurzel.dataset.powChallenge || '', Number(wurzel.dataset.powMax) || 0);
+
+    async function powHeader() {
+        const loesung = await powBereit;
+
+        return loesung === null ? {} : { 'X-Pow-Loesung': loesung };
+    }
 
     const seitenListe = wurzel.querySelector('#einreichen-seiten');
     const uploadFehler = wurzel.querySelector('#einreichen-upload-fehler');
@@ -277,6 +333,11 @@ function initEinreichen() {
 
             return;
         }
+        if (datei.size > maxDateiBytes) {
+            zeigeUploadFehler('Die Datei ist zu groß (höchstens ' + maxDateiMb + ' MB je Datei).');
+
+            return;
+        }
 
         zeigeUploadFehler('');
         const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0;
@@ -291,7 +352,7 @@ function initEinreichen() {
         renderSeiten();
 
         try {
-            const ergebnis = await seiteHochladen(datei, { token: token });
+            const ergebnis = await seiteHochladen(datei, { token: token, headers: await powHeader() });
             seite.status = 'fertig';
             seite.blobId = ergebnis.blob_id;
         } catch (problem) {
@@ -346,6 +407,9 @@ function initEinreichen() {
             freitext: String(daten.get('freitext') || '').trim(),
             kostenstelle: kostenstelle === '' ? null : kostenstelle,
             datenschutz: daten.get('datenschutz') === 'on',
+            // Honeypot (issue #25/M4-3): empty for a human, whatever a bot
+            // put there for everybody else.
+            webseite: String(daten.get('webseite') || ''),
         };
     }
 
@@ -374,7 +438,7 @@ function initEinreichen() {
         absendenKnopf.disabled = true;
         ladeAnzeige.hidden = false;
         try {
-            const antwort = await absenden(seiten, angaben, { token: token });
+            const antwort = await absenden(seiten, angaben, { token: token, headers: await powHeader() });
             if (!antwort.ok) {
                 const fehler = antwort.daten && antwort.daten.fehler;
                 if (fehler !== null && typeof fehler === 'object') {
@@ -415,5 +479,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, einreichenNutzlast, seiteHochladen, absenden };
+    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
 }

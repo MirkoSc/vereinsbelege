@@ -211,3 +211,18 @@ test('an error answer with status 200 is still an error', async () => {
         /Die Datei ist zu groß\./,
     );
 });
+
+test('extra headers (issue #25/M4-3, the proof-of-work solution) go out on every request', async () => {
+    const fake = fakeFetch([
+        { id: 'i'.repeat(32), chunks: 1, chunk_bytes: 2 },
+        { chunk: 0 },
+        { blob_id: 1 },
+    ]);
+
+    await dateiHochladen(datei(1), { csrf: 'x', fetch: fake.holen, headers: { 'X-Pow-Loesung': '4711' } });
+
+    for (const aufruf of fake.aufrufe) {
+        assert.equal(aufruf.optionen.headers['X-Pow-Loesung'], '4711');
+        assert.equal(aufruf.optionen.headers['X-CSRF-Token'], 'x', 'the CSRF header is still there too');
+    }
+});

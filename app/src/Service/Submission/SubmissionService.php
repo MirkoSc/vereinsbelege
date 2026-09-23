@@ -8,6 +8,7 @@ use App\Domain\AuditAction;
 use App\Domain\DocumentSource;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
+use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\SubmissionRepository;
@@ -31,14 +32,6 @@ use App\Service\Mail\Mailer;
  */
 final readonly class SubmissionService
 {
-    /**
-     * A page count high enough for a stack of receipts photographed one by
-     * one, low enough to bound `document.original_blob_ids`. Real spam
-     * defence (a setting, a smaller limit) is issue #25/M4-3 - this is a
-     * sanity bound, not that control.
-     */
-    public const int MAX_SEITEN = 20;
-
     public const int NAME_MAX = 200;
     public const int EMAIL_MAX = 254;
     public const int KONTOINHABER_MAX = 200;
@@ -55,9 +48,11 @@ final readonly class SubmissionService
         private SubmissionRepository $submissions,
         private DocumentRepository $documents,
         private SubmissionUploadRepository $submissionUploads,
+        private BlobRepository $blobs,
         private CostCenterRepository $kostenstellen,
         private Mailer $mailer,
         private AuditLog $audit,
+        private EinreichungsEinstellungen $einstellungen,
     ) {
     }
 
@@ -211,7 +206,7 @@ final readonly class SubmissionService
             return [];
         }
 
-        if (count($eingabe) > self::MAX_SEITEN) {
+        if (count($eingabe) > $this->einstellungen->maxSeiten) {
             $fehler['seiten'] = 'Zu viele Seiten in einer Einreichung.';
 
             return [];
@@ -241,6 +236,12 @@ final readonly class SubmissionService
         $erlaubt = $this->submissionUploads->blobIdsForFormHash($formHash);
         if (array_diff($blobIds, $erlaubt) !== []) {
             $fehler['seiten'] = 'Eine Seite ist nicht mehr vorhanden. Bitte erneut hochladen.';
+
+            return [];
+        }
+
+        if ($this->blobs->totalSize($blobIds) > $this->einstellungen->maxEinreichungBytes()) {
+            $fehler['seiten'] = 'Die Einreichung ist insgesamt zu groß. Bitte weniger oder kleinere Seiten verwenden.';
 
             return [];
         }
