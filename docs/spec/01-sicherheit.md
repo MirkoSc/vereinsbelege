@@ -451,6 +451,13 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 
 ## 5. Öffentliche Einreichung – Schutz
 
+- **Stand M4-2** (issue #24): `/einreichen` hat keine Session; Credential ist
+  ein zustandsloses, signiertes Formular-Token
+  (`App\Service\Submission\FormToken`, HMAC unter einem aus dem
+  Server-Schlüssel abgeleiteten Kontext-Schlüssel, 24 h gültig) – `GET
+  /einreichen` stellt es aus, jede weitere Anfrage trägt es im Header
+  `X-CSRF-Token` zurück. Sein Ausstellungszeitpunkt ist die Grundlage für die
+  Mindest-Ausfülldauer unten, sobald die implementiert ist.
 - Rate-Limit je IP (z. B. 10 Einreichungen/Stunde, Setting).
 - Proof-of-Work-Challenge (selbst gehostet, ALTCHA-Prinzip, kein
   Drittanbieter, kein Cookie-Banner nötig).

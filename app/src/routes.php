@@ -11,6 +11,7 @@ use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
+use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -26,6 +27,7 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
 use App\Http\Zugriff;
+use App\PublicPages\EinreichungController;
 use App\View\Area;
 use App\View\View;
 
@@ -88,6 +90,12 @@ use App\View\View;
  * @param \Closure(): CostCenterController $kostenstellen built lazily, same
  *        reason as $mail: only the cost-center pages need the database
  *        (M4-1, issue #23).
+ * @param \Closure(): EinreichungUploadController $einreichenUploads built
+ *        lazily like $uploads - opening and storing a chunk needs no
+ *        database at all (issue #24/M4-2).
+ * @param \Closure(): EinreichungController $einreichen built lazily, same
+ *        reason as $mail: rendering the form and validating cost centers
+ *        both need the database (issue #24/M4-2).
  */
 return static function (
     Router $router,
@@ -109,6 +117,8 @@ return static function (
     \Closure $einladung,
     \Closure $audit,
     \Closure $kostenstellen,
+    \Closure $einreichenUploads,
+    \Closure $einreichen,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -195,9 +205,8 @@ return static function (
     // Permission: `document.submit_internal`. The guard answers 401/403 JSON
     // here instead of redirecting - these routes are driven from fetch(),
     // where a login page would arrive as garbage. The public submission
-    // (/einreichen, M5) has no session and needs the proof of work and the
-    // rate limit of 01 before it may open an upload without a token; it will
-    // not go through this guard.
+    // (/einreichen, issue #24/M4-2, below) has no session and uses its own
+    // upload routes under App\Api\EinreichungUploadController instead.
     //
     // The id placeholder is [0-9a-f]+ and not [0-9a-f]{32}: Route::compile()
     // reads a placeholder's regex up to the first brace, so a quantifier in
@@ -220,6 +229,38 @@ return static function (
         '/api/upload/{id:[0-9a-f]+}/abort',
         $hochladen,
         static fn(Request $r, array $params) => $uploads()->abort($r, $params),
+    );
+
+    // The public submission (03 section 1, issue #24/M4-2): no login, no
+    // session (App\Http\Session's class docblock), writes only into the
+    // inbox. Permission: public - the credential is the stateless form token
+    // (App\Service\Submission\FormToken), checked by the controllers
+    // themselves, not by the guard. Real spam protection (rate limit, proof
+    // of work, honeypot) is issue #25/M4-3.
+    $get('/einreichen', $oeffentlich, static fn(Request $r) => $einreichen()->formular($r));
+    $post('/einreichen', $oeffentlich->alsApi(), static fn(Request $r) => $einreichen()->absenden($r));
+
+    // Chunk upload for the page above, the same contract as /api/upload
+    // (issue #11/M2-4) under its own path: the internal upload needs
+    // `document.submit_internal`, this one has no session to hold a right in
+    // at all. See App\Api\EinreichungUploadController for why it cannot
+    // simply reuse App\Api\UploadController.
+    $einreichenHochladen = $oeffentlich->alsApi();
+    $post('/einreichen/upload', $einreichenHochladen, static fn(Request $r) => $einreichenUploads()->create($r));
+    $post(
+        '/einreichen/upload/{id:[0-9a-f]+}/chunk/{n:\d+}',
+        $einreichenHochladen,
+        static fn(Request $r, array $params) => $einreichenUploads()->chunk($r, $params),
+    );
+    $post(
+        '/einreichen/upload/{id:[0-9a-f]+}/finish',
+        $einreichenHochladen,
+        static fn(Request $r, array $params) => $einreichenUploads()->finish($r, $params),
+    );
+    $post(
+        '/einreichen/upload/{id:[0-9a-f]+}/abort',
+        $einreichenHochladen,
+        static fn(Request $r, array $params) => $einreichenUploads()->abort($r, $params),
     );
 
     // Managing an already logged-in account's second factor (M3-4, issue

@@ -11,6 +11,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
+use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -44,6 +45,9 @@ use App\Repository\MfaTotpRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
+use App\Repository\SubmissionRepository;
+use App\Repository\SubmissionUploadRepository;
+use App\Repository\DocumentRepository;
 use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
 use App\Repository\UserAccessRepository;
@@ -76,6 +80,7 @@ use App\Service\Cron\MailCleanupTask;
 use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
+use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -89,6 +94,9 @@ use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Storage\StorageSwitchService;
+use App\Service\Submission\FormToken;
+use App\Service\Submission\SubmissionService;
+use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
@@ -96,6 +104,7 @@ use App\Service\Upload\UploadService;
 use App\Service\Upload\UploadStore;
 use App\Support\FileLogger;
 use App\Support\Version;
+use App\PublicPages\EinreichungController;
 use App\View\View;
 
 // -------------------------------------------------------------------------
@@ -182,6 +191,10 @@ $maintenance = new MaintenanceMode($paths->maintenanceFlagFile());
 // data - from M3-1 on that includes the mail queue and its settings.
 $serverCrypto = new ServerCrypto($config->serverKey);
 
+// The public submission's stateless credential (issue #24/M4-2): derived
+// from the server key like $serverCrypto, needs no database either.
+$formToken = new FormToken($config->serverKey);
+
 // Mail (docs/spec/06-betrieb.md section 3, issue #14): one small factory per
 // collaborator, shared between the admin page and the cron task so both
 // build the exact same Mailer stack from a given connection.
@@ -241,6 +254,7 @@ $updates = static fn(): UpdateController => new UpdateController(
 // Cron: like $updates, built only once the token was right.
 $cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor): CronRunner {
     $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
 
     return new CronRunner(
         lock: new CronLockRepository($pdo),
@@ -251,6 +265,12 @@ $cron = static fn(): CronController => new CronController($config, static functi
         aufraeumen: [
             new JobCleanupTask(new JobRepository($pdo)),
             new UploadCleanupTask(new UploadService($paths->uploadDir())),
+            // M4-2: blobs the public submission uploaded but no submission
+            // ever claimed.
+            new SubmissionUploadCleanupTask(
+                new SubmissionUploadRepository($pdo),
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            ),
             new MailCleanupTask($mailQueueFor($pdo)),
             // M3-3: the login counters. Same window the login uses, so a
             // row is only ever swept once it can no longer block anybody.
@@ -280,6 +300,29 @@ $uploads = static fn(): UploadController => new UploadController(
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             new VaultRepository($pdo),
             new SettingRepository($pdo),
+        );
+    },
+    logger: $logger,
+);
+
+// The public submission's own chunk upload (issue #24/M4-2): same shape as
+// $uploads, form token instead of session/CSRF, and finish() also records
+// which token the blob belongs to (App\Service\Submission\
+// SubmissionUploadStore).
+$einreichenUploads = static fn(): EinreichungUploadController => new EinreichungUploadController(
+    $formToken,
+    new UploadService($paths->uploadDir()),
+    static function () use ($connections, $paths): SubmissionUploadStore {
+        $pdo = $connections->pdo();
+        $blobs = new BlobRepository($pdo);
+
+        return new SubmissionUploadStore(
+            new UploadStore(
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+                new VaultRepository($pdo),
+                new SettingRepository($pdo),
+            ),
+            new SubmissionUploadRepository($pdo),
         );
     },
     logger: $logger,
@@ -335,6 +378,31 @@ $kostenstellen = static function () use ($connections, $view, $auditFor): CostCe
     $repository = new CostCenterRepository($pdo);
 
     return new CostCenterController($view, new Session(), $repository, new CostCenterService($repository), $auditFor($pdo));
+};
+
+// The public submission page itself (issue #24/M4-2): renders the form,
+// validates and stores what comes back. Built lazily like $mail - rendering
+// the cost-center dropdown and checking whether a vault exists both need the
+// database.
+$einreichen = static function () use ($connections, $view, $formToken, $mailerFor, $auditFor): EinreichungController {
+    $pdo = $connections->pdo();
+    $kostenstellen = new CostCenterRepository($pdo);
+
+    return new EinreichungController(
+        $view,
+        $formToken,
+        new VaultRepository($pdo),
+        $kostenstellen,
+        new SubmissionService(
+            $pdo,
+            new SubmissionRepository($pdo),
+            new DocumentRepository($pdo),
+            new SubmissionUploadRepository($pdo),
+            $kostenstellen,
+            $mailerFor($pdo),
+            $auditFor($pdo),
+        ),
+    );
 };
 
 // User management and vault grants (M3-7, issue #20). One small factory
@@ -605,6 +673,8 @@ $router = new Router();
     $einladung,
     $auditSeite,
     $kostenstellen,
+    $einreichenUploads,
+    $einreichen,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

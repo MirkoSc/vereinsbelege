@@ -173,6 +173,34 @@ test('a failing abort does not hide the error that caused it', async () => {
     );
 });
 
+test('a basis option routes every request under a different prefix (issue #24/M4-2)', async () => {
+    const fake = fakeFetch([
+        { id: 'g'.repeat(32), chunks: 1, chunk_bytes: 2 },
+        { chunk: 0 },
+        { blob_id: 9 },
+    ]);
+
+    await dateiHochladen(datei(1), { csrf: 'x', fetch: fake.holen, basis: '/einreichen/upload' });
+
+    assert.deepEqual(fake.aufrufe.map((a) => a.pfad), [
+        '/einreichen/upload',
+        '/einreichen/upload/' + 'g'.repeat(32) + '/chunk/0',
+        '/einreichen/upload/' + 'g'.repeat(32) + '/finish',
+    ]);
+});
+
+test('without a basis option, the internal route is still the default', async () => {
+    const fake = fakeFetch([
+        { id: 'h'.repeat(32), chunks: 1, chunk_bytes: 2 },
+        { chunk: 0 },
+        { blob_id: 9 },
+    ]);
+
+    await dateiHochladen(datei(1), { csrf: 'x', fetch: fake.holen });
+
+    assert.equal(fake.aufrufe[0].pfad, '/api/upload');
+});
+
 test('an error answer with status 200 is still an error', async () => {
     const fake = fakeFetch([
         { fehler: 'Die Datei ist zu groß.' },

@@ -7,59 +7,45 @@ namespace App\Api;
 use App\Domain\BlobMeta;
 use App\Http\Request;
 use App\Http\Response;
-use App\Http\Session;
+use App\Service\Submission\FormToken;
+use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadError;
 use App\Service\Upload\UploadException;
 use App\Service\Upload\UploadService;
-use App\Service\Upload\UploadStore;
 use App\Support\FileLogger;
 
 /**
- * The chunk upload (docs/spec/03-erfassung-und-ki.md section 4). Four short
- * requests instead of one long one:
+ * The chunk upload for the public submission (docs/spec/03-erfassung-und-ki.md
+ * section 4, issue #24/M4-2): the same four short requests as
+ * App\Api\UploadController, under `/einreichen/upload/...`.
  *
- *   POST /api/upload                     {groesse}  -> {id, chunks, chunk_bytes}
- *   POST /api/upload/{id}/chunk/{n}      raw body   -> {chunk, fehlend, ...}
- *   POST /api/upload/{id}/finish         {name}     -> {blob_id, groesse, typ}
- *   POST /api/upload/{id}/abort                     -> {status}
- *
- * The path segments are English because the spec fixes the chunk route; the
- * texts the browser shows are German like everywhere else.
- *
- * ---------------------------------------------------------------------
- * Rights: `document.submit_internal` (M3-6, issue #19), declared on the
- * routes and checked by App\Http\LoginGuard (app/src/routes.php), which
- * answers 401/403 JSON rather than redirecting - these endpoints are driven
- * from fetch(), where a login page would arrive as garbage. The CSRF token
- * is checked on top of that.
- *
- * The public submission (/einreichen, issue #24/M4-2) has no session by
- * design and therefore cannot use this route as it stands: it has its own
- * chunk upload under App\Api\EinreichungUploadController, credentialed by
- * App\Service\Submission\FormToken instead of session CSRF.
- * ---------------------------------------------------------------------
- *
- * The request body of a chunk is raw bytes, which App\Http\Request does not
- * expose - it only decodes JSON. Rather than widen that ported class, the
- * stream is injected as a closure, the same way InstallController injects
- * is_uploaded_file() so a test can drive it.
+ * `/einreichen` has no session by design (App\Http\Session's class docblock),
+ * so this controller cannot reuse UploadController's session-CSRF guard. Its
+ * credential is the stateless App\Service\Submission\FormToken instead,
+ * carried in the same `X-CSRF-Token` header every request already sends
+ * (public/js/upload.js); verified fresh on every request, nothing about it
+ * is looked up. finish() additionally records which token uploaded the blob
+ * (App\Service\Submission\SubmissionUploadStore), so App\Service\Submission\
+ * SubmissionService can later refuse a blob id that belongs to a different
+ * visit.
  */
-final readonly class UploadController
+final readonly class EinreichungUploadController
 {
-    private const string CSRF_MESSAGE = 'Sitzung abgelaufen – bitte die Seite neu laden.';
+    private const string TOKEN_MESSAGE = 'Das Formular ist abgelaufen – bitte die Seite neu laden.';
 
     /** Long enough for a real file name, short enough to stay a file name. */
     private const int MAX_NAME_LENGTH = 200;
 
     /**
-     * @param \Closure(): UploadStore $store built lazily: it opens the
-     *        database connection, which the chunk requests must not pay for.
+     * @param \Closure(): SubmissionUploadStore $store built lazily: it opens
+     *        the database connection, which the chunk requests must not pay
+     *        for.
      * @param (\Closure(): resource)|null $body the request body; defaults to
      *        php://input.
      */
     public function __construct(
-        private Session $session,
+        private FormToken $formToken,
         private UploadService $uploads,
         private \Closure $store,
         private ?\Closure $body = null,
@@ -105,9 +91,6 @@ final readonly class UploadController
     }
 
     /**
-     * Checks the file and hands it to the storage layer, encrypted, in one
-     * pass - the plaintext never becomes a file of its own.
-     *
      * @param array<string, string> $params
      */
     public function finish(Request $request, array $params): Response
@@ -125,15 +108,21 @@ final readonly class UploadController
 
             $typ = MagicBytes::detect($this->uploads->head($id));
             if ($typ === null) {
-                // Nothing will come of this upload, so it goes now instead of
-                // waiting 24 h for the cron.
                 $this->uploads->discard($id);
 
                 throw new UploadException(UploadError::UnsupportedType);
             }
 
             $name = self::dateiname($request->post['name'] ?? '');
-            $blob = ($this->store)()->store($this->uploads->chunks($id), new BlobMeta($typ, $name));
+            $tokenData = $this->formToken->pruefen($request->header('x-csrf-token') ?? '');
+            \assert($tokenData !== null); // guarded() already refused an invalid token.
+
+            $blob = ($this->store)()->store(
+                $this->uploads->chunks($id),
+                new BlobMeta($typ, $name),
+                $tokenData->hash(),
+                new \DateTimeImmutable(),
+            );
             $this->uploads->discard($id);
 
             return Response::json([
@@ -157,17 +146,17 @@ final readonly class UploadController
     }
 
     /**
-     * CSRF check, then the JSON error contract for everything the handler can
-     * throw. The kernel would answer a plain text 500, which no fetch() can
-     * make sense of - and a refused upload is an everyday case, not a bug.
+     * Verifies the form token, then the JSON error contract for everything
+     * the handler can throw - the same shape as
+     * App\Api\UploadController::guarded(), CSRF/session replaced by the form
+     * token.
      *
      * @param \Closure(): Response $handler
      */
     private function guarded(Request $request, \Closure $handler): Response
     {
-        $this->session->start();
-        if (!$this->session->checkCsrf($request)) {
-            return Response::json(['fehler' => self::CSRF_MESSAGE], 403);
+        if ($this->formToken->pruefen($request->header('x-csrf-token') ?? '') === null) {
+            return Response::json(['fehler' => self::TOKEN_MESSAGE], 403);
         }
 
         try {
@@ -177,7 +166,7 @@ final readonly class UploadController
         } catch (\Throwable $e) {
             // Class and route only - never the message, which could carry a
             // path or a file name (CLAUDE.md section 4).
-            $this->logger?->append(sprintf('upload failed: %s in %s', $e::class, $request->path));
+            $this->logger?->append(sprintf('public upload failed: %s in %s', $e::class, $request->path));
 
             return Response::json(['fehler' => 'Der Upload ist fehlgeschlagen.'], 500);
         }
