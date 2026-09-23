@@ -743,6 +743,19 @@ textarea[aria-invalid="true"] {
     gap: var(--abstand-1);
 }
 
+/* Honeypot (issue #25/M4-3, docs/spec/01-sicherheit.md Abschnitt 5): anders
+   als .visuell-versteckt (für Vorlesetext gedacht) muss dieses Feld auch für
+   Screenreader unsichtbar sein - deshalb zusätzlich aria-hidden und
+   tabindex="-1" im Markup, nicht display:none, das manche Formular-Bots
+   selbst herausfiltern. */
+.einreichen-koeder {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
 
 /* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).

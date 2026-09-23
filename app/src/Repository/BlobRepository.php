@@ -72,6 +72,27 @@ final readonly class BlobRepository
     }
 
     /**
+     * The plaintext bytes of these blobs together - App\Service\Submission\
+     * SubmissionService's size limit for a whole submission (issue
+     * #25/M4-3, docs/spec/01-sicherheit.md section 5). `size` is the same
+     * structural, unencrypted column inventory() already sums.
+     *
+     * @param list<int> $ids
+     */
+    public function totalSize(array $ids): int
+    {
+        if ($ids === []) {
+            return 0;
+        }
+
+        $platzhalter = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->pdo->prepare("SELECT COALESCE(SUM(size), 0) FROM file_blob WHERE id IN ({$platzhalter})");
+        $stmt->execute($ids);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * How much lies on which shelf, for the storage admin page (M2-5).
      * `size` is the plaintext length, a structural column - the sum says how
      * big the archive is, not what is in it.

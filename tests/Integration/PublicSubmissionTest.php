@@ -16,6 +16,7 @@ use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\MailQueueRepository;
+use App\Repository\RateLimitRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
@@ -29,10 +30,14 @@ use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\Mail\Mailer;
 use App\Service\Migration\Migrator;
+use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
+use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
+use App\Service\Submission\ProofOfWork;
+use App\Service\Submission\Spamschutz;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\UploadService;
@@ -58,6 +63,15 @@ final class PublicSubmissionTest extends DatabaseTestCase
 
     /** The body of the next chunk request (App\Tests\Integration\ChunkUploadTest's pattern). */
     private string $body = '';
+
+    /**
+     * Proof-of-work solutions are deterministic per token (issue #25/M4-3) -
+     * brute-forced once per token and reused for every request under it,
+     * the same as the real client solving it once per page load.
+     *
+     * @var array<string, string>
+     */
+    private array $powLoesungen = [];
 
     protected function setUp(): void
     {
@@ -294,7 +308,7 @@ final class PublicSubmissionTest extends DatabaseTestCase
     public function testMoreThanTheLimitOfPagesIsRefused(): void
     {
         $token = $this->issuedToken();
-        $viele = range(1, SubmissionService::MAX_SEITEN + 1);
+        $viele = range(1, EinreichungsEinstellungen::MAX_SEITEN_DEFAULT + 1);
 
         $daten = $this->json($this->absenden($token, $this->minimalAngaben($viele)), 422);
         self::assertArrayHasKey('seiten', $daten['fehler']);
@@ -327,9 +341,62 @@ final class PublicSubmissionTest extends DatabaseTestCase
         return new FormToken(str_repeat('t', 32));
     }
 
+    private function proofOfWork(): ProofOfWork
+    {
+        return new ProofOfWork(str_repeat('t', 32));
+    }
+
+    private function einstellungen(): EinreichungsEinstellungen
+    {
+        return EinreichungsEinstellungen::fromSettings(new SettingRepository($this->pdo()));
+    }
+
+    private function spamschutz(): Spamschutz
+    {
+        return new Spamschutz(
+            new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::SUBMISSION_WINDOW_SECONDS),
+            $this->proofOfWork(),
+            $this->einstellungen(),
+        );
+    }
+
+    /**
+     * Issued 10 s in the past: real enough for App\Service\Submission\
+     * FormToken (24 h TTL), old enough that the minimum-fill-time check
+     * (5 s, App\Service\Submission\Spamschutz) never mistakes an ordinary
+     * test for a bot.
+     */
     private function issuedToken(): string
     {
-        return $this->formToken()->ausstellen();
+        return $this->formToken()->ausstellen(new \DateTimeImmutable('-10 seconds'));
+    }
+
+    /**
+     * The proof-of-work solution belonging to this token - brute-forced the
+     * same way public/js/einreichen.js does, cached per token. An invalid
+     * token (the "manipulated token" test) has no challenge to solve; the
+     * empty string it gets back is refused at the token check anyway,
+     * before anything looks at the header.
+     */
+    private function powLoesung(string $token): string
+    {
+        if (isset($this->powLoesungen[$token])) {
+            return $this->powLoesungen[$token];
+        }
+
+        $tokenData = $this->formToken()->pruefen($token);
+        if ($tokenData === null) {
+            return '';
+        }
+
+        $challenge = $this->proofOfWork()->challenge($tokenData);
+        for ($zahl = 0; $zahl <= $challenge['max']; $zahl++) {
+            if (hash('sha256', $challenge['salt'] . $zahl) === $challenge['challenge']) {
+                return $this->powLoesungen[$token] = (string) $zahl;
+            }
+        }
+
+        self::fail('No proof-of-work solution found for the test token.');
     }
 
     /**
@@ -371,7 +438,10 @@ final class PublicSubmissionTest extends DatabaseTestCase
 
     private function postRequest(string $token, array $post): Request
     {
-        return new Request(HttpMethod::Post, '/einreichen', post: $post, headers: ['x-csrf-token' => $token]);
+        return new Request(HttpMethod::Post, '/einreichen', post: $post, headers: [
+            'x-csrf-token' => $token,
+            'x-pow-loesung' => $this->powLoesung($token),
+        ]);
     }
 
     /**
@@ -381,7 +451,10 @@ final class PublicSubmissionTest extends DatabaseTestCase
     {
         $this->body = $body;
 
-        return new Request(HttpMethod::Post, '/einreichen/upload', post: $post, headers: ['x-csrf-token' => $token]);
+        return new Request(HttpMethod::Post, '/einreichen/upload', post: $post, headers: [
+            'x-csrf-token' => $token,
+            'x-pow-loesung' => $this->powLoesung($token),
+        ]);
     }
 
     private function uploadController(): EinreichungUploadController
@@ -389,6 +462,7 @@ final class PublicSubmissionTest extends DatabaseTestCase
         return new EinreichungUploadController(
             $this->formToken(),
             new UploadService($this->uploadDir, self::CHUNK),
+            fn(): Spamschutz => $this->spamschutz(),
             fn(): SubmissionUploadStore => new SubmissionUploadStore(
                 new UploadStore($this->blobs(), new VaultRepository($this->pdo()), new SettingRepository($this->pdo())),
                 new SubmissionUploadRepository($this->pdo()),
@@ -413,10 +487,12 @@ final class PublicSubmissionTest extends DatabaseTestCase
             new MailTemplates(dirname(__DIR__, 2) . '/app/views/mail'),
         );
         $audit = new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $this->serverKey);
+        $einstellungen = $this->einstellungen();
 
         return new EinreichungController(
             new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test'),
             $this->formToken(),
+            $this->proofOfWork(),
             new VaultRepository($pdo),
             $kostenstellen,
             new SubmissionService(
@@ -424,10 +500,14 @@ final class PublicSubmissionTest extends DatabaseTestCase
                 new SubmissionRepository($pdo),
                 new DocumentRepository($pdo),
                 new SubmissionUploadRepository($pdo),
+                new BlobRepository($pdo),
                 $kostenstellen,
                 $mailer,
                 $audit,
+                $einstellungen,
             ),
+            $this->spamschutz(),
+            $einstellungen,
         );
     }
 

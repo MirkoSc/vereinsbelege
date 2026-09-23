@@ -58,6 +58,7 @@ enum AuditAction: string
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
+    case EinstellungEinreichung = 'einstellung.einreichung';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -97,6 +98,7 @@ enum AuditAction: string
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
+            self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -123,6 +125,7 @@ enum AuditAction: string
             self::EinreichungEingegangen => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
+            self::EinstellungEinreichung,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
         };
     }

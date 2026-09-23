@@ -456,22 +456,47 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   (`App\Service\Submission\FormToken`, HMAC unter einem aus dem
   Server-Schlüssel abgeleiteten Kontext-Schlüssel, 24 h gültig) – `GET
   /einreichen` stellt es aus, jede weitere Anfrage trägt es im Header
-  `X-CSRF-Token` zurück. Sein Ausstellungszeitpunkt ist die Grundlage für die
-  Mindest-Ausfülldauer unten, sobald die implementiert ist.
-- Rate-Limit je IP (z. B. 10 Einreichungen/Stunde, Setting).
-- Proof-of-Work-Challenge (selbst gehostet, ALTCHA-Prinzip, kein
-  Drittanbieter, kein Cookie-Banner nötig).
-- **Honeypot-Feld** (für Menschen unsichtbar) und **Mindest-Ausfülldauer**
-  (Formular-Token mit Zeitstempel, < 5 s = Bot).
-- Kein Einreich-Code, kein Captcha (E-14). Falls trotzdem Spam auftritt:
-  Admin kann die Einreichung vorübergehend pausieren und die Einträge im
-  Posteingang gesammelt verwerfen.
+  `X-CSRF-Token` zurück.
+- **Stand M4-3** (issue #25): Kein Einreich-Code, kein Captcha (E-14) –
+  stattdessen mehrere unsichtbare Schranken, alle zustandslos an das
+  Formular-Token gebunden (`App\Service\Submission\Spamschutz`):
+  - **Proof-of-Work** (`App\Service\Submission\ProofOfWork`, ALTCHA-Prinzip,
+    selbst gehostet, kein Drittanbieter, kein Cookie-Banner nötig): aus dem
+    Token-Nonce wird deterministisch eine geheime Zahl abgeleitet, die der
+    Browser nur durch Ausprobieren findet (`salt`/`challenge`/`max` in
+    Daten-Attributen auf `#einreichen`, gelöst im Hintergrund von
+    `public/js/einreichen.js`, sobald die Seite lädt). Die Lösung reist im
+    Header `X-Pow-Loesung` mit jeder Anfrage; geprüft wird sie serverseitig
+    ohne jede Speicherung – sie muss zu genau diesem Token passen.
+  - **Honeypot-Feld** (`webseite`, für Menschen unsichtbar per CSS,
+    `aria-hidden`, `tabindex="-1"`) und **Mindest-Ausfülldauer** (< 5 s
+    zwischen Token-Ausstellung und Absenden) gelten für den finalen Submit;
+    ein Treffer zählt sofort gegen das IP-Limit.
+  - **Rate-Limit** je IP und global, pro Stunde (`App\Service\RateLimiter`,
+    `RateLimiter::SUBMISSION_WINDOW_SECONDS`) – eigene Zähler für den Submit
+    und für jeden einzelnen Seiten-Upload (dessen Budget sich aus dem
+    Submit-Limit mal der Seitenobergrenze ergibt, da eine Einreichung aus
+    mehreren Uploads besteht). Ein Feld-Fehler (z. B. fehlender Name) kostet
+    kein Kontingent; nur eine tatsächlich abgeschlossene Einreichung zählt.
+  - **Größen- und Seitenlimits**: je Datei, je Einreichung insgesamt und
+    Seitenzahl je Einreichung – alle vier zusammen mit dem Rate-Limit
+    einstellbar unter `/admin/einreichung` (`admin.settings`,
+    `App\Admin\SubmissionSettingsController`,
+    `App\Service\Submission\EinreichungsEinstellungen`, Settings-Keys
+    `einreichung_*`, siehe 02 §Betrieb). Das Dateilimit kann
+    `App\Service\Upload\UploadService::MAX_FILE_BYTES` nur unterschreiten,
+    nie überschreiten.
+  - Dieselbe Seite pausiert auch die Einreichung insgesamt
+    (`einreichung_pausiert`): `/einreichen` zeigt dann nur einen Hinweis,
+    Absenden und Upload antworten mit 503 – für den Fall, dass trotzdem
+    Spam auftritt.
 - Dateiprüfung serverseitig über Magic Bytes (JPEG, PNG, HEIC→ablehnen mit
-  Hinweis bzw. clientseitig konvertiert, PDF), Maximalgröße je Datei und je
-  Einreichung, Seitenzahl-Limit.
+  Hinweis bzw. clientseitig konvertiert, PDF).
 - Einreicher erhält Referenznummer + optional Bestätigungsmail (ohne
   Beleginhalt).
-- IP wird nur als Hash für das Rate-Limit genutzt und nach 7 Tagen verworfen.
+- IP wird nur als Hash für das Rate-Limit genutzt (`App\Service\RateLimiter`,
+  derselbe Mechanismus wie bei der Anmeldung, 01 §3) und verworfen, sobald
+  ihr Zeitfenster abgelaufen ist – keine separate, längere Aufbewahrung.
 
 ## 6. Audit-Log
 
@@ -564,4 +589,10 @@ Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);
 Kostenstellen-Scope; Zeitraum-Scope und Ablauf externer Konten
 (Kassenprüfer/Steuerberater); Audit-Hash-Kette inkl.
-Manipulationserkennung; CSP-Compliance (übernommen).
+Manipulationserkennung; CSP-Compliance (übernommen). Öffentliche
+Einreichung (issue #25/M4-3): Proof-of-Work löst und prüft dieselbe Zahl
+zum selben Token, falsche/fehlende Lösung abgelehnt; Rate-Limit je IP und
+global für Submit und Upload greift nach dem konfigurierten Limit und
+lässt Feld-Fehler unangetastet; Honeypot und Mindest-Ausfülldauer
+abgelehnt; Größen- und Seitenlimits durchgesetzt; Pause sperrt Formular
+und Upload (503) und zeigt auf `/einreichen` nur den Hinweis.

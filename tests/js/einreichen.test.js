@@ -10,6 +10,7 @@ const {
     seitenEntfernen,
     istHeic,
     einreichenNutzlast,
+    powLoesen,
     seiteHochladen,
     absenden,
 } = require('../../public/js/einreichen.js');
@@ -56,7 +57,10 @@ test('HEIC is recognised by MIME type or file extension', () => {
 
 test('the submit payload carries only blob ids, in page order', () => {
     const seiten = [{ id: 'a', blobId: 3 }, { id: 'b', blobId: 1 }];
-    const angaben = { name: 'Max Muster', email: null, erstattung: 'keine', iban: null, kontoinhaber: null, freitext: 'Getränke', kostenstelle: null, datenschutz: true };
+    const angaben = {
+        name: 'Max Muster', email: null, erstattung: 'keine', iban: null, kontoinhaber: null,
+        freitext: 'Getränke', kostenstelle: null, datenschutz: true, webseite: '',
+    };
 
     assert.deepEqual(einreichenNutzlast(seiten, angaben), {
         blobs: [3, 1],
@@ -68,7 +72,49 @@ test('the submit payload carries only blob ids, in page order', () => {
         freitext: 'Getränke',
         kostenstelle: null,
         datenschutz: true,
+        webseite: '',
     });
+});
+
+test('the honeypot travels through the payload unchanged (issue #25/M4-3)', () => {
+    const seiten = [{ id: 'a', blobId: 1 }];
+    const angaben = {
+        name: 'Bot', email: null, erstattung: 'keine', iban: null, kontoinhaber: null,
+        freitext: 'x', kostenstelle: null, datenschutz: true, webseite: 'https://bot.example',
+    };
+
+    assert.equal(einreichenNutzlast(seiten, angaben).webseite, 'https://bot.example');
+});
+
+test('powLoesen finds the number a real client would find (issue #25/M4-3)', async () => {
+    const salt = 'ein-testsalz';
+    let gesucht = -1;
+    let challenge = '';
+    for (let zahl = 0; zahl <= 500; zahl++) {
+        const puffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + zahl));
+        const hex = Array.from(new Uint8Array(puffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+        // Any fixed rule reproducibly picks one candidate as "the" challenge
+        // without hard-coding a precomputed hash into the test.
+        if (zahl === 137) {
+            challenge = hex;
+            gesucht = zahl;
+        }
+    }
+
+    const loesung = await powLoesen(salt, challenge, 500);
+
+    assert.equal(loesung, String(gesucht));
+});
+
+test('powLoesen gives up and returns null once max is exhausted', async () => {
+    const loesung = await powLoesen('salz', 'nie-erreichbare-challenge', 20);
+
+    assert.equal(loesung, null);
+});
+
+test('powLoesen returns null for an empty challenge instead of hashing forever', async () => {
+    assert.equal(await powLoesen('', '', 0), null);
+    assert.equal(await powLoesen('salz', 'x', 0), null);
 });
 
 test('seiteHochladen calls the injected uploader with the public base path', async () => {
@@ -89,6 +135,19 @@ test('seiteHochladen calls the injected uploader with the public base path', asy
 
 test('seiteHochladen without an uploader available refuses instead of touching the network', async () => {
     await assert.rejects(seiteHochladen({ name: 'x' }, {}), /Kein Upload verfügbar/);
+});
+
+test('seiteHochladen forwards the proof-of-work header (issue #25/M4-3)', async () => {
+    const aufrufe = [];
+    const fakeHochladen = async (datei, optionen) => {
+        aufrufe.push(optionen);
+
+        return { blob_id: 1 };
+    };
+
+    await seiteHochladen({ name: 'x' }, { token: 'tok', hochladen: fakeHochladen, headers: { 'X-Pow-Loesung': '99' } });
+
+    assert.deepEqual(aufrufe[0].headers, { 'X-Pow-Loesung': '99' });
 });
 
 /** A fetch stand-in that records the call and answers with one fixed response. */
@@ -116,6 +175,17 @@ test('absenden posts the token header and the payload to /einreichen', async () 
     assert.equal(fake.aufrufe[0].optionen.method, 'POST');
     assert.equal(fake.aufrufe[0].optionen.headers['X-CSRF-Token'], 'tok');
     assert.deepEqual(JSON.parse(fake.aufrufe[0].optionen.body).blobs, [5]);
+});
+
+test('absenden forwards the proof-of-work header alongside the CSRF token (issue #25/M4-3)', async () => {
+    const fake = fakeFetch(201, { referenz: 'R-2026-0002' });
+
+    await absenden([{ id: 'a', blobId: 1 }], {
+        name: 'A', email: null, erstattung: 'keine', iban: null, kontoinhaber: null, freitext: 'x', kostenstelle: null, datenschutz: true, webseite: '',
+    }, { fetch: fake.holen, token: 'tok', headers: { 'X-Pow-Loesung': '55' } });
+
+    assert.equal(fake.aufrufe[0].optionen.headers['X-Pow-Loesung'], '55');
+    assert.equal(fake.aufrufe[0].optionen.headers['X-CSRF-Token'], 'tok');
 });
 
 test('absenden returns a field-error answer without throwing', async () => {

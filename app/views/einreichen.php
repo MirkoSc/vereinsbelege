@@ -11,16 +11,30 @@
  * (M4-2's "ohne Scanner"); the live camera with crop overlay arrives with
  * the scanner (M5).
  *
+ * Spam defence (issue #25/M4-3, docs/spec/01-sicherheit.md section 5): the
+ * proof-of-work challenge ($pow) is solved invisibly in the background by
+ * public/js/einreichen.js as soon as the page loads; the honeypot field
+ * below is for bots only (App\Service\Submission\Spamschutz).
+ *
  * @var string $token
+ * @var array{salt: string, challenge: string, max: int} $pow
  * @var array<int, string> $kostenstellen id => name, active ones
  * @var bool $hatTresor
+ * @var bool $pausiert
  * @var int $maxSeiten
+ * @var int $maxDateiMb
  */
 ?>
-<section class="schmal" id="einreichen" data-token="<?= e($token) ?>" data-max-seiten="<?= e($maxSeiten) ?>">
+<section class="schmal" id="einreichen" data-token="<?= e($token) ?>" data-max-seiten="<?= e($maxSeiten) ?>"
+         data-max-datei-mb="<?= e($maxDateiMb) ?>" data-pow-salt="<?= e($pow['salt']) ?>"
+         data-pow-challenge="<?= e($pow['challenge']) ?>" data-pow-max="<?= e($pow['max']) ?>">
     <h2>Beleg einreichen</h2>
 
-    <?php if (!$hatTresor): ?>
+    <?php if ($pausiert): ?>
+        <p class="hinweis hinweis-warnung">
+            Die Einreichung ist vorübergehend nicht möglich. Bitte später erneut versuchen.
+        </p>
+    <?php elseif (!$hatTresor): ?>
         <p class="hinweis hinweis-warnung">
             Die Einreichung ist noch nicht eingerichtet. Bitte später erneut versuchen.
         </p>
@@ -31,7 +45,7 @@
 
         <p>
             Foto aufnehmen, ein Bild oder eine PDF-Datei wählen – mehrere Seiten sind
-            möglich (bis zu <?= e($maxSeiten) ?>).
+            möglich (bis zu <?= e($maxSeiten) ?>, je höchstens <?= e($maxDateiMb) ?> MB).
         </p>
 
         <p class="knopfreihe">
@@ -54,6 +68,16 @@
         <ol class="einreichen-seiten" id="einreichen-seiten"></ol>
 
         <form class="formular" id="einreichen-formular" novalidate>
+            <!-- Honeypot (issue #25/M4-3): unsichtbar für Menschen (CSS,
+                 aria-hidden, tabindex="-1"), für ein Formular-Skript, das
+                 jedes Feld befüllt, ein Verräter (App\Service\Submission\
+                 Spamschutz). -->
+            <div class="einreichen-koeder" aria-hidden="true">
+                <label for="einreichen-webseite">Webseite
+                    <input type="text" id="einreichen-webseite" name="webseite" tabindex="-1" autocomplete="off">
+                </label>
+            </div>
+
             <label for="einreichen-name">Name <span class="pflicht" aria-hidden="true">*</span>
                 <input type="text" id="einreichen-name" name="name" autocomplete="name" required>
             </label>
