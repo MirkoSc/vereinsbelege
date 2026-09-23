@@ -372,7 +372,7 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 | `archive.import` | ✓ | – | ✓ | – | – | – |
 | `audit.view` | ✓ | ✓ | – | ✓ | – | – |
 | `admin.users` / `admin.vault_grant` | ✓ | – | – | – | – | – |
-| `admin.settings` (KI, Mail, Speicher, Kategorien) | ✓ | – | – | – | – | – |
+| `admin.settings` (KI, Mail, Speicher, Kategorien, Kostenstellen) | ✓ | – | – | – | – | – |
 | `admin.system` (Backup, Update, Wartung) | ✓ | – | – | – | – | – |
 
 - Kein Vier-Augen-Prinzip (E-09): wer `document.edit` hat, darf auch
@@ -443,11 +443,11 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   – reine Höflichkeit, die Route prüft selbst.
 - Bestehende Routen: `/app`, `/app/sicherheit*` = angemeldet;
   `/api/upload*` = `document.submit_internal`; `/admin/designsystem` =
-  `admin.*`; `/admin/speicher*`, `/admin/mail*` = `admin.settings`;
-  `/admin/update*`, `/admin/wartung/aufheben` = `admin.system`;
-  `/admin/rollen*`, `/admin/benutzer*` = `admin.users`; `/admin/tresor*` =
-  `admin.vault_grant` (M3-7); `/anmelden/einladung` = öffentlich (M3-7);
-  `/app/audit*` = `audit.view` (M3-8).
+  `admin.*`; `/admin/speicher*`, `/admin/mail*`, `/admin/kostenstellen*`
+  (M4-1) = `admin.settings`; `/admin/update*`, `/admin/wartung/aufheben` =
+  `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
+  `/admin/tresor*` = `admin.vault_grant` (M3-7); `/anmelden/einladung` =
+  öffentlich (M3-7); `/app/audit*` = `audit.view` (M3-8).
 
 ## 5. Öffentliche Einreichung – Schutz
 
@@ -523,10 +523,11 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   Passwort-Reset angefordert/abgeschlossen, Benutzer eingeladen/Einladung
   erneut/angenommen/geändert/gesperrt/entsperrt, Tresor freigegeben/
   entzogen/per Wiederherstellungsschlüssel entsperrt (auch der
-  Fehlschlag), Rolle angelegt/geändert/gelöscht, Mail-/Speicher-/Update-
-  Kanal-Einstellungen, Update eingespielt/zurückgerollt, Wartung
-  aufgehoben. Belege, Lieferanten, Buchungen, Abgleich, Festschreibung,
-  Export und Import ergänzen ihre Aktionen, wenn es sie gibt (ab M4).
+  Fehlschlag), Rolle angelegt/geändert/gelöscht, Kostenstelle angelegt/
+  geändert/gelöscht (M4-1), Mail-/Speicher-/Update-Kanal-Einstellungen,
+  Update eingespielt/zurückgerollt, Wartung aufgehoben. Belege, Lieferanten,
+  Buchungen, Abgleich, Festschreibung, Export und Import ergänzen ihre
+  Aktionen, wenn es sie gibt (ab M4).
 - **Prüfung:** `public/js/audit.js` ruft `/app/audit/pruefen` je 2000
   Zeilen auf; jeder Schritt liest seinen Startwert aus der Zeile, bei der
   der vorige endete (zustandslos, jeder Request kurz).

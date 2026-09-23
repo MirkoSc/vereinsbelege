@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\CostCenterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
@@ -84,6 +85,9 @@ use App\View\View;
  * @param \Closure(): AuditController $audit built lazily, same reason as
  *        $mail: only the audit log page needs the database (M3-8, issue
  *        #21).
+ * @param \Closure(): CostCenterController $kostenstellen built lazily, same
+ *        reason as $mail: only the cost-center pages need the database
+ *        (M4-1, issue #23).
  */
 return static function (
     Router $router,
@@ -104,6 +108,7 @@ return static function (
     \Closure $wiederherstellung,
     \Closure $einladung,
     \Closure $audit,
+    \Closure $kostenstellen,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -336,6 +341,19 @@ return static function (
     $get('/admin/mail', $einstellungen, static fn(Request $r) => $mail()->page($r));
     $post('/admin/mail/einstellungen', $einstellungen, static fn(Request $r) => $mail()->save($r));
     $post('/admin/mail/testmail', $einstellungen, static fn(Request $r) => $mail()->test($r));
+
+    // Cost centers (02 "Fachdaten", issue #23/M4-1): CRUD and reordering.
+    // Permission: `admin.settings`, the same right as Kategorien - both are
+    // stammdaten, not accounts or their rights. CSRF on all writes; the
+    // rules live in App\Service\MasterData\CostCenterService.
+    $get('/admin/kostenstellen', $einstellungen, static fn(Request $r) => $kostenstellen()->liste($r));
+    $get('/admin/kostenstellen/neu', $einstellungen, static fn(Request $r) => $kostenstellen()->neu($r));
+    $post('/admin/kostenstellen', $einstellungen, static fn(Request $r) => $kostenstellen()->anlegen($r));
+    $get('/admin/kostenstellen/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->bearbeiten($r, $params));
+    $post('/admin/kostenstellen/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->speichern($r, $params));
+    $post('/admin/kostenstellen/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->loeschen($r, $params));
+    $post('/admin/kostenstellen/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachOben($r, $params));
+    $post('/admin/kostenstellen/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachUnten($r, $params));
 
     // Update and maintenance. Permission: `admin.system` ("Backup, Update,
     // Wartung", 01 section 4); CSRF on all writes.

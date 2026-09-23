@@ -187,7 +187,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `supplier` | dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number}, name_bi, iban_bi (Mehrfach → Tabelle `supplier_key`), default_category_id, default_sphere, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL | T |
 | `supplier_key` | supplier_id, kind (`name`/`iban`/`vat_id`/`creditor_id`/`mandate`), value_bi | – (nur BI) |
 | `category` | name, parent_id NULL, default_sphere, color, sort, active, ai_hint (Beschreibung für den Prompt) | – |
-| `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege M4-1) | – |
+| `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
 | `bank_account` | kind (`bank`/`kasse`), dek_sealed, data_enc {name, iban, bic, bank}, iban_bi, opening_balance_enc, active | T |
 | `bank_import` | account_id, format (`mt940`/`csv:<profil>`), file_blob_id, imported_by, imported_at, stats JSON (neu/duplikat/fehler), balance_check (`ok`/`abweichung`/`n.v.`) | – |

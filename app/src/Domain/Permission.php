@@ -51,7 +51,7 @@ enum Permission: string
             self::AuditView => 'Audit-Log sehen',
             self::AdminUsers => 'Benutzer und Rollen verwalten',
             self::AdminVaultGrant => 'Tresor-Freigaben erteilen',
-            self::AdminSettings => 'Einstellungen (KI, Mail, Speicher, Kategorien)',
+            self::AdminSettings => 'Einstellungen (KI, Mail, Speicher, Kategorien, Kostenstellen)',
             self::AdminSystem => 'System (Backup, Update, Wartung)',
         };
     }
