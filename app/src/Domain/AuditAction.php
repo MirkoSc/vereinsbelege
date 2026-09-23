@@ -52,6 +52,9 @@ enum AuditAction: string
     case KostenstelleGeaendert = 'kostenstelle.geaendert';
     case KostenstelleGeloescht = 'kostenstelle.geloescht';
 
+    /** No acting user (public submission, issue #24/M4-2): $userId is null. */
+    case EinreichungEingegangen = 'einreichung.eingegangen';
+
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
@@ -90,6 +93,7 @@ enum AuditAction: string
             self::KostenstelleAngelegt => 'Kostenstelle angelegt',
             self::KostenstelleGeaendert => 'Kostenstelle geändert',
             self::KostenstelleGeloescht => 'Kostenstelle gelöscht',
+            self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -116,6 +120,7 @@ enum AuditAction: string
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
+            self::EinreichungEingegangen => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
@@ -132,6 +137,7 @@ enum AuditAction: string
             'trusted_device' => 'Gerät',
             'role' => 'Rolle',
             'cost_center' => 'Kostenstelle',
+            'document' => 'Beleg',
             default => $entity,
         };
     }

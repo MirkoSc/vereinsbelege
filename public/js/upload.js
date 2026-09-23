@@ -6,9 +6,9 @@
 // without 'unsafe-inline' (CLAUDE.md section 4), and all requests go to the
 // same origin, which connect-src 'self' also requires.
 //
-// No page wires this up yet - the capture screens arrive with M4-6 and M5.
-// Until then this is the library they will call, and the tests drive it
-// directly.
+// Wired up by public/js/einreichen.js (issue #24/M4-2, the public
+// submission); the internal capture screens (M4-6) and the scanner (M5)
+// reuse the same library.
 
 /** Chunk size of the server; /api/upload answers with the one that counts. */
 const CHUNK_BYTES = 2 * 1024 * 1024;
@@ -66,11 +66,15 @@ function fehlertext(antwort, daten) {
  * `fetch` is a parameter so that the tests can drive the whole sequence
  * without a network and without a DOM; in the browser the default is the real
  * one. `datei` is a File or Blob: .size, .name and .slice() are all that is
- * used of it.
+ * used of it. `basis` is the route prefix - '/api/upload' by default (the
+ * internal capture, M3-6), '/einreichen/upload' for the public submission
+ * (issue #24/M4-2, App\Api\EinreichungUploadController): same four requests,
+ * same CSRF-token header, different credential behind it.
  */
 async function dateiHochladen(datei, optionen) {
     const einstellungen = optionen || {};
     const csrf = einstellungen.csrf || '';
+    const basis = einstellungen.basis || '/api/upload';
     const holen = einstellungen.fetch || (typeof fetch === 'function' ? fetch : null);
     const melden = einstellungen.onFortschritt || function () {};
 
@@ -91,7 +95,7 @@ async function dateiHochladen(datei, optionen) {
         return daten;
     };
 
-    const eroeffnet = await senden('/api/upload', {
+    const eroeffnet = await senden(basis, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groesse: datei.size }),
     });
@@ -103,7 +107,7 @@ async function dateiHochladen(datei, optionen) {
         let gesendet = 0;
         const grenzen = chunkGrenzen(datei.size, eroeffnet.chunk_bytes || CHUNK_BYTES);
         for (const grenze of grenzen) {
-            await senden('/api/upload/' + eroeffnet.id + '/chunk/' + grenze.index, {
+            await senden(basis + '/' + eroeffnet.id + '/chunk/' + grenze.index, {
                 headers: { 'Content-Type': 'application/octet-stream' },
                 body: datei.slice(grenze.start, grenze.ende),
             });
@@ -112,7 +116,7 @@ async function dateiHochladen(datei, optionen) {
             melden(fortschrittProzent(gesendet, datei.size));
         }
 
-        return await senden('/api/upload/' + eroeffnet.id + '/finish', {
+        return await senden(basis + '/' + eroeffnet.id + '/finish', {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: datei.name || '' }),
         });
@@ -120,7 +124,7 @@ async function dateiHochladen(datei, optionen) {
         // Give the chunks back right away instead of leaving them for the
         // cron - the person may pick another file straight away.
         try {
-            await senden('/api/upload/' + eroeffnet.id + '/abort', {});
+            await senden(basis + '/' + eroeffnet.id + '/abort', {});
         } catch (ignoriert) {
             // The upload is lost either way; the original error is the one
             // worth reporting.

@@ -61,6 +61,11 @@ final class RoutePermissionMatrixTest extends TestCase
         '/anmelden/passwort-neu',
         '/anmelden/einladung',
         '/cron',
+        '/einreichen',
+        '/einreichen/upload',
+        '/einreichen/upload/{id:[0-9a-f]+}/chunk/{n:\d+}',
+        '/einreichen/upload/{id:[0-9a-f]+}/finish',
+        '/einreichen/upload/{id:[0-9a-f]+}/abort',
     ];
 
     private ?SessionUser $angemeldet = null;
@@ -368,6 +373,8 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

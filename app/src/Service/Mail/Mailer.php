@@ -195,6 +195,25 @@ final readonly class Mailer
     }
 
     /**
+     * The public submission's confirmation (issue #24/M4-2, docs/spec/
+     * 03-erfassung-und-ki.md section 1: "Referenznummer anzeigen, optional
+     * Mail"). Only queued, not sent in this request, the same reasoning as
+     * reiheFreigabeHinweisEin(): the submit request already answers with the
+     * reference on screen, so nobody is waiting on this mail, and the public
+     * page must stay fast. No receipt content, ever - just the reference the
+     * submitter already saw.
+     */
+    public function reiheEinreichungsbestaetigungEin(string $empfaenger, string $referenz, ?\DateTimeImmutable $now = null): void
+    {
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('einreichung-bestaetigung', [
+            'referenz' => $referenz,
+            'vereinsname' => $settings->vereinsname,
+        ]);
+        $this->queue->enqueue($empfaenger, sprintf('Ihre Einreichung %s', $referenz), $body, $now ?? new \DateTimeImmutable());
+    }
+
+    /**
      * Cron entry point (App\Service\Cron\MailQueueTask): works through
      * everything due right now, one attempt each.
      */

@@ -684,6 +684,65 @@ textarea[aria-invalid="true"] {
     font-size: var(--schrift-klein);
 }
 
+/* --- Einreichen-Seite (öffentliche Einreichung, Issue #24/M4-2) --- */
+
+/* Eine Reihe von Seiten-Karten statt einer Tabelle: die Reihenfolge ist frei
+   sortierbar (Ziehen oder ↑/↓/Löschen, public/js/einreichen.js), Karten
+   bleiben auch bei 360 px bedienbar (mobile first, `flex-wrap`). */
+.einreichen-seiten {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--abstand-3);
+    margin: var(--abstand-4) 0;
+    padding: 0;
+    list-style: none;
+}
+
+.einreichen-seite {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--abstand-2);
+    width: 7rem;
+    padding: var(--abstand-2);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+/* Während des Ziehens (public/js/einreichen.js, Pointer Events). */
+.einreichen-seite[aria-grabbed="true"] {
+    opacity: 0.5;
+}
+
+.einreichen-seite-vorschau {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 5rem;
+    height: 5rem;
+    overflow: hidden;
+    background: var(--farbe-flaeche-still);
+    border-radius: var(--radius);
+}
+
+.einreichen-seite-vorschau img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.einreichen-seite-status {
+    font-size: var(--schrift-klein);
+    color: var(--farbe-gedaempft);
+    text-align: center;
+}
+
+.einreichen-seite-knopfreihe {
+    display: flex;
+    gap: var(--abstand-1);
+}
+
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
 
 /* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).

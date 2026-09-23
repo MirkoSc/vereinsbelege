@@ -33,7 +33,30 @@ aber ohne Offline-Warteschlange (Backlog).
 
 Angemeldete Nutzer mit `document.submit_internal` haben dieselbe
 Erfassungskomponente unter `/app/belege/neu` (ohne Erstattungsangaben-Pflicht,
-mit Mehrfach-Upload für mehrere Belege auf einmal).
+mit Mehrfach-Upload für mehrere Belege auf einmal) – **Backlog M4-6**.
+
+**Stand M4-2** (issue #24): `App\PublicPages\EinreichungController`
+(`GET`/`POST /einreichen`) und `App\Api\EinreichungUploadController`
+(`POST /einreichen/upload/...`, gleicher Vertrag wie Abschnitt 4). Ohne
+Session ist das Credential ein zustandsloses, signiertes Formular-Token
+(`App\Service\Submission\FormToken`): `GET /einreichen` stellt es aus, jede
+spätere Anfrage trägt es im Header `X-CSRF-Token` zurück und wird gegen den
+Server-Schlüssel neu geprüft – nichts wird nachgeschlagen. Der Hash des
+Token-Nonce (`form_hash`) bindet hochgeladene Blobs an genau diesen
+Seitenaufruf (`submission_upload`, App\Repository\SubmissionUploadRepository):
+das Absenden verweigert eine Seiten-ID, die unter einem anderen Token
+hochgeladen wurde. Nicht abgesendete Uploads räumt
+`App\Service\Cron\SubmissionUploadCleanupTask` nach 24 h ab (wie
+Abschnitt 4). Foto/Bild/PDF kommen über `<input capture>` bzw.
+`<input type=file multiple>` (public/js/einreichen.js), Reihenfolge per
+Pointer-Drag **und** ↑/↓-Knöpfen; Kamera-Live-Vorschau mit Rahmen-Overlay ist
+Backlog M5 (Scanner). Seitenobergrenze vorerst eine feste Konstante
+(`SubmissionService::MAX_SEITEN` = 20) – das eigentliche, einstellbare
+Seiten-/Größenlimit sowie Rate-Limit, Proof-of-Work und Honeypot sind
+issue #25/M4-3 (Abschnitt 5 von 01). Referenznummer `R-<Jahr>-<laufende
+Nummer>`, Bestätigungsmail nur mit der Referenz
+(`Mailer::reiheEinreichungsbestaetigungEin()`), Prüfung serverseitig mit
+Feld-Fehlern je Angabe.
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -109,13 +132,13 @@ graustufen + globale Schwelle; kein Entzerren.
   `Http\Request` liest nur JSON, der Controller bekommt den Strom deshalb als
   injizierte Closure (Default `php://input`) – dasselbe Muster wie
   `InstallController` mit `is_uploaded_file`.
-- *Rechte:* bis M3-6 keine `Permission` – es gibt weder Anmeldung (M3-3) noch
-  das Enum. Einziges Credential ist das **CSRF-Token der Session**
-  (`_csrf`-Feld oder `X-CSRF-Token`), damit sind die Routen heute aus `/app`
-  und `/admin` nutzbar. Ab M3-6: `document.submit_internal`.
-  **Offen für M5:** die öffentliche Einreichung hat bewusst keine Session und
-  kann die Route so nicht nutzen; sie braucht vorher den unsichtbaren
-  Proof-of-Work und das Rate-Limit aus 01.
+- *Rechte:* seit M3-6 `document.submit_internal`, geprüft über die Route
+  (`Zugriff::recht(...)->alsApi()`), Credential ist das **CSRF-Token der
+  Session** (`_csrf`-Feld oder `X-CSRF-Token`) – nutzbar aus `/app` und
+  `/admin`. Die öffentliche Einreichung (`/einreichen`, M4-2) hat bewusst
+  keine Session und nutzt deshalb ihre eigenen Routen unter
+  `/einreichen/upload/...` (`App\Api\EinreichungUploadController`): gleicher
+  Vertrag, Credential ist stattdessen das Formular-Token (oben, Abschnitt 1).
 - *Zustand ohne Tabelle:* ein Verzeichnis je Upload unter
   `shared/var/tmp/upload/<id>/` mit `<n>.part` je Chunk und einer `meta.json`
   (Größe, Chunkzahl, Chunkgröße, Zeitstempel). Kein DB-Tisch – so braucht das
