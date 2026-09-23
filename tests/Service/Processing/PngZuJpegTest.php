@@ -51,7 +51,6 @@ final class PngZuJpegTest extends TestCase
         self::assertGreaterThan(240, $r);
         self::assertGreaterThan(240, $g);
         self::assertGreaterThan(240, $b);
-        imagedestroy($bildAusJpeg);
     }
 
     public function testPaletteImageIsConverted(): void
@@ -90,7 +89,6 @@ final class PngZuJpegTest extends TestCase
         ob_start();
         imagepng($bild);
         $png = ob_get_clean();
-        imagedestroy($bild);
 
         return $png;
     }

@@ -272,7 +272,6 @@ final class PdfErzeugungTest extends DatabaseTestCase
         ob_start();
         imagepng($bild);
         $png = ob_get_clean();
-        imagedestroy($bild);
 
         return $png;
     }

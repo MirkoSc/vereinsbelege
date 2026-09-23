@@ -43,12 +43,10 @@ final class PngZuJpeg
         imagefill($weiss, 0, 0, imagecolorallocate($weiss, 255, 255, 255));
         imagealphablending($weiss, true);
         imagecopy($weiss, $original, 0, 0, 0, 0, $breite, $hoehe);
-        imagedestroy($original);
 
         ob_start();
         imagejpeg($weiss, quality: self::QUALITAET);
         $jpeg = ob_get_clean();
-        imagedestroy($weiss);
 
         if (!is_string($jpeg) || $jpeg === '') {
             throw new ProcessingException('JPEG-Umwandlung fehlgeschlagen.');

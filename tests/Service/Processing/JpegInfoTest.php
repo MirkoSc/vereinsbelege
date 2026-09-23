@@ -24,7 +24,6 @@ final class JpegInfoTest extends TestCase
         ob_start();
         imagejpeg($bild);
         $jpeg = ob_get_clean();
-        imagedestroy($bild);
 
         $info = JpegInfo::aus($jpeg);
 
