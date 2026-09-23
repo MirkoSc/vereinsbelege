@@ -35,12 +35,22 @@ final readonly class EinreichungBenachrichtigung
     /**
      * @param string|null $basis checked base URL (PublicUrl::resolve()), or
      *        null - then the mail names the menu entry instead of a link
+     * @param int|null $ausser an account that gets no notice: whoever
+     *        captured the receipt internally already knows (issue #28/M4-6)
      * @return int number of notices queued
      */
-    public function senden(string $referenz, int $documentId, ?string $basis, ?\DateTimeImmutable $now = null): int
-    {
+    public function senden(
+        string $referenz,
+        int $documentId,
+        ?string $basis,
+        ?\DateTimeImmutable $now = null,
+        ?int $ausser = null,
+    ): int {
         $anzahl = 0;
         foreach ($this->empfaenger($now) as $user) {
+            if ($user->id === $ausser) {
+                continue;
+            }
             $this->mailer->reiheNeueEinreichungEin(
                 $this->crypto->decrypt($user->emailEnc),
                 $referenz,

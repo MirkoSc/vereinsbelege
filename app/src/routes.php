@@ -16,6 +16,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\MfaController;
@@ -103,6 +104,9 @@ use App\View\View;
  *        database (issue #25/M4-3).
  * @param \Closure(): InboxController $posteingang built lazily, same reason
  *        as $mail: only the inbox pages need the database (issue #27/M4-5).
+ * @param \Closure(): ErfassungController $erfassung built lazily, same
+ *        reason: only the internal capture needs the database (issue
+ *        #28/M4-6).
  */
 return static function (
     Router $router,
@@ -128,6 +132,7 @@ return static function (
     \Closure $einreichen,
     \Closure $einreichungAdmin,
     \Closure $posteingang,
+    \Closure $erfassung,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -204,6 +209,7 @@ return static function (
         $view->render('app/start', [
             'title' => '',
             'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
+            'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
         ], Area::App),
     ));
 
@@ -328,6 +334,17 @@ return static function (
     $post('/app/posteingang/{id:\d+}/ablehnen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->ablehnen($r, $params));
     $post('/app/posteingang/{id:\d+}/wiedervorlage', $documentEdit, static fn(Request $r, array $params) => $posteingang()->wiedervorlage($r, $params));
     $post('/app/posteingang/{id:\d+}/kostenstelle', $documentEdit, static fn(Request $r, array $params) => $posteingang()->kostenstelle($r, $params));
+
+    // Internal capture (M4-6, issue #28, docs/spec/03-erfassung-und-ki.md
+    // section 1): several receipts in one pass, straight into the inbox.
+    // Permission: `document.submit_internal` - the same right as the
+    // /api/upload routes the page uploads through. The submit is JSON from
+    // fetch() (401/403 JSON rather than a redirect) with the session CSRF
+    // token in X-CSRF-Token. It only seals to the vault's public key, so no
+    // unlocked vault is needed.
+    $intern = Zugriff::recht(Permission::DocumentSubmitInternal);
+    $get('/app/belege/neu', $intern, static fn(Request $r) => $erfassung()->formular($r));
+    $post('/app/belege/neu', $intern->alsApi(), static fn(Request $r) => $erfassung()->absenden($r));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

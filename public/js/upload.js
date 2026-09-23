@@ -7,8 +7,8 @@
 // same origin, which connect-src 'self' also requires.
 //
 // Wired up by public/js/einreichen.js (issue #24/M4-2, the public
-// submission); the internal capture screens (M4-6) and the scanner (M5)
-// reuse the same library.
+// submission) and public/js/erfassen.js (issue #28/M4-6, the internal
+// capture); the scanner (M5) reuses the same library.
 
 /** Chunk size of the server; /api/upload answers with the one that counts. */
 const CHUNK_BYTES = 2 * 1024 * 1024;

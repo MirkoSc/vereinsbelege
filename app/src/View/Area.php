@@ -69,6 +69,7 @@ enum Area: string
                 new NavItem('Start', '/app'),
                 new NavItem('Sicherheit', '/app/sicherheit'),
                 new NavItem('Posteingang', '/app/posteingang', recht: Permission::InboxView),
+                new NavItem('Beleg erfassen', '/app/belege/neu', recht: Permission::DocumentSubmitInternal),
                 new NavItem('Belege', meilenstein: 'M6', recht: Permission::InboxView),
                 new NavItem('Lieferanten', meilenstein: 'M7', recht: Permission::SupplierManage),
                 new NavItem('Konten', meilenstein: 'M8', recht: Permission::BankView),

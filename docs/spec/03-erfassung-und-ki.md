@@ -33,7 +33,7 @@ aber ohne Offline-Warteschlange (Backlog).
 
 Angemeldete Nutzer mit `document.submit_internal` haben dieselbe
 Erfassungskomponente unter `/app/belege/neu` (ohne Erstattungsangaben-Pflicht,
-mit Mehrfach-Upload für mehrere Belege auf einmal) – **Backlog M4-6**.
+mit Mehrfach-Upload für mehrere Belege auf einmal) – Stand M4-6 unten.
 
 **Stand M4-2** (issue #24): `App\PublicPages\EinreichungController`
 (`GET`/`POST /einreichen`) und `App\Api\EinreichungUploadController`
@@ -79,6 +79,41 @@ Browser-Viewer in einem neuen Tab – die CSP (`object-src 'none'`,
 pdf.js (M4-8). Nach jeder Einreichung reiht
 `App\Service\Mail\EinreichungBenachrichtigung` eine Mail an alle aktiven
 Konten mit `document.edit` ein – nur Referenz und Link, keine Fachdaten.
+
+**Stand M4-6** (issue #28): Interne Erfassung unter `/app/belege/neu`
+(`App\App\ErfassungController`, Fachlogik `App\Service\Submission\InterneErfassung`),
+Recht `document.submit_internal` auf `GET` und `POST` (JSON, Session-CSRF im
+Header `X-CSRF-Token`). **Jede gewählte Datei wird ein eigener Beleg** (eine
+Karte je Beleg, `public/js/erfassen.js`); weitere Seiten, Reihenfolge und
+Löschen je Karte wie bei `/einreichen`. Je Beleg optional: „Worum geht es?“
+(bewusst **optional**, anders als öffentlich), Mannschaft/Bereich und
+Kostenerstattung – wird „Überweisung“ gewählt, sind IBAN (mod 97) und
+Kontoinhaber Pflicht. Kein Name-/E-Mail-Feld, keine Datenschutz-Checkbox, kein
+Spamschutz: angemeldet. Höchstens `InterneErfassung::MAX_BELEGE` = 50 Belege
+je Durchgang und `MAX_SEITEN` = 50 Seiten je Beleg; Dateigröße wie
+`/api/upload` (32 MiB). Ein Durchgang ist **eine Transaktion** – bei einem
+Feldfehler (Schlüssel `"<Beleg-Index>.<Feld>"`, 422) wird nichts geschrieben.
+
+Je Beleg entsteht wie bei der öffentlichen Einreichung eine `submission`-Zeile
+(Referenz `R-<Jahr>-<Nr.>` aus derselben Nummernfolge,
+`App\Service\Submission\Referenzvergabe`; Payload-Name = Anzeigename des
+Kontos, ohne `email`, `erstattung` nur wenn angegeben) und ein `document` mit
+`source = intern`, `created_by` = Konto, Status `eingegangen`, Job
+`pdf_erzeugen` – der Posteingang zeigt interne und öffentliche Belege gleich.
+Die Mail „Neue Einreichung“ geht an alle aktiven Konten mit `document.edit`
+**außer dem erfassenden Konto**; Audit `beleg.erfasst` je Beleg mit dem Konto
+als Akteur. Ein Tresor-Entsperren ist nicht nötig (nur Versiegeln an den
+Public Key).
+
+*Bindung der Seiten:* `GET /app/belege/neu` gibt eine zufällige Erfassungs-ID
+(32 Hex) aus; die Seite schickt sie bei jedem Upload im Header `X-Erfassung`.
+`/api/upload/{id}/finish` vermerkt den Blob dann in `submission_upload` unter
+`sha256("intern|<user_id>|<Erfassungs-ID>")` – an Konto **und** Seitenaufruf
+gebunden. Beanspruchen darf ein Beleg nur dort vermerkte Blobs, jeden genau
+einmal; nach dem Commit werden genau diese Zeilen gelöscht, wieder entfernte
+Seiten räumt `SubmissionUploadCleanupTask` nach 24 h mit ihrem Blob ab.
+`submission.form_hash` je Beleg = `sha256("intern-beleg|" . obiger Hash . "|" .
+erste Blob-ID)` – ein wiederholter Request liefert dieselben Referenzen.
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -186,7 +221,10 @@ beeinträchtigt.
 - *Rechte:* seit M3-6 `document.submit_internal`, geprüft über die Route
   (`Zugriff::recht(...)->alsApi()`), Credential ist das **CSRF-Token der
   Session** (`_csrf`-Feld oder `X-CSRF-Token`) – nutzbar aus `/app` und
-  `/admin`. Die öffentliche Einreichung (`/einreichen`, M4-2) hat bewusst
+  `/admin`. Optionaler Header `X-Erfassung` (seit M4-6, Abschnitt 1): der
+  Abschluss vermerkt den Blob dann für die interne Erfassung; eine
+  ungültige Erfassungs-ID wird mit 422 abgewiesen, bevor etwas gespeichert
+  wird. Die öffentliche Einreichung (`/einreichen`, M4-2) hat bewusst
   keine Session und nutzt deshalb ihre eigenen Routen unter
   `/einreichen/upload/...` (`App\Api\EinreichungUploadController`): gleicher
   Vertrag, Credential ist stattdessen das Formular-Token (oben, Abschnitt 1).
@@ -233,8 +271,9 @@ beeinträchtigt.
   `dateiHochladen(datei, {csrf, fetch, onFortschritt})`: eröffnen, Chunks
   **nacheinander**, abschließen; bei einem Fehler wird der Upload sofort
   abgebrochen. `fetch` ist injizierbar, damit `node --test` den ganzen Ablauf
-  ohne DOM und ohne Netz prüft. Eine Oberfläche gibt es noch nicht – die
-  Erfassungsseiten kommen mit M4-6 und M5.
+  ohne DOM und ohne Netz prüft. Oberflächen: `/einreichen` (M4-2, eigene
+  Routen) und `/app/belege/neu` (M4-6, `public/js/erfassen.js`); der Scanner
+  folgt mit M5.
 
 **Pflicht-Tests (Upload):** `MagicBytesTest` (die drei erlaubten Typen, ZIP/
 ELF/HTML/Text/GIF/HEIC/leer/zu kurz abgelehnt, PDF-Kopf mit Versatz

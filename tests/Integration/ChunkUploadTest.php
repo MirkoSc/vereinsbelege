@@ -12,12 +12,14 @@ use App\Http\Response;
 use App\Http\Session;
 use App\Repository\BlobRepository;
 use App\Repository\SettingRepository;
+use App\Repository\SubmissionUploadRepository;
 use App\Repository\VaultRepository;
 use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
+use App\Service\Submission\InterneErfassung;
 use App\Service\Upload\UploadService;
 use App\Service\Upload\UploadStore;
 use App\Tests\Support\DatabaseTestCase;
@@ -65,6 +67,7 @@ final class ChunkUploadTest extends DatabaseTestCase
 
     protected function tearDown(): void
     {
+        unset($_SESSION['user_id']);
         self::removeDir($this->blobDir);
         self::removeDir($this->uploadDir);
         parent::tearDown();
@@ -231,6 +234,45 @@ final class ChunkUploadTest extends DatabaseTestCase
         self::assertSame(200, $this->controller()->abort($this->request([]), ['id' => $upload['id']])->status);
     }
 
+    /**
+     * The internal capture (issue #28/M4-6) sends its capture id along: the
+     * finished blob is recorded for exactly this account and page load.
+     */
+    public function testACaptureIdRecordsTheBlobForAccountAndPageLoad(): void
+    {
+        $_SESSION['user_id'] = 7;
+        $erfassung = str_repeat('ab', 16);
+
+        $upload = $this->open(4);
+        $this->chunk($upload['id'], 0, "\xFF\xD8\xFF\xE0");
+        $antwort = $this->json($this->finish($upload['id'], 'foto.jpg', $erfassung), 201);
+
+        $vermerke = new SubmissionUploadRepository($this->pdo());
+        self::assertSame([(int) $antwort['blob_id']], $vermerke->blobIdsForFormHash(InterneErfassung::uploadHash(7, $erfassung)));
+        self::assertSame([], $vermerke->blobIdsForFormHash(InterneErfassung::uploadHash(8, $erfassung)), 'another account');
+        self::assertSame([], $vermerke->blobIdsForFormHash(InterneErfassung::uploadHash(7, str_repeat('cd', 16))), 'another page load');
+    }
+
+    public function testAMalformedCaptureIdIsRefusedBeforeAnythingIsStored(): void
+    {
+        $_SESSION['user_id'] = 7;
+
+        $upload = $this->open(4);
+        $this->chunk($upload['id'], 0, "\xFF\xD8\xFF\xE0");
+        $this->json($this->finish($upload['id'], 'foto.jpg', '../../etc'), 422);
+
+        self::assertSame(0, $this->countBlobs());
+    }
+
+    public function testWithoutACaptureIdNothingIsRecorded(): void
+    {
+        $upload = $this->open(4);
+        $this->chunk($upload['id'], 0, "\xFF\xD8\xFF\xE0");
+        $this->json($this->finish($upload['id'], 'foto.jpg'), 201);
+
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission_upload')?->fetchColumn());
+    }
+
     // ------------------------------------------------------------------ Hilfe
 
     /**
@@ -248,9 +290,9 @@ final class ChunkUploadTest extends DatabaseTestCase
         return $this->controller()->chunk($this->request([]), ['id' => $id, 'n' => (string) $index]);
     }
 
-    private function finish(string $id, string $name): Response
+    private function finish(string $id, string $name, ?string $erfassung = null): Response
     {
-        return $this->controller()->finish($this->request(['name' => $name]), ['id' => $id]);
+        return $this->controller()->finish($this->request(['name' => $name], $erfassung), ['id' => $id]);
     }
 
     private function controller(): UploadController
@@ -270,6 +312,7 @@ final class ChunkUploadTest extends DatabaseTestCase
 
                 return $stream;
             },
+            vermerke: fn(): SubmissionUploadRepository => new SubmissionUploadRepository($this->pdo()),
         );
     }
 
@@ -283,14 +326,14 @@ final class ChunkUploadTest extends DatabaseTestCase
     /**
      * @param array<string, mixed> $post
      */
-    private function request(array $post): Request
+    private function request(array $post, ?string $erfassung = null): Request
     {
-        return new Request(
-            HttpMethod::Post,
-            '/api/upload',
-            post: $post,
-            headers: ['x-csrf-token' => $this->session->csrfToken()],
-        );
+        $headers = ['x-csrf-token' => $this->session->csrfToken()];
+        if ($erfassung !== null) {
+            $headers['x-erfassung'] = $erfassung;
+        }
+
+        return new Request(HttpMethod::Post, '/api/upload', post: $post, headers: $headers);
     }
 
     /**

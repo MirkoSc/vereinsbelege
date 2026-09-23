@@ -8,6 +8,8 @@ use App\Domain\BlobMeta;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Session;
+use App\Repository\SubmissionUploadRepository;
+use App\Service\Submission\InterneErfassung;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadError;
 use App\Service\Upload\UploadException;
@@ -38,6 +40,13 @@ use App\Support\FileLogger;
  * design and therefore cannot use this route as it stands: it has its own
  * chunk upload under App\Api\EinreichungUploadController, credentialed by
  * App\Service\Submission\FormToken instead of session CSRF.
+ *
+ * The internal capture `/app/belege/neu` (issue #28/M4-6) sends its capture
+ * id in `X-Erfassung` on every request; finish() then also records the blob
+ * in `submission_upload` under App\Service\Submission\InterneErfassung::
+ * uploadHash() - bound to the account and that page load - so only this
+ * page can later attach it to a receipt, and the cron deletes it after 24 h
+ * if nothing does. Without the header nothing changes.
  * ---------------------------------------------------------------------
  *
  * The request body of a chunk is raw bytes, which App\Http\Request does not
@@ -55,6 +64,9 @@ final readonly class UploadController
     /**
      * @param \Closure(): UploadStore $store built lazily: it opens the
      *        database connection, which the chunk requests must not pay for.
+     * @param (\Closure(): SubmissionUploadRepository)|null $vermerke built
+     *        lazily, same reason - where finish() records an internal
+     *        capture's blob (issue #28/M4-6).
      * @param (\Closure(): resource)|null $body the request body; defaults to
      *        php://input.
      */
@@ -64,6 +76,7 @@ final readonly class UploadController
         private \Closure $store,
         private ?\Closure $body = null,
         private ?FileLogger $logger = null,
+        private ?\Closure $vermerke = null,
     ) {
     }
 
@@ -115,6 +128,11 @@ final readonly class UploadController
         return $this->guarded($request, function () use ($request, $params): Response {
             $id = $params['id'];
 
+            $erfassung = $request->header('x-erfassung');
+            if ($erfassung !== null && ($this->vermerke === null || !InterneErfassung::istErfassungsId($erfassung))) {
+                return Response::json(['fehler' => 'Die Seite ist abgelaufen – bitte neu laden.'], 422);
+            }
+
             $status = $this->uploads->status($id);
             if (!$status->vollstaendig()) {
                 return Response::json([
@@ -135,6 +153,11 @@ final readonly class UploadController
             $name = self::dateiname($request->post['name'] ?? '');
             $blob = ($this->store)()->store($this->uploads->chunks($id), new BlobMeta($typ, $name));
             $this->uploads->discard($id);
+
+            $userId = $this->session->userId();
+            if ($erfassung !== null && $this->vermerke !== null && $userId !== null) {
+                ($this->vermerke)()->record($blob->id, InterneErfassung::uploadHash($userId, $erfassung), new \DateTimeImmutable());
+            }
 
             return Response::json([
                 'blob_id' => $blob->id,

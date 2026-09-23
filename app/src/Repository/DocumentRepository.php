@@ -39,6 +39,8 @@ final readonly class DocumentRepository
 
     /**
      * @param list<int> $originalBlobIds page order, as uploaded
+     * @param int|null $createdBy the account that captured it internally
+     *        (issue #28/M4-6); null for the public submission
      */
     public function insert(
         DocumentSource $source,
@@ -49,10 +51,11 @@ final readonly class DocumentRepository
         DocumentStatus $status = DocumentStatus::Eingegangen,
         OcrStatus $ocrStatus = OcrStatus::Keine,
         ?int $costCenterId = null,
+        ?int $createdBy = null,
     ): int {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO document (source, submission_id, original_blob_ids, status, ocr_status, dek_sealed, created_at, cost_center_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO document (source, submission_id, original_blob_ids, status, ocr_status, dek_sealed, created_at, cost_center_id, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
         $stmt->bindValue(1, $source->value);
         $stmt->bindValue(2, $submissionId, $submissionId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
@@ -62,6 +65,7 @@ final readonly class DocumentRepository
         $stmt->bindValue(6, $dekSealed, \PDO::PARAM_LOB);
         $stmt->bindValue(7, $now->format(self::FORMAT));
         $stmt->bindValue(8, $costCenterId, $costCenterId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(9, $createdBy, $createdBy === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->execute();
 
         return (int) $this->pdo->lastInsertId();

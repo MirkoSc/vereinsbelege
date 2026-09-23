@@ -59,6 +59,29 @@ final readonly class SubmissionUploadRepository
     }
 
     /**
+     * Releases exactly the blobs a capture claimed (issue #28/M4-6): pages
+     * the person uploaded and removed again stay behind for the cron, which
+     * deletes them with their blob - deleteForFormHash() would orphan them.
+     *
+     * @param list<int> $blobIds
+     */
+    public function deleteBlobIds(array $blobIds): void
+    {
+        if ($blobIds === []) {
+            return;
+        }
+
+        $stmt = $this->pdo->prepare(sprintf(
+            'DELETE FROM submission_upload WHERE blob_id IN (%s)',
+            implode(', ', array_fill(0, count($blobIds), '?')),
+        ));
+        foreach (array_values($blobIds) as $i => $blobId) {
+            $stmt->bindValue($i + 1, $blobId, \PDO::PARAM_INT);
+        }
+        $stmt->execute();
+    }
+
+    /**
      * Blobs nobody's submission claimed before the cutoff - the cron's 24 h
      * rule (docs/spec/03-erfassung-und-ki.md section 4, same window as
      * App\Service\Upload\UploadService::cleanup()).
