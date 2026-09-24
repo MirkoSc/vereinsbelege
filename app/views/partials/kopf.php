@@ -11,11 +11,15 @@
  * @var string|null $csrfToken
  * @var \App\Domain\Berechtigungen|null $berechtigungen rights of the logged-in
  *      account - the navigation lists only what it may open (M3-6)
+ * @var int|null $offeneJobs jobs waiting for this account's session-worker
+ *      (issue #29/M4-7), null for an account with no right for any job type -
+ *      then the badge does not render at all, `public/js/jobs.js` never starts
  */
 $eintraege = $bereich->navigation($berechtigungen ?? null);
 // The logout is a POST with a CSRF token, not a link: a GET that ends a
 // session can be triggered by any image tag on any page.
 $zeigeAbmelden = ($angemeldet ?? null) !== null && ($csrfToken ?? null) !== null;
+$jobs = $offeneJobs ?? null;
 ?>
 <header class="kopf">
     <div class="kopf-zeile">
@@ -27,6 +31,17 @@ $zeigeAbmelden = ($angemeldet ?? null) !== null && ($csrfToken ?? null) !== null
 
         <?php if ($zeigeAbmelden): ?>
             <div class="kopf-konto">
+                <?php if ($jobs !== null): ?>
+                    <span
+                        id="jobs"
+                        class="kopf-jobs"
+                        role="status"
+                        aria-live="polite"
+                        data-csrf="<?= e((string) $csrfToken) ?>"
+                        data-offen="<?= e((string) $jobs) ?>"
+                        <?= $jobs === 0 ? 'hidden' : '' ?>
+                    ></span>
+                <?php endif; ?>
                 <span class="kopf-benutzer"><?= e((string) $angemeldet) ?></span>
                 <form method="post" action="/abmelden">
                     <input type="hidden" name="_csrf" value="<?= e((string) $csrfToken) ?>">

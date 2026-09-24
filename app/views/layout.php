@@ -8,6 +8,9 @@
  * @var \App\View\Area $bereich
  * @var string $content
  * @var string $partialsDir
+ * @var int|null $offeneJobs jobs waiting for this account's session-worker
+ *      (issue #29/M4-7) - null hides both the header badge (partials/kopf.php)
+ *      and this script, the same "no right for any job type" case
  */
 $seitentitel = ($title ?? '') !== '' ? $title . ' – ' . $appName : $appName;
 // The public pages must not start a session (App\Http\Session), so they
@@ -39,6 +42,9 @@ $csrfToken = ($bereich !== \App\View\Area::Oeffentlich && ($csrf ?? '') !== '') 
     <?php foreach (($scripts ?? []) as $skript): ?>
         <script src="<?= e($skript) ?>?v=<?= e($version) ?>" defer></script>
     <?php endforeach; ?>
+    <?php if (($offeneJobs ?? null) !== null): ?>
+        <script src="/js/jobs.js?v=<?= e($version) ?>" defer></script>
+    <?php endif; ?>
 </head>
 <?php /* hx-headers is plain JSON read by htmx, not code - the CSRF check in
          App\Http\Session accepts exactly this header, so every htmx POST on

@@ -284,6 +284,21 @@ main.inhalt {
 }
 
 /*
+ * "N Belege in Verarbeitung" (issue #29/M4-7, public/js/jobs.js): a quiet
+ * pill, not a warning - jobs running is the normal state, not a problem.
+ * Hidden via the [hidden] attribute (kopf.php) rather than a class, so it
+ * disappears the instant the count drops to 0 without another class toggle.
+ */
+.kopf-jobs {
+    font-size: var(--schrift-klein);
+    color: var(--farbe-info);
+    background: var(--farbe-info-flaeche);
+    border-radius: var(--radius);
+    padding: var(--abstand-1) var(--abstand-2);
+    white-space: nowrap;
+}
+
+/*
  * Navigation: eine Zeile, die auf schmalen Schirmen waagerecht scrollt.
  * Bewusst kein Klappmenü - das bräuchte JavaScript und einen Zustand, und
  * eine scrollbare Zeile zeigt auf 360 px immer noch drei bis vier Einträge.

@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Domain\Job;
 use App\Domain\JobExecutor;
 use App\Domain\JobStatus;
+use App\Service\Job\JobSchrittErgebnis;
 
 /**
  * The `job` table (docs/spec/06-betrieb.md section 4). SQL lives in
@@ -77,6 +78,15 @@ final readonly class JobRepository
      * Hands out the oldest runnable job of an executor and locks it, or
      * returns null. Runnable: `offen`, or `laeuft` with an expired lock (the
      * previous holder crashed or its tab closed).
+     *
+     * @param list<string> $typen the job types a caller may claim (issue
+     *        #29/M4-7's JobRunner: the types this account's rights allow).
+     *        An empty list claims nothing at all - it means the caller has
+     *        no right for any type, not "any type". Takes precedence over
+     *        $typ, which stays for the single-type callers this predates
+     *        (the cron's `JobCleanupTask` reads finished jobs directly, and
+     *        the worker module (07-worker.md) will claim one type at a
+     *        time).
      */
     public function claim(
         JobExecutor $executor,
@@ -84,7 +94,12 @@ final readonly class JobRepository
         int $lockSeconds,
         ?string $typ = null,
         ?\DateTimeImmutable $now = null,
+        ?array $typen = null,
     ): ?Job {
+        if ($typen === []) {
+            return null;
+        }
+
         $now ??= new \DateTimeImmutable();
         $jetzt = $now->format(self::FORMAT);
         $bis = $now->modify(sprintf('+%d seconds', $lockSeconds))->format(self::FORMAT);
@@ -92,7 +107,10 @@ final readonly class JobRepository
         $sql = 'SELECT id FROM job
                 WHERE status IN (?, ?) AND executor = ? AND (locked_until IS NULL OR locked_until <= ?)';
         $params = [JobStatus::Offen->value, JobStatus::Laeuft->value, $executor->value, $jetzt];
-        if ($typ !== null) {
+        if ($typen !== null) {
+            $sql .= sprintf(' AND typ IN (%s)', implode(',', array_fill(0, count($typen), '?')));
+            array_push($params, ...$typen);
+        } elseif ($typ !== null) {
             $sql .= ' AND typ = ?';
             $params[] = $typ;
         }
@@ -171,22 +189,89 @@ final readonly class JobRepository
     }
 
     /**
-     * Marks a job failed. Takes the exception CLASS, not its message: a
-     * database message quotes row data, and this column is plaintext.
+     * Writes one JobHandler::schritt() result (issue #29/M4-7's JobRunner)
+     * and releases the lock either way - the next step, whoever runs it, is
+     * free to claim the job again. Only the holder of the lock may: once it
+     * expired and someone else claimed the job, the old holder's result must
+     * not overwrite what the new one is doing.
+     *
+     * Resets `attempts` to 0: this step made progress, so JobRunner's guard
+     * against a job that crashes every request it touches should not count
+     * this one.
      */
-    public function fail(int $id, string $errorClass, ?\DateTimeImmutable $now = null): void
+    public function schrittErledigt(int $id, string $lockedBy, JobSchrittErgebnis $ergebnis, ?\DateTimeImmutable $now = null): bool
     {
         $stmt = $this->pdo->prepare(
             'UPDATE job
-             SET status = ?, last_error = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
-             WHERE id = ?',
+             SET status = ?, step = ?, state = ?, attempts = 0, locked_by = NULL, locked_until = NULL, updated_at = ?
+             WHERE id = ? AND status = ? AND locked_by = ?',
         );
         $stmt->execute([
+            $ergebnis->status->value,
+            $ergebnis->step,
+            json_encode($ergebnis->state, JSON_THROW_ON_ERROR),
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $id,
+            JobStatus::Laeuft->value,
+            $lockedBy,
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Marks a job failed. Takes the exception CLASS, not its message: a
+     * database message quotes row data, and this column is plaintext.
+     *
+     * @param ?string $lockedBy set by a caller that holds a claim (issue
+     *        #29/M4-7's JobRunner): the failure is only written while it
+     *        still holds the lock, the same rule schrittErledigt() follows.
+     *        Null keeps the previous, unconditional behaviour for callers
+     *        without a claim of their own.
+     */
+    public function fail(int $id, string $errorClass, ?\DateTimeImmutable $now = null, ?string $lockedBy = null): void
+    {
+        $sql = 'UPDATE job
+                SET status = ?, last_error = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+                WHERE id = ?';
+        $params = [
             JobStatus::Fehler->value,
             mb_substr($errorClass, 0, 255),
             ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
             $id,
-        ]);
+        ];
+        if ($lockedBy !== null) {
+            $sql .= ' AND status = ? AND locked_by = ?';
+            $params[] = JobStatus::Laeuft->value;
+            $params[] = $lockedBy;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+
+    /**
+     * How many jobs of these types still wait or run - the header count
+     * (issue #29/M4-7, docs/spec/06-betrieb.md section 4). Plaintext only,
+     * needs no vault.
+     *
+     * @param list<string> $typen empty means "no right for any type", so it
+     *        counts nothing rather than everything.
+     */
+    public function zaehleOffen(JobExecutor $executor, array $typen): int
+    {
+        if ($typen === []) {
+            return 0;
+        }
+
+        $sql = sprintf(
+            'SELECT COUNT(*) FROM job WHERE executor = ? AND status IN (?, ?) AND typ IN (%s)',
+            implode(',', array_fill(0, count($typen), '?')),
+        );
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute([$executor->value, JobStatus::Offen->value, JobStatus::Laeuft->value, ...$typen]);
+
+        return (int) $stmt->fetchColumn();
     }
 
     /** Gives a claimed job back without finishing it (tab closed, step postponed). */

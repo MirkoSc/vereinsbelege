@@ -8,6 +8,7 @@ use App\Domain\Blob;
 use App\Domain\BlobMeta;
 use App\Domain\Document;
 use App\Domain\Job;
+use App\Domain\Permission;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\SubmissionRepository;
@@ -43,8 +44,8 @@ use App\Service\Upload\MagicBytes;
  *      converted JPEGs `seite` produced (never an original).
  *
  * Framework-free (CLAUDE.md section 6a): no Http, no Session. The runner that
- * calls schritt() from a logged-in browser (`POST /api/jobs/step`) is
- * M4-7 - nothing here depends on it existing yet.
+ * calls schritt() from a logged-in browser is App\Service\Job\JobRunner
+ * (issue #29/M4-7, `POST /api/jobs/step`).
  */
 final readonly class PdfErzeugung implements JobHandler
 {
@@ -63,6 +64,16 @@ final readonly class PdfErzeugung implements JobHandler
     public function typ(): string
     {
         return self::JOB_TYP;
+    }
+
+    /**
+     * `document.edit` (issue #29/M4-7): whoever decides on a receipt is who
+     * drives the PDF working copy for it - the same right InboxController
+     * checks for the decision itself.
+     */
+    public function recht(): Permission
+    {
+        return Permission::DocumentEdit;
     }
 
     public function schritt(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis

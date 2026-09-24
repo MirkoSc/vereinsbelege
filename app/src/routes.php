@@ -13,6 +13,7 @@ use App\Admin\SubmissionSettingsController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
+use App\Api\JobController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -107,6 +108,9 @@ use App\View\View;
  * @param \Closure(): ErfassungController $erfassung built lazily, same
  *        reason: only the internal capture needs the database (issue
  *        #28/M4-6).
+ * @param \Closure(): JobController $jobs built lazily, same reason as
+ *        $mail: only the job step itself needs the database (issue
+ *        #29/M4-7).
  */
 return static function (
     Router $router,
@@ -133,6 +137,7 @@ return static function (
     \Closure $einreichungAdmin,
     \Closure $posteingang,
     \Closure $erfassung,
+    \Closure $jobs,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -212,6 +217,16 @@ return static function (
             'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
         ], Area::App),
     ));
+
+    // One job step (M4-7, issue #29, docs/spec/06-betrieb.md section 4):
+    // `public/js/jobs.js` polls this from the browser of a signed-in person
+    // while a tab is open. Permission: any logged-in account - WHICH job
+    // types it may touch is checked per type inside App\Service\Job\
+    // JobRunner (JobHandler::recht()), the same split InboxController and
+    // ErfassungController use for their own rights, so a new job type needs
+    // no route change. CSRF and JSON answers like the other fetch()-driven
+    // routes.
+    $post('/api/jobs/step', $angemeldet->alsApi(), static fn(Request $r) => $jobs()->step($r));
 
     // Cron entry point for the host's control panel (06 section 4, issue #99).
     // Permission: cron token - no session, no login. The shared secret

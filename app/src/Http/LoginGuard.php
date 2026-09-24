@@ -48,6 +48,10 @@ final readonly class LoginGuard
      *        wait for a vault grant - asked only for an account with
      *        `admin.vault_grant`, for the banner "N Freigaben ausstehend"
      *        (docs/spec/01-sicherheit.md section 2, issue #20/M3-7).
+     * @param (\Closure(Berechtigungen): ?int)|null $offeneJobs how many jobs
+     *        wait for this account's session-worker, null when it has no
+     *        right for any job type - the header count (issue #29/M4-7,
+     *        docs/spec/06-betrieb.md section 4, App\Service\Job\JobRunner::offen()).
      */
     public function __construct(
         private Session $session,
@@ -55,6 +59,7 @@ final readonly class LoginGuard
         private \Closure $timeouts,
         private \Closure $benutzer,
         private ?\Closure $ausstehendeFreigaben = null,
+        private ?\Closure $offeneJobs = null,
     ) {
     }
 
@@ -113,7 +118,7 @@ final readonly class LoginGuard
 
         // The chrome of every page behind the login: who is signed in, and
         // the token their logout form needs. Not for the JSON routes - they
-        // render nothing.
+        // render nothing, so name, token and banners stay unset.
         if (!$api) {
             $this->view->setAnmeldung(
                 $benutzer->anzeigename,
@@ -122,7 +127,15 @@ final readonly class LoginGuard
                 $this->ausstehendeFreigaben !== null && $benutzer->berechtigungen->darf(Permission::AdminVaultGrant)
                     ? ($this->ausstehendeFreigaben)()
                     : 0,
+                $this->offeneJobs !== null ? ($this->offeneJobs)($benutzer->berechtigungen) : null,
             );
+        } else {
+            // A JSON controller can still need this account's rights
+            // (App\Api\JobController, issue #29/M4-7: which job TYPES a
+            // session may touch is not something the route's single
+            // App\Http\Zugriff could declare) - cheap, Berechtigungen is
+            // already built above for darf() either way.
+            $this->view->setBerechtigungen($benutzer->berechtigungen);
         }
 
         // M3-4 (issue #17): `mfa_required` without a configured factor is

@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace App\Service\Job;
 
 use App\Domain\Job;
+use App\Domain\Permission;
 use App\Service\Crypto\Vault;
 
 /**
  * One job type's logic (docs/spec/06-betrieb.md section 4, CLAUDE.md
  * section 6a): framework-free, so it runs identically whether it is called
- * from a signed-in session's browser worker (M4-7's `POST /api/jobs/step`)
- * or, once a job's own type allows it, the optional worker module.
+ * from a signed-in session's browser worker (M4-7's `POST /api/jobs/step`,
+ * App\Service\Job\JobRunner) or, once a job's own type allows it, the
+ * optional worker module.
  *
  * A single call does **one** step and returns - the time budget of a
  * shared-hosting request is short (CLAUDE.md section 1), so a handler with
@@ -23,6 +25,15 @@ interface JobHandler
 {
     /** The `job.typ` this handler is responsible for. */
     public function typ(): string;
+
+    /**
+     * The right a session needs to drive this job type (issue #29/M4-7):
+     * `Permission` because it is a Domain enum, not because this interface
+     * gains an Http dependency - JobRunner checks it against
+     * App\Domain\Berechtigungen before a session ever sees a job of this
+     * type.
+     */
+    public function recht(): Permission;
 
     /**
      * Runs the job's current step (`$job->step`, `''` for the first one) and
