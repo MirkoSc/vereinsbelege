@@ -35,13 +35,19 @@ final readonly class JobRunner
     private const int MAX_VERSUCHE = 3;
 
     /**
-     * @param list<JobHandler> $handler every job type this runner may
-     *        drive - each declares the right it needs itself
+     * @param list<JobHandler> $handler every session job type this runner
+     *        may drive - each declares the right it needs itself
      *        (JobHandler::recht()), so a new type needs no change here.
+     * @param list<JobTyp> $browserTypen browser job types this runner never
+     *        calls schritt() on (issue #30/M4-8: their steps run in the
+     *        browser, driven by App\Api\RasterungController, not here) but
+     *        still counts into offen() - the header shows one figure for
+     *        "N Belege in Verarbeitung" across both kinds of work.
      */
     public function __construct(
         private JobRepository $jobs,
         private array $handler,
+        private array $browserTypen = [],
     ) {
     }
 
@@ -51,7 +57,7 @@ final readonly class JobRunner
      */
     public function schritt(Berechtigungen $berechtigungen, Vault $vault, \DateTimeImmutable $now): JobLauf
     {
-        $typen = $this->erlaubteTypen($berechtigungen);
+        $typen = $this->erlaubteTypen($berechtigungen, $this->handler);
         if ($typen === []) {
             return JobLauf::leer(0);
         }
@@ -89,32 +95,47 @@ final readonly class JobRunner
     }
 
     /**
-     * How many jobs wait for this account's rights - the header count
-     * (`public/js/jobs.js`, App\Http\LoginGuard). Null for an account with
-     * no right for any job type: the header shows nothing rather than
+     * How many jobs wait for this account's rights, session and browser
+     * jobs together - the header count (`public/js/jobs.js`,
+     * `public/js/rasterung.js`, App\Http\LoginGuard). Null for an account
+     * with no right for any job type: the header shows nothing rather than
      * "0 in Verarbeitung" for someone who could never make that number
      * move. Needs no vault: the count is plaintext.
      */
     public function offen(Berechtigungen $berechtigungen): ?int
     {
-        $typen = $this->erlaubteTypen($berechtigungen);
+        $sessionTypen = $this->erlaubteTypen($berechtigungen, $this->handler);
+        $browserTypen = $this->erlaubteTypen($berechtigungen, $this->browserTypen);
+        if ($sessionTypen === [] && $browserTypen === []) {
+            return null;
+        }
 
-        return $typen === [] ? null : $this->jobs->zaehleOffen(JobExecutor::Session, $typen);
+        $summe = 0;
+        if ($sessionTypen !== []) {
+            $summe += $this->jobs->zaehleOffen(JobExecutor::Session, $sessionTypen);
+        }
+        if ($browserTypen !== []) {
+            $summe += $this->jobs->zaehleOffen(JobExecutor::Browser, $browserTypen);
+        }
+
+        return $summe;
     }
 
     /**
+     * @param list<JobTyp> $typen
+     *
      * @return list<string>
      */
-    private function erlaubteTypen(Berechtigungen $berechtigungen): array
+    private function erlaubteTypen(Berechtigungen $berechtigungen, array $typen): array
     {
-        $typen = [];
-        foreach ($this->handler as $handler) {
-            if ($berechtigungen->darf($handler->recht())) {
-                $typen[] = $handler->typ();
+        $erlaubt = [];
+        foreach ($typen as $typ) {
+            if ($berechtigungen->darf($typ->recht())) {
+                $erlaubt[] = $typ->typ();
             }
         }
 
-        return $typen;
+        return $erlaubt;
     }
 
     private function handlerFuer(string $typ): JobHandler

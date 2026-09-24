@@ -106,6 +106,18 @@ final class View
     }
 
     /**
+     * The release version - `render()` only ever passes this to the layout
+     * (for `?v=` cache-busting on its own asset tags), never to a content
+     * template. A controller whose page dynamically loads an asset outside
+     * that mechanism (issue #30/M4-8: `public/js/rasterung.js` importing
+     * pdf.js) needs the same version string to build its own `?v=`.
+     */
+    public function version(): string
+    {
+        return $this->version;
+    }
+
+    /**
      * Sets only the rights, without the rest of setAnmeldung()'s chrome -
      * App\Http\LoginGuard uses this for the JSON routes (issue #29/M4-7): they
      * render nothing, so name, CSRF token and banners stay unset, but a

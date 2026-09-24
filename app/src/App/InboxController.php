@@ -74,6 +74,7 @@ final readonly class InboxController
             'abgeschnitten' => $abgeschnitten,
             'entsperrt' => $tresor !== null,
             'heute' => self::heute(),
+            ...$this->rasterungDaten(),
         ], Area::App));
     }
 
@@ -110,6 +111,7 @@ final readonly class InboxController
             'alleKostenstellen' => $alle,
             'entsperrt' => $tresor !== null,
             'heute' => self::heute(),
+            ...$this->rasterungDaten(),
         ], Area::App));
     }
 
@@ -248,6 +250,44 @@ final readonly class InboxController
 
         // Back to the list: the decision is made, the next one is waiting.
         return Response::redirect('/app/posteingang');
+    }
+
+    /**
+     * `public/js/rasterung.js` (issue #30/M4-8) mounts and loads pdf.js only
+     * on the inbox pages (docs/spec/03-erfassung-und-ki.md section 3:
+     * "während ein angemeldeter Nutzer den Posteingang geöffnet hat"),
+     * unlike `public/js/jobs.js`, which runs on every authenticated page.
+     * `?v=` cache-busts the same way every other asset does
+     * (app/views/layout.php) - View::render() only hands the release
+     * version to the layout, so a page whose script loads something outside
+     * that mechanism has to build its own.
+     *
+     * Nothing at all for a viewer without `document.edit`: every
+     * `/api/rasterung/...` route needs that right anyway, so there is
+     * nothing for the script to usefully poll.
+     *
+     * @return array{scripts: list<string>, pdfjsSrc: string, pdfjsWorkerSrc: string, pdfjsWasmSrc: string}
+     */
+    private function rasterungDaten(): array
+    {
+        if (!$this->berechtigungen()->darf(Permission::DocumentEdit)) {
+            return ['scripts' => [], 'pdfjsSrc' => '', 'pdfjsWorkerSrc' => '', 'pdfjsWasmSrc' => ''];
+        }
+
+        $v = $this->view->version();
+
+        return [
+            'scripts' => ['/js/rasterung.js'],
+            'pdfjsSrc' => '/js/vendor/pdfjs/pdf.min.mjs?v=' . $v,
+            'pdfjsWorkerSrc' => '/js/vendor/pdfjs/pdf.worker.min.mjs?v=' . $v,
+            // No `?v=`: pdf.js appends a file name straight onto this
+            // (public/js/vendor/README.md), a query string would land in
+            // the middle of the path. Only reached for JBIG2/OpenJPEG-coded
+            // pages (public/js/vendor/README.md), so a stale browser cache
+            // here after a future pdf.js upgrade is a narrow enough risk to
+            // accept rather than version a directory prefix.
+            'pdfjsWasmSrc' => '/js/vendor/pdfjs/wasm/',
+        ];
     }
 
     private function berechtigungen(): Berechtigungen

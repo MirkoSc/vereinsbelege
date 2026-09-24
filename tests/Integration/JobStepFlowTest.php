@@ -338,7 +338,7 @@ final class JobStepFlowTest extends DatabaseTestCase
         if ($handler === []) {
             $blobs = new BlobRepository($pdo);
             $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($this->blobDir));
-            $handler = [new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo))];
+            $handler = [new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo))];
         }
 
         $guard = fn(): LoginGuard => new LoginGuard(
@@ -388,6 +388,7 @@ final class JobStepFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $jobs,
+            $unerreichbar,
         );
 
         return new Kernel(

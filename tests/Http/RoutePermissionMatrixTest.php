@@ -186,6 +186,16 @@ final class RoutePermissionMatrixTest extends TestCase
                 continue;
             }
 
+            // The render_pages browser job's routes (issue #30/M4-8) need
+            // `document.edit` - the same right pdf_erzeugen and the inbox
+            // decision itself need, and unlike /api/jobs/step there is
+            // exactly one job type behind them, so the route declares it.
+            if (str_starts_with($route->pattern, '/api/rasterung/')) {
+                self::assertSame(Permission::DocumentEdit, $route->zugriff->recht, $route->pattern);
+
+                continue;
+            }
+
             self::assertSame(Permission::DocumentSubmitInternal, $route->zugriff->recht, $route->pattern);
         }
     }
@@ -237,6 +247,11 @@ final class RoutePermissionMatrixTest extends TestCase
             // per-type rights are JobRunner's job, not the guard's.
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/api/jobs/step', true],
             [SystemRole::Steuerberater, HttpMethod::Post, '/api/jobs/step', true],
+            // render_pages (M4-8): document.edit, same as the inbox decision
+            // itself - Finanzen and Admin only.
+            [SystemRole::Finanzen, HttpMethod::Post, '/api/rasterung/naechste', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/api/rasterung/naechste', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/api/rasterung/7/abc123/quelle/0', false],
         ];
 
         foreach ($faelle as [$rolle, $methode, $pfad, $darf]) {
@@ -400,6 +415,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

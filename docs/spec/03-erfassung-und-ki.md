@@ -192,6 +192,66 @@ Der Job selbst läuft nur, weil ein angemeldeter Nutzer ihn abarbeitet: `POST
 neu eingereichte Belege ohne `pdf_blob_id`, was die Originale nicht
 beeinträchtigt.
 
+**Stand M4-8** (issue #30): die PDF-Rasterung selbst, als eigener
+Browser-Job `render_pages` (`App\Service\Document\PdfRasterung`,
+Abschnitt 5). `pdf_erzeugen` legt ihn in seinem ersten Schritt an, sobald
+mindestens ein PDF unter den Originalen liegt (der Einzel-PDF-Fall
+eingeschlossen – auch ein Upload, der direkt zur Arbeitsfassung wird, hat
+noch keine Seitenbilder) – höchstens einmal je Dokument
+(`JobRepository::gibtEs()`), und deckt alle PDF-Originale eines Dokuments
+in einem Lauf ab, nicht eines je Datei.
+
+- *Browser-Job statt Session-Job:* `POST /api/jobs/step` (M4-7) ruft nur
+  `JobHandler`-Typen auf, die serverseitig fertig werden. Rendern passiert
+  im Browser, deshalb eigene Routen unter `/api/rasterung/...`
+  (`App\Api\RasterungController`). Anders als bei `/api/jobs/step`, wo die
+  Route nur „angemeldet“ verlangt und `App\Service\Job\JobRunner` je Typ
+  gegen `App\Service\Job\JobTyp::recht()` prüft (mehrere Jobtypen hinter
+  einer Route), deklariert hier die Route selbst `document.edit` – es
+  steckt ohnehin nur ein Jobtyp dahinter.
+- *Wo im Browser:* nur auf `/app/posteingang` und der Detailseite
+  (`public/js/rasterung.js`, `App\App\InboxController::rasterungDaten()`),
+  nicht auf jeder angemeldeten Seite wie `public/js/jobs.js` – die Spec
+  spricht bewusst von „während ein angemeldeter Nutzer den Posteingang
+  geöffnet hat“.
+- *Protokoll:* `POST /api/rasterung/naechste` beansprucht den ältesten
+  `render_pages`-Job (`JobRepository::claim()`, 120 s Sperre) und ermittelt
+  beim allerersten Aufruf `job.state.quellen` (die PDF-Blob-IDs der
+  Originale) – danach steht dort immer, wo der Lauf steht:
+  `{quellen, quelle, seite, seq, letzte}`. `seq` zählt Seiten fortlaufend
+  über alle Quellen hinweg, passend zu `document_artifact.seq`.
+  `GET /api/rasterung/{job}/{lock}/quelle/{n}` liefert das entschlüsselte
+  Original einer Quelle (wie `App\App\InboxController::datei()`, ohne
+  CSRF – der Lock in der URL ist das Credential). `POST
+  /api/rasterung/{job}/{lock}/seite/{quelle}/{seite}/{seiten}` speichert
+  eine gerenderte Seite (Rohdaten im Body, JPEG, höchstens 2 MiB,
+  höchstens 4000 px Kantenlänge, höchstens 200 Seiten je Quelle) als
+  `document_artifact` (`kind: page_image`) plus eigenem Blob; die Antwort
+  nennt `quelle`/`seite`, an denen der Browser weitermacht – die Sperre
+  bleibt über die ganze Aufgabe hinweg gehalten
+  (`JobRepository::fortschritt()`, anders als beim Session-Job, dessen
+  `schrittErledigt()` sie je Aufruf freigibt), ein erneutes
+  `naechste()` würde also nichts Wiederaufnehmbares finden. Ein
+  wiederholter Upload derselben Seite (Netzwerkfehler auf dem Rückweg)
+  antwortet idempotent, ohne doppelt zu speichern – auch nach Abschluss
+  des ganzen Jobs. `POST /api/rasterung/{job}/{lock}/abbruch` markiert den
+  Job `fehler` (`grund: defekt` – kein Frame passt, oder `passwort` –
+  pdf.js verlangt ein Kennwort) oder gibt ihn frei (`grund: browser`, die
+  Karte ist geschlossen worden).
+- *pdf.js:* vendored unter `public/js/vendor/pdfjs/` (Details und
+  Lizenzprüfung: `public/js/vendor/README.md`), `useWasm: false` – die CSP
+  (`docker/web/.htaccess`) hat kein `wasm-unsafe-eval`, WebAssembly wäre
+  ohnehin blockiert; die beiden reinen JS-Fallback-Decoder (JBIG2,
+  OpenJPEG) sind mitausgeliefert, `enableScripting: false`
+  (PDF-JavaScript-Aktionen), Standardschriften und CJK-Cmaps fehlen
+  bewusst (Folgeaufgabe bei Bedarf).
+- *Ein Rendering-Lauf je Dokument überschreibt den vorigen:* wird ein
+  Dokument je erneut gerendert, löscht der letzte Schritt die
+  Seitenbilder-Blobs anderer `render_pages`-Läufe desselben Dokuments
+  (`DocumentArtifactRepository::fremdeBlobIds()`) – das Löschen des Blobs
+  nimmt die `document_artifact`-Zeile über `ON DELETE CASCADE` mit
+  (02, Migration 015).
+
 ## 4. Upload
 
 - Generische Upload-Komponente: Dateien in Chunks à 2 MiB
@@ -300,7 +360,8 @@ aktivem Worker-Modul.
    Bildseiten) – `session`/`session`
 1. `extract_text` (Webhoster: PDF-Textlayer / E-Rechnungs-XML) –
    `session`/`session`
-2. `render_pages` (nur PDFs ohne Seitenbilder) – `browser`/`worker`
+2. `render_pages` (nur PDFs ohne Seitenbilder; Abschnitt 3, issue #30/M4-8) –
+   `browser`/`worker`
 3. `ocr` (durchsuchbares PDF/A + Text) – *entfällt*/`worker`
 4. `ai_extract` (→ KI-Anbieter) – `session`/`worker`
 5. `resolve_supplier` (Abschnitt 7) – immer `session`
@@ -309,14 +370,19 @@ aktivem Worker-Modul.
 8. `detect_duplicate` – `session`
 9. `match_transactions` (siehe 04, falls Buchungen vorhanden) – `session`
 
-Die Logik von `pdf_erzeugen`, `render_pages` (Server-Variante), `ocr` und
-`ai_extract` liegt in `app/src/Service/Processing/` und ist framework-frei
-(siehe CLAUDE.md §6a). Jeder Jobtyp implementiert `App\Service\Job\JobHandler`
-(`typ()`, `schritt()`) – das ist der Andockpunkt, den der Runner aus M4-7
-(`POST /api/jobs/step`) aufruft. Ergebnisse ab `extract_text` werden als
-`document_artifact` gespeichert; `pdf_erzeugen` schreibt direkt
-`document.pdf_blob_id`, weil es kein Auslese-Ergebnis, sondern die Datei
-selbst ist.
+Die Logik von `pdf_erzeugen`, `ocr` und `ai_extract` liegt in
+`app/src/Service/Processing/` und ist framework-frei (siehe CLAUDE.md §6a);
+jeder dieser Jobtypen implementiert `App\Service\Job\JobHandler` (`typ()`,
+`recht()`, `schritt()`) – das ist der Andockpunkt, den der Runner aus M4-7
+(`POST /api/jobs/step`) aufruft. `render_pages` läuft anders: sein Schritt
+passiert im Browser, nicht in einem Request dieses Runners, deshalb
+implementiert `App\Service\Document\PdfRasterung` nur `App\Service\Job\
+JobTyp` (`typ()`, `recht()`, ohne `schritt()`) und liegt in
+`app/src/Service/Document/`, framework-frei bis auf die eigenen Routen
+(`App\Api\RasterungController`, Abschnitt 3). Ergebnisse ab `extract_text`
+werden als `document_artifact` gespeichert (`render_pages` seit M4-8:
+`kind: page_image`); `pdf_erzeugen` schreibt direkt `document.pdf_blob_id`,
+weil es kein Auslese-Ergebnis, sondern die Datei selbst ist.
 
 Jeder Schritt idempotent, einzeln wiederholbar, Fehler landen am Beleg
 sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
@@ -434,7 +500,10 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
 Viereck-Auswahl); Upload-Chunks (Reihenfolge, fehlende Chunks, Magic-Byte-
 Ablehnung, Größenlimit); IBAN-Validierung; PDF-Erzeugung (Seitenzahl =
-Bildzahl, gültiges PDF); Textlayer-Heuristik; ZUGFeRD-/XRechnung-Fixtures;
+Bildzahl, gültiges PDF); PDF-Rasterung (vollständiger Lauf über eine und
+mehrere Quellen, Idempotenz eines wiederholten Uploads, Sperre und
+Gift-Job-Schutz über viele Requests hinweg – Details: 06-betrieb.md §4);
+Textlayer-Heuristik; ZUGFeRD-/XRechnung-Fixtures;
 KI-Client mit aufgezeichneten Antworten (gültig, ungültig + Reparatur,
 Timeout, HTTP-Fehler, kein JSON); Betrags-Parsing („1.234,56", „1234.56",
 negativ) und Summenprüfung; Lieferanten-Auflösung über alle 6 Stufen inkl.

@@ -30,14 +30,23 @@ final class VendorAssetsTest extends TestCase
     }
 
     /**
-     * @return list<string> file names, without the README
+     * @return list<string> paths relative to VENDOR_DIR, without the README -
+     *         recursive, because pdf.js (issue #30/M4-8) ships as a small
+     *         tree (`pdfjs/`, `pdfjs/wasm/`), not flat files like htmx
      */
     private static function libraries(): array
     {
-        $dateien = array_values(array_filter(
-            scandir(self::repoRoot() . self::VENDOR_DIR) ?: [],
-            static fn(string $name): bool => str_ends_with($name, '.js'),
-        ));
+        $wurzel = self::repoRoot() . self::VENDOR_DIR;
+        $dateien = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($wurzel, \FilesystemIterator::SKIP_DOTS),
+        );
+        foreach ($iterator as $datei) {
+            $name = $datei->getFilename();
+            if (str_ends_with($name, '.js') || str_ends_with($name, '.mjs')) {
+                $dateien[] = ltrim(str_replace($wurzel, '', $datei->getPathname()), '/');
+            }
+        }
         sort($dateien);
 
         return $dateien;
@@ -48,6 +57,14 @@ final class VendorAssetsTest extends TestCase
         // Loaded by the layout on every page: if it is missing, every page
         // still renders and nothing works.
         self::assertFileExists(self::repoRoot() . self::VENDOR_DIR . '/htmx.min.js');
+    }
+
+    public function testPdfJsIsVendored(): void
+    {
+        // Loaded on demand by public/js/rasterung.js (issue #30/M4-8): if
+        // it is missing, PDF rendering fails but nothing else does.
+        self::assertFileExists(self::repoRoot() . self::VENDOR_DIR . '/pdfjs/pdf.min.mjs');
+        self::assertFileExists(self::repoRoot() . self::VENDOR_DIR . '/pdfjs/pdf.worker.min.mjs');
     }
 
     public function testEveryVendoredFileIsDocumentedWithItsChecksum(): void

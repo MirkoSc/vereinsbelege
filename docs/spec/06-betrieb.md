@@ -417,6 +417,76 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   Exception → `fehler` mit nur dem Klassennamen, `MAX_VERSUCHE` überschritten
   → `fehler` ohne Handler-Aufruf); `tests/js/jobs.test.js` (`kopfText`,
   `wartezeit` für jede Zeile der Tabelle oben).
+
+  **Stand M4-8 (issue #30):** der erste **Browser-Job** (Abschnitt 4 oben:
+  „Worker holt Aufgabe, rendert, lädt Seitenbilder hoch") – `render_pages`
+  (03-erfassung-und-ki.md §3/§5, `App\Service\Document\PdfRasterung`).
+
+  - *Warum eigene Routen:* `POST /api/jobs/step` ruft ausschließlich
+    `App\Service\Job\JobHandler::schritt()` auf, serverseitig, in einem
+    Request. Rendern passiert im Browser mit pdf.js – dafür braucht es die
+    rohen PDF-Bytes (Download), Zeit für mehrere Seiten und viele kleine
+    Uploads, keinen einzelnen Request-Roundtrip. `App\Service\Job\JobTyp`
+    trennt deshalb, was jeder Jobtyp über sich erklärt (`typ()`, `recht()`)
+    von dem, was nur ein Session-Jobtyp zusätzlich kann (`schritt()`,
+    `JobHandler extends JobTyp`) – `App\Service\Job\JobRunner::offen()`
+    zählt beide Sorten für die Kopfzeile zusammen, `schritt()` treibt nur
+    die Session-Sorte.
+  - *Sperre über viele Requests:* anders als der Session-Job (eine Sperre
+    je Aufruf, `schrittErledigt()` gibt sie frei) hält `render_pages` seine
+    Sperre über die ganze Aufgabe hinweg – `App\Repository\JobRepository::
+    fortschritt()` schreibt `state` und verlängert `locked_until`, ohne
+    `locked_by` anzurühren. Ein erneutes `naechste()` mitten im Job fände
+    also nichts Wiederaufnehmbares (die Sperre ist ja noch gültig); die
+    Antwort auf eine gespeicherte Seite nennt deshalb selbst, wo es
+    weitergeht (`App\Service\Document\SeiteErgebnis::ok()`,
+    `naechsteQuelle`/`naechsteSeite`), auch beim Wechsel auf die nächste
+    PDF-Quelle desselben Jobs.
+  - *Idempotenz ohne Zustandstabelle für Uploads:* `job.state` trägt neben
+    der Fortschrittsposition (`quellen`, `quelle`, `seite`, `seq`) das
+    zuletzt gespeicherte Tupel (`letzte`) – ein wiederholter Upload genau
+    dieser Seite (Netzwerkfehler auf dem Rückweg) antwortet `ok` bzw.
+    `fertig`, ohne ein zweites Artefakt zu schreiben; die Unique-Zeile in
+    `document_artifact` (02-datenmodell.md, Migration 015) ist der
+    Rückfallschutz, nicht der Regelfall.
+  - *Gift-Job-Schutz:* wie beim Session-Job, aber nur an einer Stelle
+    scharf – `App\Service\Document\PdfRasterung::naechste()` prüft
+    `attempts > MAX_VERSUCHE` direkt nach dem `claim()`, **bevor** es
+    `job.state` überhaupt anlegt oder liest. Ein Fortschritt
+    (`fortschritt()`) setzt `attempts` zurück, ein bloßes erneutes Claimen
+    ohne gespeicherte Seite nicht – sonst würde `naechste()`s eigener
+    `fortschritt()`-Aufruf beim allerersten Claim den Zähler sofort wieder
+    auf 0 setzen und ein Browser, der nie über den PDF-Download
+    hinauskommt, liefe endlos weiter.
+  - *Nur im Posteingang:* `public/js/rasterung.js` läuft, anders als
+    `public/js/jobs.js`, nicht auf jeder angemeldeten Seite, sondern nur auf
+    `/app/posteingang` und der Detailseite (`App\App\InboxController::
+    rasterungDaten()`) – dort, wo die Spec „während ein angemeldeter Nutzer
+    den Posteingang geöffnet hat" verlangt (03-erfassung-und-ki.md §3).
+    pdf.js wird erst beim ersten tatsächlich beanspruchten Job per
+    `import()` nachgeladen, nicht auf Verdacht.
+
+  **Pflicht-Tests (M4-8):** `DocumentArtifactRepositoryTest` (Insert/Lesen
+  in Seitenreihenfolge, Unique-Zeile verhindert doppelte Einträge,
+  `fremdeBlobIds` nur für andere Jobs, `ON DELETE CASCADE` auf `blob_id`);
+  `JobRepositoryTest`, ergänzt (`gibtEs`, `fortschritt` nur für den Halter
+  und setzt `attempts` zurück, `fortschritt` nach abgelaufener und
+  übernommener Sperre wirkungslos, `release` mit Halter-Prüfung);
+  `PdfErzeugungTest`, ergänzt (Einzel-PDF und gemischter Beleg legen genau
+  einen `render_pages`-Job an, reine Bildbelege keinen, ein wiederholtes
+  `pruefen()` keinen zweiten); `RasterungFlowTest` (echte Route/Guard/
+  Controller/DB: vollständiger Lauf über zwei Seiten einer Quelle und über
+  zwei Quellen, wiederholter Upload der zuletzt gespeicherten Seite – auch
+  nach Jobabschluss – ohne doppeltes Artefakt, Lücke in der Seitenzählung
+  → `unerwartet`, falscher Lock → `verloren`, ein zweiter Tab beansprucht
+  keinen bereits gesperrten Job, ohne Recht/CSRF/Tresor wird nichts
+  beansprucht, falscher Dateityp → 415, zu große Datei → 413, Abbruch
+  `defekt`/`passwort` scheitert mit nur dem Klassennamen, Abbruch `browser`
+  gibt den Job frei, ein späterer Rendering-Lauf räumt die Seiten eines
+  früheren auf); `tests/js/rasterung.test.js` (`massstab`, `wartezeitRaster`
+  für jede Zeile, Qualitätsstufen, `verarbeiteJob` treibt eine oder mehrere
+  Quellen mit derselben Sperre durch, bricht bei einer zu großen Seite oder
+  einem defekten/passwortgeschützten PDF ab).
 - Langlaufende KI-Aufrufe: curl-Timeout aus dem Anbieter-Profil. Auf
   Linux zählt Warten auf Netzwerk-I/O nicht in `max_execution_time`, aber
   der Webserver kann Requests trotzdem kappen – **Grenze im Hosting-Check

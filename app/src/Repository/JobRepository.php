@@ -274,20 +274,80 @@ final readonly class JobRepository
         return (int) $stmt->fetchColumn();
     }
 
-    /** Gives a claimed job back without finishing it (tab closed, step postponed). */
-    public function release(int $id, ?\DateTimeImmutable $now = null): void
+    /**
+     * Gives a claimed job back without finishing it (tab closed, step
+     * postponed, browser gave up on it - App\Api\RasterungController).
+     *
+     * @param ?string $lockedBy set by a caller that holds a claim, same
+     *        reasoning as fail(): only the current holder may give the job
+     *        back, so a request that lost a race for the lock cannot undo
+     *        what the winner is doing. Null keeps the previous,
+     *        unconditional behaviour for callers without a claim of their own.
+     */
+    public function release(int $id, ?\DateTimeImmutable $now = null, ?string $lockedBy = null): void
     {
-        $stmt = $this->pdo->prepare(
-            'UPDATE job
-             SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
-             WHERE id = ? AND status = ?',
-        );
-        $stmt->execute([
+        $sql = 'UPDATE job
+                SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+                WHERE id = ? AND status = ?';
+        $params = [
             JobStatus::Offen->value,
             ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
             $id,
             JobStatus::Laeuft->value,
+        ];
+        if ($lockedBy !== null) {
+            $sql .= ' AND locked_by = ?';
+            $params[] = $lockedBy;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+
+    /**
+     * Writes progress on a job that stays claimed across many small
+     * requests instead of one call per step (issue #30/M4-8's browser job:
+     * the browser fetches one task and then uploads many pages against the
+     * same lock, unlike the session job's one-call-per-step in
+     * schrittErledigt()). Only the holder may - like heartbeat(), but also
+     * carries the new state and resets `attempts`, because a page that made
+     * it into the database is progress, the same reasoning schrittErledigt()
+     * follows.
+     *
+     * @param array<string, mixed> $state ids and counters only, never business data
+     */
+    public function fortschritt(int $id, string $lockedBy, array $state, int $lockSeconds, ?\DateTimeImmutable $now = null): bool
+    {
+        $now ??= new \DateTimeImmutable();
+        $stmt = $this->pdo->prepare(
+            'UPDATE job
+             SET state = ?, attempts = 0, locked_until = ?, updated_at = ?
+             WHERE id = ? AND status = ? AND locked_by = ?',
+        );
+        $stmt->execute([
+            json_encode($state, JSON_THROW_ON_ERROR),
+            $now->modify(sprintf('+%d seconds', $lockSeconds))->format(self::FORMAT),
+            $now->format(self::FORMAT),
+            $id,
+            JobStatus::Laeuft->value,
+            $lockedBy,
         ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Whether a job of this type already exists for this row (issue
+     * #30/M4-8: App\Service\Document\PdfErzeugung enqueues `render_pages` at
+     * most once per document). Any status counts - a finished or failed job
+     * still means one was created; nothing here re-triggers a failed run.
+     */
+    public function gibtEs(string $typ, string $refType, int $refId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM job WHERE typ = ? AND ref_type = ? AND ref_id = ?');
+        $stmt->execute([$typ, $refType, $refId]);
+
+        return $stmt->fetch() !== false;
     }
 
     /**

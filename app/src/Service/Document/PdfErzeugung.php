@@ -8,9 +8,11 @@ use App\Domain\Blob;
 use App\Domain\BlobMeta;
 use App\Domain\Document;
 use App\Domain\Job;
+use App\Domain\JobExecutor;
 use App\Domain\Permission;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Repository\SubmissionRepository;
 use App\Service\Crypto\Vault;
 use App\Service\Job\JobHandler;
@@ -31,11 +33,14 @@ use App\Service\Upload\MagicBytes;
  * shared-hosting request (CLAUDE.md section 1):
  *
  *   '' (pruefen) - decides what this document even needs. Only images ->
- *      go on to `seite`. Exactly one PDF and nothing else -> that upload
- *      already IS the working copy, done immediately. Anything mixed or
- *      more than one PDF -> App\Service\Job\JobSchrittErgebnis::uebersprungen(),
- *      the originals stay the only thing there is (docs/spec/03-erfassung-
- *      und-ki.md section 3: "Hochgeladene PDFs werden nicht umgebaut").
+ *      go on to `seite`. Any PDF among the originals -> queues the
+ *      `render_pages` browser job (issue #30/M4-8, App\Service\Document\
+ *      PdfRasterung) once, since none of them has page images yet; exactly
+ *      one PDF and nothing else -> that upload already IS the working copy
+ *      too, done immediately. Anything mixed or more than one PDF ->
+ *      App\Service\Job\JobSchrittErgebnis::uebersprungen(), the originals
+ *      stay the only thing there is (docs/spec/03-erfassung-und-ki.md
+ *      section 3: "Hochgeladene PDFs werden nicht umgebaut").
  *   'seite' - turns every PNG page into a JPEG (App\Service\Processing\
  *      PngZuJpeg), at most one conversion per call; JPEG pages need nothing
  *      and are free to collect in the same call.
@@ -58,6 +63,7 @@ final readonly class PdfErzeugung implements JobHandler
         private BlobRepository $blobs,
         private BlobService $blobService,
         private SubmissionRepository $submissions,
+        private JobRepository $jobs,
     ) {
     }
 
@@ -79,7 +85,7 @@ final readonly class PdfErzeugung implements JobHandler
     public function schritt(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
     {
         return match ($job->step) {
-            '' => $this->pruefen($job, $vault),
+            '' => $this->pruefen($job, $vault, $now),
             'seite' => $this->seite($job, $vault),
             'pdf' => $this->pdf($job, $vault),
             default => throw new ProcessingException(sprintf('Unbekannter Schritt "%s".', $job->step)),
@@ -92,7 +98,7 @@ final readonly class PdfErzeugung implements JobHandler
      * - no re-detection) to sort the document into one of the three cases
      * above.
      */
-    private function pruefen(Job $job, Vault $vault): JobSchrittErgebnis
+    private function pruefen(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
     {
         $document = $this->dokument($job);
         if ($document->pdfBlobId !== null) {
@@ -113,6 +119,27 @@ final readonly class PdfErzeugung implements JobHandler
         }
 
         $pdfs = array_filter($typen, static fn (string $typ): bool => $typ === MagicBytes::PDF);
+        if ($pdfs === []) {
+            // Neither all-image nor any PDF: an unexpected mix mimeType()
+            // would already have rejected, so this cannot be reached.
+            return JobSchrittErgebnis::uebersprungen();
+        }
+
+        // At least one PDF among the originals, and none of them has page
+        // images yet (section 3: "render_pages nur für PDFs ohne
+        // Seitenbilder") - queue the browser job that renders them
+        // (issue #30/M4-8, App\Service\Document\PdfRasterung). One job per
+        // document, covering every PDF original, not one job per file.
+        if (!$this->jobs->gibtEs(PdfRasterung::JOB_TYP, self::REF_TYPE, $document->id)) {
+            $this->jobs->enqueue(
+                PdfRasterung::JOB_TYP,
+                JobExecutor::Browser,
+                self::REF_TYPE,
+                $document->id,
+                now: $now,
+            );
+        }
+
         if (count($pdfs) === 1 && count($typen) === 1) {
             $this->documents->setzePdfBlob($document->id, array_key_first($pdfs));
 

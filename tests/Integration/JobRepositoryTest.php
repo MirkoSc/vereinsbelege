@@ -272,4 +272,70 @@ final class JobRepositoryTest extends DatabaseTestCase
         self::assertNotNull($this->jobs->find($altOffen));
         self::assertNotNull($this->jobs->find($neu));
     }
+
+    /** issue #30/M4-8: PdfErzeugung enqueues render_pages at most once per document. */
+    public function testGibtEsFindsAJobOfAnyStatusForThisRow(): void
+    {
+        self::assertFalse($this->jobs->gibtEs('render_pages', 'document', 42));
+
+        $id = $this->jobs->enqueue('render_pages', JobExecutor::Browser, 'document', 42, now: $this->t0);
+        self::assertTrue($this->jobs->gibtEs('render_pages', 'document', 42));
+        self::assertFalse($this->jobs->gibtEs('render_pages', 'document', 43), 'anderes Dokument');
+        self::assertFalse($this->jobs->gibtEs('pdf_erzeugen', 'document', 42), 'anderer Typ');
+
+        // Even finished, it still counts as "one was created".
+        $this->jobs->finish($id, JobStatus::Fertig, now: $this->t0);
+        self::assertTrue($this->jobs->gibtEs('render_pages', 'document', 42));
+    }
+
+    /** issue #30/M4-8: the browser job's many small requests share one claim. */
+    public function testFortschrittWritesStateAndExtendsTheLockOnlyForTheHolder(): void
+    {
+        $id = $this->jobs->enqueue('render_pages', JobExecutor::Browser, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'browser-a', 120, now: $this->t0);
+
+        self::assertFalse($this->jobs->fortschritt($id, 'browser-b', ['seq' => 1], 120, $this->t0));
+
+        self::assertTrue($this->jobs->fortschritt($id, 'browser-a', ['seq' => 1], 120, $this->t0->modify('+30 seconds')));
+        $job = $this->jobs->find($id);
+        self::assertSame(JobStatus::Laeuft, $job?->status);
+        self::assertSame('browser-a', $job?->lockedBy, 'the lock stays held, unlike schrittErledigt()');
+        self::assertSame(['seq' => 1], $job?->state);
+        self::assertEquals($this->t0->modify('+150 seconds'), $job?->lockedUntil);
+    }
+
+    /** A page just stored is progress, the same reasoning schrittErledigt() follows. */
+    public function testFortschrittResetsAttempts(): void
+    {
+        $id = $this->jobs->enqueue('render_pages', JobExecutor::Browser, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'a', 120, now: $this->t0);
+        $this->jobs->release($id, $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'a', 120, now: $this->t0);
+
+        $this->jobs->fortschritt($id, 'a', ['seq' => 1], 120, $this->t0);
+
+        self::assertSame(0, $this->jobs->find($id)?->attempts);
+    }
+
+    /** Once the lock expired and someone else claimed the job, the old holder must not write over it. */
+    public function testFortschrittDoesNothingOnceTheLockWasTakenOver(): void
+    {
+        $id = $this->jobs->enqueue('render_pages', JobExecutor::Browser, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'a', 30, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'b', 30, now: $this->t0->modify('+31 seconds'));
+
+        self::assertFalse($this->jobs->fortschritt($id, 'a', ['seq' => 1], 120, $this->t0->modify('+32 seconds')));
+    }
+
+    public function testReleaseWithALockedByOnlyWorksForTheHolder(): void
+    {
+        $id = $this->jobs->enqueue('render_pages', JobExecutor::Browser, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Browser, 'a', 30, now: $this->t0);
+
+        $this->jobs->release($id, $this->t0, 'b');
+        self::assertSame(JobStatus::Laeuft, $this->jobs->find($id)?->status, 'a stranger must not release the job');
+
+        $this->jobs->release($id, $this->t0, 'a');
+        self::assertSame(JobStatus::Offen, $this->jobs->find($id)?->status);
+    }
 }
