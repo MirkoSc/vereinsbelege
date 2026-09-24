@@ -13,6 +13,7 @@ use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
+use App\Api\JobController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -28,6 +29,7 @@ use App\App\SecurityController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
+use App\Domain\Berechtigungen;
 use App\Http\Kernel;
 use App\Http\LoginGuard;
 use App\Http\Router;
@@ -85,7 +87,9 @@ use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Document\PdfErzeugung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Job\JobRunner;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -750,6 +754,29 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
     );
 };
 
+// Every job type's handler (issue #29/M4-7, CLAUDE.md section 6a), built
+// fresh from a connection and shared between the header count
+// ($guard below) and the step API ($jobsSeite) - a new job type is
+// registered here once and both pick it up.
+//
+// @return list<\App\Service\Job\JobHandler>
+$jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
+    $blobs = new BlobRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+
+    return [
+        new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo)),
+    ];
+};
+
+// One job step (M4-7, issue #29): built lazily like the other pages - only
+// a call that actually claims a job needs the database.
+$jobsSeite = static function () use ($connections, $view, $jobHandlerFor): JobController {
+    $pdo = $connections->pdo();
+
+    return new JobController(new Session(), new SessionVault(), $view, new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo)));
+};
+
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
     $view,
@@ -771,6 +798,14 @@ $guard = static fn(): LoginGuard => new LoginGuard(
         $vault = new VaultRepository($connections->pdo())->current();
 
         return $vault === null ? 0 : new VaultGrantRepository($connections->pdo())->countPending($vault->version, new \DateTimeImmutable());
+    },
+    // The header count "N Belege in Verarbeitung" (M4-7, issue #29): null
+    // for an account with no right for any job type (App\Service\Job\
+    // JobRunner::offen()).
+    static function (Berechtigungen $berechtigungen) use ($connections, $jobHandlerFor): ?int {
+        $pdo = $connections->pdo();
+
+        return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo))->offen($berechtigungen);
     },
 );
 
@@ -800,6 +835,7 @@ $router = new Router();
     $einreichungAdmin,
     $posteingangSeite,
     $erfassungSeite,
+    $jobsSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

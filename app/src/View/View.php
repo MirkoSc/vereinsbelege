@@ -56,6 +56,15 @@ final class View
      */
     private int $ausstehendeFreigaben = 0;
 
+    /**
+     * Jobs waiting for this account's session-worker, for the header
+     * (issue #29/M4-7, docs/spec/06-betrieb.md section 4) - null for an
+     * account with no right for any job type, which is how the header tells
+     * "0 in Verarbeitung" apart from "nothing to show at all". Set with the
+     * rest of the chrome by App\Http\LoginGuard.
+     */
+    private ?int $offeneJobs = null;
+
     public function __construct(
         private readonly string $viewsDir,
         private readonly string $version,
@@ -77,11 +86,13 @@ final class View
         ?string $csrfToken,
         ?Berechtigungen $berechtigungen = null,
         int $ausstehendeFreigaben = 0,
+        ?int $offeneJobs = null,
     ): void {
         $this->angemeldet = $anzeigename;
         $this->csrfToken = $csrfToken;
         $this->berechtigungen = $berechtigungen;
         $this->ausstehendeFreigaben = $ausstehendeFreigaben;
+        $this->offeneJobs = $offeneJobs;
     }
 
     /**
@@ -92,6 +103,18 @@ final class View
     public function berechtigungen(): ?Berechtigungen
     {
         return $this->berechtigungen;
+    }
+
+    /**
+     * Sets only the rights, without the rest of setAnmeldung()'s chrome -
+     * App\Http\LoginGuard uses this for the JSON routes (issue #29/M4-7): they
+     * render nothing, so name, CSRF token and banners stay unset, but a
+     * controller such as App\Api\JobController may still need this
+     * account's rights.
+     */
+    public function setBerechtigungen(?Berechtigungen $berechtigungen): void
+    {
+        $this->berechtigungen = $berechtigungen;
     }
 
     /**
@@ -115,6 +138,7 @@ final class View
                 'angemeldet' => $this->angemeldet,
                 'berechtigungen' => $this->berechtigungen,
                 'ausstehendeFreigaben' => $this->ausstehendeFreigaben,
+                'offeneJobs' => $this->offeneJobs,
                 'content' => $content,
                 'bereich' => $bereich,
                 'pfad' => $this->currentPath,

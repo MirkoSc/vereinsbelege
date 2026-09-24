@@ -361,6 +361,62 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   bleibt bei `release`, Aufräumen einmal je Intervall und konfigurierbar,
   fehlschlagender Task ohne Meldung in der Antwort); `CronTokenTest`
   (Token-Prüfung ohne Datenbank).
+
+  **Stand M4-7 (issue #29):** der Browser-Worker treibt `executor=session`-
+  Jobs an, solange eine angemeldete Person eine Seite offen hat.
+
+  - *Route:* `POST /api/jobs/step` (`App\Api\JobController`), Zugriff
+    `Zugriff::angemeldet()` – welche Job-**Typen** eine Session anfassen darf,
+    prüft nicht die Route, sondern `App\Service\Job\JobRunner` je Typ über
+    `App\Service\Job\JobHandler::recht()`. Ein neuer Job-Typ braucht also
+    keine Routen-Änderung, nur einen Eintrag in der Handler-Liste
+    (`app/src/bootstrap.php`, `$jobHandlerFor`). `pdf_erzeugen`
+    (`App\Service\Document\PdfErzeugung`) verlangt `document.edit`. Ohne
+    entsperrten Tresor (CLAUDE.md Abschnitt 4) antwortet die Route
+    `{status: "gesperrt", offen: N}`, ohne einen Job zu beanspruchen.
+  - *Ein Aufruf = ein Schritt:* `JobRunner::schritt()` beansprucht (`claim()`,
+    60 Sekunden Sperre) höchstens einen Job aus den erlaubten Typen, ruft
+    dessen `JobHandler::schritt()` genau einmal auf und schreibt das Ergebnis
+    über `JobRepository::schrittErledigt()` zurück – das setzt `attempts`
+    auf 0 zurück, weil der Schritt Fortschritt gebracht hat, und gibt die
+    Sperre frei, damit der nächste Aufruf (derselbe Tab oder ein anderer)
+    weitermachen kann.
+  - *Gift-Job-Schutz:* wird ein Job **`JobRunner::MAX_VERSUCHE` (3) mal**
+    beansprucht, ohne dass je ein Schritt durchläuft (der Request stürzt ab
+    oder wird vom Webserver gekappt – Abschnitt 1), markiert `JobRunner` ihn
+    `fehler` mit `App\Service\Job\JobAbgebrochen`, ohne den Handler
+    aufzurufen. Eine Exception aus dem Handler markiert den Job sofort
+    `fehler` – nur die Klasse, nie die Meldung (wie beim Cron).
+  - *Kopfzeile:* „N Belege in Verarbeitung" (`partials/kopf.php`,
+    `public/js/jobs.js`), gespeist von `App\Service\Job\JobRunner::offen()` –
+    `null` für einen Zugang ohne Recht für irgendeinen Job-Typ, dann zeigt
+    die Kopfzeile nichts und der Worker startet gar nicht erst. `LoginGuard`
+    setzt den Wert wie `ausstehendeFreigaben` bei jedem Request neu.
+  - *Hintergrund-Tab:* `public/js/jobs.js` pausiert nicht vollständig,
+    sondern verlangsamt (Page Visibility API):
+
+    | Antwort                | sichtbar | Hintergrund |
+    |---|---|---|
+    | ein Schritt lief       | 250 ms   | 30 s        |
+    | nichts zu tun, offen>0 | 10 s     | 60 s        |
+    | nichts zu tun, offen=0 | 30 s     | 120 s       |
+    | gesperrt, 401, 403     | Stopp    | Stopp       |
+    | Netz-/5xx-Fehler       | 30 s     | 120 s       |
+
+    Wird der Tab wieder sichtbar, verwirft das Skript den laufenden Timer
+    und fragt sofort erneut. `gesperrt`/401/403 verlangen ein Neuladen der
+    Seite, kein weiteres Fragen aus derselben Schleife.
+
+  **Pflicht-Tests (M4-7):** `JobRepositoryTest` (Claim mit Typ-Liste, leere
+  Liste beansprucht nichts, `schrittErledigt` nur für den Halter der Sperre
+  und setzt `attempts` zurück, `fail` mit Halter-Prüfung, `zaehleOffen`);
+  `JobStepFlowTest` (echte Route/Guard/Controller/DB: ein Aufruf = ein
+  Schritt, mehrstufiger Job bis `fertig`, ohne das nötige Recht wird nichts
+  beansprucht, ohne entsperrten Tresor `gesperrt` und der Job bleibt
+  unangetastet, CSRF und Anmeldung, fremd gesperrte Jobs bleiben unberührt,
+  Exception → `fehler` mit nur dem Klassennamen, `MAX_VERSUCHE` überschritten
+  → `fehler` ohne Handler-Aufruf); `tests/js/jobs.test.js` (`kopfText`,
+  `wartezeit` für jede Zeile der Tabelle oben).
 - Langlaufende KI-Aufrufe: curl-Timeout aus dem Anbieter-Profil. Auf
   Linux zählt Warten auf Netzwerk-I/O nicht in `max_execution_time`, aber
   der Webserver kann Requests trotzdem kappen – **Grenze im Hosting-Check

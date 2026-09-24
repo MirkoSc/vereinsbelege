@@ -171,10 +171,22 @@ final class RoutePermissionMatrixTest extends TestCase
     public function testTheUploadAnswersInJson(): void
     {
         foreach ($this->router()->routes() as $route) {
-            if (str_starts_with($route->pattern, '/api/')) {
-                self::assertTrue($route->zugriff->api, $route->pattern);
-                self::assertSame(Permission::DocumentSubmitInternal, $route->zugriff->recht, $route->pattern);
+            if (!str_starts_with($route->pattern, '/api/')) {
+                continue;
             }
+            self::assertTrue($route->zugriff->api, $route->pattern);
+
+            // The job step (issue #29/M4-7) is the one /api/ route open to
+            // any logged-in account: WHICH job types it may touch is a
+            // per-type check inside App\Service\Job\JobRunner, not something
+            // a single route-level Permission could express.
+            if ($route->pattern === '/api/jobs/step') {
+                self::assertSame(ZugriffArt::Angemeldet, $route->zugriff->art, $route->pattern);
+
+                continue;
+            }
+
+            self::assertSame(Permission::DocumentSubmitInternal, $route->zugriff->recht, $route->pattern);
         }
     }
 
@@ -221,6 +233,10 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Admin, HttpMethod::Post, '/app/posteingang/7/wiedervorlage', true],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/posteingang/7/annehmen', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/posteingang/7/kostenstelle', false],
+            // The job step (M4-7): the route itself only needs a login -
+            // per-type rights are JobRunner's job, not the guard's.
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/api/jobs/step', true],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/api/jobs/step', true],
         ];
 
         foreach ($faelle as [$rolle, $methode, $pfad, $darf]) {
@@ -384,6 +400,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

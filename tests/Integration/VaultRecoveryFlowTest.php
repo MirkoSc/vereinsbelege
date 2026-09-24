@@ -549,6 +549,7 @@ final class VaultRecoveryFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,
+            $unerreichbar,
         );
 
         return new Kernel(

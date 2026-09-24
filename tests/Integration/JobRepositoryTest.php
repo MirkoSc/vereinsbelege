@@ -7,6 +7,7 @@ namespace App\Tests\Integration;
 use App\Domain\JobExecutor;
 use App\Domain\JobStatus;
 use App\Repository\JobRepository;
+use App\Service\Job\JobSchrittErgebnis;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 
@@ -162,6 +163,92 @@ final class JobRepositoryTest extends DatabaseTestCase
 
         self::assertSame(JobStatus::Offen, $this->jobs->find($id)?->status);
         self::assertSame($id, $this->jobs->claim(JobExecutor::Session, 'b', 30, now: $this->t0)?->id);
+    }
+
+    /** issue #29/M4-7: JobRunner claims only the job types an account's rights allow. */
+    public function testClaimFiltersByAListOfTypes(): void
+    {
+        $pdf = $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->enqueue('ki_auslesen', JobExecutor::Session, now: $this->t0);
+
+        $job = $this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0, typen: ['pdf_erzeugen']);
+
+        self::assertSame($pdf, $job?->id);
+    }
+
+    /** An account with no right for any job type must not claim anything - not "any type". */
+    public function testAnEmptyTypeListClaimsNothing(): void
+    {
+        $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+
+        self::assertNull($this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0, typen: []));
+    }
+
+    public function testSchrittErledigtWritesTheResultAndFreesTheLockAndResetsAttempts(): void
+    {
+        $id = $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0);
+        // A second claim of the same job by a different holder (after the
+        // lock ran out) would raise attempts past 1 - schrittErledigt() must
+        // reset it, not just leave it as the claim left it.
+        $this->jobs->release($id, $this->t0);
+        $this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0);
+
+        $geschafft = $this->jobs->schrittErledigt(
+            $id,
+            'a',
+            JobSchrittErgebnis::weiter('seite', ['arbeit' => [1, 2]]),
+            $this->t0,
+        );
+
+        self::assertTrue($geschafft);
+        $job = $this->jobs->find($id);
+        self::assertSame(JobStatus::Offen, $job?->status);
+        self::assertSame('seite', $job?->step);
+        self::assertSame(['arbeit' => [1, 2]], $job?->state);
+        self::assertSame(0, $job?->attempts);
+        self::assertNull($job?->lockedBy);
+        self::assertNull($job?->lockedUntil);
+    }
+
+    /** Only the holder of the lock may write a step's result. */
+    public function testSchrittErledigtDoesNothingForAnyoneButTheHolder(): void
+    {
+        $id = $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0);
+
+        $geschafft = $this->jobs->schrittErledigt($id, 'b', JobSchrittErgebnis::fertig(), $this->t0);
+
+        self::assertFalse($geschafft);
+        self::assertSame(JobStatus::Laeuft, $this->jobs->find($id)?->status);
+    }
+
+    public function testFailWithALockedByOnlyWorksForTheHolder(): void
+    {
+        $id = $this->jobs->enqueue('x', JobExecutor::Session, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Session, 'a', 30, now: $this->t0);
+
+        $this->jobs->fail($id, \RuntimeException::class, $this->t0, 'b');
+        self::assertSame(JobStatus::Laeuft, $this->jobs->find($id)?->status, 'a stranger must not fail the job');
+
+        $this->jobs->fail($id, \RuntimeException::class, $this->t0, 'a');
+        self::assertSame(JobStatus::Fehler, $this->jobs->find($id)?->status);
+    }
+
+    public function testZaehleOffenCountsOpenAndRunningJobsOfTheGivenTypes(): void
+    {
+        $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $laufend = $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->claim(JobExecutor::Session, 'a', 30, 'pdf_erzeugen', $this->t0);
+        $fertig = $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->finish($fertig, JobStatus::Fertig, now: $this->t0);
+        $this->jobs->enqueue('ki_auslesen', JobExecutor::Session, now: $this->t0);
+        $this->jobs->enqueue('pdf_erzeugen', JobExecutor::Worker, now: $this->t0);
+
+        self::assertSame(2, $this->jobs->zaehleOffen(JobExecutor::Session, ['pdf_erzeugen']));
+        self::assertSame(3, $this->jobs->zaehleOffen(JobExecutor::Session, ['pdf_erzeugen', 'ki_auslesen']));
+        self::assertSame(0, $this->jobs->zaehleOffen(JobExecutor::Session, []));
+        self::assertNotNull($laufend);
     }
 
     public function testDeleteFinishedBeforeOnlyRemovesOldFinishedJobs(): void

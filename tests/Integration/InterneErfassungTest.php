@@ -645,6 +645,7 @@ final class InterneErfassungTest extends DatabaseTestCase
             $unerreichbar,
             $posteingang,
             $erfassung,
+            $unerreichbar,
         );
 
         return new Kernel(
