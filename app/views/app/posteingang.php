@@ -17,6 +17,11 @@
  * @var bool $abgeschnitten
  * @var bool $entsperrt
  * @var \DateTimeImmutable $heute
+ * @var list<string> $scripts
+ * @var string $pdfjsSrc
+ * @var string $pdfjsWorkerSrc
+ * @var string $pdfjsWasmSrc
+ * @var string $csrf
  */
 
 use App\Service\Inbox\InboxFilter;
@@ -136,4 +141,6 @@ $kurz = static fn(string $text, int $max = 60): string => mb_strlen($text) > $ma
             <p class="gedaempft">Es gibt weitere, ältere Einreichungen – bitte über Zeitraum oder Suche eingrenzen.</p>
         <?php endif; ?>
     <?php endif; ?>
+
+    <?php require __DIR__ . '/rasterung-mount.php'; ?>
 </section>

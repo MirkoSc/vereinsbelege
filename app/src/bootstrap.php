@@ -14,6 +14,7 @@ use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
 use App\Api\JobController;
+use App\Api\RasterungController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -42,6 +43,7 @@ use App\Repository\AuthTokenRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
+use App\Repository\DocumentArtifactRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
@@ -88,6 +90,7 @@ use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\PdfErzeugung;
+use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
 use App\Service\Job\JobRunner;
 use App\Service\Mail\EinreichungBenachrichtigung;
@@ -754,8 +757,8 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
     );
 };
 
-// Every job type's handler (issue #29/M4-7, CLAUDE.md section 6a), built
-// fresh from a connection and shared between the header count
+// Every session job type's handler (issue #29/M4-7, CLAUDE.md section 6a),
+// built fresh from a connection and shared between the header count
 // ($guard below) and the step API ($jobsSeite) - a new job type is
 // registered here once and both pick it up.
 //
@@ -765,7 +768,27 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
 
     return [
-        new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo)),
+        new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo)),
+    ];
+};
+
+// Every browser job type (issue #30/M4-8): JobRunner never calls schritt()
+// on these (App\Service\Job\JobTyp, not JobHandler - their steps run in the
+// browser), but counts them into the header the same as a session job type.
+//
+// @return list<\App\Service\Job\JobTyp>
+$browserJobTypenFor = static function (\PDO $pdo) use ($paths): array {
+    $blobs = new BlobRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+
+    return [
+        new PdfRasterung(
+            new JobRepository($pdo),
+            new DocumentRepository($pdo),
+            $blobs,
+            $blobService,
+            new DocumentArtifactRepository($pdo),
+        ),
     ];
 };
 
@@ -775,6 +798,29 @@ $jobsSeite = static function () use ($connections, $view, $jobHandlerFor): JobCo
     $pdo = $connections->pdo();
 
     return new JobController(new Session(), new SessionVault(), $view, new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo)));
+};
+
+// The `render_pages` browser job (issue #30/M4-8): claim, source PDF,
+// uploaded pages. Built lazily like the other pages.
+$rasterungSeite = static function () use ($connections, $view, $paths, $jobHandlerFor, $browserJobTypenFor): RasterungController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    $rasterung = new PdfRasterung(
+        new JobRepository($pdo),
+        new DocumentRepository($pdo),
+        $blobs,
+        $blobService,
+        new DocumentArtifactRepository($pdo),
+    );
+
+    return new RasterungController(
+        new Session(),
+        new SessionVault(),
+        $view,
+        $rasterung,
+        new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo), $browserJobTypenFor($pdo)),
+    );
 };
 
 $guard = static fn(): LoginGuard => new LoginGuard(
@@ -799,13 +845,14 @@ $guard = static fn(): LoginGuard => new LoginGuard(
 
         return $vault === null ? 0 : new VaultGrantRepository($connections->pdo())->countPending($vault->version, new \DateTimeImmutable());
     },
-    // The header count "N Belege in Verarbeitung" (M4-7, issue #29): null
-    // for an account with no right for any job type (App\Service\Job\
-    // JobRunner::offen()).
-    static function (Berechtigungen $berechtigungen) use ($connections, $jobHandlerFor): ?int {
+    // The header count "N Belege in Verarbeitung" (M4-7/M4-8, issues
+    // #29/#30): null for an account with no right for any job type
+    // (App\Service\Job\JobRunner::offen()), session and browser jobs
+    // together.
+    static function (Berechtigungen $berechtigungen) use ($connections, $jobHandlerFor, $browserJobTypenFor): ?int {
         $pdo = $connections->pdo();
 
-        return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo))->offen($berechtigungen);
+        return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo), $browserJobTypenFor($pdo))->offen($berechtigungen);
     },
 );
 
@@ -836,6 +883,7 @@ $router = new Router();
     $posteingangSeite,
     $erfassungSeite,
     $jobsSeite,
+    $rasterungSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

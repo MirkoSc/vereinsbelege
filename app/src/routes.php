@@ -14,6 +14,7 @@ use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
 use App\Api\JobController;
+use App\Api\RasterungController;
 use App\Api\UploadController;
 use App\App\AuditController;
 use App\App\AuthController;
@@ -111,6 +112,9 @@ use App\View\View;
  * @param \Closure(): JobController $jobs built lazily, same reason as
  *        $mail: only the job step itself needs the database (issue
  *        #29/M4-7).
+ * @param \Closure(): RasterungController $rasterung built lazily, same
+ *        reason as $mail: only claiming a task or storing a page needs the
+ *        database (issue #30/M4-8).
  */
 return static function (
     Router $router,
@@ -138,6 +142,7 @@ return static function (
     \Closure $posteingang,
     \Closure $erfassung,
     \Closure $jobs,
+    \Closure $rasterung,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -227,6 +232,35 @@ return static function (
     // no route change. CSRF and JSON answers like the other fetch()-driven
     // routes.
     $post('/api/jobs/step', $angemeldet->alsApi(), static fn(Request $r) => $jobs()->step($r));
+
+    // The `render_pages` browser job (issue #30/M4-8, docs/spec/06-betrieb.md
+    // section 4): `public/js/rasterung.js`, only on the inbox pages
+    // (docs/spec/03-erfassung-und-ki.md section 3). Permission:
+    // `document.edit` on every route - the same right `pdf_erzeugen` and the
+    // inbox decision need, and unlike /api/jobs/step there is exactly one
+    // job type behind these routes, so the route itself declares it instead
+    // of a generic "logged in". The lock App\Service\Document\PdfRasterung::
+    // naechste() hands out travels in the path like the upload component's
+    // chunk id (App\Api\UploadController); `quelle` is a GET that only
+    // streams bytes and skips CSRF, the same way the inbox's own file route
+    // does (App\App\InboxController::datei()).
+    $rasterungRecht = Zugriff::recht(Permission::DocumentEdit)->alsApi();
+    $post('/api/rasterung/naechste', $rasterungRecht, static fn(Request $r) => $rasterung()->naechste($r));
+    $get(
+        '/api/rasterung/{job:\d+}/{lock}/quelle/{quelle:\d+}',
+        $rasterungRecht,
+        static fn(Request $r, array $p) => $rasterung()->quelle($r, $p),
+    );
+    $post(
+        '/api/rasterung/{job:\d+}/{lock}/seite/{quelle:\d+}/{seite:\d+}/{seiten:\d+}',
+        $rasterungRecht,
+        static fn(Request $r, array $p) => $rasterung()->seite($r, $p),
+    );
+    $post(
+        '/api/rasterung/{job:\d+}/{lock}/abbruch',
+        $rasterungRecht,
+        static fn(Request $r, array $p) => $rasterung()->abbruch($r, $p),
+    );
 
     // Cron entry point for the host's control panel (06 section 4, issue #99).
     // Permission: cron token - no session, no login. The shared secret

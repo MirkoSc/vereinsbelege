@@ -38,6 +38,15 @@ final class StaticFileHandlerTest extends TestCase
         self::assertArrayHasKey('Content-Length', $response->headers);
     }
 
+    /** issue #30/M4-8: pdf.js ships as .mjs (public/js/vendor/pdfjs/). */
+    public function testServesEsModulesWithTheJavascriptMimeType(): void
+    {
+        $response = $this->handler->tryServe(self::request('/js/module.mjs'));
+
+        self::assertNotNull($response);
+        self::assertSame('text/javascript; charset=utf-8', $response->headers['Content-Type']);
+    }
+
     public function testIgnoresUnknownExtensions(): void
     {
         self::assertNull($this->handler->tryServe(self::request('/index.php')));

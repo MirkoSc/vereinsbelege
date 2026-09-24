@@ -7,8 +7,11 @@
  *
  * Pages stream decrypted from /app/posteingang/{id}/datei/{blob}. Images
  * show inline; a PDF opens in the browser's own viewer in a new tab - the
- * CSP (object-src 'none', frame-ancestors 'none') rules out embedding it,
- * and rendered page images arrive with pdf.js (M4-8).
+ * CSP (object-src 'none', frame-ancestors 'none') rules out embedding it.
+ * Page images of a PDF original are rendered by `public/js/rasterung.js`
+ * with pdf.js (issue #30/M4-8) while this page or the inbox list is open;
+ * this view does not show them yet (no gallery here), only mounts the
+ * script (rasterung-mount.php).
  *
  * @var \App\Service\Inbox\InboxEintrag $eintrag
  * @var list<array{blobId: int, mime: string, seite: int, pdf: bool}> $seiten
@@ -19,6 +22,10 @@
  * @var bool $entsperrt
  * @var \DateTimeImmutable $heute
  * @var string $csrf
+ * @var list<string> $scripts
+ * @var string $pdfjsSrc
+ * @var string $pdfjsWorkerSrc
+ * @var string $pdfjsWasmSrc
  */
 
 use App\Domain\DocumentStatus;
@@ -182,4 +189,6 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
             </p>
         </form>
     <?php endif; ?>
+
+    <?php require __DIR__ . '/rasterung-mount.php'; ?>
 </section>

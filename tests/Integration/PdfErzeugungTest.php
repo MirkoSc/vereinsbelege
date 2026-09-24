@@ -13,6 +13,7 @@ use App\Domain\JobExecutor;
 use App\Domain\JobStatus;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Repository\SubmissionRepository;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
@@ -76,7 +77,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $documents = new DocumentRepository($this->pdo());
         $submissions = new SubmissionRepository($this->pdo());
         $blobService = $this->blobService($storage);
-        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
         $jpeg1 = FakeJpeg::bauen(breite: 400, hoehe: 300);
         $jpeg2 = FakeJpeg::bauen(breite: 200, hoehe: 200);
@@ -135,7 +136,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $documents = new DocumentRepository($this->pdo());
         $submissions = new SubmissionRepository($this->pdo());
         $blobService = $this->blobService($storage);
-        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
         $pdfBlob = $blobService->storeString('irgendein PDF-Inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
         $now = new \DateTimeImmutable();
@@ -161,7 +162,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $documents = new DocumentRepository($this->pdo());
         $submissions = new SubmissionRepository($this->pdo());
         $blobService = $this->blobService($storage);
-        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
         $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $pdf = $blobService->storeString('pdf-inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
@@ -188,7 +189,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $documents = new DocumentRepository($this->pdo());
         $submissions = new SubmissionRepository($this->pdo());
         $blobService = $this->blobService($storage);
-        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
         $pdf1 = $blobService->storeString('erstes PDF', new BlobMeta(MagicBytes::PDF), $this->vault);
         $pdf2 = $blobService->storeString('zweites PDF', new BlobMeta(MagicBytes::PDF), $this->vault);
@@ -208,13 +209,135 @@ final class PdfErzeugungTest extends DatabaseTestCase
         self::assertSame(2, self::blobAnzahl());
     }
 
+    /**
+     * issue #30/M4-8: a single uploaded PDF has no page images yet, so
+     * pdf_erzeugen queues App\Service\Document\PdfRasterung's job for it -
+     * even though the upload itself already becomes the working copy.
+     */
+    #[DataProvider('backends')]
+    public function testASingleUploadedPdfQueuesARenderPagesJob(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $submissions = new SubmissionRepository($this->pdo());
+        $jobs = new JobRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
+
+        $pdfBlob = $blobService->storeString('irgendein PDF-Inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(DocumentSource::Einreichung, null, [$pdfBlob->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+
+        self::runJob($handler, $documentId, $this->vault, $now);
+
+        $renderJob = $this->findRenderPagesJob($documentId);
+        self::assertNotNull($renderJob);
+        self::assertSame(JobExecutor::Browser, $renderJob->executor);
+        self::assertSame('document', $renderJob->refType);
+        self::assertSame($documentId, $renderJob->refId);
+        self::assertSame(JobStatus::Offen, $renderJob->status);
+    }
+
+    /** Mixed pages leave the originals as the only representation, but the
+     * PDF among them still needs rendering for a preview/for the KI later. */
+    #[DataProvider('backends')]
+    public function testMixedImageAndPdfQueuesARenderPagesJob(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $submissions = new SubmissionRepository($this->pdo());
+        $jobs = new JobRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
+
+        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $pdf = $blobService->storeString('pdf-inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(DocumentSource::Einreichung, null, [$bild->id, $pdf->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+
+        self::runJob($handler, $documentId, $this->vault, $now);
+
+        self::assertNotNull($this->findRenderPagesJob($documentId));
+    }
+
+    /** All-image documents already have their page images (the originals
+     * themselves) - rendering the generated PDF back into images would be
+     * redundant (docs/spec/03-erfassung-und-ki.md section 5). */
+    #[DataProvider('backends')]
+    public function testAllImagesDoesNotQueueARenderPagesJob(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $submissions = new SubmissionRepository($this->pdo());
+        $jobs = new JobRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
+
+        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(DocumentSource::Einreichung, null, [$bild->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+
+        self::runJob($handler, $documentId, $this->vault, $now);
+
+        self::assertNull($this->findRenderPagesJob($documentId));
+    }
+
+    /** A repeated pruefen() for the same document (defence in depth, class
+     * docblock) must not queue a second render_pages job. */
+    #[DataProvider('backends')]
+    public function testPruefenNeverQueuesASecondRenderPagesJob(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $submissions = new SubmissionRepository($this->pdo());
+        $jobs = new JobRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
+
+        $pdfBlob = $blobService->storeString('irgendein PDF-Inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(DocumentSource::Einreichung, null, [$pdfBlob->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+
+        $job = new Job(
+            id: 0,
+            typ: PdfErzeugung::JOB_TYP,
+            refType: 'document',
+            refId: $documentId,
+            executor: JobExecutor::Session,
+            status: JobStatus::Offen,
+            step: '',
+            state: [],
+            attempts: 0,
+            lastError: null,
+            lockedBy: null,
+            lockedUntil: null,
+            createdAt: $now,
+        );
+        $handler->schritt($job, $this->vault, $now);
+        $handler->schritt($job, $this->vault, $now);
+
+        self::assertSame(
+            1,
+            (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE typ = 'render_pages'")->fetchColumn(),
+        );
+    }
+
+    private function findRenderPagesJob(int $documentId): ?Job
+    {
+        $stmt = $this->pdo()->prepare("SELECT id FROM job WHERE typ = 'render_pages' AND ref_type = 'document' AND ref_id = ?");
+        $stmt->execute([$documentId]);
+        $id = $stmt->fetchColumn();
+
+        return $id === false ? null : new JobRepository($this->pdo())->find((int) $id);
+    }
+
     public function testALockedVaultThrowsBeforeAnythingIsWritten(): void
     {
         $blobs = new BlobRepository($this->pdo());
         $documents = new DocumentRepository($this->pdo());
         $submissions = new SubmissionRepository($this->pdo());
         $blobService = $this->blobService(BlobStorage::Fs);
-        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
         $bild = $blobService->storeString(FakeJpeg::bauen(breite: 50, hoehe: 50), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $now = new \DateTimeImmutable();

@@ -18,6 +18,9 @@ final class StaticFileHandler
     private const array MIME_TYPES = [
         'css' => 'text/css; charset=utf-8',
         'js' => 'text/javascript; charset=utf-8',
+        // ES modules (issue #30/M4-8: pdf.js ships as .mjs) - same type as
+        // .js, browsers key module vs. script off <script type>, not MIME.
+        'mjs' => 'text/javascript; charset=utf-8',
         'json' => 'application/json; charset=utf-8',
         'webmanifest' => 'application/manifest+json',
         'svg' => 'image/svg+xml',
