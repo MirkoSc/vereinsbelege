@@ -140,6 +140,37 @@ Eigenes Modul `public/js/scanner/` mit reinen, testbaren Funktionen:
 Server-Fallback (Beleg kam ohne Aufbereitung, z. B. altes Gerät): GD
 graustufen + globale Schwelle; kein Entzerren.
 
+### Rechenkerne (M5-1)
+
+Umgesetzt als reine Funktionen ohne DOM-/Canvas-Zugriff, damit sie sowohl im
+Browser als auch unter `node --test` laufen (Dateien laden sich per
+`module.exports`-Guard gegenseitig wie `public/js/erfassen.js` ↔
+`public/js/einreichen.js`):
+
+- `public/js/scanner/homographie.js` – `homographie(von, nach)` (DLT aus 4
+  Punktpaaren, `null` bei entartetem Viereck), `abbilden(H, punkt)`,
+  `invertieren(H)`.
+- `public/js/scanner/entzerrung.js` – `zielgroesse(ecken, optionen)`
+  (A4-Snap, Deckel bei `maxKante`), `entzerren(bild, ecken, ziel)` (inverse
+  Abbildung, bilineare Interpolation).
+- `public/js/scanner/schwelle.js` – `graustufen`, `integralbild`,
+  `bradleySchwelle`, `schwarzweiss`. Bradley statt Sauvola: Sauvola
+  bräuchte zusätzlich ein Integralbild der quadrierten Werte (doppelter
+  Speicher, auf dem Handy relevant) für eine Varianz, die hier nicht nötig
+  ist – Bradleys „dunkler als ein Anteil des lokalen Mittels" reicht für die
+  Schattenverläufe eines fotografierten Belegs.
+
+Ein Bild ist überall `{ width, height, data }` mit `data` als RGBA-
+`Uint8ClampedArray` (kompatibel zu `CanvasRenderingContext2D.getImageData()`/
+`ImageData`). Ecken sind immer `[oben-links, oben-rechts, unten-rechts,
+unten-links]` (im Uhrzeigersinn). Referenzbilder unter
+`tests/fixtures/scanner/` sind synthetisch erzeugt (PGM P5, siehe deren
+`README.md`) – echte, anonymisierte Belegfotos für die Kantenerkennungs-
+Trefferquote folgen mit M5-2.
+
+Noch offen (spätere M5-Issues): Kantenerkennung/Viereck-Auswahl (M5-2),
+Eck-Editor-UI (M5-3), Einbau in Einreichung/Erfassung + GD-Fallback (M5-4).
+
 ## 3. PDF-Erzeugung und PDF-Eingang
 
 - Aus den aufbereiteten Seitenbildern erzeugt der Server **ein PDF**
