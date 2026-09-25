@@ -120,7 +120,56 @@ Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
-*Vor M5-2 – anhand echter Belegfotos*
-Empfehlung: eigene schlanke Implementierung zuerst; OpenCV.js (lazy
-geladen, vendored) nur, wenn die Trefferquote < 80 % liegt. Manuelle
+*Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
+Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
+(lazy geladen, vendored) nur, wenn die Trefferquote < 80 % liegt. Manuelle
 Eckkorrektur gibt es in beiden Fällen.
+
+M5-2 hat eine eigene Implementierung umgesetzt (Sobel-Kanten + Hough-
+Linien + Viereck-Auswahl, `public/js/scanner/kanten.js`) und gegen 9 echte,
+anonymisierte Belegfotos gemessen (nicht Teil dieses Repos – siehe unten).
+Ergebnis auf den 8 auswertbaren Fotos (1 Foto ausgeschlossen, weil die
+Soll-Ecken nicht zuverlässig bestimmbar waren – ein gefaltetes Schreiben auf
+unruhigem Hintergrund):
+
+- **3/8 (38 %)** Treffer streng nach Vorgabe (jede der 4 Ecken ≤ 3 % der
+  Bilddiagonale von der Soll-Ecke).
+- **6/8 (75 %)** bei 5 % Toleranz – 3 der 5 „Fehlschläge" lagen bei
+  3,7–4,2 %, also knapp über der strengen Schwelle und im Kontrollbild
+  visuell praktisch auf der echten Kante (Nachkorrektur im Eck-Editor M5-3
+  wäre ein kleiner Korrektur-Zug).
+- 2 echte Fehlschläge ohne gezielt behebbare Ursache: ein sehr langer,
+  geknickter Kassenbon (die Unterkante wird zu früh angenommen) und ein
+  fast bildfüllendes, deutlich gedrehtes Blatt mit einem unruhigen
+  Hintergrund (Tastatur sichtbar), bei dem die Liniensuche die falschen
+  Kandidaten bevorzugt.
+
+Zwei Fehlerbilder aus einer ersten Messrunde (Trefferquote danach 11 %)
+waren gezielt behebbar und sind jetzt als Regressionstests festgehalten
+(`tests/js/scanner-kanten.test.js`): eine helle, bildbreite Linie neben dem
+Beleg (z. B. eine Tischkante) wurde fälschlich als Belegkante gewählt, und
+eine gedruckte Linie *innerhalb* eines großen Blatts wurde der echten
+Außenkante vorgezogen. Behoben durch eine zusätzliche Prüfung je
+Kantenpunkt: die Innenseite des Vierecks muss dort merklich heller sein als
+die Außenseite (ein Beleg ist Papier, heller als das, worauf er liegt) –
+eine Tischkante hat beidseitig dunklen Untergrund, eine Innenlinie beidseitig
+helles Papier, beides fällt jetzt durch.
+
+**Damit ist E-03 noch nicht entscheidbar:**
+- Issue #32 verlangt ≥ 20 Fotos, es liegen erst 9 vor.
+- 38–75 % ist keine belastbare Aussage gegen die 80 %-Schwelle bei n = 8.
+- Die zwei verbleibenden Fehlschläge brauchen entweder mehr Beispielfotos
+  (um ein Muster zu erkennen) oder eine grundsätzlichere Änderung
+  (z. B. Bevorzugung von Kandidatenlinien nahe am Bildrand), beides über den
+  Rahmen von M5-2 hinaus.
+
+**Nächster Schritt** (Folge-Issue): ≥ 20 weitere anonymisierte Fotos
+(Beträge/Namen unkenntlich gemacht) als committete Fixtures sammeln, damit
+die Trefferquote reproduzierbar in der CI gemessen werden kann, und E-03
+danach abschließend entscheiden.
+
+Die 9 Fotos für diese Messung liegen **nicht** in diesem Repository (CLAUDE.md
+§1, E-13 – öffentliches Repo, keine echten Belegdaten): sie zeigen reale
+Beträge, Lieferanten und teils Namen/Adressen. Auswertung lief einmalig
+lokal in der Bearbeitungssession; weder die Fotos noch daraus erzeugte
+Bilder wurden committet.

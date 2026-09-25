@@ -165,11 +165,57 @@ Ein Bild ist überall `{ width, height, data }` mit `data` als RGBA-
 `ImageData`). Ecken sind immer `[oben-links, oben-rechts, unten-rechts,
 unten-links]` (im Uhrzeigersinn). Referenzbilder unter
 `tests/fixtures/scanner/` sind synthetisch erzeugt (PGM P5, siehe deren
-`README.md`) – echte, anonymisierte Belegfotos für die Kantenerkennungs-
-Trefferquote folgen mit M5-2.
+`README.md`).
 
-Noch offen (spätere M5-Issues): Kantenerkennung/Viereck-Auswahl (M5-2),
-Eck-Editor-UI (M5-3), Einbau in Einreichung/Erfassung + GD-Fallback (M5-4).
+### Kantenerkennung (M5-2)
+
+`public/js/scanner/kanten.js`, ebenfalls reine Funktionen. Ablauf in
+`kantenErkennen(bild, optionen)`:
+
+1. Graustufen (`schwelle.js`), Verkleinerung auf max. 500 px lange Kante
+   (`verkleinern`) – die Erkennung selbst läuft auf dem kleinen Bild, das
+   Ergebnis wird zurückskaliert.
+2. Weichzeichnen (5×5-Gauß-Näherung) + Sobel-Kanten + Unterdrückung der
+   Nicht-Maxima + ein aus dem Bild selbst abgeleiteter Schwellwert
+   (Perzentil) → binäre Kantenkarte (`kantenKarte`). Ein 4-px-Rand wird
+   ausgeblendet, weil das Weichzeichnen/Sobel dort durch die fehlenden
+   Nachbarpixel eine künstliche Kante erzeugt.
+3. Hough-Transformation (`houghLinien`) auf der Kantenkarte, getrennt nach
+   eher waagerechten und eher senkrechten Linien.
+4. `viereckAuswaehlen`: probiert Paare aus je zwei waagerechten und zwei
+   senkrechten Linien, verwirft nicht konvexe oder zu kleine/zu weit aus dem
+   Bild ragende Vierecke, bewertet die restlichen nach Fläche und
+   Kantenunterstützung je Seite (`kanteUnterstuetzung`) – ein Punkt zählt
+   nur, wenn dort eine Kante liegt **und** die Innenseite des Vierecks
+   merklich heller ist als die Außenseite (ein Beleg ist Papier, heller als
+   der Untergrund). Das verhindert, dass eine starke fremde Linie neben dem
+   Beleg (z. B. eine Tischkante) oder eine gedruckte Linie *innerhalb* eines
+   großen Blatts statt der echten Außenkante gewählt wird.
+5. `eckenOrdnen`: ordnet 4 Punkte nach Winkel um ihren Schwerpunkt in
+   `[oben-links, oben-rechts, unten-rechts, unten-links]` – bleibt auch bei
+   starker Drehung ein gültiger, nicht überkreuzter Zyklus.
+
+`null`, wenn kein Viereck sicher genug gefunden wird; der Eck-Editor (M5-3)
+setzt dann einen eingerückten Standardrahmen statt falscher Ecken.
+
+**Treffer-Regel** für die Messung: alle 4 gefundenen Ecken liegen höchstens
+3 % der Bilddiagonale von der Soll-Ecke entfernt (Soll-Ecken von Auge bzw.
+per Otsu-Schwelle + größter Kontur bestimmt).
+
+**Stand** (Details und Zahlen: `docs/ENTSCHEIDUNGEN.md` E-03): gemessen auf
+9 echten, anonymisierten Belegfotos (nicht im Repo – öffentliches Repo,
+CLAUDE.md §1/E-13), 8 davon auswertbar: 3/8 (38 %) streng, 6/8 (75 %) bei
+5 % Toleranz. E-03 ist damit **noch nicht entschieden** – 9 statt der
+geforderten ≥ 20 Fotos sind keine belastbare Grundlage. Pflicht-Tests für
+die reine Vierecks-Logik (u. a. eine helle Linie neben dem Beleg, eine
+gedruckte Linie innerhalb, eine ~30°-Drehung) laufen mit synthetischen
+Bildern unter `tests/js/scanner-kanten.test.js`.
+
+Noch offen (spätere M5-Issues): Eck-Editor-UI (M5-3), Einbau in
+Einreichung/Erfassung + GD-Fallback (M5-4); außerdem ≥ 20 weitere
+anonymisierte Belegfotos als committete Fixtures für eine reproduzierbare
+Trefferquoten-Messung in der CI und der abschließende Entscheid zu E-03
+(Folge-Issue).
 
 ## 3. PDF-Erzeugung und PDF-Eingang
 
