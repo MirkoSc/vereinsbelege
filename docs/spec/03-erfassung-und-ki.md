@@ -211,11 +211,51 @@ die reine Vierecks-Logik (u. a. eine helle Linie neben dem Beleg, eine
 gedruckte Linie innerhalb, eine ~30°-Drehung) laufen mit synthetischen
 Bildern unter `tests/js/scanner-kanten.test.js`.
 
-Noch offen (spätere M5-Issues): Eck-Editor-UI (M5-3), Einbau in
-Einreichung/Erfassung + GD-Fallback (M5-4); außerdem ≥ 20 weitere
-anonymisierte Belegfotos als committete Fixtures für eine reproduzierbare
-Trefferquoten-Messung in der CI und der abschließende Entscheid zu E-03
-(Folge-Issue).
+Noch offen (spätere M5-Issues): Einbau in Einreichung/Erfassung +
+GD-Fallback (M5-4); außerdem ≥ 20 weitere anonymisierte Belegfotos als
+committete Fixtures für eine reproduzierbare Trefferquoten-Messung in der
+CI und der abschließende Entscheid zu E-03 (Folge-Issue).
+
+### Eck-Editor (M5-3)
+
+`public/js/scanner/eckeditor.js`, reine Funktionen plus eine DOM-Bindung
+(die einzige Ausnahme unter den Dateien in `public/js/scanner/`, weil sie
+genau die Bedienung treibt, die M5-4 in Einreichung und interne Erfassung
+einbaut, statt einer separaten Seiten-Glue-Datei):
+
+- `standardRahmen(breite, hoehe, einzug)` – eingerückter Standardrahmen,
+  wenn `kantenErkennen()` (M5-2) `null` liefert; `ganzesBild(breite, hoehe)`
+  für den „Ganzes Bild"-Knopf.
+- `eckeVerschieben(ecken, index, punkt, breite, hoehe)` – klemmt den neuen
+  Punkt auf die Bildgrenzen und übernimmt ihn nur, wenn das Viereck danach
+  weiterhin konvex bleibt und eine Mindestfläche (1 % der Bildfläche) nicht
+  unterschreitet; sonst bleibt das alte Viereck unverändert (Grund: siehe
+  `homographie.js` – ein entartetes Viereck lässt sich nicht mehr
+  entzerren).
+- `tastaturSchritt(taste, gross)` – Pfeiltasten bewegen den fokussierten
+  Griff (ein `<button>`, wie jedes andere Bedienelement per Tastatur
+  erreichbar) um 1 Bildpixel, mit Shift um 10.
+- `lupenPosition(...)`/`lupenAusschnitt(...)` – Lupe sitzt fest in einer
+  Bühnen-Ecke (oben links, oder oben rechts, sobald der gezogene Punkt sie
+  sonst verdecken würde) statt am Finger zu kleben, damit der Finger sie nie
+  verdeckt.
+- `FARBMODI = ['sw', 'grau', 'farbe']`, `farbmodusAnwenden(bild, modus)` –
+  nutzt `schwarzweiss()`/`graustufenBild()` aus `schwelle.js`; Standard ist
+  „Schwarzweiß" (Vorgabe für den üblichen Fall, Farbe bleibt wählbar für
+  Belege mit Stempel/Foto).
+- `ergebnisErzeugen(bild, ecken, modus, optionen)` – der eine Aufruf, den
+  M5-4 für das hochzuladende Bild braucht: `zielgroesse()` + `entzerren()`
+  aus `entzerrung.js`, dann der gewählte Farbmodus.
+- `eckEditorBinden(wurzel, quelle, ecken)` – bindet Pointer Events (Touch
+  und Maus identisch, `touch-action: none`), 4 Griffe ≥ 44 px
+  (`--tippflaeche`), die Lupe und den Farbmodus-Umschalter an die Markup aus
+  `app/views/partials/eck-editor.php`; gibt
+  `{ ecken(), farbmodus(), zuruecksetzen() }` zurück.
+
+Demo/Testseite: `/admin/designsystem` („Eck-Editor (Scanner)", Abschnitt
+`admin.designsystem` – Bild bleibt im Browser, nichts wird hochgeladen),
+über `public/js/designsystem.js`. Einbau in `/einreichen` und die interne
+Erfassung folgt in M5-4.
 
 ## 3. PDF-Erzeugung und PDF-Eingang
 
@@ -575,8 +615,10 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 ## Pflicht-Tests
 
 Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
-Viereck-Auswahl); Upload-Chunks (Reihenfolge, fehlende Chunks, Magic-Byte-
-Ablehnung, Größenlimit); IBAN-Validierung; PDF-Erzeugung (Seitenzahl =
+Viereck-Auswahl); Eck-Editor (Standardrahmen, Anzeige-/Bildkoordinaten-
+Umrechnung, Eckpunkt-Verschieben mit Ablehnung entarteter Vierecke,
+Farbmodus-Anwendung je Modus); Upload-Chunks (Reihenfolge, fehlende Chunks,
+Magic-Byte-Ablehnung, Größenlimit); IBAN-Validierung; PDF-Erzeugung (Seitenzahl =
 Bildzahl, gültiges PDF); PDF-Rasterung (vollständiger Lauf über eine und
 mehrere Quellen, Idempotenz eines wiederholten Uploads, Sperre und
 Gift-Job-Schutz über viele Requests hinweg – Details: 06-betrieb.md §4);

@@ -220,6 +220,20 @@ final class ViewTest extends TestCase
         self::assertStringNotContainsString('Rollen und Rechte fehlen noch', $html, 'Der Übergangshinweis aus M3-3 ist weg.');
     }
 
+    /**
+     * The corner editor demo (issue #33/M5-3) includes the shared partial
+     * that M5-4 will reuse in /einreichen and the internal capture - this
+     * guards that the include itself keeps working and that all 4 draggable
+     * handles are there.
+     */
+    public function testDesignsystemIncludesTheCornerEditorPartial(): void
+    {
+        $html = $this->render('admin/designsystem', ['title' => ''], Area::Admin);
+
+        self::assertStringContainsString('class="eck-editor"', $html);
+        self::assertSame(4, substr_count($html, 'class="eck-editor-griff"'));
+    }
+
     /** A template must not be able to shadow the frame it renders into. */
     public function testATemplateCannotOverrideTheLayoutVariables(): void
     {

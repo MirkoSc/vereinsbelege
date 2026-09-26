@@ -597,6 +597,8 @@ if (typeof module === 'object' && module.exports) {
         kantenKarte,
         houghLinien,
         schnittpunkt,
+        flaeche,
+        istKonvex,
         eckenOrdnen,
         viereckAuswaehlen,
         kantenErkennen,
