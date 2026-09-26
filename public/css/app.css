@@ -897,6 +897,82 @@ textarea[aria-invalid="true"] {
     }
 }
 
+/* --- Eck-Editor (Scanner, Issue #33/M5-3) --- */
+
+/* Die Bühne begrenzt sich selbst über public/js/scanner/eckeditor.js
+   (Breite/Höhe werden dort in Pixeln gesetzt, aus der tatsächlichen
+   Bildgröße berechnet) - hier nur der Rahmen und dass Kind-Elemente
+   übereinanderliegen. max-width hält sie auch bei einem großen Testbild
+   innerhalb des Inhalts (ab 360 px geprüft). */
+.eck-editor-buehne {
+    position: relative;
+    max-width: 100%;
+    margin: var(--abstand-3) 0;
+    touch-action: none;
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+.eck-editor-bild {
+    display: block;
+    max-width: 100%;
+}
+
+.eck-editor-rahmen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}
+
+.eck-editor-rahmen polygon {
+    fill: rgba(26, 92, 158, 0.15);
+    stroke: var(--farbe-akzent);
+    stroke-width: 2;
+}
+
+/* Mind. 44 px Touch-Ziel (CLAUDE.md/Spec), zentriert auf dem Eckpunkt statt
+   danebenliegend - links/oben werden per JS aus der Bildposition gesetzt. */
+.eck-editor-griff {
+    position: absolute;
+    width: var(--tippflaeche);
+    height: var(--tippflaeche);
+    margin: calc(var(--tippflaeche) / -2) 0 0 calc(var(--tippflaeche) / -2);
+    padding: 0;
+    background: var(--farbe-akzent);
+    border: 3px solid var(--farbe-flaeche);
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    cursor: grab;
+    touch-action: none;
+}
+
+.eck-editor-griff:active {
+    cursor: grabbing;
+}
+
+/* Lupe: fest in einer Bühnen-Ecke (public/js/scanner/eckeditor.js wählt
+   zwischen oben-links und oben-rechts, damit der Finger sie nie
+   verdeckt), nur während des Ziehens sichtbar. */
+.eck-editor-lupe {
+    position: absolute;
+    background: var(--farbe-flaeche);
+    border: 2px solid var(--farbe-rand-stark);
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+}
+
+#eck-editor-ergebnis img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-top: var(--abstand-3);
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand);
+}
+
 .schluessel-gruppe {
     padding: var(--abstand-2);
     overflow-x: auto;

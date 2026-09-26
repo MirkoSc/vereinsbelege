@@ -141,4 +141,23 @@
         handgeschrieben, weil <code>includeIndicatorStyles</code> aus ist:
     </p>
     <p><span class="htmx-indicator lade-anzeige">Wird geladen …</span> (nur während einer htmx-Anfrage sichtbar)</p>
+
+    <h3>Eck-Editor (Scanner)</h3>
+    <p>
+        Ziehbare Ecken, Lupe, Farbmodus-Umschalter (<code>public/js/scanner/eckeditor.js</code>,
+        docs/spec/03-erfassung-und-ki.md §2). Die Kantenerkennung (M5-2) läuft
+        auf dem gewählten Bild; findet sie kein Viereck, setzt der Editor
+        einen eingerückten Standardrahmen. Das gewählte Bild bleibt im
+        Browser – nichts wird hochgeladen.
+    </p>
+    <label for="eck-editor-datei">Testbild
+        <input type="file" id="eck-editor-datei" accept="image/*">
+    </label>
+    <div id="eck-editor-demo" hidden>
+        <?php require __DIR__ . '/../partials/eck-editor.php'; ?>
+    </div>
+    <p class="knopfreihe">
+        <button type="button" class="knopf knopf-primaer" id="eck-editor-entzerren" disabled>Entzerren</button>
+    </p>
+    <div id="eck-editor-ergebnis"></div>
 </section>

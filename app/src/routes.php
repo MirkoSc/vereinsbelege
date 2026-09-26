@@ -402,10 +402,24 @@ return static function (
     ));
 
     // Pattern page of the design system - the reference for new pages and
-    // the place where the light/dark and 360 px checks happen.
+    // the place where the light/dark and 360 px checks happen. Also the
+    // demo page of the corner editor (issue #33/M5-3): the scanner scripts
+    // load in their dependency order, homographie/entzerrung/schwelle
+    // (math) before kanten (edge detection) before eckeditor (the editor
+    // itself), designsystem.js last (the demo glue).
     // Permission: any `admin.*` right.
     $get('/admin/designsystem', Zugriff::adminBereich(), static fn(): Response => Response::html(
-        $view->render('admin/designsystem', ['title' => 'Designsystem'], Area::Admin),
+        $view->render('admin/designsystem', [
+            'title' => 'Designsystem',
+            'scripts' => [
+                '/js/scanner/homographie.js',
+                '/js/scanner/entzerrung.js',
+                '/js/scanner/schwelle.js',
+                '/js/scanner/kanten.js',
+                '/js/scanner/eckeditor.js',
+                '/js/designsystem.js',
+            ],
+        ], Area::Admin),
     ));
 
     // Roles (M3-6, issue #19, docs/spec/01-sicherheit.md section 4): the
