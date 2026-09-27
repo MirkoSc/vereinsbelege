@@ -12,6 +12,11 @@
  * the <template> below. No inline script (CSP, CLAUDE.md section 4), only
  * components from /admin/designsystem.
  *
+ * The scanner (issue #34/M5-4): images are processed automatically, the
+ * corner editor (partials/scanner-dialog.php) opens on "Zuschneiden"; the
+ * live camera (partials/kamera-dialog.php) replaces the system camera where
+ * the browser allows getUserMedia.
+ *
  * @var string $csrf
  * @var string $erfassung capture id of this page load
  * @var array<int, string> $kostenstellen id => name, active ones
@@ -43,6 +48,7 @@
         </p>
 
         <p class="knopfreihe" id="erfassen-quellen">
+            <button type="button" class="knopf" id="erfassen-kamera" hidden>Foto aufnehmen</button>
             <label class="knopf">
                 Foto aufnehmen
                 <input type="file" id="erfassen-foto" class="visuell-versteckt" accept="image/*" capture="environment">
@@ -58,6 +64,10 @@
         </p>
 
         <p class="feld-fehler" id="erfassen-upload-fehler" hidden></p>
+        <p class="feld-hilfe" id="erfassen-scan-hinweis" hidden>
+            Dieser Browser kann Bilder nicht selbst aufbereiten – sie werden unverändert hochgeladen
+            und auf dem Server aufbereitet.
+        </p>
 
         <form class="formular" id="erfassen-formular" novalidate>
             <ol class="erfassen-belege" id="erfassen-belege"></ol>
@@ -83,6 +93,9 @@
             </p>
         </div>
 
+        <?php require __DIR__ . '/../partials/scanner-dialog.php'; ?>
+        <?php require __DIR__ . '/../partials/kamera-dialog.php'; ?>
+
         <template id="erfassen-vorlage">
             <li class="karte erfassen-beleg">
                 <div class="erfassen-beleg-kopf">
@@ -92,6 +105,7 @@
 
                 <ol class="einreichen-seiten" data-rolle="seiten"></ol>
                 <p class="knopfreihe">
+                    <button type="button" class="knopf knopf-still" data-rolle="seite-kamera" hidden>Seite fotografieren</button>
                     <label class="knopf knopf-still">
                         Seite hinzufügen
                         <input type="file" class="visuell-versteckt" accept="image/*,application/pdf" multiple data-rolle="seite-hinzufuegen">

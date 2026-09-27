@@ -5,6 +5,13 @@
 // chunk upload through /api/upload), public/js/iban.js (the IBAN check) and
 // the page helpers of public/js/einreichen.js - loaded after all three.
 //
+// The scanner (issue #34/M5-4, public/js/scanner/, loaded before): every
+// image is processed automatically - detected corners or the whole image,
+// black and white - and uploaded as the original plus the processed
+// version; "Zuschneiden" on a page opens the corner editor to correct it.
+// Automatically, because a pass may hold fifty receipts. The live camera
+// adds a receipt ("Foto aufnehmen") or a page to one.
+//
 // Its own file rather than an inline script: the CSP is script-src 'self'
 // without 'unsafe-inline', no on*-attributes (CLAUDE.md section 4). The CSRF
 // token and the capture id come from data-* attributes on #erfassen.
@@ -13,7 +20,7 @@
 // scripts), a require() in Node (tests/js).
 const erfassenHilfen = typeof module === 'object' && module.exports
     ? require('./einreichen.js')
-    : { seitenVerschieben: seitenVerschieben, seitenEntfernen: seitenEntfernen, istHeic: istHeic };
+    : { seitenVerschieben: seitenVerschieben, seitenEntfernen: seitenEntfernen, istHeic: istHeic, aufbereitetListe: aufbereitetListe };
 
 /** A new, empty receipt at the end of the list. */
 function belegAnlegen(belege, id) {
@@ -67,6 +74,7 @@ function erfassenNutzlast(erfassung, belege, angaben) {
                 blobs: beleg.seiten.map(function (seite) {
                     return seite.blobId;
                 }),
+                aufbereitet: erfassenHilfen.aufbereitetListe(beleg.seiten),
                 freitext: werte.freitext || '',
                 kostenstelle: werte.kostenstelle || null,
                 erstattung: werte.erstattung || null,
@@ -179,6 +187,14 @@ function initErfassen() {
     const referenzListe = wurzel.querySelector('#erfassen-referenzen');
     const neuKnopf = wurzel.querySelector('#erfassen-neu');
     const quellen = wurzel.querySelector('#erfassen-quellen');
+    const scanHinweis = wurzel.querySelector('#erfassen-scan-hinweis');
+    const scannerDialog = document.getElementById('scanner-dialog');
+    const kameraDialog = document.getElementById('kamera-dialog');
+
+    // The scanner (issue #34/M5-4), each part only where this browser can.
+    const kannScan = typeof kannScannen === 'function' && kannScannen(window) && scannerDialog !== null;
+    const kannKamera = typeof kameraVerfuegbar === 'function' && kameraVerfuegbar(window)
+        && kameraDialog !== null && typeof kameraDialog.showModal === 'function';
 
     let belege = [];
     let naechsteId = 1;
@@ -217,6 +233,9 @@ function initErfassen() {
     }
 
     function seitenText(seite, index) {
+        if (seite.status === 'scan') {
+            return 'Wird aufbereitet …';
+        }
         if (seite.status === 'laedt') {
             return 'Wird hochgeladen …';
         }
@@ -240,6 +259,57 @@ function initErfassen() {
         if (seite.vorschauUrl !== null && typeof URL !== 'undefined' && URL.revokeObjectURL) {
             URL.revokeObjectURL(seite.vorschauUrl);
         }
+    }
+
+    function scanHinweisAktualisieren() {
+        if (scanHinweis === null) {
+            return;
+        }
+        scanHinweis.hidden = !belege.some(function (beleg) {
+            return beleg.seiten.some(function (seite) {
+                return seite.serverFallback;
+            });
+        });
+    }
+
+    function hochladen(datei) {
+        return erfassenHochladen(datei, { csrf: csrf, erfassung: erfassung });
+    }
+
+    /**
+     * "Zuschneiden": the corner editor on the kept original; a new
+     * processed version replaces the automatic one. The superseded blob
+     * stays unclaimed and SubmissionUploadCleanupTask removes it.
+     */
+    async function neuZuschneiden(belegId, seite) {
+        let datei;
+        try {
+            datei = await scannerOeffnen(scannerDialog, seite.datei);
+        } catch (fehler) {
+            zeigeUploadFehler('Das Bild konnte nicht aufbereitet werden.');
+
+            return;
+        }
+        if (datei === null) {
+            return;
+        }
+
+        seite.status = 'laedt';
+        renderSeiten(belegId);
+        warteschlange = warteschlange.then(async function () {
+            try {
+                const ergebnis = await hochladen(datei);
+                vorschauFreigeben(seite);
+                seite.vorschauUrl = URL.createObjectURL(datei);
+                seite.aufbereitetId = ergebnis.blob_id;
+                seite.serverFallback = false;
+            } catch (fehler) {
+                // The previous version stays valid.
+                zeigeUploadFehler(fehler.message);
+            }
+            seite.status = 'fertig';
+            renderSeiten(belegId);
+        });
     }
 
     function seitenKarte(belegId, seite, index, anzahl) {
@@ -286,6 +356,14 @@ function initErfassen() {
             renderSeiten(belegId);
         }));
         li.appendChild(knopfreihe);
+
+        if (kannScan && seite.datei && seite.status === 'fertig') {
+            const zuschneiden = knopf('Zuschneiden', 'Seite zuschneiden', false, function () {
+                neuZuschneiden(belegId, seite);
+            });
+            zuschneiden.classList.add('einreichen-seite-zuschneiden');
+            li.appendChild(zuschneiden);
+        }
 
         // Pointer drag within one receipt, in addition to the buttons above
         // (keyboard, small screens): HTML5 drag and drop, no on*-attributes.
@@ -334,6 +412,7 @@ function initErfassen() {
         beleg.seiten.forEach(function (seite, index) {
             seitenListe.appendChild(seitenKarte(belegId, seite, index, beleg.seiten.length));
         });
+        scanHinweisAktualisieren();
     }
 
     /** Order and numbering of the cards; the cards themselves are kept. */
@@ -379,6 +458,17 @@ function initErfassen() {
             seiteFeld.value = '';
         });
 
+        const kameraSeite = karte.querySelector('[data-rolle="seite-kamera"]');
+        if (kameraSeite !== null && kannKamera) {
+            kameraSeite.hidden = false;
+            kameraSeite.addEventListener('click', async function () {
+                const foto = await kameraOeffnen(kameraDialog);
+                if (foto !== null) {
+                    seiteHinzufuegen(belegId, foto);
+                }
+            });
+        }
+
         karten[belegId] = karte;
 
         return karte;
@@ -414,10 +504,15 @@ function initErfassen() {
 
         zeigeUploadFehler('');
         const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0;
+        const scanbar = typeof istScanbar === 'function' && istScanbar(datei);
         const seite = {
             id: 'seite-' + naechsteId++,
             status: 'laedt',
             blobId: null,
+            aufbereitetId: null,
+            // The original stays in memory for "Zuschneiden".
+            datei: scanbar ? datei : null,
+            serverFallback: false,
             fehler: null,
             vorschauUrl: kannVorschau ? URL.createObjectURL(datei) : null,
         };
@@ -427,10 +522,31 @@ function initErfassen() {
         renderSeiten(belegId);
 
         warteschlange = warteschlange.then(async function () {
+            if (kannScan && scanbar) {
+                seite.status = 'scan';
+                renderSeiten(belegId);
+            }
             try {
-                const ergebnis = await erfassenHochladen(datei, { csrf: csrf, erfassung: erfassung });
+                const ergebnis = await seiteVerarbeiten(datei, {
+                    kann: kannScan,
+                    aufbereiten: automatischAufbereiten,
+                    hochladen: function (teil) {
+                        if (seite.status === 'scan') {
+                            seite.status = 'laedt';
+                            renderSeiten(belegId);
+                        }
+
+                        return hochladen(teil);
+                    },
+                });
                 seite.status = 'fertig';
-                seite.blobId = ergebnis.blob_id;
+                seite.blobId = ergebnis.blobId;
+                seite.aufbereitetId = ergebnis.aufbereitetId;
+                seite.serverFallback = ergebnis.serverFallback;
+                if (ergebnis.aufbereitet !== null) {
+                    vorschauFreigeben(seite);
+                    seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
+                }
             } catch (fehler) {
                 seite.status = 'fehler';
                 seite.fehler = fehler.message;
@@ -459,6 +575,21 @@ function initErfassen() {
             karteAnlegen(belegId);
             renderBelege();
             seiteHinzufuegen(belegId, datei);
+        });
+    }
+
+    // Live camera instead of the system camera where it works; the dialog
+    // keeps the system camera as "Kamera-App verwenden".
+    const kameraKnopf = wurzel.querySelector('#erfassen-kamera');
+    const fotoFeld = wurzel.querySelector('#erfassen-foto');
+    if (kannKamera && kameraKnopf !== null && fotoFeld !== null) {
+        kameraKnopf.hidden = false;
+        fotoFeld.closest('label').hidden = true;
+        kameraKnopf.addEventListener('click', async function () {
+            const foto = await kameraOeffnen(kameraDialog);
+            if (foto !== null) {
+                belegeAusDateien([foto]);
+            }
         });
     }
 

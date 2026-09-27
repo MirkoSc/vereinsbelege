@@ -25,7 +25,6 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Upload\MagicBytes;
 use App\Tests\Support\DatabaseTestCase;
-use App\Tests\Support\FakeJpeg;
 use App\Tests\Support\PdfStruktur;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -71,7 +70,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
     }
 
     #[DataProvider('backends')]
-    public function testTwoJpegsAndOnePngProduceAThreePagePdfWithTheReferenceAsTitle(BlobStorage $storage): void
+    public function testTwoUnprocessedJpegsAndOnePngProduceAThreePageFallbackPdfWithTheReferenceAsTitle(BlobStorage $storage): void
     {
         $blobs = new BlobRepository($this->pdo());
         $documents = new DocumentRepository($this->pdo());
@@ -79,8 +78,8 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $blobService = $this->blobService($storage);
         $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
-        $jpeg1 = FakeJpeg::bauen(breite: 400, hoehe: 300);
-        $jpeg2 = FakeJpeg::bauen(breite: 200, hoehe: 200);
+        $jpeg1 = self::jpegBytes(400, 300);
+        $jpeg2 = self::jpegBytes(200, 200);
         $png = self::pngBytes(100, 50);
 
         $blob1 = $blobService->storeString($jpeg1, new BlobMeta(MagicBytes::JPEG), $this->vault);
@@ -114,19 +113,109 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $struktur = PdfStruktur::analysiere(self::lesen($blobService, $pdfBlob, $this->vault));
         self::assertCount(3, $struktur->seiten);
         self::assertSame('R-2026-0099', $struktur->titel);
+        // Unprocessed pages go through the GD fallback (issue #34/M5-4):
+        // what is embedded is its black-and-white JPEG, not the original.
+        self::assertNotSame($jpeg1, $struktur->seiten[0]['jpeg']);
+        self::assertTrue(self::nurSchwarzWeiss($struktur->seiten[0]['jpeg']));
+        self::assertTrue(self::nurSchwarzWeiss($struktur->seiten[2]['jpeg']));
 
         // Die Originale bleiben byte-identisch erhalten (E-10).
         self::assertSame($jpeg1, self::lesen($blobService, $blobs->find($blob1->id), $this->vault));
         self::assertSame($jpeg2, self::lesen($blobService, $blobs->find($blob2->id), $this->vault));
         self::assertSame($png, self::lesen($blobService, $blobs->find($blob3->id), $this->vault));
 
-        // 3 Originale + 1 PDF - der PNG-Zwischenschritt-Blob wurde gelöscht.
+        // 3 Originale + 1 PDF - die Fallback-Zwischenschritt-Blobs wurden gelöscht.
         self::assertSame(4, self::blobAnzahl());
 
         // Ein zweiter Lauf ist sofort fertig, ohne einen weiteren Blob.
         ['status' => $zweiterStatus] = self::runJob($handler, $documentId, $this->vault, $now);
         self::assertSame(JobStatus::Fertig, $zweiterStatus);
         self::assertSame(4, self::blobAnzahl());
+    }
+
+    #[DataProvider('backends')]
+    public function testProcessedPagesAreEmbeddedUnchangedAndOriginalsStay(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, new SubmissionRepository($this->pdo()), new JobRepository($this->pdo()));
+
+        // Page 1 comes with the scanner's version, page 2 without one.
+        $original1 = self::jpegBytes(400, 300);
+        $scan1 = self::jpegBytes(248, 351, 250);
+        $original2 = self::jpegBytes(200, 200);
+        $blobOriginal1 = $blobService->storeString($original1, new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $blobScan1 = $blobService->storeString($scan1, new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $blobOriginal2 = $blobService->storeString($original2, new BlobMeta(MagicBytes::JPEG), $this->vault);
+
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(
+            DocumentSource::Einreichung,
+            null,
+            [$blobOriginal1->id, $blobOriginal2->id],
+            $this->vault->sealDataKey(DataKey::generate()),
+            $now,
+            processedBlobIds: [$blobScan1->id, null],
+        );
+
+        ['status' => $status] = self::runJob($handler, $documentId, $this->vault, $now);
+        self::assertSame(JobStatus::Fertig, $status);
+
+        $document = $documents->find($documentId);
+        self::assertNotNull($document);
+        self::assertSame([$blobOriginal1->id, $blobOriginal2->id], $document->originalBlobIds);
+        self::assertSame([$blobScan1->id, null], $document->processedBlobIds);
+
+        $pdfBlob = $blobs->find((int) $document->pdfBlobId);
+        self::assertNotNull($pdfBlob);
+        $struktur = PdfStruktur::analysiere(self::lesen($blobService, $pdfBlob, $this->vault));
+        self::assertCount(2, $struktur->seiten);
+        self::assertSame($scan1, $struktur->seiten[0]['jpeg'], 'die aufbereitete Fassung wird unverändert eingebettet');
+        self::assertTrue(self::nurSchwarzWeiss($struktur->seiten[1]['jpeg']), 'Seite ohne Aufbereitung läuft über den GD-Fallback');
+
+        // Originale und die Fassung aus dem Browser bleiben byte-identisch (E-10).
+        self::assertSame($original1, self::lesen($blobService, $blobs->find($blobOriginal1->id), $this->vault));
+        self::assertSame($scan1, self::lesen($blobService, $blobs->find($blobScan1->id), $this->vault));
+        self::assertSame($original2, self::lesen($blobService, $blobs->find($blobOriginal2->id), $this->vault));
+        // 2 Originale + 1 Scan + 1 PDF; der Fallback-Zwischenschritt ist weg.
+        self::assertSame(4, self::blobAnzahl());
+    }
+
+    #[DataProvider('backends')]
+    public function testAProcessedVersionThatIsNoJpegIsIgnoredInFavourOfTheFallback(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, new SubmissionRepository($this->pdo()), new JobRepository($this->pdo()));
+
+        $original = self::jpegBytes(300, 200);
+        $blobOriginal = $blobService->storeString($original, new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $blobFalsch = $blobService->storeString(self::pngBytes(30, 20), new BlobMeta(MagicBytes::PNG), $this->vault);
+
+        $now = new \DateTimeImmutable();
+        $documentId = $documents->insert(
+            DocumentSource::Einreichung,
+            null,
+            [$blobOriginal->id],
+            $this->vault->sealDataKey(DataKey::generate()),
+            $now,
+            processedBlobIds: [$blobFalsch->id],
+        );
+
+        ['status' => $status] = self::runJob($handler, $documentId, $this->vault, $now);
+        self::assertSame(JobStatus::Fertig, $status);
+
+        $document = $documents->find($documentId);
+        self::assertNotNull($document);
+        $pdfBlob = $blobs->find((int) $document->pdfBlobId);
+        self::assertNotNull($pdfBlob);
+        $struktur = PdfStruktur::analysiere(self::lesen($blobService, $pdfBlob, $this->vault));
+        self::assertCount(1, $struktur->seiten);
+        self::assertTrue(self::nurSchwarzWeiss($struktur->seiten[0]['jpeg']));
+        self::assertSame($original, self::lesen($blobService, $blobs->find($blobOriginal->id), $this->vault));
+        self::assertNotNull($blobs->find($blobFalsch->id), 'der eingereichte Blob bleibt, er wird nur nicht verwendet');
     }
 
     #[DataProvider('backends')]
@@ -164,7 +253,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $blobService = $this->blobService($storage);
         $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
-        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $bild = $blobService->storeString(self::jpegBytes(100, 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $pdf = $blobService->storeString('pdf-inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
         $now = new \DateTimeImmutable();
         $documentId = $documents->insert(
@@ -250,7 +339,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $blobService = $this->blobService($storage);
         $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
 
-        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $bild = $blobService->storeString(self::jpegBytes(100, 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $pdf = $blobService->storeString('pdf-inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
         $now = new \DateTimeImmutable();
         $documentId = $documents->insert(DocumentSource::Einreichung, null, [$bild->id, $pdf->id], $this->vault->sealDataKey(DataKey::generate()), $now);
@@ -273,7 +362,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $blobService = $this->blobService($storage);
         $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, $jobs);
 
-        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 100, hoehe: 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $bild = $blobService->storeString(self::jpegBytes(100, 100), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $now = new \DateTimeImmutable();
         $documentId = $documents->insert(DocumentSource::Einreichung, null, [$bild->id], $this->vault->sealDataKey(DataKey::generate()), $now);
 
@@ -339,7 +428,7 @@ final class PdfErzeugungTest extends DatabaseTestCase
         $blobService = $this->blobService(BlobStorage::Fs);
         $handler = new PdfErzeugung($documents, $blobs, $blobService, $submissions, new JobRepository($this->pdo()));
 
-        $bild = $blobService->storeString(FakeJpeg::bauen(breite: 50, hoehe: 50), new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $bild = $blobService->storeString(self::jpegBytes(50, 50), new BlobMeta(MagicBytes::JPEG), $this->vault);
         $now = new \DateTimeImmutable();
         $documentId = $documents->insert(
             DocumentSource::Einreichung,
@@ -386,6 +475,46 @@ final class PdfErzeugungTest extends DatabaseTestCase
     private function blobAnzahl(): int
     {
         return (int) $this->pdo()->query('SELECT COUNT(*) FROM file_blob')->fetchColumn();
+    }
+
+    /**
+     * A real, decodable JPEG - the GD fallback (issue #34/M5-4) reads the
+     * pixels, which App\Tests\Support\FakeJpeg does not have.
+     */
+    private static function jpegBytes(int $breite, int $hoehe, int $grau = 180): string
+    {
+        $bild = imagecreatetruecolor($breite, $hoehe);
+        imagefill($bild, 0, 0, imagecolorallocate($bild, $grau, $grau, $grau));
+        imagefilledrectangle($bild, 0, 0, intdiv($breite, 3), intdiv($hoehe, 3), imagecolorallocate($bild, 30, 30, 30));
+        ob_start();
+        imagejpeg($bild);
+
+        return (string) ob_get_clean();
+    }
+
+    /**
+     * Whether a JPEG decodes to (nearly) only black and white - the GD
+     * fallback's output, give or take JPEG's ringing at the edges.
+     */
+    private static function nurSchwarzWeiss(string $jpeg): bool
+    {
+        $bild = imagecreatefromstring($jpeg);
+        if ($bild === false) {
+            return false;
+        }
+        $grau = 0;
+        $gesamt = 0;
+        for ($y = 0; $y < imagesy($bild); $y += 3) {
+            for ($x = 0; $x < imagesx($bild); $x += 3) {
+                $wert = imagecolorat($bild, $x, $y) & 0xFF;
+                $gesamt++;
+                if ($wert > 40 && $wert < 215) {
+                    $grau++;
+                }
+            }
+        }
+
+        return $gesamt > 0 && $grau / $gesamt < 0.05;
     }
 
     private static function pngBytes(int $breite, int $hoehe): string

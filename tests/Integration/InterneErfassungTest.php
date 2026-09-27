@@ -308,6 +308,66 @@ final class InterneErfassungTest extends DatabaseTestCase
         self::assertArrayHasKey('belege', $this->json($this->absenden($zuViele), 422)['fehler']);
     }
 
+    public function testProcessedVersionsAreStoredPerReceiptAndClaimed(): void
+    {
+        $foto = $this->hochladen("\xFF\xD8\xFF\xE0 Foto");
+        $scan = $this->hochladen("\xFF\xD8\xFF\xE0 Scan");
+        $ohne = $this->hochladen("\xFF\xD8\xFF\xE0 ohne Scanner");
+        $alterScan = $this->hochladen("\xFF\xD8\xFF\xE0 erster Zuschnitt");
+
+        $this->json($this->absenden([
+            ['blobs' => [$foto], 'aufbereitet' => [$scan]],
+            ['blobs' => [$ohne]],
+        ]), 201);
+
+        $zeilen = $this->pdo()->query('SELECT original_blob_ids, processed_blob_ids FROM document ORDER BY id')->fetchAll();
+        self::assertSame([$foto], json_decode((string) $zeilen[0]['original_blob_ids'], true));
+        self::assertSame([$scan], json_decode((string) $zeilen[0]['processed_blob_ids'], true));
+        self::assertNull($zeilen[1]['processed_blob_ids']);
+
+        // The scan is claimed with its receipt; only the superseded first crop
+        // is left for SubmissionUploadCleanupTask.
+        self::assertSame(
+            [$alterScan],
+            new SubmissionUploadRepository($this->pdo())->blobIdsForFormHash(InterneErfassung::uploadHash($this->userId, $this->erfassung)),
+        );
+    }
+
+    public function testAProcessedVersionOfAnotherPageLoadIsRefused(): void
+    {
+        $fremd = $this->hochladen("\xFF\xD8\xFF\xE0 anderer Aufruf");
+        $this->erfassung = InterneErfassung::neueErfassungsId();
+        $eigen = $this->hochladen("\xFF\xD8\xFF\xE0 eigen");
+
+        $fehler = $this->json($this->absenden([['blobs' => [$eigen], 'aufbereitet' => [$fremd]]]), 422)['fehler'];
+
+        self::assertArrayHasKey('0.seiten', $fehler);
+        self::assertSame(0, $this->zaehle('document'));
+    }
+
+    public function testAProcessedListOfTheWrongLengthIsRefused(): void
+    {
+        $foto = $this->hochladen("\xFF\xD8\xFF\xE0 Foto");
+
+        $fehler = $this->json($this->absenden([['blobs' => [$foto], 'aufbereitet' => [null, null]]]), 422)['fehler'];
+
+        self::assertArrayHasKey('0.seiten', $fehler);
+    }
+
+    public function testAProcessedVersionUsedInTwoReceiptsIsRefused(): void
+    {
+        $eins = $this->hochladen("\xFF\xD8\xFF\xE0 eins");
+        $zwei = $this->hochladen("\xFF\xD8\xFF\xE0 zwei");
+        $scan = $this->hochladen("\xFF\xD8\xFF\xE0 Scan");
+
+        $fehler = $this->json($this->absenden([
+            ['blobs' => [$eins], 'aufbereitet' => [$scan]],
+            ['blobs' => [$zwei], 'aufbereitet' => [$scan]],
+        ]), 422)['fehler'];
+
+        self::assertSame(['1.seiten' => 'Eine Seite steckt in mehreren Belegen.'], $fehler);
+    }
+
     public function testAPageInTwoReceiptsIsRefused(): void
     {
         $seite = $this->hochladen('%PDF-1.7 doppelt');

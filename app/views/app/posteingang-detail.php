@@ -13,8 +13,11 @@
  * this view does not show them yet (no gallery here), only mounts the
  * script (rasterung-mount.php).
  *
+ * A page the scanner processed (issue #34/M5-4) shows its processed version;
+ * the untouched original is one link away (decision E-10).
+ *
  * @var \App\Service\Inbox\InboxEintrag $eintrag
- * @var list<array{blobId: int, mime: string, seite: int, pdf: bool}> $seiten
+ * @var list<array{blobId: int, mime: string, seite: int, pdf: bool, originalId: ?int}> $seiten
  * @var list<\App\Domain\InboxAction> $aktionen
  * @var bool $darfEntscheiden
  * @var array<int, string> $kostenstellen active ones, plus the document's own
@@ -113,7 +116,10 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                             <a href="<?= e($url) ?>" target="_blank" rel="noopener">
                                 <img src="<?= e($url) ?>" alt="<?= e('Seite ' . $seite['seite']) ?>" loading="lazy">
                             </a>
-                            <span class="klein gedaempft">Seite <?= e((string) $seite['seite']) ?></span>
+                            <span class="klein gedaempft">Seite <?= e((string) $seite['seite']) ?><?= $seite['originalId'] !== null ? ' (aufbereitet)' : '' ?></span>
+                            <?php if ($seite['originalId'] !== null): ?>
+                                <a class="klein" href="<?= e($basis . '/datei/' . $seite['originalId']) ?>" target="_blank" rel="noopener">Original öffnen</a>
+                            <?php endif; ?>
                         <?php endif; ?>
                     </li>
                 <?php endforeach; ?>

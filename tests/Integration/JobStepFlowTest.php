@@ -101,10 +101,10 @@ final class JobStepFlowTest extends DatabaseTestCase
 
     public function testOneCallRunsOneStepUntilTheJobIsFinished(): void
     {
-        $id = $this->dokument([
-            [FakeJpeg::bauen(20, 10), MagicBytes::JPEG],
-            [FakeJpeg::bauen(10, 20), MagicBytes::JPEG],
-        ]);
+        $id = $this->dokument(
+            [[FakeJpeg::bauen(20, 10), MagicBytes::JPEG], [FakeJpeg::bauen(10, 20), MagicBytes::JPEG]],
+            [FakeJpeg::bauen(20, 10), FakeJpeg::bauen(10, 20)],
+        );
         $this->jobRepository()->enqueue(PdfErzeugung::JOB_TYP, JobExecutor::Session, 'document', $id);
 
         // Step 1: '' -> 'seite'. Still one job waiting - only its own step advanced.
@@ -114,7 +114,8 @@ final class JobStepFlowTest extends DatabaseTestCase
         self::assertSame('seite', $this->job($id)?->step);
         self::assertSame(JobStatus::Offen, $this->job($id)?->status);
 
-        // Step 2: 'seite' -> 'pdf' (both pages are JPEG, so one call collects both).
+        // Step 2: 'seite' -> 'pdf' (both pages come with the scanner's JPEG,
+        // so one call collects both).
         $zweite = self::json($this->schritt());
         self::assertSame('gearbeitet', $zweite['status']);
         self::assertSame('pdf', $this->job($id)?->step);
@@ -221,7 +222,11 @@ final class JobStepFlowTest extends DatabaseTestCase
     /**
      * @param list<array{string, string}> $seiten bytes and MIME type
      */
-    private function dokument(array $seiten): int
+    /**
+     * @param list<string> $aufbereitet the scanner's processed JPEG per page
+     *        (issue #34/M5-4); empty for none
+     */
+    private function dokument(array $seiten, array $aufbereitet = []): int
     {
         $documents = new DocumentRepository($this->pdo());
         $blobService = $this->blobService();
@@ -230,6 +235,10 @@ final class JobStepFlowTest extends DatabaseTestCase
         foreach ($seiten as [$inhalt, $mime]) {
             $blobIds[] = $blobService->storeString($inhalt, new BlobMeta($mime), $this->tresor)->id;
         }
+        $aufbereitetIds = [];
+        foreach ($aufbereitet as $inhalt) {
+            $aufbereitetIds[] = $blobService->storeString($inhalt, new BlobMeta(MagicBytes::JPEG), $this->tresor)->id;
+        }
 
         return $documents->insert(
             DocumentSource::Einreichung,
@@ -237,6 +246,7 @@ final class JobStepFlowTest extends DatabaseTestCase
             $blobIds,
             $this->tresor->sealDataKey(DataKey::generate()),
             new \DateTimeImmutable(),
+            processedBlobIds: $aufbereitetIds,
         );
     }
 

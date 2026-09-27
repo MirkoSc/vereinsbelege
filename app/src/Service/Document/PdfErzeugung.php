@@ -17,17 +17,20 @@ use App\Repository\SubmissionRepository;
 use App\Service\Crypto\Vault;
 use App\Service\Job\JobHandler;
 use App\Service\Job\JobSchrittErgebnis;
+use App\Service\Processing\JpegInfo;
 use App\Service\Processing\PdfAusBildern;
-use App\Service\Processing\PngZuJpeg;
 use App\Service\Processing\ProcessingException;
+use App\Service\Processing\SchwarzweissFallback;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
 
 /**
  * The `pdf_erzeugen` job (issue #26/M4-4, docs/spec/03-erfassung-und-ki.md
- * section 3): builds the PDF working copy of a document from its original
- * pages, once a signed-in session can decrypt them. The originals are never
- * touched (decision E-10) - this only ever adds `document.pdf_blob_id`.
+ * section 3): builds the PDF working copy of a document from its pages, once
+ * a signed-in session can decrypt them - from the scanner's processed
+ * version of a page where the browser uploaded one, otherwise from the
+ * original run through the GD fallback (issue #34/M5-4). The originals are
+ * never touched (decision E-10) - this only ever adds `document.pdf_blob_id`.
  *
  * Three short, idempotent steps, none of which does more work than fits a
  * shared-hosting request (CLAUDE.md section 1):
@@ -41,12 +44,16 @@ use App\Service\Upload\MagicBytes;
  *      App\Service\Job\JobSchrittErgebnis::uebersprungen(), the originals
  *      stay the only thing there is (docs/spec/03-erfassung-und-ki.md
  *      section 3: "Hochgeladene PDFs werden nicht umgebaut").
- *   'seite' - turns every PNG page into a JPEG (App\Service\Processing\
- *      PngZuJpeg), at most one conversion per call; JPEG pages need nothing
- *      and are free to collect in the same call.
+ *   'seite' - picks the working image of every page: the processed version
+ *      (`document.processed_blob_ids`) as it is, when it is a JPEG - these
+ *      are free to collect in the same call; otherwise the original through
+ *      App\Service\Processing\SchwarzweissFallback (greyscale + global
+ *      threshold, docs/spec/03-erfassung-und-ki.md section 2), at most one
+ *      such conversion per call.
  *   'pdf' - streams App\Service\Processing\PdfAusBildern::erzeuge() straight
  *      into BlobService::store(), attaches it to the document, and drops the
- *      converted JPEGs `seite` produced (never an original).
+ *      fallback JPEGs `seite` produced (never an original, never a processed
+ *      version the browser uploaded).
  *
  * Framework-free (CLAUDE.md section 6a): no Http, no Session. The runner that
  * calls schritt() from a logged-in browser is App\Service\Job\JobRunner
@@ -152,7 +159,7 @@ final readonly class PdfErzeugung implements JobHandler
     }
 
     /**
-     * One PNG conversion per call at most; a run of plain JPEGs is free and
+     * One GD fallback per call at most; a run of processed pages is free and
      * collected in the same call (class docblock).
      */
     private function seite(Job $job, Vault $vault): JobSchrittErgebnis
@@ -162,24 +169,33 @@ final readonly class PdfErzeugung implements JobHandler
         $zwischen = self::intListe($job->state['zwischen'] ?? []);
 
         for ($i = count($arbeit); $i < count($document->originalBlobIds); $i++) {
-            $blobId = $document->originalBlobIds[$i];
-            $typ = $this->mimeType($blobId, $vault);
-
-            if ($typ === MagicBytes::JPEG) {
-                $arbeit[] = $blobId;
+            // The browser's processed version, used unchanged. Its type is
+            // only known here, with the vault open - the submission could not
+            // check it (the blob meta is sealed). Anything but a JPEG is
+            // ignored and the page falls back like an unprocessed one.
+            $verarbeitet = $document->processedBlobId($i);
+            if ($verarbeitet !== null && $this->mimeType($verarbeitet, $vault) === MagicBytes::JPEG) {
+                $arbeit[] = $verarbeitet;
 
                 continue;
             }
 
-            if ($typ !== MagicBytes::PNG) {
+            $blobId = $document->originalBlobIds[$i];
+            $typ = $this->mimeType($blobId, $vault);
+            if ($typ !== MagicBytes::JPEG && $typ !== MagicBytes::PNG) {
                 throw new ProcessingException('Unerwarteter Bildtyp in der PDF-Erzeugung.');
             }
 
             $original = $this->findBlob($blobId);
-            $jpeg = PngZuJpeg::konvertiere(self::volltext($this->blobService, $original, $vault));
-            $konvertiert = $this->blobService->storeString($jpeg, new BlobMeta(MagicBytes::JPEG), $vault);
-            $arbeit[] = $konvertiert->id;
-            $zwischen[] = $konvertiert->id;
+            $jpeg = SchwarzweissFallback::aufbereiten(self::volltext($this->blobService, $original, $vault));
+            $jpegInfo = JpegInfo::aus($jpeg);
+            $aufbereitet = $this->blobService->storeString(
+                $jpeg,
+                new BlobMeta(MagicBytes::JPEG, width: $jpegInfo->width, height: $jpegInfo->height),
+                $vault,
+            );
+            $arbeit[] = $aufbereitet->id;
+            $zwischen[] = $aufbereitet->id;
 
             return JobSchrittErgebnis::weiter('seite', ['arbeit' => $arbeit, 'zwischen' => $zwischen]);
         }
@@ -221,8 +237,8 @@ final readonly class PdfErzeugung implements JobHandler
         }
 
         foreach ($zwischen as $blobId) {
-            if (in_array($blobId, $document->originalBlobIds, true)) {
-                continue; // never the original (decision E-10)
+            if (in_array($blobId, $document->originalBlobIds, true) || in_array($blobId, $document->processedBlobIds, true)) {
+                continue; // never the original (decision E-10), nor the browser's version
             }
 
             $blob = $this->blobs->find($blobId);

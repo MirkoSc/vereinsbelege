@@ -7,9 +7,11 @@
  * public/js/einreichen.js and public/js/upload.js - only components from
  * /admin/designsystem here, no inline script (CSP, CLAUDE.md section 4).
  *
- * "Foto aufnehmen" is the system camera via <input capture> for now
- * (M4-2's "ohne Scanner"); the live camera with crop overlay arrives with
- * the scanner (M5).
+ * The scanner (issue #34/M5-4): "Foto aufnehmen" opens the live camera
+ * (partials/kamera-dialog.php) where the browser allows getUserMedia, and
+ * falls back to the system camera via <input capture> otherwise; every image
+ * then goes through the corner editor (partials/scanner-dialog.php). Both
+ * dialogs are driven by public/js/scanner/.
  *
  * Spam defence (issue #25/M4-3, docs/spec/01-sicherheit.md section 5): the
  * proof-of-work challenge ($pow) is solved invisibly in the background by
@@ -49,6 +51,7 @@
         </p>
 
         <p class="knopfreihe">
+            <button type="button" class="knopf" id="einreichen-kamera" hidden>Foto aufnehmen</button>
             <label class="knopf">
                 Foto aufnehmen
                 <input type="file" id="einreichen-foto" class="visuell-versteckt" accept="image/*" capture="environment">
@@ -64,6 +67,10 @@
         </p>
 
         <p class="feld-fehler" id="einreichen-upload-fehler" hidden></p>
+        <p class="feld-hilfe" id="einreichen-scan-hinweis" hidden>
+            Dieses Gerät kann Bilder nicht selbst zuschneiden – das Bild wird unverändert hochgeladen
+            und auf dem Server aufbereitet.
+        </p>
 
         <ol class="einreichen-seiten" id="einreichen-seiten"></ol>
 
@@ -149,6 +156,9 @@
                 <span class="htmx-indicator lade-anzeige" id="einreichen-lade" hidden>Wird gesendet …</span>
             </p>
         </form>
+
+        <?php require __DIR__ . '/partials/scanner-dialog.php'; ?>
+        <?php require __DIR__ . '/partials/kamera-dialog.php'; ?>
 
         <div id="einreichen-erfolg" hidden>
             <p class="hinweis hinweis-ok">

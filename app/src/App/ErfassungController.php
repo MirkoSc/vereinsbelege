@@ -18,6 +18,7 @@ use App\Service\Mail\PublicUrl;
 use App\Service\Submission\InterneErfassung;
 use App\Service\Upload\UploadService;
 use App\View\Area;
+use App\View\ScannerSkripte;
 use App\View\View;
 
 /**
@@ -66,7 +67,7 @@ final readonly class ErfassungController
             'maxSeiten' => InterneErfassung::MAX_SEITEN,
             'maxDateiMb' => intdiv(UploadService::MAX_FILE_BYTES, 1024 * 1024),
             'posteingang' => ($this->view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
-            'scripts' => ['/js/upload.js', '/js/iban.js', '/js/einreichen.js', '/js/erfassen.js'],
+            'scripts' => ['/js/upload.js', '/js/iban.js', ...ScannerSkripte::LISTE, '/js/einreichen.js', '/js/erfassen.js'],
         ], Area::App));
     }
 

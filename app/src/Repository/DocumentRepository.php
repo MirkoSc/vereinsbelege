@@ -41,6 +41,9 @@ final readonly class DocumentRepository
      * @param list<int> $originalBlobIds page order, as uploaded
      * @param int|null $createdBy the account that captured it internally
      *        (issue #28/M4-6); null for the public submission
+     * @param list<int|null> $processedBlobIds parallel to $originalBlobIds,
+     *        the scanner's processed version of each page (issue #34/M5-4);
+     *        stored as NULL when no entry is set
      */
     public function insert(
         DocumentSource $source,
@@ -52,20 +55,23 @@ final readonly class DocumentRepository
         OcrStatus $ocrStatus = OcrStatus::Keine,
         ?int $costCenterId = null,
         ?int $createdBy = null,
+        array $processedBlobIds = [],
     ): int {
+        $processed = array_filter($processedBlobIds, is_int(...)) === [] ? null : json_encode(array_values($processedBlobIds), JSON_THROW_ON_ERROR);
         $stmt = $this->pdo->prepare(
-            'INSERT INTO document (source, submission_id, original_blob_ids, status, ocr_status, dek_sealed, created_at, cost_center_id, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO document (source, submission_id, original_blob_ids, processed_blob_ids, status, ocr_status, dek_sealed, created_at, cost_center_id, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
         $stmt->bindValue(1, $source->value);
         $stmt->bindValue(2, $submissionId, $submissionId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(3, json_encode($originalBlobIds, JSON_THROW_ON_ERROR));
-        $stmt->bindValue(4, $status->value);
-        $stmt->bindValue(5, $ocrStatus->value);
-        $stmt->bindValue(6, $dekSealed, \PDO::PARAM_LOB);
-        $stmt->bindValue(7, $now->format(self::FORMAT));
-        $stmt->bindValue(8, $costCenterId, $costCenterId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
-        $stmt->bindValue(9, $createdBy, $createdBy === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(4, $processed, $processed === null ? \PDO::PARAM_NULL : \PDO::PARAM_STR);
+        $stmt->bindValue(5, $status->value);
+        $stmt->bindValue(6, $ocrStatus->value);
+        $stmt->bindValue(7, $dekSealed, \PDO::PARAM_LOB);
+        $stmt->bindValue(8, $now->format(self::FORMAT));
+        $stmt->bindValue(9, $costCenterId, $costCenterId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(10, $createdBy, $createdBy === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->execute();
 
         return (int) $this->pdo->lastInsertId();

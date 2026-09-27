@@ -88,7 +88,7 @@ final class SubmissionUploadCleanupTaskTest extends DatabaseTestCase
 
     public function testAClaimedBlobHasNoRowLeftToSweep(): void
     {
-        // A submission's own deleteForFormHash() removes the row the moment
+        // A submission's own deleteBlobIds() removes the row the moment
         // it claims the blob - this only checks the cron leaves such a blob
         // alone because there is nothing left pointing at it as "unclaimed".
         $blob = $this->blob('e');

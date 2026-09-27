@@ -158,6 +158,7 @@ final class PublicSubmissionTest extends DatabaseTestCase
         $dokument = $this->pdo()->query('SELECT * FROM document')->fetch();
         self::assertNotFalse($dokument);
         self::assertSame([$seite1, $seite2], json_decode((string) $dokument['original_blob_ids'], true));
+        self::assertNull($dokument['processed_blob_ids'], 'ohne Scanner keine aufbereiteten Fassungen');
         self::assertSame('einreichung', $dokument['source']);
         self::assertSame((int) $row['id'], (int) $dokument['submission_id']);
 
@@ -367,6 +368,93 @@ final class PublicSubmissionTest extends DatabaseTestCase
 
         self::assertArrayHasKey('seiten', $daten['fehler']);
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    public function testProcessedVersionsAreStoredNextToTheUntouchedOriginals(): void
+    {
+        $token = $this->issuedToken();
+        $foto = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Foto");
+        $scan = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Scan");
+        $pdf = $this->hochladen($token, '%PDF-1.7 Seite zwei');
+
+        $angaben = $this->minimalAngaben([$foto, $pdf]);
+        $angaben['aufbereitet'] = [$scan, null];
+        $this->json($this->absenden($token, $angaben), 201);
+
+        $dokument = $this->pdo()->query('SELECT * FROM document')->fetch();
+        self::assertNotFalse($dokument);
+        self::assertSame([$foto, $pdf], json_decode((string) $dokument['original_blob_ids'], true));
+        self::assertSame([$scan, null], json_decode((string) $dokument['processed_blob_ids'], true));
+        // Both versions are claimed, so the cron leaves the scan alone.
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission_upload')->fetchColumn());
+        self::assertSame(3, (int) $this->pdo()->query('SELECT COUNT(*) FROM file_blob')->fetchColumn());
+    }
+
+    public function testASupersededScanStaysForTheCronInsteadOfBeingOrphaned(): void
+    {
+        $token = $this->issuedToken();
+        $foto = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Foto");
+        $ersterZuschnitt = $this->hochladen($token, "\xFF\xD8\xFF\xE0 erster Zuschnitt");
+        $zweiterZuschnitt = $this->hochladen($token, "\xFF\xD8\xFF\xE0 zweiter Zuschnitt");
+
+        $angaben = $this->minimalAngaben([$foto]);
+        $angaben['aufbereitet'] = [$zweiterZuschnitt];
+        $this->json($this->absenden($token, $angaben), 201);
+
+        $rest = $this->pdo()->query('SELECT blob_id FROM submission_upload')->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertSame([$ersterZuschnitt], array_map(intval(...), $rest));
+    }
+
+    public function testAProcessedVersionUploadedUnderAnotherTokenIsRefused(): void
+    {
+        $fremdeSeite = $this->hochladen($this->issuedToken(), "\xFF\xD8\xFF\xE0 fremd");
+
+        $token = $this->issuedToken();
+        $foto = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Foto");
+        $angaben = $this->minimalAngaben([$foto]);
+        $angaben['aufbereitet'] = [$fremdeSeite];
+
+        $daten = $this->json($this->absenden($token, $angaben), 422);
+        self::assertArrayHasKey('seiten', $daten['fehler']);
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM document')->fetchColumn());
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function ungueltigeAufbereitung(): array
+    {
+        return [
+            'zu kurz' => [[]],
+            'zu lang' => [[null, null]],
+            'kein Array' => ['7'],
+            'keine Zahl' => [['abc']],
+            'Objekt statt Liste' => [['a' => null]],
+        ];
+    }
+
+    #[DataProvider('ungueltigeAufbereitung')]
+    public function testAProcessedListThatDoesNotMatchThePagesIsRefused(mixed $aufbereitet): void
+    {
+        $token = $this->issuedToken();
+        $foto = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Foto");
+        $angaben = $this->minimalAngaben([$foto]);
+        $angaben['aufbereitet'] = $aufbereitet;
+
+        $daten = $this->json($this->absenden($token, $angaben), 422);
+        self::assertArrayHasKey('seiten', $daten['fehler']);
+    }
+
+    public function testAnOriginalCannotAlsoBeTheProcessedVersion(): void
+    {
+        $token = $this->issuedToken();
+        $foto = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Foto");
+        $zweites = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Zwei");
+        $angaben = $this->minimalAngaben([$foto, $zweites]);
+        $angaben['aufbereitet'] = [$zweites, null];
+
+        $daten = $this->json($this->absenden($token, $angaben), 422);
+        self::assertSame('Eine Seite wurde doppelt eingereicht.', $daten['fehler']['seiten']);
     }
 
     public function testMoreThanTheLimitOfPagesIsRefused(): void

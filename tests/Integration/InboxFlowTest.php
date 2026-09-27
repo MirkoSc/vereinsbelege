@@ -474,6 +474,30 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('geheim-original', $detail);
     }
 
+    public function testAProcessedPageShowsWithItsOriginalOneLinkAway(): void
+    {
+        $original = FakeJpeg::bauen(40, 30) . 'foto';
+        $scan = FakeJpeg::bauen(20, 28) . 'scan';
+        $pdf = '%PDF-1.7 zweite Seite';
+        $id = $this->einreichung(
+            seiten: [[$original, MagicBytes::JPEG], [$pdf, MagicBytes::PDF]],
+            aufbereitet: [$scan, null],
+        );
+        [$originalBlob, $pdfBlob] = $this->originale($id);
+        $scanBlob = (int) json_decode((string) $this->zeile($id)['processed_blob_ids'], true)[0];
+
+        $detail = $this->get('/app/posteingang/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('<img src="/app/posteingang/' . $id . '/datei/' . $scanBlob . '"', $detail);
+        self::assertStringContainsString('href="/app/posteingang/' . $id . '/datei/' . $originalBlob . '"', $detail);
+        self::assertStringContainsString('Original öffnen', $detail);
+        self::assertStringContainsString('href="/app/posteingang/' . $id . '/datei/' . $pdfBlob . '"', $detail);
+        self::assertStringNotContainsString('geheim-scan', $detail);
+
+        // Both versions stream, byte for byte.
+        self::assertSame($scan, self::inhalt($this->roh('/app/posteingang/' . $id . '/datei/' . $scanBlob, entsperrt: true)));
+        self::assertSame($original, self::inhalt($this->roh('/app/posteingang/' . $id . '/datei/' . $originalBlob, entsperrt: true)));
+    }
+
     public function testOnlyTheDocumentsOwnBlobsAreServed(): void
     {
         $id = $this->einreichung();
@@ -513,6 +537,7 @@ final class InboxFlowTest extends DatabaseTestCase
         ?\DateTimeImmutable $erstellt = null,
         ?array $seiten = null,
         BlobStorage $storage = BlobStorage::Fs,
+        array $aufbereitet = [],
     ): int {
         $erstellt ??= new \DateTimeImmutable();
         $seiten ??= [[FakeJpeg::bauen(10, 10), MagicBytes::JPEG]];
@@ -521,6 +546,10 @@ final class InboxFlowTest extends DatabaseTestCase
         foreach ($seiten as [$inhalt, $mime]) {
             $blobIds[] = $this->blobService()->storeString($inhalt, new BlobMeta($mime, 'geheim-original.bin'), $this->tresor, $storage)->id;
         }
+        $aufbereitetIds = array_map(
+            fn (?string $inhalt): ?int => $inhalt === null ? null : $this->blobService()->storeString($inhalt, new BlobMeta(MagicBytes::JPEG, 'geheim-scan.jpg'), $this->tresor, $storage)->id,
+            $aufbereitet,
+        );
 
         $submissions = new SubmissionRepository($this->pdo());
         $submissionId = $submissions->insertDraft(random_bytes(32), $erstellt);
@@ -545,6 +574,7 @@ final class InboxFlowTest extends DatabaseTestCase
             $erstellt,
             $status,
             costCenterId: $kostenstelle,
+            processedBlobIds: $aufbereitetIds,
         );
         if ($resubmitOn !== null) {
             $this->pdo()->prepare('UPDATE document SET resubmit_on = ? WHERE id = ?')->execute([$resubmitOn->format('Y-m-d'), $id]);

@@ -93,7 +93,7 @@ final readonly class InterneErfassung
 
     /**
      * @param array<string, mixed> $eingabe the decoded JSON body
-     *        `{belege: [{blobs, freitext?, kostenstelle?, erstattung?, iban?, kontoinhaber?}]}`
+     *        `{belege: [{blobs, aufbereitet?, freitext?, kostenstelle?, erstattung?, iban?, kontoinhaber?}]}`
      * @param string $anzeigename the capturing account's display name - the
      *        "Name" the inbox shows
      * @param string|null $linkBasis checked base URL for the link in the
@@ -126,12 +126,18 @@ final readonly class InterneErfassung
         $uploadHash = self::uploadHash($userId, $erfassung);
         $fehler = [];
         $seiten = [];
+        $aufbereitet = [];
         foreach ($belege as $index => $beleg) {
             [$blobIds, $problem] = Seitenliste::lesen(is_array($beleg) ? ($beleg['blobs'] ?? null) : null, self::MAX_SEITEN);
+            $verarbeitet = [];
+            if ($problem === null) {
+                [$verarbeitet, $problem] = Seitenliste::aufbereitungLesen(is_array($beleg) ? ($beleg['aufbereitet'] ?? null) : null, $blobIds);
+            }
             if ($problem !== null) {
                 $fehler[$index . '.seiten'] = $problem;
             }
             $seiten[$index] = $blobIds;
+            $aufbereitet[$index] = $verarbeitet;
         }
 
         // A retried request (the browser resent it after a lost response) -
@@ -151,7 +157,13 @@ final readonly class InterneErfassung
             $angaben[$index] = $this->pruefeAngaben(is_array($beleg) ? $beleg : [], $anzeigename, $aktiveKostenstellen, $index, $fehler);
         }
 
-        $this->pruefeHerkunft($seiten, $uploadHash, $fehler);
+        // The processed versions (issue #34/M5-4) are blobs of their own and
+        // must come from this page load just the same.
+        $alleBlobs = [];
+        foreach ($seiten as $index => $blobIds) {
+            $alleBlobs[$index] = [...$blobIds, ...array_values(array_filter($aufbereitet[$index], is_int(...)))];
+        }
+        $this->pruefeHerkunft($alleBlobs, $uploadHash, $fehler);
 
         if ($fehler !== []) {
             return InterneErfassungErgebnis::fehler($fehler);
@@ -177,6 +189,7 @@ final readonly class InterneErfassung
                     $now,
                     costCenterId: $beleg->kostenstelleId,
                     createdBy: $userId,
+                    processedBlobIds: $aufbereitet[$index],
                 );
 
                 // The PDF working copy is a session job, the same as for the
@@ -186,7 +199,7 @@ final readonly class InterneErfassung
                 $erfasst[] = [$referenz, $documentId];
             }
 
-            $this->submissionUploads->deleteBlobIds(array_merge(...array_values($seiten)));
+            $this->submissionUploads->deleteBlobIds(array_merge(...array_values($alleBlobs)));
 
             $this->pdo->commit();
         } catch (\Throwable $e) {

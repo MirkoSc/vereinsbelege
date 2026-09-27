@@ -34,6 +34,7 @@ use App\Http\Router;
 use App\Http\Zugriff;
 use App\PublicPages\EinreichungController;
 use App\View\Area;
+use App\View\ScannerSkripte;
 use App\View\View;
 
 /**
@@ -404,21 +405,13 @@ return static function (
     // Pattern page of the design system - the reference for new pages and
     // the place where the light/dark and 360 px checks happen. Also the
     // demo page of the corner editor (issue #33/M5-3): the scanner scripts
-    // load in their dependency order, homographie/entzerrung/schwelle
-    // (math) before kanten (edge detection) before eckeditor (the editor
-    // itself), designsystem.js last (the demo glue).
+    // load in their dependency order (App\View\ScannerSkripte),
+    // designsystem.js last (the demo glue).
     // Permission: any `admin.*` right.
     $get('/admin/designsystem', Zugriff::adminBereich(), static fn(): Response => Response::html(
         $view->render('admin/designsystem', [
             'title' => 'Designsystem',
-            'scripts' => [
-                '/js/scanner/homographie.js',
-                '/js/scanner/entzerrung.js',
-                '/js/scanner/schwelle.js',
-                '/js/scanner/kanten.js',
-                '/js/scanner/eckeditor.js',
-                '/js/designsystem.js',
-            ],
+            'scripts' => [...ScannerSkripte::LISTE, '/js/designsystem.js'],
         ], Area::Admin),
     ));
 
