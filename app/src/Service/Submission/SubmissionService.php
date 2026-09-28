@@ -81,7 +81,7 @@ final readonly class SubmissionService
         }
 
         [$angaben, $fehler] = $this->pruefeAngaben($eingabe);
-        $blobIds = $this->pruefeSeiten($eingabe['blobs'] ?? null, $formHash, $fehler);
+        [$blobIds, $aufbereitet] = $this->pruefeSeiten($eingabe['blobs'] ?? null, $eingabe['aufbereitet'] ?? null, $formHash, $fehler);
 
         if ($fehler !== []) {
             return SubmissionResult::fehler($fehler);
@@ -99,6 +99,7 @@ final readonly class SubmissionService
                 $vault->sealDataKey(DataKey::generate()),
                 $now,
                 costCenterId: $angaben->kostenstelleId,
+                processedBlobIds: $aufbereitet,
             );
 
             // Building the PDF working copy needs an unlocked vault, so it
@@ -112,7 +113,12 @@ final readonly class SubmissionService
                 now: $now,
             );
 
-            $this->submissionUploads->deleteForFormHash($formHash);
+            // Only what this submission claims: a version the scanner
+            // superseded ("Zuschneiden", issue #34/M5-4) or a page removed
+            // again stays behind for SubmissionUploadCleanupTask, which
+            // deletes it with its blob - deleting every row of the token
+            // would orphan those blobs for good.
+            $this->submissionUploads->deleteBlobIds([...$blobIds, ...array_values(array_filter($aufbereitet, is_int(...)))]);
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -211,34 +217,42 @@ final readonly class SubmissionService
      * @param array<string, string> $fehler filled in by reference on a
      *        problem, the same shape App\Service\Account\PasswordChange uses
      *        for its list of messages
-     * @return list<int>
+     * @return array{0: list<int>, 1: list<int|null>} the originals in page
+     *         order and, parallel to them, the scanner's processed versions
+     *         (issue #34/M5-4)
      */
-    private function pruefeSeiten(mixed $eingabe, string $formHash, array &$fehler): array
+    private function pruefeSeiten(mixed $eingabe, mixed $aufbereitungEingabe, string $formHash, array &$fehler): array
     {
         [$blobIds, $problem] = Seitenliste::lesen($eingabe, $this->einstellungen->maxSeiten);
+        if ($problem === null) {
+            [$aufbereitet, $problem] = Seitenliste::aufbereitungLesen($aufbereitungEingabe, $blobIds);
+        }
         if ($problem !== null) {
             $fehler['seiten'] = $problem;
 
-            return [];
+            return [[], []];
         }
 
         // Every id must belong to THIS visit - otherwise a visitor could
         // attach a blob they merely guessed the id of, uploaded under a
-        // different, unrelated token.
+        // different, unrelated token. The processed versions are blobs of
+        // their own and are checked the same way.
+        $alle = [...$blobIds, ...array_filter($aufbereitet, is_int(...))];
         $erlaubt = $this->submissionUploads->blobIdsForFormHash($formHash);
-        if (array_diff($blobIds, $erlaubt) !== []) {
+        if (array_diff($alle, $erlaubt) !== []) {
             $fehler['seiten'] = 'Eine Seite ist nicht mehr vorhanden. Bitte erneut hochladen.';
 
-            return [];
+            return [[], []];
         }
 
-        if ($this->blobs->totalSize($blobIds) > $this->einstellungen->maxEinreichungBytes()) {
+        // Both versions are stored, so both count towards the limit.
+        if ($this->blobs->totalSize($alle) > $this->einstellungen->maxEinreichungBytes()) {
             $fehler['seiten'] = 'Die Einreichung ist insgesamt zu groß. Bitte weniger oder kleinere Seiten verwenden.';
 
-            return [];
+            return [[], []];
         }
 
-        return $blobIds;
+        return [$blobIds, $aufbereitet];
     }
 
     private static function kostenstelleId(mixed $wert): ?int

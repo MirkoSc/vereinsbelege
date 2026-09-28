@@ -35,6 +35,16 @@ final class FakeJpeg
         return $bytes;
     }
 
+    /**
+     * A real (GD-encoded) JPEG with an EXIF orientation inserted right after
+     * its SOI - for tests that decode the pixels and still need a camera's
+     * orientation tag (App\Service\Processing\SchwarzweissFallback).
+     */
+    public static function mitOrientierung(string $jpeg, int $orientierung): string
+    {
+        return "\xFF\xD8" . self::exifApp1($orientierung, true) . substr($jpeg, 2);
+    }
+
     private static function sof0(int $breite, int $hoehe, int $komponenten): string
     {
         $daten = chr(8) . pack('n', $hoehe) . pack('n', $breite) . chr($komponenten);

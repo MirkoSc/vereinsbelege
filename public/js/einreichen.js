@@ -3,6 +3,14 @@
 // it off. Built on public/js/upload.js (the chunk upload) and
 // public/js/iban.js (the client-side IBAN check); loaded after both.
 //
+// Since issue #34/M5-4 with the scanner (public/js/scanner/scanner.js and
+// kamera.js, loaded before this file): the live camera where the browser
+// allows it, and the corner editor for every image - each image page then
+// uploads the original and the processed version. A browser that cannot
+// process uploads the original only; the server's GD fallback takes over.
+// Both scanner files are optional here: /app/belege/neu loads this file for
+// its page helpers too.
+//
 // Its own file rather than an inline script: the CSP is script-src 'self'
 // without 'unsafe-inline', no on*-attributes (CLAUDE.md section 4). The form
 // token comes from a data-* attribute on #einreichen, the same pattern
@@ -42,12 +50,24 @@ function istHeic(datei) {
     return typ === 'image/heic' || typ === 'image/heif' || /\.hei[cf]$/i.test(name);
 }
 
+/**
+ * The processed version of every page, parallel to the originals
+ * (`aufbereitet` of POST /einreichen and of each receipt of POST
+ * /app/belege/neu, issue #34/M5-4): null where the page has none.
+ */
+function aufbereitetListe(seiten) {
+    return seiten.map(function (seite) {
+        return seite.aufbereitetId === undefined || seite.aufbereitetId === null ? null : seite.aufbereitetId;
+    });
+}
+
 /** The JSON body of POST /einreichen. */
 function einreichenNutzlast(seiten, angaben) {
     return {
         blobs: seiten.map(function (seite) {
             return seite.blobId;
         }),
+        aufbereitet: aufbereitetListe(seiten),
         name: angaben.name,
         email: angaben.email,
         erstattung: angaben.erstattung,
@@ -181,10 +201,33 @@ function initEinreichen() {
     const erfolgsBlock = wurzel.querySelector('#einreichen-erfolg');
     const referenzText = wurzel.querySelector('#einreichen-referenz');
     const neuKnopf = wurzel.querySelector('#einreichen-neu');
+    const scanHinweis = wurzel.querySelector('#einreichen-scan-hinweis');
+    const scannerDialog = document.getElementById('scanner-dialog');
+    const kameraDialog = document.getElementById('kamera-dialog');
+
+    // The scanner (issue #34/M5-4): the corner editor for every image, and
+    // the live camera, each only where this browser can do it.
+    const kannScan = typeof kannScannen === 'function' && kannScannen(window) && scannerDialog !== null;
+    const kannKamera = typeof kameraVerfuegbar === 'function' && kameraVerfuegbar(window)
+        && kameraDialog !== null && typeof kameraDialog.showModal === 'function';
 
     let seiten = [];
     let naechsteId = 1;
     let gezogenId = null;
+    // One corner editor at a time: several images chosen at once are
+    // cropped one after the other.
+    let editorKette = Promise.resolve();
+
+    function inEditorReihe(aufgabe) {
+        const lauf = editorKette.then(aufgabe);
+        editorKette = lauf.catch(function () {});
+
+        return lauf;
+    }
+
+    async function hochladenMitPow(datei) {
+        return seiteHochladen(datei, { token: token, headers: await powHeader() });
+    }
 
     function zeigeUploadFehler(text) {
         uploadFehler.textContent = text;
@@ -209,11 +252,60 @@ function initEinreichen() {
     }
 
     function seitenText(seite, index) {
+        if (seite.status === 'scan') {
+            return 'Wird zugeschnitten …';
+        }
         if (seite.status === 'laedt') {
             return 'Wird hochgeladen …';
         }
 
         return seite.status === 'fehler' ? seite.fehler || 'Fehlgeschlagen' : 'Seite ' + (index + 1);
+    }
+
+    function vorschauFreigeben(seite) {
+        if (seite.vorschauUrl !== null && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+            URL.revokeObjectURL(seite.vorschauUrl);
+        }
+    }
+
+    function scanHinweisAktualisieren() {
+        if (scanHinweis !== null) {
+            scanHinweis.hidden = !seiten.some(function (seite) {
+                return seite.serverFallback;
+            });
+        }
+    }
+
+    /** "Zuschneiden": the corner editor again, on the kept original; replaces the processed version. */
+    async function neuZuschneiden(seite) {
+        let datei;
+        try {
+            datei = await inEditorReihe(function () {
+                return scannerOeffnen(scannerDialog, seite.datei);
+            });
+        } catch (problem) {
+            zeigeUploadFehler('Das Bild konnte nicht aufbereitet werden.');
+
+            return;
+        }
+        if (datei === null) {
+            return;
+        }
+
+        seite.status = 'laedt';
+        renderSeiten();
+        try {
+            const ergebnis = await hochladenMitPow(datei);
+            vorschauFreigeben(seite);
+            seite.vorschauUrl = URL.createObjectURL(datei);
+            seite.aufbereitetId = ergebnis.blob_id;
+            seite.serverFallback = false;
+        } catch (problem) {
+            // The previous version stays valid; the new one did not arrive.
+            zeigeUploadFehler(problem.message);
+        }
+        seite.status = 'fertig';
+        renderSeiten();
     }
 
     function seitenKarte(seite, index) {
@@ -270,9 +362,7 @@ function initEinreichen() {
         entfernen.setAttribute('aria-label', 'Seite entfernen');
         entfernen.textContent = '✕';
         entfernen.addEventListener('click', function () {
-            if (seite.vorschauUrl !== null && typeof URL !== 'undefined' && URL.revokeObjectURL) {
-                URL.revokeObjectURL(seite.vorschauUrl);
-            }
+            vorschauFreigeben(seite);
             seiten = seitenEntfernen(seiten, seite.id);
             renderSeiten();
         });
@@ -281,6 +371,17 @@ function initEinreichen() {
         knopfreihe.appendChild(runter);
         knopfreihe.appendChild(entfernen);
         li.appendChild(knopfreihe);
+
+        if (kannScan && seite.datei && seite.status === 'fertig') {
+            const zuschneiden = document.createElement('button');
+            zuschneiden.type = 'button';
+            zuschneiden.className = 'knopf knopf-still einreichen-seite-zuschneiden';
+            zuschneiden.textContent = 'Zuschneiden';
+            zuschneiden.addEventListener('click', function () {
+                neuZuschneiden(seite);
+            });
+            li.appendChild(zuschneiden);
+        }
 
         // Pointer-Drag zusätzlich zu den Knöpfen oben (Tastatur, kleine
         // Bildschirme): HTML5 drag and drop, keine on*-Attribute (CSP).
@@ -320,6 +421,7 @@ function initEinreichen() {
         seiten.forEach(function (seite, index) {
             seitenListe.appendChild(seitenKarte(seite, index));
         });
+        scanHinweisAktualisieren();
     }
 
     async function dateiHinzufuegen(datei) {
@@ -341,10 +443,15 @@ function initEinreichen() {
 
         zeigeUploadFehler('');
         const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0;
+        const scanbar = typeof istScanbar === 'function' && istScanbar(datei);
         const seite = {
             id: 'seite-' + naechsteId++,
-            status: 'laedt',
+            status: kannScan && scanbar ? 'scan' : 'laedt',
             blobId: null,
+            aufbereitetId: null,
+            // The original stays in memory for "Zuschneiden".
+            datei: scanbar ? datei : null,
+            serverFallback: false,
             fehler: null,
             vorschauUrl: kannVorschau ? URL.createObjectURL(datei) : null,
         };
@@ -352,9 +459,37 @@ function initEinreichen() {
         renderSeiten();
 
         try {
-            const ergebnis = await seiteHochladen(datei, { token: token, headers: await powHeader() });
+            const ergebnis = await seiteVerarbeiten(datei, {
+                kann: kannScan,
+                aufbereiten: function (bild) {
+                    return inEditorReihe(function () {
+                        return scannerOeffnen(scannerDialog, bild);
+                    });
+                },
+                hochladen: function (teil) {
+                    if (seite.status === 'scan') {
+                        seite.status = 'laedt';
+                        renderSeiten();
+                    }
+
+                    return hochladenMitPow(teil);
+                },
+            });
+            if (ergebnis.abgebrochen) {
+                vorschauFreigeben(seite);
+                seiten = seitenEntfernen(seiten, seite.id);
+                renderSeiten();
+
+                return;
+            }
             seite.status = 'fertig';
-            seite.blobId = ergebnis.blob_id;
+            seite.blobId = ergebnis.blobId;
+            seite.aufbereitetId = ergebnis.aufbereitetId;
+            seite.serverFallback = ergebnis.serverFallback;
+            if (ergebnis.aufbereitet !== null) {
+                vorschauFreigeben(seite);
+                seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
+            }
         } catch (problem) {
             seite.status = 'fehler';
             seite.fehler = problem.message;
@@ -365,6 +500,21 @@ function initEinreichen() {
     function dateienVerarbeiten(dateien) {
         Array.prototype.slice.call(dateien || []).forEach(function (datei) {
             dateiHinzufuegen(datei);
+        });
+    }
+
+    // Live camera instead of the system camera where it works; the dialog
+    // keeps the system camera as "Kamera-App verwenden".
+    const kameraKnopf = wurzel.querySelector('#einreichen-kamera');
+    const fotoFeld = wurzel.querySelector('#einreichen-foto');
+    if (kannKamera && kameraKnopf !== null && fotoFeld !== null) {
+        kameraKnopf.hidden = false;
+        fotoFeld.closest('label').hidden = true;
+        kameraKnopf.addEventListener('click', async function () {
+            const foto = await kameraOeffnen(kameraDialog);
+            if (foto !== null) {
+                dateiHinzufuegen(foto);
+            }
         });
     }
 
@@ -479,5 +629,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
+    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, aufbereitetListe, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
 }

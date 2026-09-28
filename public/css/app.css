@@ -964,6 +964,75 @@ textarea[aria-invalid="true"] {
     pointer-events: none;
 }
 
+/* --- Scanner-Dialoge (Issue #34/M5-4) ---
+   Eck-Editor und Live-Kamera als <dialog> (app/views/partials/
+   scanner-dialog.php, kamera-dialog.php): auf dem Handy bildschirmfüllend,
+   damit die Griffe (--tippflaeche) Platz haben, ab Tablet-Breite ein
+   zentriertes Fenster. */
+.scanner-dialog {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    margin: 0;
+    padding: var(--abstand-4);
+    overflow-y: auto;
+    color: var(--farbe-text);
+    background: var(--farbe-flaeche);
+    border: 0;
+}
+
+.scanner-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.scanner-dialog h2 {
+    margin-top: 0;
+}
+
+@media (min-width: 48rem) {
+    .scanner-dialog {
+        width: min(46rem, 100% - 2 * var(--abstand-5));
+        height: auto;
+        max-height: calc(100% - 2 * var(--abstand-5));
+        margin: auto;
+        border: 1px solid var(--farbe-rand);
+        border-radius: var(--radius-gross);
+    }
+}
+
+/* Video und Rahmen liegen übereinander; der Rahmen wird von
+   public/js/scanner/kamera.js (rahmenGeometrie) in Pixeln platziert. */
+.kamera-buehne {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.kamera-video {
+    display: block;
+    width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+}
+
+.kamera-rahmen {
+    position: absolute;
+    border: 3px dashed #ffffff;
+    border-radius: var(--radius);
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+}
+
+/* Knopf „Zuschneiden“ unter einer Seiten-Karte (public/js/einreichen.js,
+   public/js/erfassen.js) - volle Kartenbreite, damit er bei 360 px
+   genauso groß zu treffen ist wie die ↑/↓/✕-Knöpfe. */
+.einreichen-seite-zuschneiden {
+    width: 100%;
+}
+
 #eck-editor-ergebnis img {
     display: block;
     max-width: 100%;

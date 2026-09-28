@@ -49,8 +49,8 @@ hochgeladen wurde. Nicht abgesendete Uploads räumt
 `App\Service\Cron\SubmissionUploadCleanupTask` nach 24 h ab (wie
 Abschnitt 4). Foto/Bild/PDF kommen über `<input capture>` bzw.
 `<input type=file multiple>` (public/js/einreichen.js), Reihenfolge per
-Pointer-Drag **und** ↑/↓-Knöpfen; Kamera-Live-Vorschau mit Rahmen-Overlay ist
-Backlog M5 (Scanner). Referenznummer `R-<Jahr>-<laufende Nummer>`,
+Pointer-Drag **und** ↑/↓-Knöpfen; Kamera-Live-Vorschau mit Rahmen-Overlay kam
+mit M5-4 (unten). Referenznummer `R-<Jahr>-<laufende Nummer>`,
 Bestätigungsmail nur mit der Referenz
 (`Mailer::reiheEinreichungsbestaetigungEin()`), Prüfung serverseitig mit
 Feld-Fehlern je Angabe.
@@ -114,6 +114,40 @@ einmal; nach dem Commit werden genau diese Zeilen gelöscht, wieder entfernte
 Seiten räumt `SubmissionUploadCleanupTask` nach 24 h mit ihrem Blob ab.
 `submission.form_hash` je Beleg = `sha256("intern-beleg|" . obiger Hash . "|" .
 erste Blob-ID)` – ein wiederholter Request liefert dieselben Referenzen.
+
+**Stand M5-4** (issue #34): Scanner in beiden Erfassungen.
+„Foto aufnehmen“ öffnet die **Live-Kamera** (`public/js/scanner/kamera.js`,
+`app/views/partials/kamera-dialog.php`: `getUserMedia` mit Rückkamera als
+`ideal`, A4-Rahmen als Ausrichthilfe, das ganze Kamerabild wird das Original),
+wo der Browser sie erlaubt (sicherer Kontext). Sonst, oder nach
+verweigertem Zugriff über „Kamera-App verwenden“ im Dialog, bleibt es beim
+`<input capture>`. Der Videostrom läuft über `srcObject`, die CSP bleibt
+unverändert. Jede Bildseite (JPEG/PNG, nie PDF) lädt **Original und
+aufbereitete Fassung** hoch (zwei Uploads über dieselben Routen). Die
+Nutzlast trägt neben `blobs` die parallele Liste `aufbereitet: [id|null, …]`,
+intern je Beleg:
+`App\Service\Submission\Seitenliste::aufbereitungLesen()`.
+- Das Feld ist optional, alte Clients funktionieren weiter.
+- Die Länge muss zu den Seiten passen.
+- Keine ID darf doppelt vorkommen oder zugleich ein Original sein.
+- Jede ID muss wie die Originale unter demselben Token bzw. Seitenaufruf
+  hochgeladen sein.
+- Das Größenlimit der öffentlichen Einreichung zählt beide Fassungen.
+- Beim Absenden werden **nur die beanspruchten** `submission_upload`-Zeilen
+  gelöscht (öffentlich wie intern). Durch „Zuschneiden“ abgelöste Fassungen
+  und entfernte Seiten räumt `SubmissionUploadCleanupTask` mit ihrem Blob
+  ab, statt sie zu verwaisen.
+
+Bedienung:
+- `/einreichen` öffnet den Eck-Editor nach jedem Bild. Mehrere Bilder kommen
+  nacheinander dran, „Abbrechen“ verwirft die Seite.
+- `/app/belege/neu` bereitet **automatisch** auf: erkannte Ecken, sonst das
+  ganze Bild, dazu Schwarzweiß. Ein Durchgang kann 50 Belege haben.
+- Beide Seiten bieten je Bildseite „Zuschneiden“ (Editor auf dem im Browser
+  gehaltenen Original; die neue Fassung ersetzt die alte) und intern je
+  Karte „Seite fotografieren“.
+- Der Posteingang zeigt die aufbereitete Fassung mit „Original öffnen“
+  (`Posteingang::seiten()`, `Document::blobIds()` enthält beide).
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -211,8 +245,7 @@ die reine Vierecks-Logik (u. a. eine helle Linie neben dem Beleg, eine
 gedruckte Linie innerhalb, eine ~30°-Drehung) laufen mit synthetischen
 Bildern unter `tests/js/scanner-kanten.test.js`.
 
-Noch offen (spätere M5-Issues): Einbau in Einreichung/Erfassung +
-GD-Fallback (M5-4); außerdem ≥ 20 weitere anonymisierte Belegfotos als
+Noch offen: ≥ 20 weitere anonymisierte Belegfotos als
 committete Fixtures für eine reproduzierbare Trefferquoten-Messung in der
 CI und der abschließende Entscheid zu E-03 (Folge-Issue).
 
@@ -254,8 +287,45 @@ einbaut, statt einer separaten Seiten-Glue-Datei):
 
 Demo/Testseite: `/admin/designsystem` („Eck-Editor (Scanner)", Abschnitt
 `admin.designsystem` – Bild bleibt im Browser, nichts wird hochgeladen),
-über `public/js/designsystem.js`. Einbau in `/einreichen` und die interne
-Erfassung folgt in M5-4.
+über `public/js/designsystem.js`. Die Bühne nimmt höchstens 60 % der
+Fensterhöhe ein (seit M5-4, damit „Übernehmen“ im Dialog erreichbar
+bleibt).
+
+### Einbau und Fallbacks (M5-4)
+
+`public/js/scanner/scanner.js` verbindet Datei, Editor und Upload. Die
+Skriptreihenfolge aller Scanner-Seiten steht in `App\View\ScannerSkripte`.
+- `kannScannen(window)` verlangt `createImageBitmap`, `ImageData`,
+  `canvas.toBlob` und `<dialog>`.
+- `istScanbar()` gilt für JPEG/PNG.
+- `startEcken()`: erkannte Ecken; ohne Treffer interaktiv den
+  Standardrahmen, automatisch das ganze Bild (blind zuschneiden würde den
+  Beleg anschneiden).
+- `seiteVerarbeiten()`: erst aufbereiten, dann Original, dann Fassung
+  hochladen; ein Abbruch lädt nichts hoch.
+- `scannerOeffnen()`: ein `<dialog>` je Seite
+  (`app/views/partials/scanner-dialog.php`). Er wird je Bild neu gebunden,
+  weil die Farbmodus-Radios des Editors einen festen Namen tragen.
+- `automatischAufbereiten()`.
+- `createImageBitmap(…, {imageOrientation: 'from-image'})` richtet
+  Handyfotos nach EXIF auf. Ausgabe JPEG 0.85, max. 2480 px (`zielgroesse`).
+
+Kann der Browser nicht (Fähigkeit fehlt oder die Aufbereitung scheitert an
+einem Bild, z. B. Speicher), geht **nur das Original** hoch
+(`aufbereitet: null`), mit einem Hinweis auf der Seite. Den Rest erledigt
+der **Server-Fallback** in `pdf_erzeugen` (Abschnitt 3):
+`App\Service\Processing\SchwarzweissFallback` (rein, GD).
+1. Pixel-Obergrenze vor dem Dekodieren.
+2. PNG → `PngZuJpeg`.
+3. EXIF-Drehung auf die Pixel anwenden (GD verwirft EXIF).
+4. Verkleinern auf 2480 px lange Kante.
+5. `IMG_FILTER_GRAYSCALE`.
+6. **Globale Otsu-Schwelle** aus dem Histogramm. Nicht fest 128, damit ein
+   dunkles Foto nicht schwarz wird.
+7. JPEG 85.
+
+Kein Entzerren, keine adaptive Schwelle – das bleibt dem Browser. Eine
+A4-Seite braucht so in PHP unter 1 s.
 
 ## 3. PDF-Erzeugung und PDF-Eingang
 
@@ -279,6 +349,17 @@ Erfassung folgt in M5-4.
   gelesen (Lieferant, USt-ID, IBAN, Rechnungsnr., Beträge, Steuern). KI nur
   für Kategorie/Zweck. Bibliothek prüfen (horstoeko/zugferd o. ä.) oder
   schmaler eigener Parser für die benötigten Felder.
+
+**Stand M5-4** (issue #34): `pdf_erzeugen` baut das PDF je Seite aus der
+aufbereiteten Fassung des Browsers (`document.processed_blob_ids`,
+unverändert eingebettet, mehrere in einem Aufruf). Sie wird nur genommen,
+wenn sie laut Blob-Metadaten ein JPEG ist – das lässt sich erst hier mit
+entsperrtem Tresor prüfen, sonst gilt die Seite als nicht aufbereitet. Ohne
+Fassung läuft das Original durch den GD-Fallback (Abschnitt 2, höchstens
+eine Seite je Aufruf). Dessen JPEG ist ein Zwischenblob und wird nach dem
+PDF gelöscht; Originale und Browser-Fassungen werden nie gelöscht (E-10).
+Damit wird auch eine nicht aufbereitete JPEG-Seite nicht mehr unverändert
+eingebettet (bis M5-4 der Fall), sondern schwarzweiß.
 
 **Stand M4-4** (issue #26): Aus reinen Bildbelegen (JPEG/PNG) erzeugt der Job
 `pdf_erzeugen` (Abschnitt 5) die Arbeitsfassung; ein einzeln eingereichtes PDF
@@ -449,8 +530,9 @@ in einem Lauf ab, nicht eines je Datei.
   **nacheinander**, abschließen; bei einem Fehler wird der Upload sofort
   abgebrochen. `fetch` ist injizierbar, damit `node --test` den ganzen Ablauf
   ohne DOM und ohne Netz prüft. Oberflächen: `/einreichen` (M4-2, eigene
-  Routen) und `/app/belege/neu` (M4-6, `public/js/erfassen.js`); der Scanner
-  folgt mit M5.
+  Routen) und `/app/belege/neu` (M4-6, `public/js/erfassen.js`); seit M5-4
+  lädt jede Bildseite dort Original und aufbereitete Fassung als zwei
+  Uploads hoch (Abschnitt 1).
 
 **Pflicht-Tests (Upload):** `MagicBytesTest` (die drei erlaubten Typen, ZIP/
 ELF/HTML/Text/GIF/HEIC/leer/zu kurz abgelehnt, PDF-Kopf mit Versatz
@@ -617,7 +699,18 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
 Viereck-Auswahl); Eck-Editor (Standardrahmen, Anzeige-/Bildkoordinaten-
 Umrechnung, Eckpunkt-Verschieben mit Ablehnung entarteter Vierecke,
-Farbmodus-Anwendung je Modus); Upload-Chunks (Reihenfolge, fehlende Chunks,
+Farbmodus-Anwendung je Modus); Scanner-Einbau (`tests/js/scanner.test.js`:
+Fähigkeitsprüfung, Startecken, Upload-Reihenfolge Original → Fassung, Abbruch
+ohne Upload, Fallback nur mit Original; `tests/js/kamera.test.js`:
+Verfügbarkeit nur im sicheren Kontext, Rahmen A4 innerhalb des Videos,
+Fehlertexte); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
+dunkles Foto nicht schwarz, lange Kante gedeckelt, EXIF-Drehung,
+PNG-Transparenz, Pixel-Obergrenze); Original + aufbereitete Fassung
+(`PdfErzeugungTest`: Fassung unverändert eingebettet, Originale
+byte-identisch, Nicht-JPEG-Fassung → Fallback; `PublicSubmissionTest`/
+`InterneErfassungTest`: parallele Liste gespeichert, falsche Länge/fremde
+Herkunft/Kollision abgelehnt, abgelöste Fassung bleibt für den Cron;
+`InboxFlowTest`: beide Fassungen ausgeliefert); Upload-Chunks (Reihenfolge, fehlende Chunks,
 Magic-Byte-Ablehnung, Größenlimit); IBAN-Validierung; PDF-Erzeugung (Seitenzahl =
 Bildzahl, gültiges PDF); PDF-Rasterung (vollständiger Lauf über eine und
 mehrere Quellen, Idempotenz eines wiederholten Uploads, Sperre und

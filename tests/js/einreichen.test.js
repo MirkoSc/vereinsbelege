@@ -9,6 +9,7 @@ const {
     seitenVerschieben,
     seitenEntfernen,
     istHeic,
+    aufbereitetListe,
     einreichenNutzlast,
     powLoesen,
     seiteHochladen,
@@ -64,6 +65,7 @@ test('the submit payload carries only blob ids, in page order', () => {
 
     assert.deepEqual(einreichenNutzlast(seiten, angaben), {
         blobs: [3, 1],
+        aufbereitet: [null, null],
         name: 'Max Muster',
         email: null,
         erstattung: 'keine',
@@ -74,6 +76,24 @@ test('the submit payload carries only blob ids, in page order', () => {
         datenschutz: true,
         webseite: '',
     });
+});
+
+test('the processed versions travel parallel to the originals, null where a page has none (issue #34/M5-4)', () => {
+    const seiten = [
+        { id: 'a', blobId: 3, aufbereitetId: 7 },
+        { id: 'b', blobId: 4, aufbereitetId: null },
+        { id: 'c', blobId: 5 },
+    ];
+    const angaben = {
+        name: 'Max', email: null, erstattung: 'keine', iban: null, kontoinhaber: null,
+        freitext: 'x', kostenstelle: null, datenschutz: true, webseite: '',
+    };
+
+    const nutzlast = einreichenNutzlast(seiten, angaben);
+
+    assert.deepEqual(nutzlast.blobs, [3, 4, 5]);
+    assert.deepEqual(nutzlast.aufbereitet, [7, null, null]);
+    assert.deepEqual(aufbereitetListe([]), []);
 });
 
 test('the honeypot travels through the payload unchanged (issue #25/M4-3)', () => {

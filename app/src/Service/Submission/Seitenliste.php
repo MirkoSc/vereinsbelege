@@ -44,4 +44,48 @@ final class Seitenliste
 
         return [$blobIds, null];
     }
+
+    /**
+     * Reads the optional list of processed pages (issue #34/M5-4): parallel
+     * to the originals $originale, one entry per page - the blob id of the
+     * scanner's processed version, or null where the page came without one.
+     * A missing or null field means no page was processed (a browser that
+     * could not, or a client from before the scanner). A processed id may
+     * neither repeat nor be one of the originals.
+     *
+     * @param list<int> $originale
+     * @return array{0: list<int|null>, 1: ?string} one entry per original,
+     *         or an empty list and the German message saying what is wrong
+     */
+    public static function aufbereitungLesen(mixed $eingabe, array $originale): array
+    {
+        if ($eingabe === null) {
+            return [array_fill(0, count($originale), null), null];
+        }
+
+        if (!is_array($eingabe) || !array_is_list($eingabe) || count($eingabe) !== count($originale)) {
+            return [[], 'Die aufbereiteten Seiten passen nicht zu den Seiten. Bitte erneut hochladen.'];
+        }
+
+        $blobIds = [];
+        foreach ($eingabe as $wert) {
+            if ($wert === null) {
+                $blobIds[] = null;
+                continue;
+            }
+            $blobId = is_int($wert) ? $wert : (is_string($wert) && ctype_digit($wert) ? (int) $wert : null);
+            if ($blobId === null || $blobId < 1) {
+                return [[], 'Eine Seite ist ungültig. Bitte erneut hochladen.'];
+            }
+
+            $blobIds[] = $blobId;
+        }
+
+        $gesetzt = array_values(array_filter($blobIds, is_int(...)));
+        if (count(array_unique($gesetzt)) !== count($gesetzt) || array_intersect($gesetzt, $originale) !== []) {
+            return [[], 'Eine Seite wurde doppelt eingereicht.'];
+        }
+
+        return [$blobIds, null];
+    }
 }

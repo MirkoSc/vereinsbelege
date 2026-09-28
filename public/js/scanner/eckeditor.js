@@ -241,6 +241,8 @@ function ergebnisErzeugen(bild, ecken, modus, optionen) {
 // `kantenErkennen()`, or `standardRahmen()` when that returned `null`).
 
 const LUPE_ZOOM = 2.5;
+/** Share of the window height the stage may take at most. */
+const EDITOR_HOEHE = 0.6;
 const LUPE_GROESSE = 120;
 
 /**
@@ -333,7 +335,11 @@ function eckEditorBinden(wurzel, quelle, ecken) {
         // that fixed value instead of the container's actual current space
         // (e.g. after a phone rotation).
         const maxBreite = wurzel.clientWidth || bildB;
-        skala = anzeigeSkala(bildB, bildH, maxBreite, maxBreite * (bildH / bildB));
+        // At most EDITOR_HOEHE of the window's height (issue #34/M5-4): in
+        // the capture dialogs a tall receipt would otherwise push the
+        // "Übernehmen" button out of view.
+        const maxHoehe = Math.min(maxBreite * (bildH / bildB), (window.innerHeight || bildH) * EDITOR_HOEHE);
+        skala = anzeigeSkala(bildB, bildH, maxBreite, maxHoehe);
         const anzeigeBreite = Math.round(bildB * skala);
         const anzeigeHoehe = Math.round(bildH * skala);
 

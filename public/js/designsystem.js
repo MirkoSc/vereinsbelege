@@ -2,25 +2,17 @@
 // (docs/spec/03-erfassung-und-ki.md section 2, issue #33/M5-3): loads a
 // locally chosen test image, runs edge detection (M5-2) on it and binds the
 // corner editor (public/js/scanner/eckeditor.js). Only exercised on this
-// page - the chosen file never leaves the browser. Wiring the editor into
-// /einreichen and the internal capture is M5-4.
+// page - the chosen file never leaves the browser. /einreichen and the
+// internal capture use the same editor through public/js/scanner/scanner.js
+// (M5-4).
 //
 // Its own file rather than an inline script: the CSP is script-src 'self'
 // without 'unsafe-inline' (CLAUDE.md section 4). Loaded after every
 // public/js/scanner/ file, so kantenErkennen(), standardRahmen(),
-// eckEditorBinden() and ergebnisErzeugen() are already global functions
-// here (classic scripts share one scope, like the rest of public/js/).
-
-/** The chosen file's pixels as the { width, height, data } shape the scanner module functions expect. */
-function bildAusBitmap(bitmap) {
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext('2d');
-    context.drawImage(bitmap, 0, 0);
-
-    return context.getImageData(0, 0, bitmap.width, bitmap.height);
-}
+// eckEditorBinden(), ergebnisErzeugen() and bildAusBitmap() (scanner.js,
+// shared with the capture pages since issue #34/M5-4) are already global
+// functions here (classic scripts share one scope, like the rest of
+// public/js/).
 
 function initDesignsystemEckEditor() {
     const dateiEingabe = document.getElementById('eck-editor-datei');

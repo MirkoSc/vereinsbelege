@@ -115,28 +115,44 @@ final readonly class Posteingang
 
     /**
      * The pages of a document for the preview, in upload order, then the
-     * working PDF if it is a file of its own.
+     * working PDF if it is a file of its own. A page the scanner processed
+     * (issue #34/M5-4) shows its processed version, with `originalId`
+     * pointing at the untouched original (decision E-10); otherwise
+     * `originalId` is null and `blobId` is the original itself.
      *
-     * @return list<array{blobId: int, mime: string, seite: int, pdf: bool}>
+     * @return list<array{blobId: int, mime: string, seite: int, pdf: bool, originalId: ?int}>
      */
     public function seiten(Document $document, Vault $vault): array
     {
         $seiten = [];
-        foreach ($document->blobIds() as $nummer => $blobId) {
-            $blob = $this->blobs->find($blobId);
-            $meta = $blob === null ? null : $this->meta($blob, $vault);
-            if ($meta === null) {
-                continue;
+        foreach ($document->originalBlobIds as $index => $originalId) {
+            $original = $this->blobMeta($originalId, $vault);
+            $verarbeitetId = $document->processedBlobId($index);
+            $verarbeitet = $verarbeitetId === null ? null : $this->blobMeta($verarbeitetId, $vault);
+
+            if ($verarbeitetId !== null && $verarbeitet !== null && $verarbeitet->mimeType === MagicBytes::JPEG) {
+                $seiten[] = ['blobId' => $verarbeitetId, 'mime' => $verarbeitet->mimeType, 'seite' => $index + 1, 'pdf' => false, 'originalId' => $originalId];
+            } elseif ($original !== null) {
+                $seiten[] = ['blobId' => $originalId, 'mime' => $original->mimeType, 'seite' => $index + 1, 'pdf' => false, 'originalId' => null];
             }
-            $seiten[] = [
-                'blobId' => $blobId,
-                'mime' => $meta->mimeType,
-                'seite' => $nummer + 1,
-                'pdf' => $blobId === $document->pdfBlobId && !in_array($blobId, $document->originalBlobIds, true),
-            ];
+        }
+
+        $pdfId = $document->pdfBlobId;
+        if ($pdfId !== null && !in_array($pdfId, $document->originalBlobIds, true)) {
+            $pdf = $this->blobMeta($pdfId, $vault);
+            if ($pdf !== null) {
+                $seiten[] = ['blobId' => $pdfId, 'mime' => $pdf->mimeType, 'seite' => count($document->originalBlobIds) + 1, 'pdf' => true, 'originalId' => null];
+            }
         }
 
         return $seiten;
+    }
+
+    private function blobMeta(int $blobId, Vault $vault): ?BlobMeta
+    {
+        $blob = $this->blobs->find($blobId);
+
+        return $blob === null ? null : $this->meta($blob, $vault);
     }
 
     /**

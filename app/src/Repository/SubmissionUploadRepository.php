@@ -50,18 +50,12 @@ final readonly class SubmissionUploadRepository
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
     }
 
-    /** Called once a submission has claimed every blob it needs. */
-    public function deleteForFormHash(string $formHash): void
-    {
-        $stmt = $this->pdo->prepare('DELETE FROM submission_upload WHERE form_hash = ?');
-        $stmt->bindValue(1, $formHash, \PDO::PARAM_LOB);
-        $stmt->execute();
-    }
-
     /**
-     * Releases exactly the blobs a capture claimed (issue #28/M4-6): pages
-     * the person uploaded and removed again stay behind for the cron, which
-     * deletes them with their blob - deleteForFormHash() would orphan them.
+     * Releases exactly the blobs a submission or capture claimed (issue
+     * #28/M4-6, for the public submission since #34/M5-4): pages the person
+     * uploaded and removed again, and scans superseded by a new crop, stay
+     * behind for the cron, which deletes them with their blob - deleting
+     * every row of the form hash would orphan those blobs.
      *
      * @param list<int> $blobIds
      */

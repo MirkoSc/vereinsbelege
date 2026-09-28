@@ -63,10 +63,27 @@ test('the body carries every receipt with its pages in order and optional fields
     assert.deepEqual(nutzlast, {
         erfassung: 'ab'.repeat(16),
         belege: [
-            { blobs: [11, 12], freitext: '', kostenstelle: null, erstattung: null, iban: null, kontoinhaber: null },
-            { blobs: [13], freitext: 'Trikots', kostenstelle: '3', erstattung: 'ueberweisung', iban: 'DE89370400440532013000', kontoinhaber: 'Erika' },
+            { blobs: [11, 12], aufbereitet: [null, null], freitext: '', kostenstelle: null, erstattung: null, iban: null, kontoinhaber: null },
+            { blobs: [13], aufbereitet: [null], freitext: 'Trikots', kostenstelle: '3', erstattung: 'ueberweisung', iban: 'DE89370400440532013000', kontoinhaber: 'Erika' },
         ],
     });
+});
+
+test('each receipt carries its processed versions parallel to its pages (issue #34/M5-4)', () => {
+    const belege = [
+        { id: 'a', seiten: [Object.assign(fertig('s1', 11), { aufbereitetId: 21 }), fertig('s2', 12)] },
+        { id: 'b', seiten: [Object.assign(fertig('s3', 13), { aufbereitetId: 23 })] },
+    ];
+
+    const nutzlast = erfassenNutzlast('x', belege, [{}, {}]);
+
+    assert.deepEqual(nutzlast.belege[0].blobs, [11, 12]);
+    assert.deepEqual(nutzlast.belege[0].aufbereitet, [21, null]);
+    assert.deepEqual(nutzlast.belege[1].aufbereitet, [23]);
+});
+
+test('a page still being processed keeps the pass from being sent', () => {
+    assert.match(belegeBereit([{ id: 'a', seiten: [{ id: 's', status: 'scan' }] }]), /warten/);
 });
 
 test('bank details are only sent for a transfer', () => {

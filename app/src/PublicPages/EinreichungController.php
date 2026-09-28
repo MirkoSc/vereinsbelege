@@ -16,6 +16,7 @@ use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
 use App\Service\Submission\SubmissionService;
 use App\View\Area;
+use App\View\ScannerSkripte;
 use App\View\View;
 
 /**
@@ -66,7 +67,7 @@ final readonly class EinreichungController
             'pausiert' => $this->einstellungen->pausiert,
             'maxSeiten' => $this->einstellungen->maxSeiten,
             'maxDateiMb' => $this->einstellungen->maxDateiMb,
-            'scripts' => ['/js/upload.js', '/js/iban.js', '/js/einreichen.js'],
+            'scripts' => ['/js/upload.js', '/js/iban.js', ...ScannerSkripte::LISTE, '/js/einreichen.js'],
         ], Area::Oeffentlich));
     }
 
