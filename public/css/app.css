@@ -42,6 +42,18 @@
     --farbe-warnung-flaeche: #fbf1dd;
     --farbe-fehler-flaeche: #fbebea;
 
+    /* Palette der Kategorien (App\Domain\CategoryColor): eine feste
+       Auswahl statt freier Hex-Werte, weil die CSP keine Inline-Styles
+       erlaubt. Farbe ist nur Zusatz - der Name steht immer daneben. */
+    --farbe-kategorie-blau: #2f6fad;
+    --farbe-kategorie-gruen: #2e8b57;
+    --farbe-kategorie-tuerkis: #1b8a8f;
+    --farbe-kategorie-gelb: #c99a06;
+    --farbe-kategorie-orange: #d2691e;
+    --farbe-kategorie-rot: #b8322a;
+    --farbe-kategorie-lila: #7b4fa8;
+    --farbe-kategorie-grau: #6b7079;
+
     --abstand-1: 0.25rem;
     --abstand-2: 0.5rem;
     --abstand-3: 0.75rem;
@@ -87,6 +99,15 @@
         --farbe-info-flaeche: #17232f;
         --farbe-warnung-flaeche: #2b2415;
         --farbe-fehler-flaeche: #2e1c1a;
+
+        --farbe-kategorie-blau: #6fa8e6;
+        --farbe-kategorie-gruen: #5fc28a;
+        --farbe-kategorie-tuerkis: #4cc0c4;
+        --farbe-kategorie-gelb: #e6c24f;
+        --farbe-kategorie-orange: #eb9152;
+        --farbe-kategorie-rot: #ee7a72;
+        --farbe-kategorie-lila: #b08ade;
+        --farbe-kategorie-grau: #9aa0a8;
     }
 }
 
@@ -464,6 +485,58 @@ main.inhalt {
     color: var(--farbe-fehler);
     background: var(--farbe-fehler-flaeche);
     border-color: var(--farbe-fehler);
+}
+
+/* Farbpunkt einer Kategorie; steht immer neben ihrem Namen. */
+.farbpunkt {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-right: var(--abstand-2);
+    vertical-align: baseline;
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand-stark);
+    border-radius: 50%;
+}
+
+.farbpunkt-blau {
+    background: var(--farbe-kategorie-blau);
+    border-color: var(--farbe-kategorie-blau);
+}
+
+.farbpunkt-gruen {
+    background: var(--farbe-kategorie-gruen);
+    border-color: var(--farbe-kategorie-gruen);
+}
+
+.farbpunkt-tuerkis {
+    background: var(--farbe-kategorie-tuerkis);
+    border-color: var(--farbe-kategorie-tuerkis);
+}
+
+.farbpunkt-gelb {
+    background: var(--farbe-kategorie-gelb);
+    border-color: var(--farbe-kategorie-gelb);
+}
+
+.farbpunkt-orange {
+    background: var(--farbe-kategorie-orange);
+    border-color: var(--farbe-kategorie-orange);
+}
+
+.farbpunkt-rot {
+    background: var(--farbe-kategorie-rot);
+    border-color: var(--farbe-kategorie-rot);
+}
+
+.farbpunkt-lila {
+    background: var(--farbe-kategorie-lila);
+    border-color: var(--farbe-kategorie-lila);
+}
+
+.farbpunkt-grau {
+    background: var(--farbe-kategorie-grau);
+    border-color: var(--farbe-kategorie-grau);
 }
 
 /* --- Knöpfe --- */

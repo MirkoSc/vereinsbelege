@@ -187,7 +187,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `invoice` (fachlicher Beleg) | document_id, doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`), supplier_id NULL, invoice_date, due_date NULL, service_from/to NULL, category_id NULL, sphere NULL, cost_center_id NULL, recurring_series_id NULL, direction (`ausgabe`/`einnahme`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[], currency, purpose_short, notes, payment_hint}, number_bi | T |
 | `supplier` | dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number}, name_bi, iban_bi (Mehrfach → Tabelle `supplier_key`), default_category_id, default_sphere, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL | T |
 | `supplier_key` | supplier_id, kind (`name`/`iban`/`vat_id`/`creditor_id`/`mandate`), value_bi | – (nur BI) |
-| `category` | name, parent_id NULL, default_sphere, color, sort, active, ai_hint (Beschreibung für den Prompt) | – |
+| `category` | name UNIQUE, direction (`einnahme`/`ausgabe`/`beide`), parent_id NULL (FK `RESTRICT`), default_sphere NULL, color NULL (Schlüssel der Palette `App\Domain\CategoryColor`), sort (je Richtung), active, ai_hint (Beschreibung für den Prompt, max. 500 Zeichen) (Migration 017, M6-1; Pflege `/admin/kategorien`, Recht `admin.settings`, s. u. „Kategorien“) | – |
 | `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
 | `bank_account` | kind (`bank`/`kasse`), dek_sealed, data_enc {name, iban, bic, bank}, iban_bi, opening_balance_enc, active | T |
@@ -267,3 +267,37 @@ Fahrtkosten · Jugendarbeit · Übungsleiter & Ehrenamt · Büro & Verwaltung ·
 IT & Software · Bankgebühren · Werbung & Sponsoring · Ehrungen & Geschenke ·
 Sonstiges. Jede Kategorie hat ein `ai_hint`-Feld mit Beispielen
 („Rasendünger, Mäharbeiten, Sand, Linierfarbe" für Platzpflege).
+
+**Umsetzung (M6-1, issue #35, Migration 017):** Der Seed legt genau diese
+Liste an – jede Kategorie aktiv, mit `ai_hint` und einer Farbe. Pflege unter
+`/admin/kategorien` (`App\Admin\CategoryController`, Regeln in
+`App\Service\MasterData\CategoryService`, Recht `admin.settings` wie die
+Kostenstellen):
+
+- Die Liste ist nach Richtung gruppiert; ↑/↓ verschiebt **innerhalb** der
+  Richtung und normalisiert deren `sort` auf 10, 20, 30, … Eine neue oder in
+  eine andere Richtung verschobene Kategorie landet am Ende ihrer Gruppe.
+  Angeboten werden für eine Richtung die aktiven Kategorien dieser Richtung
+  plus `beide` (`CategoryRepository::active()`).
+- Farbe ist eine feste Palette (`App\Domain\CategoryColor`, CSS-Klassen
+  `.farbpunkt-<farbe>` mit Token für hell/dunkel), kein freier Hex-Wert: die
+  CSP erlaubt keine Inline-Styles (CLAUDE.md §4).
+- **Löschen nur ohne Verwendung, sonst deaktivieren.** Was als Verwendung
+  zählt, entscheidet allein `CategoryRepository::usageCount()` – heute nur
+  Unterkategorien (`parent_id`). Jede spätere Tabelle mit `category_id`
+  (`invoice`, `bank_transaction`, `supplier.default_category_id`,
+  `assignment_rule`) legt ihren Fremdschlüssel mit `ON DELETE RESTRICT` an
+  **und** zählt dort mit. Deaktivierte Kategorien werden nicht mehr
+  angeboten, bestehende Zuordnungen bleiben.
+- `parent_id` ist vorbereitet, Unterkategorien sind aber noch nicht pflegbar
+  (flache Liste). `default_sphere` bleibt NULL und unsichtbar, solange
+  `sphaeren_aktiv` aus ist (E-15).
+- Alles Klartext – Stammdaten, keine fachlichen Daten; die Kategorie-ID
+  filtert direkt in SQL.
+
+**Pflicht-Tests:** `CategoryAdminFlowTest` (Seed vollständig laut Liste,
+aktiv, mit KI-Hinweis und Farbe; Tabelle ohne `*_enc`/`dek_sealed`;
+Anlegen/Ändern/Verschieben je Richtung/Löschen mit Audit-Eintrag;
+Validierung; CSRF; verwendete Kategorie wird nicht gelöscht, lässt sich
+deaktivieren; der FK allein verweigert das Löschen; 404; 403 ohne
+`admin.settings`).

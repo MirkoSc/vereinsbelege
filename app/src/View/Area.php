@@ -86,7 +86,7 @@ enum Area: string
                 new NavItem('KI-Anbieter', meilenstein: 'M7', recht: Permission::AdminSettings),
                 new NavItem('Kostenstellen', '/admin/kostenstellen', recht: Permission::AdminSettings),
                 new NavItem('Einreichung', '/admin/einreichung', recht: Permission::AdminSettings),
-                new NavItem('Kategorien', meilenstein: 'M6', recht: Permission::AdminSettings),
+                new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),
                 new NavItem('Backup', meilenstein: 'M1', recht: Permission::AdminSystem),

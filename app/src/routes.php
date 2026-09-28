@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
@@ -116,6 +117,9 @@ use App\View\View;
  * @param \Closure(): RasterungController $rasterung built lazily, same
  *        reason as $mail: only claiming a task or storing a page needs the
  *        database (issue #30/M4-8).
+ * @param \Closure(): CategoryController $kategorien built lazily, same
+ *        reason as $mail: only the category pages need the database
+ *        (issue #35/M6-1).
  */
 return static function (
     Router $router,
@@ -144,6 +148,7 @@ return static function (
     \Closure $erfassung,
     \Closure $jobs,
     \Closure $rasterung,
+    \Closure $kategorien,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -499,6 +504,19 @@ return static function (
     $post('/admin/kostenstellen/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->loeschen($r, $params));
     $post('/admin/kostenstellen/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachOben($r, $params));
     $post('/admin/kostenstellen/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kostenstellen()->nachUnten($r, $params));
+
+    // Categories (02 "Kategorien", issue #35/M6-1): CRUD and reordering
+    // within a direction. Permission: `admin.settings`, the same right as
+    // Kostenstellen. CSRF on all writes; the rules live in
+    // App\Service\MasterData\CategoryService.
+    $get('/admin/kategorien', $einstellungen, static fn(Request $r) => $kategorien()->liste($r));
+    $get('/admin/kategorien/neu', $einstellungen, static fn(Request $r) => $kategorien()->neu($r));
+    $post('/admin/kategorien', $einstellungen, static fn(Request $r) => $kategorien()->anlegen($r));
+    $get('/admin/kategorien/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kategorien()->bearbeiten($r, $params));
+    $post('/admin/kategorien/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kategorien()->speichern($r, $params));
+    $post('/admin/kategorien/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kategorien()->loeschen($r, $params));
+    $post('/admin/kategorien/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachOben($r, $params));
+    $post('/admin/kategorien/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachUnten($r, $params));
 
     // Public submission's spam defence (01 §5, issue #25/M4-3): rate/size/
     // page limits and the pause switch. Permission: `admin.settings`, same
