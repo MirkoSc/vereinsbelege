@@ -52,6 +52,10 @@ enum AuditAction: string
     case KostenstelleGeaendert = 'kostenstelle.geaendert';
     case KostenstelleGeloescht = 'kostenstelle.geloescht';
 
+    case KategorieAngelegt = 'kategorie.angelegt';
+    case KategorieGeaendert = 'kategorie.geaendert';
+    case KategorieGeloescht = 'kategorie.geloescht';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -101,6 +105,9 @@ enum AuditAction: string
             self::KostenstelleAngelegt => 'Kostenstelle angelegt',
             self::KostenstelleGeaendert => 'Kostenstelle geändert',
             self::KostenstelleGeloescht => 'Kostenstelle gelöscht',
+            self::KategorieAngelegt => 'Kategorie angelegt',
+            self::KategorieGeaendert => 'Kategorie geändert',
+            self::KategorieGeloescht => 'Kategorie gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -134,6 +141,7 @@ enum AuditAction: string
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
+            self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle => 'document',
             self::LoginFehlgeschlagen,
@@ -153,6 +161,7 @@ enum AuditAction: string
             'trusted_device' => 'Gerät',
             'role' => 'Rolle',
             'cost_center' => 'Kostenstelle',
+            'category' => 'Kategorie',
             'document' => 'Beleg',
             default => $entity,
         };

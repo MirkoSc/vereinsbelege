@@ -46,6 +46,18 @@
         <span class="marke marke-fehler">KI fehlgeschlagen</span>
     </p>
 
+    <h3>Farbpunkte (Kategorien)</h3>
+    <p class="knopfreihe">
+        <?php foreach (\App\Domain\CategoryColor::cases() as $farbe): ?>
+            <span><span class="farbpunkt <?= e($farbe->cssKlasse()) ?>" aria-hidden="true"></span><?= e($farbe->label()) ?></span>
+        <?php endforeach; ?>
+        <span><span class="farbpunkt" aria-hidden="true"></span>Keine Farbe</span>
+    </p>
+    <p>
+        Eine feste Palette statt freier Farbwerte, weil die CSP keine Inline-Styles
+        erlaubt. Der Punkt ergänzt den Namen, er ersetzt ihn nie.
+    </p>
+
     <h3>Formular</h3>
     <?php /* GET auf die eigene Seite: das Muster soll nichts schreiben. */ ?>
     <form method="get" action="/admin/designsystem" class="formular">

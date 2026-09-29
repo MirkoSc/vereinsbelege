@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
@@ -40,6 +41,7 @@ use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
+use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
@@ -99,6 +101,7 @@ use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
+use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
@@ -421,6 +424,15 @@ $kostenstellen = static function () use ($connections, $view, $auditFor): CostCe
     $repository = new CostCenterRepository($pdo);
 
     return new CostCenterController($view, new Session(), $repository, new CostCenterService($repository), $auditFor($pdo));
+};
+
+// Categories (M6-1, issue #35): plaintext master data like cost centers -
+// only the category pages open the connection.
+$kategorien = static function () use ($connections, $view, $auditFor): CategoryController {
+    $pdo = $connections->pdo();
+    $repository = new CategoryRepository($pdo);
+
+    return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo));
 };
 
 // The public submission page itself (issue #24/M4-2): renders the form,
@@ -884,6 +896,7 @@ $router = new Router();
     $erfassungSeite,
     $jobsSeite,
     $rasterungSeite,
+    $kategorien,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

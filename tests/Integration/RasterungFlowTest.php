@@ -619,6 +619,7 @@ final class RasterungFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $rasterungController,
+            $unerreichbar,
         );
 
         return new Kernel(
