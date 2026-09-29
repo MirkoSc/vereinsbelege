@@ -25,6 +25,7 @@ use App\App\InvitationController;
 use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\SecurityController;
+use App\App\SupplierController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
 use App\Http\HttpMethod;
@@ -120,6 +121,9 @@ use App\View\View;
  * @param \Closure(): CategoryController $kategorien built lazily, same
  *        reason as $mail: only the category pages need the database
  *        (issue #35/M6-1).
+ * @param \Closure(): SupplierController $lieferanten built lazily, same
+ *        reason as $mail: only the supplier pages need the database
+ *        (issue #36/M6-2).
  */
 return static function (
     Router $router,
@@ -149,6 +153,7 @@ return static function (
     \Closure $jobs,
     \Closure $rasterung,
     \Closure $kategorien,
+    \Closure $lieferanten,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -400,6 +405,19 @@ return static function (
     $intern = Zugriff::recht(Permission::DocumentSubmitInternal);
     $get('/app/belege/neu', $intern, static fn(Request $r) => $erfassung()->formular($r));
     $post('/app/belege/neu', $intern->alsApi(), static fn(Request $r) => $erfassung()->absenden($r));
+
+    // Suppliers and payers (M6-2, issue #36, docs/spec/03-erfassung-und-ki.md
+    // section 7). Permission: `supplier.manage` (Admin, Finanzen) for reading
+    // and writing alike - the list is the maintenance page. CSRF on every
+    // write. Names and IBANs are vault data, so the pages show nothing and
+    // write nothing without the unlocked vault (App\App\SupplierController).
+    $lieferantenPflege = Zugriff::recht(Permission::SupplierManage);
+    $get('/app/lieferanten', $lieferantenPflege, static fn(Request $r) => $lieferanten()->liste($r));
+    $get('/app/lieferanten/neu', $lieferantenPflege, static fn(Request $r) => $lieferanten()->neu($r));
+    $post('/app/lieferanten', $lieferantenPflege, static fn(Request $r) => $lieferanten()->anlegen($r));
+    $get('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->bearbeiten($r, $params));
+    $post('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->speichern($r, $params));
+    $post('/app/lieferanten/{id:\d+}/loeschen', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->loeschen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

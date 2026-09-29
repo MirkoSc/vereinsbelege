@@ -28,6 +28,7 @@ use App\App\MfaToolbox;
 use App\App\PasswordController;
 use App\App\PasswordToolbox;
 use App\App\SecurityController;
+use App\App\SupplierController;
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
@@ -56,6 +57,7 @@ use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
+use App\Repository\SupplierRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
@@ -103,6 +105,7 @@ use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
+use App\Service\MasterData\SupplierService;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
@@ -433,6 +436,23 @@ $kategorien = static function () use ($connections, $view, $auditFor): CategoryC
     $repository = new CategoryRepository($pdo);
 
     return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo));
+};
+
+// Suppliers and payers (M6-2, issue #36): vault data, read and written only
+// with the session's unlocked vault - only the supplier pages open the
+// connection.
+$lieferanten = static function () use ($connections, $view, $auditFor): SupplierController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+
+    return new SupplierController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+        $kategorien,
+        $auditFor($pdo),
+    );
 };
 
 // The public submission page itself (issue #24/M4-2): renders the form,
@@ -897,6 +917,7 @@ $router = new Router();
     $jobsSeite,
     $rasterungSeite,
     $kategorien,
+    $lieferanten,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

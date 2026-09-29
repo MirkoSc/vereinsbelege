@@ -56,6 +56,10 @@ enum AuditAction: string
     case KategorieGeaendert = 'kategorie.geaendert';
     case KategorieGeloescht = 'kategorie.geloescht';
 
+    case LieferantAngelegt = 'lieferant.angelegt';
+    case LieferantGeaendert = 'lieferant.geaendert';
+    case LieferantGeloescht = 'lieferant.geloescht';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -108,6 +112,9 @@ enum AuditAction: string
             self::KategorieAngelegt => 'Kategorie angelegt',
             self::KategorieGeaendert => 'Kategorie geändert',
             self::KategorieGeloescht => 'Kategorie gelöscht',
+            self::LieferantAngelegt => 'Lieferant angelegt',
+            self::LieferantGeaendert => 'Lieferant geändert',
+            self::LieferantGeloescht => 'Lieferant gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -142,6 +149,7 @@ enum AuditAction: string
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
+            self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle => 'document',
             self::LoginFehlgeschlagen,
@@ -162,6 +170,7 @@ enum AuditAction: string
             'role' => 'Rolle',
             'cost_center' => 'Kostenstelle',
             'category' => 'Kategorie',
+            'supplier' => 'Lieferant',
             'document' => 'Beleg',
             default => $entity,
         };

@@ -673,6 +673,13 @@ sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
   `merged_into` setzen, Audit).
 - Lieferant hat Default-Kategorie/-Sphäre; ab dem 2. bestätigten Beleg mit
   gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI).
+- **Stand M6-2** (issue #36): Stammdaten-Pflege unter `/app/lieferanten`
+  (Lieferanten und Zahler, Spalte `role`), Blind-Index-Schlüssel in
+  `supplier_key` für Name/Aliasse, IBAN, USt-ID, Steuernummer, Gläubiger-ID
+  und Mandatsreferenz, Normalisierung aus Stufe 4 in
+  `App\Service\MasterData\SupplierKeys` – die Stufen 1–4 sind damit reine
+  Nachschlagevorgänge. IBAN/USt-ID/Steuernummer/Gläubiger-ID sind eindeutig
+  je Lieferant. Details: 02 „Lieferanten“.
 
 ## 8. Kategorisierung
 
