@@ -563,7 +563,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   erneut/angenommen/geändert/gesperrt/entsperrt, Tresor freigegeben/
   entzogen/per Wiederherstellungsschlüssel entsperrt (auch der
   Fehlschlag), Rolle angelegt/geändert/gelöscht, Kostenstelle angelegt/
-  geändert/gelöscht (M4-1), Mail-/Speicher-/Update-Kanal-Einstellungen,
+  geändert/gelöscht (M4-1), Lieferant angelegt/geändert/gelöscht (M6-2,
+  Details nur Feldnamen), Mail-/Speicher-/Update-Kanal-Einstellungen,
   Update eingespielt/zurückgerollt, Wartung aufgehoben. Belege, Lieferanten,
   Buchungen, Abgleich, Festschreibung, Export und Import ergänzen ihre
   Aktionen, wenn es sie gibt (ab M4).

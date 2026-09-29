@@ -185,8 +185,8 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `submission_upload` | blob_id (FK `file_blob`, `ON DELETE CASCADE`), form_hash, created_at – Blobs, die das Formular-Token hochgeladen hat, bis eine Einreichung sie beansprucht (Zeile gelöscht) oder der Cron sie nach 24 h abräumt (`App\Service\Cron\SubmissionUploadCleanupTask`, M4-2) | – (nur IDs/Hash) |
 | `document_artifact` | document_id, kind (`page_image`/`pdfa`/`text`/`extraction`), seq, blob_id NULL, dek_sealed, data_enc NULL, producer (`session`/`browser`/`worker`), job_id NULL (kein FK, wie `job.ref_id` – der Job wird nach 7 Tagen aufgeräumt, das Artefakt bleibt; seit M4-8/Migration 015), created_at – jedes Artefakt mit eigenem DEK, damit auch der Worker (ohne Zeilen-DEK des Dokuments) Ergebnisse ablegen kann; das jeweils neueste je kind gilt. **Stand M4-8** (issue #30): Kind `page_image`, Producer `browser`, durch `App\Service\Document\PdfRasterung` (`render_pages`-Job) – das per-Artefakt-DEK wird auch hier gesetzt, ist aber ungenutzt, weil `blob_id` bereits sein eigenes trägt (Details: 03 §3). `UNIQUE(document_id, kind, job_id, seq)`, `blob_id` mit `ON DELETE CASCADE` – ein gelöschtes Blob (ein abgelöster Rendering-Lauf) nimmt die Zeile mit | T |
 | `invoice` (fachlicher Beleg) | document_id, doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`), supplier_id NULL, invoice_date, due_date NULL, service_from/to NULL, category_id NULL, sphere NULL, cost_center_id NULL, recurring_series_id NULL, direction (`ausgabe`/`einnahme`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[], currency, purpose_short, notes, payment_hint}, number_bi | T |
-| `supplier` | dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number}, name_bi, iban_bi (Mehrfach → Tabelle `supplier_key`), default_category_id, default_sphere, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL | T |
-| `supplier_key` | supplier_id, kind (`name`/`iban`/`vat_id`/`creditor_id`/`mandate`), value_bi | – (nur BI) |
+| `supplier` (Lieferant bzw. Zahler) | role (`lieferant`/`zahler`/`beide`, Klartext – filtert Liste und später die Auswahl in der Prüfansicht), dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number, notes}, default_category_id NULL (FK `RESTRICT`), default_sphere NULL, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL (FK auf `supplier`), created_at, updated_at – **keine** `*_bi`-Spalten, alle Blind Indexes stehen in `supplier_key` (Migration 018, M6-2, s. u. „Lieferanten“) | T |
+| `supplier_key` | supplier_id (FK `CASCADE`), kind (`name`/`iban`/`vat_id`/`tax_number`/`creditor_id`/`mandate`), value_bi – mehrere Zeilen je Kind; `INDEX(kind, value_bi)` für die Auflösung (Migration 018, M6-2) | – (nur BI) |
 | `category` | name UNIQUE, direction (`einnahme`/`ausgabe`/`beide`), parent_id NULL (FK `RESTRICT`), default_sphere NULL, color NULL (Schlüssel der Palette `App\Domain\CategoryColor`), sort (je Richtung), active, ai_hint (Beschreibung für den Prompt, max. 500 Zeichen) (Migration 017, M6-1; Pflege `/admin/kategorien`, Recht `admin.settings`, s. u. „Kategorien“) | – |
 | `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
@@ -301,3 +301,66 @@ Anlegen/Ändern/Verschieben je Richtung/Löschen mit Audit-Eintrag;
 Validierung; CSRF; verwendete Kategorie wird nicht gelöscht, lässt sich
 deaktivieren; der FK allein verweigert das Löschen; 404; 403 ohne
 `admin.settings`).
+
+## Lieferanten
+
+**Umsetzung (M6-2, issue #36, Migration 018):** Lieferanten und Zahler sind
+eine Tabelle – ein Geschäftspartner, ob er Rechnungen schickt oder an den
+Verein zahlt, sagt `role` (`App\Domain\SupplierRole`: `lieferant`, `zahler`,
+`beide`). Pflege unter `/app/lieferanten` (`App\App\SupplierController`,
+Regeln und Verschlüsselung in `App\Service\MasterData\SupplierService`,
+Recht `supplier.manage` – Admin, Finanzen; auch zum Lesen).
+
+- **Tresor-Daten:** alles außer der Struktur liegt in `data_enc` (JSON,
+  AAD `supplier|<id>|data_enc`, Zeilen-DEK in `dek_sealed`). Die Zeile wird
+  in einer Transaktion zweistufig geschrieben (Insert → ID → `data_enc`).
+  Lesen **und** Schreiben brauchen den entsperrten Tresor der Sitzung –
+  Schreiben, weil die Blind Indexes aus ihm abgeleitet sind. Ohne Tresor
+  zeigen die Seiten nur einen Hinweis. Liste, Sortierung (nach Name) und
+  Suche (Name, Alias, IBAN, auch Teilstücke) laufen in PHP nach dem
+  Entschlüsseln.
+- **`supplier_key`** wird bei jedem Speichern aus den gespeicherten Daten
+  komplett neu geschrieben (`App\Service\MasterData\SupplierKeys`):
+  Name und jeder Alias als `name`, jede IBAN, USt-ID, Steuernummer,
+  Gläubiger-ID und jede Mandatsreferenz. Zweck des Blind Index =
+  `supplier.<kind>` (`App\Domain\SupplierKeyKind`, Werte nie umbenennen).
+  Normalisierung: Name wie 03 §7 Stufe 4 (klein, ä→ae/ß→ss, Akzente weg,
+  Satzzeichen → Leerzeichen, Rechtsform **am Ende** entfernt – „Getränke
+  Müller GmbH & Co. KG“ → „getraenke mueller“, „Sport AG Nord“ bleibt);
+  IBAN, USt-ID, Gläubiger-ID, Mandatsreferenz groß ohne Leerraum;
+  Steuernummer nur Buchstaben/Ziffern. Die Auflösung (M7-6) nutzt dieselben
+  Funktionen.
+- **Eindeutig:** IBAN, USt-ID, Steuernummer und Gläubiger-ID gehören zu
+  genau einem (nicht zusammengeführten) Lieferanten – ein zweiter wird mit
+  Hinweis und Link auf den ersten abgelehnt (Doppelte → Zusammenführen,
+  M6-5). Geprüft im Service, nicht per `UNIQUE`, damit das Zusammenführen
+  die Schlüssel umhängen kann. Gleicher Name/Alias ist erlaubt, die Seite
+  weist darauf hin. Mandatsreferenzen sind nur je Gläubiger eindeutig.
+- **Standard-Kategorie:** muss existieren, aktiv sein (außer der bereits
+  gespeicherten) und zur Rolle passen – Lieferant: Ausgabe/beide, Zahler:
+  Einnahme/beide. `CategoryRepository::usageCount()` zählt sie mit.
+- **Mehrfachwerte** (Aliasse, IBANs, Mandatsreferenzen) sind im Formular
+  Textfelder „eine pro Zeile“ (je höchstens 20) – kein JavaScript nötig.
+- **Löschen** nur ohne Verwendung (`SupplierRepository::usageCount()`,
+  heute: zusammengeführte Lieferanten; `invoice`, `recurring_series`,
+  `assignment_rule` zählen dort mit, sobald es sie gibt). Die Schlüssel
+  gehen per `CASCADE` mit.
+- **Audit** (`lieferant.angelegt/geaendert/geloescht`, Entität `supplier`):
+  Details nur die **Namen** der geänderten Felder bzw. die Rolle – nie
+  Name, IBAN o. Ä. (ein Zahler kann eine Person sein, 01 §6). Speichern
+  ohne Änderung schreibt keine Zeile. Flash-Meldungen nennen keinen Namen.
+- `created_via` ist hier immer `manuell`, `needs_review` 0; `ki` mit
+  `needs_review` legt erst M7-6 an (die Seite zeigt dann „prüfen“).
+  `default_sphere` bleibt NULL und unsichtbar (E-15).
+
+**Pflicht-Tests:** `SupplierKeysTest` (Namens-Normalisierung inkl.
+Rechtsformen und Umlaute, Schlüssel je Feld, leere Felder ohne Schlüssel,
+eigener Zweck je Kind); `SupplierFlowTest` (mehrere IBANs/Aliasse
+round-trip; weder Name noch IBAN noch normalisierter Name im Klartext in
+`supplier`/`supplier_key`; `supplier_key` = nachgerechnete Blind Indexes
+nach Anlegen und Ändern; Audit nur mit Feldnamen; ungültige IBAN;
+doppelte IBAN/USt-ID mit Link abgelehnt, eigene IBAN kein Konflikt;
+gleicher Name mit Hinweis; Kategorie passend zur Rolle, aktiv, dann in
+Verwendung; Liste sortiert, Filter Rolle, Suche Name/IBAN; ohne Tresor
+nichts sichtbar und nichts geschrieben; CSRF; 404; Spaltenliste);
+`RoutePermissionMatrixTest` (nur Admin/Finanzen).
