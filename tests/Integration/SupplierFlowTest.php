@@ -538,6 +538,7 @@ final class SupplierFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $lieferanten,
+            $unerreichbar,
         );
 
         return new Kernel(

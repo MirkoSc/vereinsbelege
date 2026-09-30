@@ -19,12 +19,12 @@ final class DocumentStatusTest extends TestCase
     /** The diagram of the spec, written out once more by hand. */
     private const array ERLAUBT = [
         'eingegangen' => ['bereit_zur_auswertung', 'wiedervorlage', 'abgelehnt'],
-        'bereit_zur_auswertung' => ['ausgewertet', 'ki_fehler'],
+        'bereit_zur_auswertung' => ['ausgewertet', 'ki_fehler', 'in_pruefung'],
         'ausgewertet' => ['in_pruefung', 'ki_fehler', 'wiedervorlage'],
         'in_pruefung' => ['geprueft', 'abgelehnt'],
         'geprueft' => ['festgeschrieben'],
         'festgeschrieben' => [],
-        'ki_fehler' => ['bereit_zur_auswertung', 'wiedervorlage'],
+        'ki_fehler' => ['bereit_zur_auswertung', 'wiedervorlage', 'in_pruefung'],
         'wiedervorlage' => ['bereit_zur_auswertung', 'abgelehnt'],
         'abgelehnt' => [],
     ];
@@ -105,5 +105,21 @@ final class DocumentStatusTest extends TestCase
         self::assertSame([], InboxAction::fuer(DocumentStatus::Abgelehnt));
         self::assertSame([], InboxAction::fuer(DocumentStatus::Festgeschrieben));
         self::assertSame([], InboxAction::fuer(DocumentStatus::BereitZurAuswertung));
+    }
+
+    /**
+     * The review page (issue #37/M6-3) captures exactly the documents that
+     * can reach `in_pruefung` - accepted, evaluated, failed by the AI - and
+     * the ones already in review.
+     */
+    public function testTheReviewPageTakesWhatCanReachInReview(): void
+    {
+        self::assertSame(
+            [DocumentStatus::BereitZurAuswertung, DocumentStatus::Ausgewertet, DocumentStatus::InPruefung, DocumentStatus::KiFehler],
+            DocumentStatus::pruefbare(),
+        );
+        foreach ([DocumentStatus::Eingegangen, DocumentStatus::Wiedervorlage, DocumentStatus::Geprueft, DocumentStatus::Festgeschrieben, DocumentStatus::Abgelehnt] as $status) {
+            self::assertFalse($status->pruefbar(), $status->value);
+        }
     }
 }

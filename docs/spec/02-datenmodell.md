@@ -184,11 +184,11 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, cost_center_id NULL (Klartext-Strukturfeld wie bei `invoice`, FK `RESTRICT`; aus der Mannschaftswahl der Einreichung, im Posteingang änderbar – Filter und Scope „eigene Kostenstelle“ von `inbox.view`, seit M4-5/Migration 014), original_blob_ids JSON, processed_blob_ids JSON NULL (parallel zu `original_blob_ids`: je Seite die aufbereitete Fassung des Scanners oder null; NULL, wenn keine Seite eine hat – seit M5-4/Migration 016, Details 03 §1/§2), pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), resubmit_on DATE NULL (Wiedervorlage-Datum), status_note_enc NULL (Ablehnungsgrund bzw. Wiedervorlage-Notiz, AEAD mit Zeilen-DEK), status_changed_at/by NULL, content_bi (Duplikaterkennung), dek_sealed, created_by NULL (bei `intern` das erfassende Konto, M4-6), created_at | T |
 | `submission_upload` | blob_id (FK `file_blob`, `ON DELETE CASCADE`), form_hash, created_at – Blobs, die das Formular-Token hochgeladen hat, bis eine Einreichung sie beansprucht (Zeile gelöscht) oder der Cron sie nach 24 h abräumt (`App\Service\Cron\SubmissionUploadCleanupTask`, M4-2) | – (nur IDs/Hash) |
 | `document_artifact` | document_id, kind (`page_image`/`pdfa`/`text`/`extraction`), seq, blob_id NULL, dek_sealed, data_enc NULL, producer (`session`/`browser`/`worker`), job_id NULL (kein FK, wie `job.ref_id` – der Job wird nach 7 Tagen aufgeräumt, das Artefakt bleibt; seit M4-8/Migration 015), created_at – jedes Artefakt mit eigenem DEK, damit auch der Worker (ohne Zeilen-DEK des Dokuments) Ergebnisse ablegen kann; das jeweils neueste je kind gilt. **Stand M4-8** (issue #30): Kind `page_image`, Producer `browser`, durch `App\Service\Document\PdfRasterung` (`render_pages`-Job) – das per-Artefakt-DEK wird auch hier gesetzt, ist aber ungenutzt, weil `blob_id` bereits sein eigenes trägt (Details: 03 §3). `UNIQUE(document_id, kind, job_id, seq)`, `blob_id` mit `ON DELETE CASCADE` – ein gelöschtes Blob (ein abgelöster Rendering-Lauf) nimmt die Zeile mit | T |
-| `invoice` (fachlicher Beleg) | document_id, doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`), supplier_id NULL, invoice_date, due_date NULL, service_from/to NULL, category_id NULL, sphere NULL, cost_center_id NULL, recurring_series_id NULL, direction (`ausgabe`/`einnahme`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[], currency, purpose_short, notes, payment_hint}, number_bi | T |
+| `invoice` (fachlicher Beleg) | document_id UNIQUE (FK `RESTRICT`), doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`, `App\Domain\InvoiceType`), supplier_id NULL (FK `RESTRICT`), invoice_date, due_date NULL, service_from/to NULL, category_id NULL (FK `RESTRICT`), sphere NULL, cost_center_id NULL (FK `RESTRICT`), recurring_series_id NULL, direction (`ausgabe`/`einnahme`, `App\Domain\InvoiceDirection`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[{rate, amount}], currency, purpose_short, notes, payment_hint}, number_bi (Blind Index der Rechnungsnummer, Zweck `invoice.number`, Leerraum entfernt; `INDEX(supplier_id, number_bi)` für die Duplikaterkennung M6-6), created_by/at, updated_by/at. **Stand M6-3** (issue #37, Migration 019): angelegt von der Prüfansicht (03 §6), ohne `recurring_series_id` (kommt mit M8 – die Zieltabelle fehlt noch), `locked_by/at` (M6-4) und `payment_status` (Abgleich M9/M10); `data_enc` noch ohne `payment_hint`. Beträge Integer-Cent, Steuersatz als Dezimal-String mit Punkt („19“, „5.5“) | T |
 | `supplier` (Lieferant bzw. Zahler) | role (`lieferant`/`zahler`/`beide`, Klartext – filtert Liste und später die Auswahl in der Prüfansicht), dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number, notes}, default_category_id NULL (FK `RESTRICT`), default_sphere NULL, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL (FK auf `supplier`), created_at, updated_at – **keine** `*_bi`-Spalten, alle Blind Indexes stehen in `supplier_key` (Migration 018, M6-2, s. u. „Lieferanten“) | T |
 | `supplier_key` | supplier_id (FK `CASCADE`), kind (`name`/`iban`/`vat_id`/`tax_number`/`creditor_id`/`mandate`), value_bi – mehrere Zeilen je Kind; `INDEX(kind, value_bi)` für die Auflösung (Migration 018, M6-2) | – (nur BI) |
 | `category` | name UNIQUE, direction (`einnahme`/`ausgabe`/`beide`), parent_id NULL (FK `RESTRICT`), default_sphere NULL, color NULL (Schlüssel der Palette `App\Domain\CategoryColor`), sort (je Richtung), active, ai_hint (Beschreibung für den Prompt, max. 500 Zeichen) (Migration 017, M6-1; Pflege `/admin/kategorien`, Recht `admin.settings`, s. u. „Kategorien“) | – |
-| `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`) | – |
+| `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`; als Verwendung zählen auch `document` und – seit M6-3 – `invoice`, `CostCenterRepository::documentCount()`) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
 | `bank_account` | kind (`bank`/`kasse`), dek_sealed, data_enc {name, iban, bic, bank}, iban_bi, opening_balance_enc, active | T |
 | `bank_import` | account_id, format (`mt940`/`csv:<profil>`), file_blob_id, imported_by, imported_at, stats JSON (neu/duplikat/fehler), balance_check (`ok`/`abweichung`/`n.v.`) | – |
@@ -208,6 +208,8 @@ eingegangen ──(Annehmen im Posteingang)──► bereit_zur_auswertung
      ├──► wiedervorlage ◄─────────────────────┤               └──► abgelehnt (mit Grund, bleibt erhalten)
      │                                        │
      └──► abgelehnt              ki_fehler ◄──┘ (auch aus bereit_zur_auswertung)
+
+bereit_zur_auswertung / ki_fehler ──(Prüfansicht, manuell)──► in_pruefung
 ```
 
 Übergänge vollständig (maßgeblich ist `App\Domain\DocumentStatus::uebergaenge()`,
@@ -216,11 +218,11 @@ Test `tests/Domain/DocumentStatusTest.php`; seit M4-5/issue #27):
 | von | nach |
 |---|---|
 | `eingegangen` | `bereit_zur_auswertung`, `wiedervorlage`, `abgelehnt` |
-| `bereit_zur_auswertung` | `ausgewertet`, `ki_fehler` |
+| `bereit_zur_auswertung` | `ausgewertet`, `ki_fehler`, `in_pruefung` |
 | `ausgewertet` | `in_pruefung`, `ki_fehler`, `wiedervorlage` |
 | `in_pruefung` | `geprueft`, `abgelehnt` |
 | `geprueft` | `festgeschrieben` |
-| `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage` |
+| `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage`, `in_pruefung` |
 | `wiedervorlage` | `bereit_zur_auswertung`, `abgelehnt` |
 | `festgeschrieben`, `abgelehnt` | – (Endzustände) |
 
@@ -235,6 +237,17 @@ Grund und Notiz liegen verschlüsselt in `status_note_enc`, im Audit-Log als
 versiegelte Details. Ein Statuswechsel gilt nur, wenn der Beleg noch im
 erwarteten Ausgangsstatus ist (`UPDATE … WHERE status = ?`) – zwei
 gleichzeitige Entscheidungen gewinnen nicht beide.
+
+Prüfansicht (M6-3, issue #37, 03 §6, Recht `document.edit`): Ein Beleg
+lässt sich erfassen, solange aus seinem Status `in_pruefung` erreichbar ist
+oder er dort steht (`DocumentStatus::pruefbar()`: `bereit_zur_auswertung`,
+`ausgewertet`, `ki_fehler`, `in_pruefung`). Ohne KI führt der Weg direkt von
+`bereit_zur_auswertung` (bzw. nach einem KI-Fehler von `ki_fehler`) nach
+`in_pruefung` – beim ersten Speichern; „Geprüft, nächster“ setzt danach
+`geprueft` samt `invoice.checked_by/at`. Beides in einer Transaktion, die den
+Beleg zuerst im gelesenen Status sperrt (`SELECT … FOR UPDATE`). Ein
+geprüfter Beleg ist in der Prüfansicht nur noch lesbar; Zurücknehmen gibt es
+noch nicht.
 
 `duplikat_verdacht` ist ein Flag (content_bi gleich oder Lieferant +
 Rechnungsnummer gleich), kein Status.
@@ -283,11 +296,11 @@ Kostenstellen):
   `.farbpunkt-<farbe>` mit Token für hell/dunkel), kein freier Hex-Wert: die
   CSP erlaubt keine Inline-Styles (CLAUDE.md §4).
 - **Löschen nur ohne Verwendung, sonst deaktivieren.** Was als Verwendung
-  zählt, entscheidet allein `CategoryRepository::usageCount()` – heute nur
-  Unterkategorien (`parent_id`). Jede spätere Tabelle mit `category_id`
-  (`invoice`, `bank_transaction`, `supplier.default_category_id`,
-  `assignment_rule`) legt ihren Fremdschlüssel mit `ON DELETE RESTRICT` an
-  **und** zählt dort mit. Deaktivierte Kategorien werden nicht mehr
+  zählt, entscheidet allein `CategoryRepository::usageCount()` – heute
+  Unterkategorien (`parent_id`), `supplier.default_category_id` (M6-2) und
+  `invoice.category_id` (M6-3). Jede spätere Tabelle mit `category_id`
+  (`bank_transaction`, `assignment_rule`) legt ihren Fremdschlüssel mit
+  `ON DELETE RESTRICT` an **und** zählt dort mit. Deaktivierte Kategorien werden nicht mehr
   angeboten, bestehende Zuordnungen bleiben.
 - `parent_id` ist vorbereitet, Unterkategorien sind aber noch nicht pflegbar
   (flache Liste). `default_sphere` bleibt NULL und unsichtbar, solange
@@ -342,9 +355,9 @@ Recht `supplier.manage` – Admin, Finanzen; auch zum Lesen).
 - **Mehrfachwerte** (Aliasse, IBANs, Mandatsreferenzen) sind im Formular
   Textfelder „eine pro Zeile“ (je höchstens 20) – kein JavaScript nötig.
 - **Löschen** nur ohne Verwendung (`SupplierRepository::usageCount()`,
-  heute: zusammengeführte Lieferanten; `invoice`, `recurring_series`,
-  `assignment_rule` zählen dort mit, sobald es sie gibt). Die Schlüssel
-  gehen per `CASCADE` mit.
+  heute: zusammengeführte Lieferanten und `invoice` (M6-3);
+  `recurring_series`, `assignment_rule` zählen dort mit, sobald es sie
+  gibt). Die Schlüssel gehen per `CASCADE` mit.
 - **Audit** (`lieferant.angelegt/geaendert/geloescht`, Entität `supplier`):
   Details nur die **Namen** der geänderten Felder bzw. die Rolle – nie
   Name, IBAN o. Ä. (ein Zahler kann eine Person sein, 01 §6). Speichern

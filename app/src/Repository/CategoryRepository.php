@@ -130,9 +130,10 @@ final readonly class CategoryRepository
 
     /**
      * How often this category is in use - the one place that decides
-     * whether it may still be deleted. Today sub-categories and the default
-     * category of suppliers (M6-2) point here; every later table with a
-     * `category_id` (invoice, bank_transaction, assignment_rule) adds its
+     * whether it may still be deleted. Today sub-categories, the default
+     * category of suppliers (M6-2) and the receipts of the review page
+     * (`invoice`, M6-3) point here; every later table with a
+     * `category_id` (bank_transaction, assignment_rule) adds its
      * count here and
      * its foreign key with ON DELETE RESTRICT (docs/spec/02-datenmodell.md
      * "Kategorien").
@@ -141,9 +142,10 @@ final readonly class CategoryRepository
     {
         $stmt = $this->pdo->prepare(
             'SELECT (SELECT COUNT(*) FROM category WHERE parent_id = ?)
-                  + (SELECT COUNT(*) FROM supplier WHERE default_category_id = ?)',
+                  + (SELECT COUNT(*) FROM supplier WHERE default_category_id = ?)
+                  + (SELECT COUNT(*) FROM invoice WHERE category_id = ?)',
         );
-        $stmt->execute([$id, $id]);
+        $stmt->execute([$id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

@@ -236,6 +236,19 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/lieferanten/7', false],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/lieferanten', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/lieferanten/7', false],
+            // Prüfansicht (M6-3): document.edit - Admin and Finanzen capture
+            // receipts; the reading roles and the Vereinsverantwortlicher
+            // (inbox.view only) do not.
+            [SystemRole::Admin, HttpMethod::Get, '/app/belege/pruefen', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/belege/pruefen', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/belege/pruefen/7', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/belege/pruefen/7/datei/3', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/belege/pruefen', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/belege/pruefen/7', false],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/belege/pruefen/7/datei/3', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/belege/pruefen', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/designsystem', false],
@@ -431,6 +444,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

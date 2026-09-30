@@ -941,6 +941,130 @@ textarea[aria-invalid="true"] {
     background: var(--farbe-flaeche-still);
 }
 
+/* --- Prüfansicht (Issue #37, M6-3) ---
+   Beleg und Formular nebeneinander ab 64rem, darunter gestapelt: der Beleg
+   zuerst, in einem Kasten mit eigener Bildlaufleiste und begrenzter Höhe,
+   damit das Formular auf 360 px erreichbar bleibt. Blättern und Zoom
+   (public/js/pruefansicht.js) schalten nur hidden-Attribute und die
+   Klassen .zoom-1 bis .zoom-4 - die CSP erlaubt keine Inline-Styles. */
+body.bereich-app:has(.pruefansicht) {
+    --inhalt-breite: 90rem;
+}
+
+.pruefen-kopf h2 .marke {
+    vertical-align: middle;
+}
+
+.pruefansicht {
+    display: grid;
+    gap: var(--abstand-5);
+    margin-top: var(--abstand-4);
+}
+
+.beleg-betrachter {
+    min-width: 0;
+}
+
+.beleg-seiten {
+    display: flex;
+    flex-direction: column;
+    gap: var(--abstand-3);
+    max-height: 60vh;
+    margin: var(--abstand-2) 0;
+    padding: var(--abstand-2);
+    overflow: auto;
+    list-style: none;
+    background: var(--farbe-flaeche-still);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius);
+}
+
+.beleg-seite {
+    display: flex;
+    flex-direction: column;
+    gap: var(--abstand-1);
+}
+
+/* 100 %: so breit wie der Kasten, ein kleines Bild aber nicht hochgezogen;
+   die Stufen darüber relativ zum Kasten. */
+.beleg-seite img {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    background: var(--farbe-flaeche);
+}
+
+.zoom-2 .beleg-seite img,
+.zoom-3 .beleg-seite img,
+.zoom-4 .beleg-seite img {
+    max-width: none;
+}
+
+.zoom-2 .beleg-seite img {
+    width: 150%;
+}
+
+.zoom-3 .beleg-seite img {
+    width: 200%;
+}
+
+.zoom-4 .beleg-seite img {
+    width: 300%;
+}
+
+.beleg-seitenzahl,
+.beleg-zoom {
+    min-width: 5rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.pruefen-felder {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.pruefen-richtung {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--abstand-5);
+}
+
+/* Zusammengehörige kurze Felder in einer Zeile, sobald Platz ist. */
+.pruefen-zeile {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--abstand-4);
+}
+
+.pruefen-zeile > label {
+    flex: 1 1 10rem;
+}
+
+.pruefen-zeile > .pruefen-waehrung,
+.pruefen-zeile > .pruefen-satz {
+    flex: 0 1 7rem;
+}
+
+@media (min-width: 64rem) {
+    .pruefansicht {
+        grid-template-columns: minmax(0, 1fr) minmax(22rem, 30rem);
+        align-items: start;
+    }
+
+    .beleg-betrachter {
+        position: sticky;
+        top: var(--abstand-4);
+    }
+
+    .beleg-seiten {
+        max-height: calc(100vh - 8rem);
+    }
+}
+
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
 
 /* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).

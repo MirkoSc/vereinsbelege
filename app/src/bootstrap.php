@@ -28,6 +28,7 @@ use App\App\MfaToolbox;
 use App\App\PasswordController;
 use App\App\PasswordToolbox;
 use App\App\SecurityController;
+use App\App\PruefungController;
 use App\App\SupplierController;
 use App\Config\Config;
 use App\Config\Paths;
@@ -47,6 +48,7 @@ use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentArtifactRepository;
+use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
@@ -96,6 +98,7 @@ use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobRunner;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\FreigabeBenachrichtigung;
@@ -452,6 +455,43 @@ $lieferanten = static function () use ($connections, $view, $auditFor): Supplier
         new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
         $kategorien,
         $auditFor($pdo),
+    );
+};
+
+// The review page (M6-3, issue #37): captures a document as a receipt with
+// the session's unlocked vault - only the review pages open the connection.
+$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor): PruefungController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $kategorien = new CategoryRepository($pdo);
+    $kostenstellen = new CostCenterRepository($pdo);
+    $lieferanten = new SupplierRepository($pdo);
+    $documents = new DocumentRepository($pdo);
+    $audit = $auditFor($pdo);
+
+    return new PruefungController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Pruefung(
+            $pdo,
+            $documents,
+            new InvoiceRepository($pdo),
+            $kategorien,
+            $kostenstellen,
+            $lieferanten,
+            new SupplierService($pdo, $lieferanten, $kategorien),
+            new DocumentArtifactRepository($pdo),
+            new Posteingang(
+                $documents,
+                $kostenstellen,
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+                $audit,
+            ),
+            $audit,
+        ),
+        $kategorien,
+        $kostenstellen,
     );
 };
 
@@ -918,6 +958,7 @@ $router = new Router();
     $rasterungSeite,
     $kategorien,
     $lieferanten,
+    $pruefungSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

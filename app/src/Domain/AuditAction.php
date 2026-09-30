@@ -69,6 +69,10 @@ enum AuditAction: string
     case BelegAbgelehnt = 'beleg.abgelehnt';
     case BelegWiedervorlage = 'beleg.wiedervorlage';
     case BelegKostenstelle = 'beleg.kostenstelle';
+    // The review page (issue #37/M6-3): details name the changed fields,
+    // never their values.
+    case BelegBearbeitet = 'beleg.bearbeitet';
+    case BelegGeprueft = 'beleg.geprueft';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -121,6 +125,8 @@ enum AuditAction: string
             self::BelegAbgelehnt => 'Beleg abgelehnt',
             self::BelegWiedervorlage => 'Beleg auf Wiedervorlage gelegt',
             self::BelegKostenstelle => 'Kostenstelle des Belegs geändert',
+            self::BelegBearbeitet => 'Beleg erfasst/bearbeitet',
+            self::BelegGeprueft => 'Beleg geprüft',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -151,7 +157,8 @@ enum AuditAction: string
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
             self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
             self::EinreichungEingegangen, self::BelegErfasst,
-            self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle => 'document',
+            self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
+            self::BelegBearbeitet, self::BelegGeprueft => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung,

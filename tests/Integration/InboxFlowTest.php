@@ -280,6 +280,9 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertSame((string) $this->userId, (string) $zeile['status_changed_by']);
         self::assertNotNull($zeile['status_changed_at']);
         self::assertSame([AuditAction::BelegAngenommen->value], $this->auditAktionen());
+
+        // Accepted, the document is ready for the review page (issue #37/M6-3).
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $id . '"', $this->get('/app/posteingang/' . $id, entsperrt: true)->body);
     }
 
     public function testRejectingNeedsAReason(): void
@@ -788,6 +791,7 @@ final class InboxFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $posteingang,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

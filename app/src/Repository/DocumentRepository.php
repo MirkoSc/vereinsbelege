@@ -20,7 +20,8 @@ use App\Service\Inbox\InboxFilter;
  * insert() (issue #24/M4-2, the public submission writes the first row a
  * document ever gets), find()/setzePdfBlob() (issue #26/M4-4, the
  * `pdf_erzeugen` job) and the inbox (issue #27/M4-5): the filtered list,
- * status changes and the cost center. Every inbox read takes the viewer's
+ * status changes and the cost center; the review queue (issue #37/M6-3).
+ * Every inbox read takes the viewer's
  * App\Domain\Zugriffsbereich and filters in SQL (docs/spec/01-sicherheit.md
  * section 4) - a template never sees a row it must not show.
  */
@@ -157,6 +158,27 @@ final readonly class DocumentRepository
     }
 
     /**
+     * The review queue (issue #37/M6-3): every document the review page may
+     * capture (App\Domain\DocumentStatus::pruefbare()), oldest first - a
+     * queue is worked off in the order it came in. Narrowed to $bereich
+     * like the inbox.
+     *
+     * @return list<InboxItem>
+     */
+    public function pruefListe(Zugriffsbereich $bereich, int $limit): array
+    {
+        $status = DocumentStatus::pruefbare();
+        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            self::INBOX_SELECT . ' WHERE d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope
+            . ' ORDER BY d.created_at, d.id LIMIT ' . max(1, $limit),
+        );
+        $stmt->execute([...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter]);
+
+        return array_map(InboxItem::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
      * Changes the status, but only away from $von: two people deciding on
      * the same document at once must not both win, and the loser learns it
      * (false). The note and the Wiedervorlage date are replaced with what
@@ -185,6 +207,20 @@ final readonly class DocumentRepository
         $stmt->execute();
 
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Inside a transaction: locks the row if the document is still in
+     * $status, so nobody changes it before the commit (issue #37/M6-3 - a
+     * review saved while somebody else just marked the document as checked
+     * must not overwrite it). False when it is not in $status any more.
+     */
+    public function sperreImStatus(int $id, DocumentStatus $status): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT id FROM document WHERE id = ? AND status = ? FOR UPDATE');
+        $stmt->execute([$id, $status->value]);
+
+        return $stmt->fetch() !== false;
     }
 
     public function setzeKostenstelle(int $id, ?int $costCenterId): void
