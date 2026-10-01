@@ -17,6 +17,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
+use App\App\AccountController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\ErfassungController;
@@ -43,6 +44,8 @@ use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
+use App\Repository\BankAccountRepository;
+use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CronLockRepository;
@@ -85,6 +88,8 @@ use App\Service\Account\UserAdministration;
 use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
+use App\Service\Bank\BankAccountService;
+use App\Service\Bank\Kassensturz;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\AuthTokenCleanupTask;
@@ -492,6 +497,22 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
         ),
         $kategorien,
         $kostenstellen,
+    );
+};
+
+// Bank accounts and cash boxes (M9-1, issue #59): vault data, read and
+// written only with the session's unlocked vault - only the account pages
+// open the connection.
+$konten = static function () use ($connections, $view, $auditFor): AccountController {
+    $pdo = $connections->pdo();
+
+    return new AccountController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new BankAccountService($pdo, new BankAccountRepository($pdo)),
+        new Kassensturz($pdo, new CashCountRepository($pdo)),
+        $auditFor($pdo),
     );
 };
 
@@ -959,6 +980,7 @@ $router = new Router();
     $kategorien,
     $lieferanten,
     $pruefungSeite,
+    $konten,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

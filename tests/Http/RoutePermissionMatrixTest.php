@@ -249,6 +249,21 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/belege/pruefen/7/datei/3', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/belege/pruefen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7', false],
+            // Konten (M9-1): bank.view reads - Vorstand, Kassenprüfer and
+            // Steuerberater too; bank.book writes and records cash counts -
+            // Admin and Finanzen only. The Vereinsverantwortlicher sees no
+            // accounts at all.
+            [SystemRole::Admin, HttpMethod::Get, '/app/konten', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/konten', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/konten/7/kassensturz', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/konten', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/konten/7', true],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/konten', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/konten/neu', false],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/konten/7', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/konten/7/kassensturz', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/konten/7/loeschen', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/konten', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/designsystem', false],
@@ -444,6 +459,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,
