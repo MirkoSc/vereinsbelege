@@ -179,6 +179,20 @@ async function verarbeite(umgebung) {
     return await verarbeiteJob(aufgabe, umgebung);
 }
 
+/** Builds the `umgebung` the functions above take. `fetch` is wrapped
+ * rather than passed on as is: they call it as `umgebung.fetch(...)`, which
+ * runs `window.fetch` with `this = umgebung`, and Chrome rejects that with
+ * "Illegal invocation" (issue #152). */
+function baueUmgebung(holen, csrf, ladeQuelle) {
+    return {
+        fetch: function (...argumente) {
+            return holen(...argumente);
+        },
+        csrf: csrf,
+        ladeQuelle: ladeQuelle,
+    };
+}
+
 function initRasterung() {
     const wurzel = document.querySelector('#rasterung');
     if (wurzel === null) {
@@ -247,7 +261,7 @@ function initRasterung() {
     async function lauf() {
         let ergebnis;
         try {
-            ergebnis = await verarbeite({ fetch: fetch, csrf: csrf, ladeQuelle: ladeQuelle });
+            ergebnis = await verarbeite(baueUmgebung(fetch, csrf, ladeQuelle));
         } catch {
             ergebnis = { status: 'fehler' };
         }
@@ -291,6 +305,7 @@ if (typeof module === 'object' && module.exports) {
         verarbeiteJob,
         naechsteAufgabe,
         verarbeite,
+        baueUmgebung,
         QUALITAETSSTUFEN,
         MAX_BYTES,
     };

@@ -12,6 +12,7 @@ const {
     verarbeiteJob,
     naechsteAufgabe,
     verarbeite,
+    baueUmgebung,
     QUALITAETSSTUFEN,
     MAX_BYTES,
 } = require('../../public/js/rasterung.js');
@@ -261,4 +262,58 @@ test('verarbeite drives a claimed task to done', async () => {
         '/api/rasterung/naechste',
         '/api/rasterung/1/l/seite/0/1/1',
     ]);
+});
+
+/**
+ * A fetch like the browser's: it throws "Illegal invocation" unless it is
+ * called as a plain function, not as a method of another object.
+ */
+function thisEmpfindlichesFetch(antworten) {
+    const fake = fakeFetch(antworten);
+    const holen = function (...argumente) {
+        if (this !== undefined && this !== globalThis) {
+            throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+        }
+
+        return fake.holen(...argumente);
+    };
+
+    return { holen: holen, aufrufe: fake.aufrufe };
+}
+
+test('the this-sensitive fetch rejects a method call, like the browser does', async () => {
+    const fake = thisEmpfindlichesFetch([{ status: 'leer', offen: 0 }]);
+
+    // The pre-fix wiring (issue #152): fetch handed in as-is and called as umgebung.fetch().
+    const ergebnis = await verarbeite({ csrf: 'x', fetch: fake.holen, ladeQuelle: async () => fakeDokument(1) });
+
+    assert.deepEqual(ergebnis, { status: 'fehler' });
+    assert.equal(fake.aufrufe.length, 0);
+});
+
+test('baueUmgebung keeps fetch callable as a plain function (issue #152)', async () => {
+    const fake = thisEmpfindlichesFetch([
+        { status: 'aufgabe', job: 1, lock: 'l', quelle: 0, seite: 1, quellen: 1 },
+        { status: 'fertig' },
+    ]);
+
+    const ergebnis = await verarbeite(baueUmgebung(fake.holen, 'x', async () => fakeDokument(1)));
+
+    assert.deepEqual(ergebnis, { status: 'fertig' });
+    assert.equal(fake.aufrufe.length, 2);
+});
+
+test('baueUmgebung also keeps the abort request working', async () => {
+    const fake = thisEmpfindlichesFetch([
+        { status: 'aufgabe', job: 1, lock: 'l', quelle: 0, seite: 1, quellen: 1 },
+        { status: 'abgebrochen' },
+    ]);
+    const kaputt = async () => {
+        throw new Error('kaputt');
+    };
+
+    const ergebnis = await verarbeite(baueUmgebung(fake.holen, 'x', kaputt));
+
+    assert.equal(ergebnis.status, 'defekt');
+    assert.equal(fake.aufrufe[1].pfad, '/api/rasterung/1/l/abbruch');
 });
