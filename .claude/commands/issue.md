@@ -17,7 +17,11 @@ Setze GitHub-Issue #$ARGUMENTS um. Halte dich strikt an diesen Ablauf:
    JS betroffen – `node --test tests/js`. Beides muss grün sein, ohne
    Deprecations.
 6. Falls Architektur/Datenmodell betroffen: Spec bzw. CLAUDE.md im selben
-   Branch aktualisieren.
+   Branch aktualisieren. Falls sich Reihenfolge, Abhängigkeiten oder die
+   Einstufung (Modell/Effort/Modus) anderer Issues ändern oder ein neues
+   Issue entsteht: die Zeile in `PLAN` in `docs/arbeitsplan.html` im selben
+   Branch anpassen bzw. ergänzen und `PLAN_STAND` auf das heutige Datum
+   setzen. Den Status nicht pflegen – der kommt live von GitHub.
 7. Commit(s) auf Englisch, `git push -u origin HEAD`,
    `gh pr create --fill` mit Body: Zusammenfassung, `Closes #$ARGUMENTS`,
    Prüfliste für manuelle Tests (Mobil 360 px + Desktop), geprüfte

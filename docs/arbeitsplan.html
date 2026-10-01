@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arbeitsplan Vereinsbelege</title>
+<style>
+:root {
+  --bg: #f6f6f3; --fl: #ffffff; --fl2: #efefea; --rand: #d9d9d2;
+  --text: #1d1f22; --leise: #5c6066; --link: #1f5fa8;
+  --a: #2f6fb3; --b: #2f8a5a; --c: #8a5a2f; --g: #a03a3a; --o: #6b4fa0;
+  --fable: #6b4fa0; --opus: #1f5fa8; --sonnet: #24744a;
+  --ok: #2f8a5a; --warn: #b07a12; --rev: #6b4fa0; --bereit: #1f5fa8;
+  --schatten: 0 1px 2px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16171a; --fl: #1e2024; --fl2: #26292e; --rand: #363a40;
+    --text: #e8e9ea; --leise: #a3a8ae; --link: #7fb0ea;
+    --a: #6fa8e6; --b: #5fc28a; --c: #d19a62; --g: #e07a72; --o: #b08ade;
+    --fable: #b08ade; --opus: #6fa8e6; --sonnet: #5fc28a;
+    --ok: #5fc28a; --warn: #e6c24f; --rev: #b08ade; --bereit: #6fa8e6;
+    --schatten: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16171a; --fl: #1e2024; --fl2: #26292e; --rand: #363a40;
+  --text: #e8e9ea; --leise: #a3a8ae; --link: #7fb0ea;
+  --a: #6fa8e6; --b: #5fc28a; --c: #d19a62; --g: #e07a72; --o: #b08ade;
+  --fable: #b08ade; --opus: #6fa8e6; --sonnet: #5fc28a;
+  --ok: #5fc28a; --warn: #e6c24f; --rev: #b08ade; --bereit: #6fa8e6;
+  --schatten: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--link); }
+.seite { max-width: 1400px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 36px 0 12px; }
+.unter { color: var(--leise); margin: 0 0 4px; }
+.stand { color: var(--leise); font-size: .85rem; }
+.stand b { font-weight: 600; color: var(--text); }
+.leiste { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin: 16px 0 0; font-size: .9rem; }
+.leiste label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+.kasten { background: var(--fl); border: 1px solid var(--rand); border-radius: 10px; padding: 16px; box-shadow: var(--schatten); }
+.zwei { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.kasten h3 { margin: 0 0 10px; font-size: 1rem; }
+.kasten p { margin: 6px 0; }
+.leer { color: var(--leise); font-style: italic; }
+
+.karten { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.karte { background: var(--fl); border: 1px solid var(--rand); border-left: 4px solid var(--strang, var(--rand)); border-radius: 8px; padding: 10px 12px; box-shadow: var(--schatten); }
+.karte.erledigt { opacity: .55; }
+.karte.empfohlen { outline: 2px solid var(--bereit); outline-offset: -1px; }
+.empfehlung { display: inline-block; font-size: .72rem; font-weight: 700; color: var(--fl); background: var(--bereit); padding: 0 8px; border-radius: 999px; margin-bottom: 4px; }
+.karte .kopf { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.karte .nr { font-weight: 700; text-decoration: none; }
+.karte .titel { margin: 2px 0 8px; font-weight: 500; }
+.karte .nach, .karte .notiz { margin: 6px 0 0; font-size: .82rem; color: var(--leise); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--rand); background: var(--fl2); white-space: nowrap; }
+.chip.modell { color: var(--fl); border-color: transparent; font-weight: 600; }
+.chip.fable { background: var(--fable); } .chip.opus { background: var(--opus); } .chip.sonnet { background: var(--sonnet); }
+.chip.mig { border-style: dashed; }
+.pille { font-size: .72rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; }
+.pille.erledigt { color: var(--ok); } .pille.wartet { color: var(--warn); } .pille.review { color: var(--rev); }
+.pille.bereit { color: var(--bereit); } .pille.offen { color: var(--leise); } .pille.schliessen { color: var(--warn); }
+
+.raster { display: grid; gap: 8px; grid-template-columns: 70px repeat(5, minmax(0, 1fr)); align-items: start; }
+.raster .kopfzelle { font-weight: 600; font-size: .85rem; padding: 6px 8px; border-radius: 6px; background: var(--fl2); border-top: 3px solid var(--strang); }
+.raster .welle { font-weight: 700; color: var(--leise); font-size: .85rem; padding-top: 10px; }
+.raster .zelle { display: grid; gap: 8px; min-height: 8px; }
+.raster .zelle .strangname { display: none; }
+.zeilentrenner { grid-column: 1 / -1; border-top: 1px dashed var(--rand); }
+
+@media (max-width: 900px) {
+  .raster { grid-template-columns: 1fr; }
+  .raster .kopfzelle, .zeilentrenner { display: none; }
+  .raster .welle { padding-top: 14px; font-size: .95rem; color: var(--text); }
+  .raster .zelle:empty { display: none; }
+  .raster .zelle .strangname { display: block; font-size: .78rem; font-weight: 600; color: var(--strang); }
+}
+
+table.legende { border-collapse: collapse; width: 100%; font-size: .9rem; }
+table.legende th, table.legende td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rand); vertical-align: top; }
+ul.regeln { margin: 0; padding-left: 20px; } ul.regeln li { margin: 6px 0; }
+code { font-size: .85em; background: var(--fl2); padding: 0 4px; border-radius: 4px; }
+.hinweis { border-left: 4px solid var(--warn); }
+</style>
+</head>
+<body>
+<div class="seite">
+  <h1>Arbeitsplan</h1>
+  <p class="unter">In welcher Reihenfolge die offenen Issues laufen, was parallel geht und wie jede Sitzung gestartet wird.</p>
+  <p class="stand" id="stand"></p>
+  <div class="leiste">
+    <label><input type="checkbox" id="erledigte-ausblenden"> Erledigte ausblenden</label>
+    <span>Modell: <span class="chip modell fable">Fable 5.1</span> <span class="chip modell opus">Opus 5.5</span> <span class="chip modell sonnet">Sonnet 5.5</span></span>
+    <span><span class="chip mig">Migration</span> = legt vermutlich eine neue Migration an</span>
+  </div>
+
+  <h2>Jetzt dran</h2>
+  <div class="zwei">
+    <section class="kasten">
+      <h3>Startbar (alle Vorgänger erledigt)</h3>
+      <p class="stand">Höchstens drei Sitzungen gleichzeitig – der Engpass ist das Prüfen und Mergen. Die markierten drei kommen aus verschiedenen Strängen und laufen ohne Konflikte nebeneinander; wird eine Sitzung frei, die nächste Karte in der Liste nehmen. Sicherheit und Go-Live-Themen stehen bewusst nur im Gesamtplan.</p>
+      <div class="karten" id="bereit"></div>
+      <p class="stand" id="mig-warnung" hidden></p>
+    </section>
+    <section class="kasten">
+      <h3>Wartet auf dich</h3>
+      <div class="karten" id="wartet"></div>
+      <h3 style="margin-top:16px">In Review (PR offen)</h3>
+      <div class="karten" id="review"></div>
+    </section>
+  </div>
+
+  <h2>Gesamtplan: Wellen × Stränge</h2>
+  <p class="stand">Alles in derselben Welle kann parallel laufen, sobald die genannten Vorgänger erledigt sind. Strang A ist der kritische Pfad.</p>
+  <div class="raster" id="raster"></div>
+
+  <h2>Später</h2>
+  <div class="zwei">
+    <section class="kasten">
+      <h3>Nach v1.0 (Backlog – nicht einplanen)</h3>
+      <p id="backlog"></p>
+    </section>
+    <section class="kasten">
+      <h3>Aufräumen</h3>
+      <div class="karten" id="aufraeumen"></div>
+    </section>
+  </div>
+
+  <h2>Legende</h2>
+  <div class="zwei">
+    <section class="kasten">
+      <h3>Modus</h3>
+      <table class="legende">
+        <tr><th>Auto</th><td>Direkt im Auto-Modus mit <code>/issue &lt;nr&gt;</code>. Für klar beschriebene Bugfixes, Parser, Oberflächen auf fertigem Unterbau, Doku.</td></tr>
+        <tr><th>Plan → Auto</th><td>Erst im Plan-Modus starten und den Plan freigeben, dann Auto. Für neue Tabellen/Migrationen (alte Migrationen sind unveränderlich), Krypto, Rechte und neue Teilbereiche.</td></tr>
+        <tr><th>Entscheidung</th><td>Erst entscheidest du fachlich; die Sitzung erarbeitet nur Optionen und hält die Entscheidung fest.</td></tr>
+      </table>
+    </section>
+    <section class="kasten">
+      <h3>Effort</h3>
+      <table class="legende">
+        <tr><th>medium</th><td>Doku, kleine UI-Fixes.</td></tr>
+        <tr><th>high</th><td>Normalfall für Umsetzungen.</td></tr>
+        <tr><th>xhigh</th><td>Datenmodell, Migrationen, Krypto, Abgleich-Logik, Planen großer Issues.</td></tr>
+        <tr><th>max</th><td>Selten – Security-Review, oder wenn xhigh sichtbar nicht reicht.</td></tr>
+      </table>
+    </section>
+  </div>
+
+  <h2>Regeln beim Parallelisieren</h2>
+  <section class="kasten">
+    <ul class="regeln">
+      <li><b>Migrationsnummern:</b> Zwei parallele PRs mit neuer Migration nehmen dieselbe Nummer. Der später gemergte PR benennt seine Migration vor dem Merge um.</li>
+      <li><b>Sammeldateien</b> (<code>app/src/routes.php</code>, <code>Permission</code>, <code>AuditAction</code>, Navigation, Specs) erzeugen kleine Merge-Konflikte – vor dem PR mit <code>main</code> abgleichen.</li>
+      <li><b>PHPUnit lokal nie gleichzeitig</b> laufen lassen (gemeinsame DB <code>vereinsbelege_test</code>), oder je Lauf <code>TEST_DB_NAME</code> setzen. Sonst die CI im PR prüfen lassen.</li>
+      <li><b>Docker sieht nur <code>C:\dev\vereinbelege</code>.</b> Sitzungen in Worktrees oder in der Cloud verlassen sich auf die CI; die Browser-Prüfung danach lokal nachholen.</li>
+      <li><b>Vor jedem Merge:</b> <code>/code-review high</code>, vor allem nach Auto-Sitzungen.</li>
+      <li><b>Diese Seite pflegen:</b> Ändern sich Reihenfolge, Abhängigkeiten oder Einstufung, die Zeile in <code>PLAN</code> im selben PR anpassen. Den Status musst du nicht pflegen – er kommt live von GitHub.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+// Plan data: one line per issue so parallel PRs rarely conflict.
+// n = issue, t = title, s = lane (A/B/C/G/O), m = model (fable/opus/sonnet),
+// e = effort, mo = mode (auto/plan/entscheid), d = predecessors,
+// st = status fallback when GitHub is unreachable (offen/wartet/erledigt),
+// mig = probably adds a migration, x = note.
+const PLAN_STAND = '2026-10-01';
+const REPO = 'MirkoSc/vereinsbelege';
+const PLAN = [
+  { n: 152, t: 'PDF-Rasterung: fetch binden', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'Kritisch: KI-Auslese (#47) braucht die Seitenbilder.' },
+  { n: 38, t: 'M6-4 Festschreibung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [], mig: true },
+  { n: 39, t: 'M6-5 Lieferanten zusammenführen', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [] },
+  { n: 40, t: 'M6-6 Duplikaterkennung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [38], mig: true, x: 'Nach #38: beide ändern die Prüfansicht.' },
+  { n: 41, t: 'M7-1 KI-Anbieter + Verbindungstest', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [38, 39, 40], mig: true },
+  { n: 45, t: 'M7-3 Textlayer digitaler PDFs', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [38, 39, 40], x: 'Reiner Parser, keine KI.' },
+  { n: 46, t: 'M7-4 E-Rechnungen (ZUGFeRD/XRechnung)', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [38, 39, 40], x: 'Fremdbibliothek nach CLAUDE.md §8 prüfen.' },
+  { n: 44, t: 'M7-2 LlmClient + Schema + Reparatur', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [41] },
+  { n: 42, t: 'M7-1b Profil Anthropic', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [44] },
+  { n: 43, t: 'M7-1c Profil llama.cpp', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [44] },
+  { n: 47, t: 'M7-5 Job ai_extract (extract-v1)', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [44, 45, 46, 152], mig: true, x: 'Plan mit Fable; Umsetzung auch mit Opus xhigh möglich.' },
+  { n: 48, t: 'M7-6 Lieferanten-Auflösung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [47, 39] },
+  { n: 49, t: 'M7-7 Kategorisierung', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [47], mig: true },
+  { n: 50, t: 'M7-8 KI-Protokoll', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [47], mig: true },
+  { n: 57, t: 'M8-1 Serienerkennung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [48, 49], mig: true },
+  { n: 58, t: 'M8-2 Übersicht wiederkehrende Kosten', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [57] },
+  { n: 65, t: 'M10-1 Allocation-Modell', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [48, 49, 50, 64], mig: true, x: 'Braucht M7 und Strang B (M9).' },
+  { n: 66, t: 'M10-2 Scoring + Auto-Zuordnung', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [65] },
+  { n: 67, t: 'M10-3 Erstattungen', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [65] },
+  { n: 70, t: 'M10-6 Umbuchungen eigene Konten', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [65] },
+  { n: 68, t: 'M10-4 Abgleich-Oberfläche', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [66, 67] },
+  { n: 69, t: 'M10-5 Übersichten (unbezahlt, ohne Beleg …)', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [65] },
+  { n: 71, t: 'M11-1 ReportService', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [68, 69, 70] },
+  { n: 72, t: 'M11-2 Dashboard', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [71] },
+  { n: 73, t: 'M11-3 „Wohin fließt das Geld“', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [71] },
+  { n: 74, t: 'M11-4 Kassenprüfungs-Report + CSV', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [71] },
+
+  { n: 59, t: 'M9-1 Konten inkl. Kasse/Kassensturz', s: 'B', m: 'opus', e: 'xhigh', mo: 'plan', d: [], mig: true },
+  { n: 60, t: 'M9-2 MT940-Parser', s: 'B', m: 'opus', e: 'high', mo: 'auto', d: [], x: 'Braucht anonymisierte echte Dateien (Sparkasse, VR Bank).' },
+  { n: 61, t: 'M9-3 CSV-Profile + Mapping-Assistent', s: 'B', m: 'opus', e: 'high', mo: 'plan', d: [], mig: true, x: 'Braucht anonymisierte echte CSV-Exporte.' },
+  { n: 62, t: 'M9-4 Import mit Vorschau/Salden/Duplikaten', s: 'B', m: 'opus', e: 'xhigh', mo: 'plan', d: [59, 60, 61], mig: true },
+  { n: 63, t: 'M9-5 Buchungsliste + manuelle Buchungen', s: 'B', m: 'opus', e: 'high', mo: 'auto', d: [62] },
+  { n: 64, t: 'M9-6 Regeln „kein Beleg nötig“', s: 'B', m: 'opus', e: 'high', mo: 'plan', d: [63], mig: true },
+
+  { n: 151, t: 'TOTP-QR-Code: SVG-Pfad reparieren', s: 'C', m: 'sonnet', e: 'high', mo: 'auto', d: [] },
+  { n: 153, t: 'E-Mail-2FA: Code beim Login senden', s: 'C', m: 'sonnet', e: 'high', mo: 'auto', d: [] },
+  { n: 145, t: 'Seitenkarten-Knöpfe bei 360 px (+ UI-Punkte aus #155)', s: 'C', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'UI-Punkte aus #155 mitnehmen; Backup-Punkte gehören zu #154.' },
+  { n: 107, t: 'M3-10 Adminseite Systemcheck', s: 'C', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'Schließt #97 und #98 mit.' },
+  { n: 102, t: 'CLAUDE.md §1: exec-Verzicht begründen', s: 'C', m: 'sonnet', e: 'medium', mo: 'auto', d: [] },
+  { n: 142, t: 'M5-2b Kantenerkennung: Fotos + E-03', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [], st: 'wartet', x: 'Wartet auf ≥ 20 echte, anonymisierte Belegfotos von dir.' },
+  { n: 75, t: 'M12-1 Pfad-/Dateinamen-Muster', s: 'C', m: 'opus', e: 'high', mo: 'auto', d: [38, 39, 40] },
+  { n: 76, t: 'M12-2 Gestreamter ZIP-Export', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75] },
+  { n: 77, t: 'M12-3 Archiv-Import', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75], x: 'Probelauf mit einem echten Jahresarchiv.' },
+
+  { n: 154, t: 'Restore ohne config.php sperrt Konten aus', s: 'G', m: 'fable', e: 'xhigh', mo: 'entscheid', d: [], st: 'wartet', x: 'Erst deine Entscheidung (3 Wege im Issue). Backup-Punkte aus #155 mitnehmen.' },
+  { n: 112, t: 'M3-11 Admin-Seite Backups', s: 'G', m: 'opus', e: 'high', mo: 'plan', d: [154] },
+  { n: 120, t: 'dump.sql strömend einspielen', s: 'G', m: 'opus', e: 'xhigh', mo: 'plan', d: [154] },
+  { n: 100, t: 'Argon2id-Profil festlegen', s: 'G', m: 'opus', e: 'xhigh', mo: 'plan', d: [] },
+  { n: 101, t: 'Installer: .htaccess-Sperren', s: 'G', m: 'opus', e: 'high', mo: 'auto', d: [] },
+  { n: 79, t: 'M13-2 Code-Integritätscheck', s: 'G', m: 'opus', e: 'xhigh', mo: 'plan', d: [58, 72, 73, 74, 76, 77, 112, 120] },
+  { n: 80, t: 'M13-3 Datenschutz/Impressum + Texte', s: 'G', m: 'sonnet', e: 'high', mo: 'auto', d: [58, 72, 73, 74, 76, 77] },
+  { n: 81, t: 'M13-4 Verfahrensdokumentation', s: 'G', m: 'sonnet', e: 'high', mo: 'auto', d: [58, 72, 73, 74, 76, 77] },
+  { n: 82, t: 'M13-5 Performance-Test', s: 'G', m: 'opus', e: 'xhigh', mo: 'plan', d: [58, 72, 73, 74, 76, 77] },
+  { n: 83, t: 'M13-6 Betriebsdoku', s: 'G', m: 'sonnet', e: 'high', mo: 'auto', d: [58, 72, 73, 74, 76, 77, 112] },
+  { n: 78, t: 'M13-1 Security-Review', s: 'G', m: 'fable', e: 'max', mo: 'plan', d: [79, 80, 81, 82, 83, 100, 101, 151, 153], x: 'Bewusst als Letztes, damit er alles abdeckt.' },
+
+  { n: 51, t: 'M7b-1 Worker-API + HMAC', s: 'O', m: 'opus', e: 'xhigh', mo: 'plan', d: [48, 49, 50], mig: true, x: 'Optional, auch nach v1.0 möglich.' },
+  { n: 52, t: 'M7b-2 Worker-Grants + Kontext', s: 'O', m: 'fable', e: 'xhigh', mo: 'plan', d: [51], mig: true },
+  { n: 53, t: 'M7b-3 Routing, Fallback, Admin-Seite', s: 'O', m: 'opus', e: 'high', mo: 'plan', d: [52] },
+  { n: 54, t: 'M7b-4 bin/worker.php', s: 'O', m: 'opus', e: 'xhigh', mo: 'plan', d: [52, 53] },
+  { n: 55, t: 'M7b-5 Docker-Image Multi-Arch', s: 'O', m: 'opus', e: 'high', mo: 'auto', d: [54] },
+  { n: 56, t: 'M7b-6 Anleitung Raspberry Pi', s: 'O', m: 'sonnet', e: 'medium', mo: 'auto', d: [55], x: 'Abnahme: echte Einrichtung auf dem Pi.' },
+];
+const AUFRAEUMEN = [
+  { n: 32, t: 'M5-2 Kantenerkennung', x: 'Mit PR #141 umgesetzt, Rest steckt in #142 – kann geschlossen werden.' },
+  { n: 155, t: 'Kleinere Befunde (Sammel-Issue)', x: 'Wird über #145 (UI-Punkte), #154 (Backup-Punkte) und #142 (Kanten) abgearbeitet.' },
+];
+const BACKLOG = [84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 103, 146, 147];
+
+const STRAENGE = [
+  { id: 'A', name: 'A · Belege → KI → Abgleich → Auswertungen', farbe: 'var(--a)' },
+  { id: 'B', name: 'B · Konten & Kontoauszüge (M9)', farbe: 'var(--b)' },
+  { id: 'C', name: 'C · Kleinkram & Export', farbe: 'var(--c)' },
+  { id: 'G', name: 'Vor Go-Live (M13)', farbe: 'var(--g)' },
+  { id: 'O', name: 'Optional: Worker (M7b)', farbe: 'var(--o)' },
+];
+const MODELL = { fable: 'Fable 5.1', opus: 'Opus 5.5', sonnet: 'Sonnet 5.5' };
+const MODUS = { auto: 'Auto', plan: 'Plan → Auto', entscheid: 'Entscheidung' };
+const STATUS_TEXT = { erledigt: 'erledigt', wartet: 'wartet auf dich', review: 'PR offen', bereit: 'startbar', offen: 'offen', schliessen: 'schließen' };
+
+const byNr = new Map(PLAN.map((p) => [p.n, p]));
+let live = null; // { closed: Set, review: Set, zeit: Date } once GitHub answered
+
+function status(p) {
+  if (live) {
+    if (live.closed.has(p.n)) return 'erledigt';
+    if (live.review.has(p.n)) return 'review';
+  } else if (p.st === 'erledigt') {
+    return 'erledigt';
+  }
+  if (p.st === 'wartet') return 'wartet';
+  return vorgaengerErledigt(p) ? 'bereit' : 'offen';
+}
+function erledigt(n) {
+  const p = byNr.get(n);
+  if (!p) return live ? live.closed.has(n) : true;
+  return status(p) === 'erledigt';
+}
+function vorgaengerErledigt(p) { return p.d.every(erledigt); }
+
+const wellenCache = new Map();
+function welle(p) {
+  if (wellenCache.has(p.n)) return wellenCache.get(p.n);
+  const w = 1 + Math.max(0, ...p.d.filter((n) => byNr.has(n)).map((n) => welle(byNr.get(n))));
+  wellenCache.set(p.n, w);
+  return w;
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function link(n) { return `https://github.com/${REPO}/issues/${n}`; }
+
+function karte(p, mitStrang, empfohlen) {
+  const st = status(p);
+  const strang = STRAENGE.find((s) => s.id === p.s);
+  const offeneVorgaenger = p.d.filter((n) => !erledigt(n));
+  const nach = p.d.length
+    ? `<p class="nach">nach ${p.d.map((n) => `<a href="${link(n)}"${erledigt(n) ? ' style="text-decoration:line-through"' : ''}>#${n}</a>`).join(', ')}${offeneVorgaenger.length && st !== 'erledigt' ? ` · offen: ${offeneVorgaenger.length}` : ''}</p>`
+    : '';
+  return `<article class="karte ${st}${empfohlen ? ' empfohlen' : ''}" style="--strang:${strang.farbe}" data-status="${st}">
+    ${mitStrang ? `<span class="strangname">${esc(strang.name)}</span>` : ''}
+    ${empfohlen ? '<span class="empfehlung">Jetzt starten</span>' : ''}
+    <div class="kopf"><a class="nr" href="${link(p.n)}">#${p.n}</a><span class="pille ${st}">${STATUS_TEXT[st]}</span></div>
+    <p class="titel">${esc(p.t)}</p>
+    <div class="chips">
+      <span class="chip modell ${p.m}">${MODELL[p.m]}</span>
+      <span class="chip">${esc(p.e)}</span>
+      <span class="chip">${MODUS[p.mo]}</span>
+      ${p.mig ? '<span class="chip mig">Migration</span>' : ''}
+    </div>
+    ${nach}
+    ${p.x ? `<p class="notiz">${esc(p.x)}</p>` : ''}
+  </article>`;
+}
+
+function rangfolge(a, b) {
+  const reihe = { A: 0, B: 1, C: 2, G: 3, O: 4 };
+  return welle(a) - welle(b) || reihe[a.s] - reihe[b.s] || PLAN.indexOf(a) - PLAN.indexOf(b);
+}
+
+function zeichne() {
+  const ausblenden = document.getElementById('erledigte-ausblenden').checked;
+
+  // "Now" covers lanes A-C only; go-live (G) and the optional worker (O)
+  // stay in the grid. Interleave the lanes so the top three are three
+  // independent sessions.
+  const jeStrang = ['A', 'B', 'C'].map((id) => PLAN.filter((p) => p.s === id && status(p) === 'bereit').sort(rangfolge));
+  const bereit = [];
+  for (let i = 0; jeStrang.some((l) => l.length > i); i++) jeStrang.forEach((l) => { if (l[i]) bereit.push(l[i]); });
+  document.getElementById('bereit').innerHTML = bereit.length
+    ? bereit.map((p, i) => karte(p, false, i < 3)).join('')
+    : '<p class="leer">Nichts startbar.</p>';
+  const migBereit = bereit.filter((p) => p.mig).map((p) => '#' + p.n);
+  const warnung = document.getElementById('mig-warnung');
+  warnung.hidden = migBereit.length < 2;
+  warnung.textContent = `Mehrere startbare Issues legen vermutlich Migrationen an (${migBereit.join(', ')}) – bei paralleler Arbeit Nummern vor dem Merge abstimmen.`;
+
+  const wartet = PLAN.filter((p) => status(p) === 'wartet');
+  document.getElementById('wartet').innerHTML = wartet.length ? wartet.map((p) => karte(p)).join('') : '<p class="leer">Nichts.</p>';
+  const review = PLAN.filter((p) => status(p) === 'review');
+  document.getElementById('review').innerHTML = review.length ? review.map((p) => karte(p)).join('') : '<p class="leer">Nichts.</p>';
+
+  const maxWelle = Math.max(...PLAN.map(welle));
+  let html = '<div></div>' + STRAENGE.map((s) => `<div class="kopfzelle" style="--strang:${s.farbe}">${esc(s.name)}</div>`).join('');
+  for (let w = 1; w <= maxWelle; w++) {
+    const inWelle = PLAN.filter((p) => welle(p) === w && !(ausblenden && status(p) === 'erledigt'));
+    if (!inWelle.length) continue;
+    html += `<div class="zeilentrenner"></div><div class="welle">Welle ${w}</div>`;
+    for (const s of STRAENGE) {
+      html += `<div class="zelle">${inWelle.filter((p) => p.s === s.id).sort(rangfolge).map((p) => karte(p, true)).join('')}</div>`;
+    }
+  }
+  document.getElementById('raster').innerHTML = html;
+
+  document.getElementById('aufraeumen').innerHTML = AUFRAEUMEN
+    .filter((a) => !(live && live.closed.has(a.n)))
+    .map((a) => `<article class="karte" style="--strang:var(--warn)"><div class="kopf"><a class="nr" href="${link(a.n)}">#${a.n}</a><span class="pille schliessen">${STATUS_TEXT.schliessen}</span></div><p class="titel">${esc(a.t)}</p><p class="notiz">${esc(a.x)}</p></article>`)
+    .join('') || '<p class="leer">Nichts.</p>';
+  document.getElementById('backlog').innerHTML = BACKLOG.map((n) => `<a href="${link(n)}">#${n}</a>`).join(' · ');
+
+  const fertig = PLAN.filter((p) => status(p) === 'erledigt').length;
+  document.getElementById('stand').innerHTML = `Plandaten vom <b>${PLAN_STAND}</b> · ${fertig} von ${PLAN.length} erledigt · ` +
+    (live ? `Status live von GitHub (${live.zeit.toLocaleString('de-DE')})` : (live === false ? 'GitHub nicht erreichbar – Status aus dem Dokument' : 'Status wird von GitHub geladen …'));
+}
+
+async function ladeLive() {
+  try {
+    const closed = new Set();
+    for (let seite = 1; seite <= 5; seite++) {
+      const r = await fetch(`https://api.github.com/repos/${REPO}/issues?state=closed&per_page=100&page=${seite}`, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const liste = await r.json();
+      liste.filter((i) => !i.pull_request).forEach((i) => closed.add(i.number));
+      if (liste.length < 100) break;
+    }
+    const review = new Set();
+    const pr = await fetch(`https://api.github.com/repos/${REPO}/pulls?state=open&per_page=100`, { headers: { Accept: 'application/vnd.github+json' } });
+    if (pr.ok) {
+      for (const p of await pr.json()) {
+        for (const m of String(p.body || '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)) review.add(Number(m[1]));
+      }
+    }
+    live = { closed, review, zeit: new Date() };
+  } catch {
+    live = false;
+  }
+  zeichne();
+}
+
+const schalter = document.getElementById('erledigte-ausblenden');
+try { schalter.checked = localStorage.getItem('arbeitsplan-erledigte-ausblenden') === '1'; } catch {}
+schalter.addEventListener('change', () => {
+  try { localStorage.setItem('arbeitsplan-erledigte-ausblenden', schalter.checked ? '1' : '0'); } catch {}
+  zeichne();
+});
+zeichne();
+ladeLive();
+</script>
+</body>
+</html>
