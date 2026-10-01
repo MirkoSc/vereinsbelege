@@ -156,9 +156,14 @@ final class PruefungFlowTest extends DatabaseTestCase
         $sortiert = $positionen;
         sort($sortiert);
         self::assertSame($sortiert, $positionen, 'oldest first');
-        foreach ([$neu, $geprueft, $abgelehnt] as $nicht) {
+        foreach ([$neu, $abgelehnt] as $nicht) {
             self::assertStringNotContainsString('/app/belege/pruefen/' . $nicht . '"', $seite->body);
         }
+        // A checked receipt is not in the queue, but waits in its own section
+        // below it (issue #38/M6-4).
+        [$warteschlange, $zumFestschreiben] = explode('Geprüft – bereit zum Festschreiben', $seite->body, 2) + [1 => ''];
+        self::assertStringNotContainsString('/app/belege/pruefen/' . $geprueft . '"', $warteschlange);
+        self::assertStringContainsString('/app/belege/pruefen/' . $geprueft . '"', $zumFestschreiben);
         self::assertStringContainsString('Mit dem ältesten beginnen', $seite->body);
     }
 
@@ -889,17 +894,6 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
         self::assertStringContainsString('Keine geprüften Belege', $this->get('/app/belege/pruefen', entsperrt: true)->body);
-    }
-
-    public function testTheInboxLeadsToCheckedAndLockedReceipts(): void
-    {
-        $id = $this->gepruefterBeleg();
-        self::assertStringContainsString('Beleg ansehen oder festschreiben', $this->get('/app/posteingang/' . $id, entsperrt: true)->body);
-
-        $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
-        $seite = $this->get('/app/posteingang/' . $id, entsperrt: true)->body;
-        self::assertStringContainsString('Beleg ansehen oder Festschreibung aufheben', $seite);
-        self::assertStringContainsString('lässt sich nicht mehr ändern', $seite);
     }
 
     // -------------------------------------------------- service, schema

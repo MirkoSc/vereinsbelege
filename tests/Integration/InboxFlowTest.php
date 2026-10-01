@@ -157,6 +157,32 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('/kostenstelle', $seite->body);
     }
 
+    /**
+     * The way to a checked or locked receipt (issue #38/M6-4): lifting the
+     * lock happens on the review page, so the detail has to lead there - and
+     * a locked receipt offers no cost center change any more.
+     */
+    public function testTheDetailLinksToCheckedAndLockedReceipts(): void
+    {
+        $geprueft = $this->einreichung(status: DocumentStatus::Geprueft);
+        $gesperrt = $this->einreichung(status: DocumentStatus::Festgeschrieben);
+
+        $seite = $this->get('/app/posteingang/' . $geprueft, entsperrt: true)->body;
+        self::assertStringContainsString('Beleg ansehen oder festschreiben', $seite);
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $geprueft . '"', $seite);
+        self::assertStringContainsString('/kostenstelle', $seite);
+
+        $seite = $this->get('/app/posteingang/' . $gesperrt, entsperrt: true)->body;
+        self::assertStringContainsString('Beleg ansehen oder Festschreibung aufheben', $seite);
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $gesperrt . '"', $seite);
+        self::assertStringContainsString('lässt sich nicht mehr ändern', $seite);
+        self::assertStringNotContainsString('/kostenstelle', $seite);
+
+        // Whoever may not edit receipts gets no link into the review page.
+        $this->alsRolle(SystemRole::Vorstand);
+        self::assertStringNotContainsString('/app/belege/pruefen/', $this->get('/app/posteingang/' . $gesperrt, entsperrt: true)->body);
+    }
+
     public function testTheCostCenterScopeShowsOnlyOwnSubmissions(): void
     {
         $kostenstellen = new CostCenterRepository($this->pdo());
