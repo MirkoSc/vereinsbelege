@@ -133,6 +133,19 @@ final readonly class BankAccountRepository
         return (int) $stmt->fetchColumn();
     }
 
+    /**
+     * The date of the account's earliest cash count, or null without one -
+     * the opening date may not move past it.
+     */
+    public function firstCashCountOn(int $id): ?\DateTimeImmutable
+    {
+        $stmt = $this->pdo->prepare('SELECT MIN(counted_on) FROM cash_count WHERE account_id = ?');
+        $stmt->execute([$id]);
+        $datum = $stmt->fetchColumn();
+
+        return $datum === null || $datum === false ? null : new \DateTimeImmutable((string) $datum);
+    }
+
     public function delete(int $id): void
     {
         $stmt = $this->pdo->prepare('DELETE FROM bank_account WHERE id = ?');

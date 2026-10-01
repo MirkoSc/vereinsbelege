@@ -31,6 +31,8 @@ use App\Service\Processing\Betrag;
  *   A cash box has no bank connection and no negative opening balance.
  * - An IBAN belongs to one account only: a second one is refused with a
  *   pointer to the first.
+ * - The opening date lies neither in the future nor after the account's
+ *   first cash count.
  * - Deleting only while unused (BankAccountRepository::usageCount()),
  *   otherwise the account is deactivated.
  */
@@ -87,7 +89,7 @@ final readonly class BankAccountService
      */
     public function anlegen(Vault $vault, BankAccountKind $art, array $felder, \DateTimeImmutable $now): BankAccountSaved
     {
-        [$daten, $saldo, $stichtag] = $this->pruefe($art, $felder);
+        [$daten, $saldo, $stichtag] = $this->pruefe($art, $felder, $now);
         $ibanBi = $this->ibanBi($vault, $daten);
         $this->pruefeEindeutig($vault, $ibanBi, null);
 
@@ -120,22 +122,20 @@ final readonly class BankAccountService
         $record = $this->konten->find($id) ?? throw new BankRuleViolation('Dieses Konto gibt es nicht.');
         $vorher = $this->entschluesseln($vault, $record);
 
-        [$daten, $saldo, $stichtag] = $this->pruefe($record->kind, $felder);
+        [$daten, $saldo, $stichtag] = $this->pruefe($record->kind, $felder, $now);
         $aktiv = ($felder['active'] ?? '') === '1';
         $ibanBi = $this->ibanBi($vault, $daten);
         $this->pruefeEindeutig($vault, $ibanBi, $id);
 
-        // The row keeps its data key: re-sealing would gain nothing.
-        $key = $vault->openDataKey($record->dekSealed);
-        $this->konten->update(
-            $id,
-            self::verschluesseln($key, $id, $daten),
-            $ibanBi,
-            self::verschluesselnSaldo($key, $id, $saldo),
-            $stichtag,
-            $aktiv,
-            $now,
-        );
+        // A recorded cash count was measured against the opening balance of
+        // its time: the opening date must not move past the first one.
+        $ersterKassensturz = $this->konten->firstCashCountOn($id);
+        if ($ersterKassensturz !== null && $stichtag > $ersterKassensturz) {
+            throw new BankRuleViolation(
+                sprintf('Der Stichtag kann nicht nach dem ersten Kassensturz (%s) liegen.', $ersterKassensturz->format('d.m.Y')),
+                'opening_date',
+            );
+        }
 
         $geaendert = [];
         $alt = $vorher->data->toPayload();
@@ -153,6 +153,22 @@ final readonly class BankAccountService
         if ($aktiv !== $vorher->active) {
             $geaendert[] = 'active';
         }
+        // Nothing changed: no write, so `updated_at` keeps telling the truth.
+        if ($geaendert === []) {
+            return new BankAccountSaved($id, []);
+        }
+
+        // The row keeps its data key: re-sealing would gain nothing.
+        $key = $vault->openDataKey($record->dekSealed);
+        $this->konten->update(
+            $id,
+            self::verschluesseln($key, $id, $daten),
+            $ibanBi,
+            self::verschluesselnSaldo($key, $id, $saldo),
+            $stichtag,
+            $aktiv,
+            $now,
+        );
 
         return new BankAccountSaved($id, $geaendert);
     }
@@ -256,7 +272,7 @@ final readonly class BankAccountService
      *
      * @throws BankRuleViolation
      */
-    private function pruefe(BankAccountKind $art, array $felder): array
+    private function pruefe(BankAccountKind $art, array $felder, \DateTimeImmutable $heute): array
     {
         $feld = static fn(string $name): string => trim($felder[$name] ?? '');
 
@@ -293,6 +309,9 @@ final readonly class BankAccountService
         $stichtag = \DateTimeImmutable::createFromFormat('!Y-m-d', $wert);
         if ($stichtag === false || $stichtag->format('Y-m-d') !== $wert) {
             throw new BankRuleViolation('Bitte den Stichtag des Anfangssaldos als Datum angeben.', 'opening_date');
+        }
+        if ($wert > $heute->format('Y-m-d')) {
+            throw new BankRuleViolation('Der Stichtag kann nicht in der Zukunft liegen.', 'opening_date');
         }
 
         return [new BankAccountData(name: $name, iban: $iban, bic: $bic, bank: $bank), $saldo, $stichtag];

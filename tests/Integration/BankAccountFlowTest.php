@@ -180,6 +180,7 @@ final class BankAccountFlowTest extends DatabaseTestCase
             ['saldo', ['opening_balance' => 'zwölf'], 'Den Anfangssaldo bitte als Betrag'],
             ['saldo', ['opening_balance' => '1,234'], 'Den Anfangssaldo bitte als Betrag'],
             ['stichtag', ['opening_date' => '2026-02-30'], 'Bitte den Stichtag'],
+            ['stichtag', ['opening_date' => new \DateTimeImmutable('tomorrow')->format('Y-m-d')], 'Der Stichtag kann nicht in der Zukunft liegen.'],
         ];
         foreach ($faelle as [$feld, $eingabe, $meldung]) {
             $antwort = $this->post('/app/konten', $this->felder(['art' => 'bank', 'name' => 'Girokonto', ...$eingabe]));
@@ -232,10 +233,12 @@ final class BankAccountFlowTest extends DatabaseTestCase
         self::assertSame(9995, $konto->openingBalance);
         self::assertSame($this->tresor->blindIndex()->forValue('bank_account.iban', self::IBAN_2), $this->konten->find($id)?->ibanBi);
 
-        // Unchanged: no second row.
+        // Unchanged: no second row, and the row is not even written.
+        $this->pdo()->exec("UPDATE bank_account SET updated_at = '2026-01-02 03:04:05' WHERE id = " . $id);
         $this->post('/app/konten/' . $id, $this->felder([
             'name' => 'Girokonto VR Bank', 'iban' => self::IBAN_2, 'opening_balance' => '99,95', 'opening_date' => '2026-01-01', 'active' => '1',
         ]));
+        self::assertSame('2026-01-02 03:04:05', $this->konten->find($id)?->updatedAt->format('Y-m-d H:i:s'));
 
         $zeilen = $this->protokoll('bank_account', $id);
         self::assertSame(
@@ -243,6 +246,28 @@ final class BankAccountFlowTest extends DatabaseTestCase
             array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
         );
         self::assertSame(['felder' => ['name', 'iban', 'opening_balance']], $this->audit->details($zeilen[0], $this->tresor));
+    }
+
+    /**
+     * A recorded cash count was measured against the opening balance of its
+     * time: the opening date may move up to the first count, not past it.
+     */
+    public function testTheOpeningDateStaysOnOrBeforeTheFirstCashCount(): void
+    {
+        $kasse = $this->kasse('Barkasse', '100,00');
+        $zaehltag = new \DateTimeImmutable('today -10 days');
+        $this->post('/app/konten/' . $kasse . '/kassensturz', ['aktion' => 'speichern', 'datum' => $zaehltag->format('Y-m-d'), 'ist' => '100,00', 'notiz' => '']);
+        $felder = ['name' => 'Barkasse', 'opening_balance' => '100,00', 'active' => '1'];
+
+        $danach = $this->post('/app/konten/' . $kasse, $this->felder([...$felder, 'opening_date' => $zaehltag->modify('+1 day')->format('Y-m-d')]));
+        self::assertSame(422, $danach->status);
+        self::assertStringContainsString('Der Stichtag kann nicht nach dem ersten Kassensturz (' . $zaehltag->format('d.m.Y') . ') liegen.', $danach->body);
+        self::assertMatchesRegularExpression('/id="konto-stichtag"[^>]*aria-invalid="true"/', $danach->body);
+        self::assertSame('2026-01-01', $this->konto($kasse)->openingDate->format('Y-m-d'));
+
+        $amZaehltag = $this->post('/app/konten/' . $kasse, $this->felder([...$felder, 'opening_date' => $zaehltag->format('Y-m-d')]));
+        self::assertSame(302, $amZaehltag->status);
+        self::assertSame($zaehltag->format('Y-m-d'), $this->konto($kasse)->openingDate->format('Y-m-d'));
     }
 
     /**
@@ -362,6 +387,12 @@ final class BankAccountFlowTest extends DatabaseTestCase
         self::assertSame(404, $this->get('/app/konten/999/kassensturz')->status);
         self::assertSame(404, $this->get('/app/konten/' . $bank . '/kassensturz')->status, 'a bank account has no cash count');
         self::assertSame(404, $this->post('/app/konten/' . $bank . '/kassensturz', ['aktion' => 'speichern', 'datum' => $this->heute(), 'ist' => '1,00'])->status);
+
+        // Deleting an unknown account answers 404 directly - no error left
+        // behind for whatever page comes next.
+        unset($_SESSION['flash']);
+        self::assertSame(404, $this->post('/app/konten/999/loeschen', [])->status);
+        self::assertArrayNotHasKey('flash', $_SESSION);
     }
 
     /**
@@ -503,6 +534,31 @@ final class BankAccountFlowTest extends DatabaseTestCase
         self::assertStringContainsString('102,00 €', $seite);
         self::assertStringNotContainsString('91,00 €', $seite);
         self::assertStringContainsString('1 Kassensturz,', $seite);
+    }
+
+    /**
+     * The period scope covers the opening balance too: it is the balance of
+     * the opening date. An external reader whose period starts later sees
+     * the account, but not that amount.
+     */
+    public function testReadersOutsideTheirPeriodDoNotSeeTheOpeningBalance(): void
+    {
+        $alt = $this->bankkonto('Girokonto Sparkasse', self::IBAN_1);
+        $antwort = $this->post('/app/konten', $this->felder(['art' => 'bank', 'name' => 'Tagesgeld', 'opening_balance' => '777,00', 'opening_date' => $this->heute()]));
+        $neu = (int) substr($antwort->headers['Location'] ?? '', strlen('/app/konten/'));
+        $this->rolle(SystemRole::Steuerberater);
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('today -30 days'), null);
+
+        $liste = $this->get('/app/konten')->body;
+        self::assertStringContainsString('Girokonto Sparkasse', $liste);
+        self::assertStringContainsString('außerhalb Ihres Zeitraums', $liste);
+        self::assertStringNotContainsString('500,00', $liste);
+        self::assertStringContainsString('777,00 €', $liste);
+
+        $seite = $this->get('/app/konten/' . $alt)->body;
+        self::assertStringNotContainsString('500,00', $seite);
+        self::assertStringContainsString('Der Stichtag liegt außerhalb Ihres Zeitraums', $seite);
+        self::assertStringContainsString('value="777,00"', $this->get('/app/konten/' . $neu)->body);
     }
 
     // ---------------------------------------------------------- helpers

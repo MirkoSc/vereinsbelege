@@ -69,8 +69,12 @@ final readonly class AccountController
         foreach (BankAccountKind::cases() as $art) {
             $gruppen[$art->value] = [];
         }
+        $saldoVerborgen = [];
         foreach ($tresor === null ? [] : $this->service->liste($tresor) as $konto) {
             $gruppen[$konto->kind->value][] = $konto;
+            if (!$this->saldoSichtbar($konto)) {
+                $saldoVerborgen[] = $konto->id;
+            }
         }
 
         return Response::html($this->view->render('app/konten', [
@@ -78,6 +82,7 @@ final readonly class AccountController
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
             'gruppen' => $gruppen,
+            'saldoVerborgen' => $saldoVerborgen,
             'darfPflegen' => $this->berechtigungen()->darf(Permission::BankBook),
         ], Area::App));
     }
@@ -191,8 +196,12 @@ final readonly class AccountController
         }
         // Deleting touches no ciphertext, but a page that cannot even show
         // which account it is about should not offer to delete it either.
-        if ($this->tresor($request) === null) {
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
             return $this->gesperrt(true);
+        }
+        if ($this->service->finde($tresor, $id) === null) {
+            return $this->nichtGefunden();
         }
 
         try {
@@ -290,6 +299,10 @@ final readonly class AccountController
         ?Vault $tresor = null,
     ): ResponseInterface {
         $darfPflegen = $this->berechtigungen()->darf(Permission::BankBook);
+        $saldoVerborgen = $konto !== null && !$this->saldoSichtbar($konto);
+        if ($saldoVerborgen) {
+            $felder['opening_balance'] = '';
+        }
         $kassenstuerze = $konto !== null && $tresor !== null && $konto->kind === BankAccountKind::Kasse
             ? $this->kassensturz->liste($tresor, $konto, $this->berechtigungen()->zugriffsbereich(Permission::BankView))
             : [];
@@ -304,6 +317,7 @@ final readonly class AccountController
             'konfliktId' => $fehler?->konfliktId,
             'flash' => $this->session->pullFlash(),
             'darfPflegen' => $darfPflegen,
+            'saldoVerborgen' => $saldoVerborgen,
             'verwendungen' => $konto === null ? 0 : $this->service->verwendungen($konto->id),
             'kassenstuerze' => $kassenstuerze,
         ], Area::App), $status);
@@ -332,6 +346,21 @@ final readonly class AccountController
             'fehlerFeld' => $fehler?->feld,
             'flash' => $this->session->pullFlash(),
         ], Area::App), $status);
+    }
+
+    /**
+     * Whether the reader may see the opening balance: it is the balance of
+     * the opening date, and the period scope of external accounts
+     * (docs/spec/01-sicherheit.md section 4) applies to it like to every
+     * other dated figure. Whoever maintains accounts sees it to edit it -
+     * those are internal accounts, which carry no period scope.
+     */
+    private function saldoSichtbar(BankAccount $konto): bool
+    {
+        $berechtigungen = $this->berechtigungen();
+
+        return $berechtigungen->darf(Permission::BankBook)
+            || $berechtigungen->zugriffsbereich(Permission::BankView)->erlaubt(null, $konto->openingDate);
     }
 
     /** The account if it is a cash box - a bank account has no cash count. */

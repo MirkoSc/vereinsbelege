@@ -11,6 +11,7 @@
  *
  * @var bool $entsperrt
  * @var array<string, list<\App\Domain\BankAccount>> $gruppen kind value => accounts
+ * @var list<int> $saldoVerborgen accounts whose opening date lies outside the reader's period
  * @var bool $darfPflegen holds `bank.book`
  */
 
@@ -73,7 +74,13 @@ use App\Service\Processing\Betrag;
                                         <td><?= $konto->data->iban === '' ? '<span class="gedaempft">–</span>' : e(Iban::formatieren($konto->data->iban)) ?></td>
                                         <td><?= $konto->data->bank === '' ? '<span class="gedaempft">–</span>' : e($konto->data->bank) ?></td>
                                     <?php endif; ?>
-                                    <td class="zahl"><?= e(Betrag::format($konto->openingBalance)) ?> €</td>
+                                    <td class="zahl">
+                                        <?php if (in_array($konto->id, $saldoVerborgen, true)): ?>
+                                            <span class="gedaempft">außerhalb Ihres Zeitraums</span>
+                                        <?php else: ?>
+                                            <?= e(Betrag::format($konto->openingBalance)) ?> €
+                                        <?php endif; ?>
+                                    </td>
                                     <td><?= e($konto->openingDate->format('d.m.Y')) ?></td>
                                 </tr>
                             <?php endforeach; ?>

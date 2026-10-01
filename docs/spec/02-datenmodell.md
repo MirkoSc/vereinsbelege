@@ -406,7 +406,10 @@ nur die gespeicherten Werte), **Anlegen/Ändern/Löschen und Kassensturz
   falls doch gesendet), Anfangsbestand ≥ 0.
 - **Anfangssaldo** = Bestand **zu Beginn** des Stichtags in Integer-Cent
   (`App\Service\Processing\Betrag`, Eingabe wie „1.234,56“), Währung EUR
-  mit gespeichert. Buchungen ab dem Stichtag kommen hinzu.
+  mit gespeichert. Buchungen ab dem Stichtag kommen hinzu. Der Stichtag
+  liegt nicht in der Zukunft und nicht nach dem ersten Kassensturz der Kasse
+  (`BankAccountRepository::firstCashCountOn()`) – ein gespeicherter
+  Kassensturz bleibt so auf seinen Anfangsbestand bezogen.
 - **Löschen nur ohne Verwendung, sonst deaktivieren** (`active`). Was als
   Verwendung zählt, entscheidet allein `BankAccountRepository::usageCount()`
   – heute `cash_count`. Jede spätere Tabelle mit `account_id`
@@ -426,22 +429,27 @@ nur die gespeicherten Werte), **Anlegen/Ändern/Löschen und Kassensturz
   „Kassendifferenz“ vorzuschlagen, übernimmt M9-5 (issue #63), sobald es
   Kassenbuchungen gibt.
 - **Zeitraum-Scope:** Die Kassensturz-Liste filtert per
-  `Zugriffsbereich::sqlBedingung('c.counted_on', null)` in SQL; Konten
-  selbst sind Stammdaten und ungefiltert.
+  `Zugriffsbereich::sqlBedingung('c.counted_on', null)` in SQL. Konten
+  selbst sind Stammdaten und bleiben sichtbar; den **Anfangssaldo** sieht
+  ein Leser ohne `bank.book` nur, wenn der Stichtag in seinem Zeitraum liegt
+  (sonst „außerhalb Ihres Zeitraums“) – er ist der Bestand eines Tages.
 - **Audit:** `konto.angelegt` (Details: Art und Namen der Felder mit Wert),
-  `konto.geaendert` (nur Namen der geänderten Felder; ohne Änderung keine
-  Zeile), `konto.geloescht` (Art) – Entität `bank_account`;
+  `konto.geaendert` (nur Namen der geänderten Felder; ohne Änderung weder
+  Zeile noch Schreibzugriff, `updated_at` bleibt), `konto.geloescht` (Art) – Entität `bank_account`;
   `kassensturz.erfasst` – Entität `cash_count`, **ohne Details**. Nie
   Name, IBAN oder Betrag im Log oder in Flash-Meldungen.
 
 **Pflicht-Tests:** `BankAccountFlowTest` (Bankkonto: IBAN/Name/Betrag nicht
 im Klartext, `iban_bi` = nachgerechneter Blind Index, Betrag als Cent;
 Kasse ohne Bankverbindung und nicht negativ, Bankkonto darf negativ sein;
-Validierung mit markiertem Feld; doppelte IBAN mit Link abgelehnt, eigene
-kein Konflikt; Ändern mit Feldnamen im Audit, Art unveränderlich, ohne
-Änderung keine Zeile; verwendete Kasse nicht löschbar – auch der FK allein
+Validierung mit markiertem Feld, Stichtag nicht in der Zukunft; doppelte
+IBAN mit Link abgelehnt, eigene kein Konflikt; Ändern mit Feldnamen im
+Audit, Art unveränderlich, ohne Änderung keine Zeile und kein Schreiben;
+Stichtag höchstens bis zum ersten Kassensturz; verwendete Kasse nicht löschbar – auch der FK allein
 nicht –, deaktivierbar; ungenutztes Konto löschbar; Leserechte ohne
-Formular; ohne Tresor nichts sichtbar und nichts geschrieben; CSRF; 404;
+Formular; Anfangssaldo außerhalb des Zeitraums verborgen; ohne Tresor
+nichts sichtbar und nichts geschrieben; CSRF; 404 (auch Löschen ohne
+liegen gebliebene Meldung);
 Spaltenlisten; Kassensturz: Differenz-Anzeige ohne Speichern für
 Fehlbetrag/stimmt/Überschuss, Speichern verschlüsselt mit Soll vom Server
 und Audit ohne Details, Regeln für Datum/Betrag/Notiz/inaktive Kasse,

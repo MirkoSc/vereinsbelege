@@ -19,6 +19,7 @@
  * @var string|null $fehlerFeld
  * @var int|null $konfliktId the other account of a duplicate IBAN
  * @var bool $darfPflegen holds `bank.book`
+ * @var bool $saldoVerborgen the opening date lies outside the reader's period: no amount shown
  * @var int $verwendungen
  * @var list<\App\Domain\CashCount> $kassenstuerze within the reader's scope, newest first
  */
@@ -115,9 +116,13 @@ $betrag = static fn(int $cent): string => e(Betrag::format($cent)) . ' €';
                            required<?= $fehlerAn('opening_date') . $gesperrt ?>>
                 </label>
                 <p class="feld-hilfe">
-                    <?= $kasse
-                        ? 'Bargeld in der Kasse zu Beginn des Stichtags. Kassenbuchungen ab diesem Tag kommen hinzu.'
-                        : 'Kontostand zu Beginn des Stichtags, wie auf dem Kontoauszug. Buchungen ab diesem Tag kommen hinzu.' ?>
+                    <?php if ($saldoVerborgen): ?>
+                        Der Stichtag liegt außerhalb Ihres Zeitraums – der <?= e($saldoName) ?> wird deshalb nicht angezeigt.
+                    <?php else: ?>
+                        <?= $kasse
+                            ? 'Bargeld in der Kasse zu Beginn des Stichtags. Kassenbuchungen ab diesem Tag kommen hinzu.'
+                            : 'Kontostand zu Beginn des Stichtags, wie auf dem Kontoauszug. Buchungen ab diesem Tag kommen hinzu.' ?>
+                    <?php endif; ?>
                 </p>
             </fieldset>
 
