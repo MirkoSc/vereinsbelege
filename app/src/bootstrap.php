@@ -8,6 +8,7 @@ use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\SubmissionSettingsController;
+use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -128,6 +129,7 @@ use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
+use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
@@ -519,6 +521,15 @@ $konten = static function () use ($connections, $view, $auditFor): AccountContro
         $auditFor($pdo),
     );
 };
+
+// System check (issue #107/M3-10): the M0 hosting assumptions on the running
+// system. Built lazily like $mail - it reads wait_timeout from the database.
+// Reads settings only, never business data, so it needs no vault.
+$systemcheck = static fn(): SystemCheckController => new SystemCheckController(
+    $view,
+    new Session(),
+    new SystemCheck($connections->pdo(), $paths->varDir()),
+);
 
 // The public submission page itself (issue #24/M4-2): renders the form,
 // validates and stores what comes back. Built lazily like $mail - rendering
@@ -991,6 +1002,7 @@ $router = new Router();
     $lieferanten,
     $pruefungSeite,
     $konten,
+    $systemcheck,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

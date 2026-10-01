@@ -40,13 +40,18 @@ final class SystemCheckWaitTimeoutTest extends DatabaseTestCase
         self::assertStringContainsString('120', $result->detail);
     }
 
-    public function testWithADatabaseBothChecksAreListed(): void
+    /**
+     * Issue #97 and #98 stay the first two lines of the page; the other M0
+     * probes follow (issue #107).
+     */
+    public function testWithADatabaseTheTwoFindingsComeFirst(): void
     {
         $keys = array_map(
             static fn($r): string => $r->key,
             new SystemCheck($this->pdo())->all(),
         );
 
-        self::assertSame(['zend.exception_ignore_args', 'wait_timeout'], $keys);
+        self::assertSame(['zend.exception_ignore_args', 'wait_timeout'], array_slice($keys, 0, 2));
+        self::assertContains('memory_limit', $keys);
     }
 }

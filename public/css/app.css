@@ -741,6 +741,105 @@ textarea[aria-invalid="true"] {
     font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Tabelle als Karten (Systemcheck, Issue #107): ab 360 px wird jede Zeile zu
+ * einer Karte, deren Zellen ihren Spaltennamen aus data-label davor tragen -
+ * ohne waagerechtes Scrollen. Ab 48 rem gilt wieder die normale Tabelle.
+ * Mobile first: der Kartenaufbau ist der Grundzustand, die Media Query fügt
+ * die Tabelle hinzu. Die Kopfzeile bleibt für Screenreader im Dokument.
+ */
+.tabelle-karten thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
+.tabelle-karten tr {
+    display: block;
+    padding: var(--abstand-3) var(--abstand-4);
+    border-top: 1px solid var(--farbe-rand);
+}
+
+.tabelle-karten tbody tr:first-child {
+    border-top: 0;
+}
+
+.tabelle-karten th,
+.tabelle-karten td {
+    display: block;
+    padding: var(--abstand-1) 0;
+    white-space: normal;
+    border-top: 0;
+}
+
+.tabelle-karten th[scope="row"] {
+    font-weight: 600;
+}
+
+.tabelle-karten td::before {
+    display: block;
+    color: var(--farbe-gedaempft);
+    font-size: var(--schrift-klein);
+    content: attr(data-label);
+}
+
+@media (min-width: 48rem) {
+    .tabelle-karten thead {
+        position: static;
+        width: auto;
+        height: auto;
+        overflow: visible;
+        clip-path: none;
+    }
+
+    .tabelle-karten tr {
+        display: table-row;
+        padding: 0;
+    }
+
+    .tabelle-karten tbody tr:first-child {
+        border-top: 1px solid var(--farbe-rand);
+    }
+
+    /* Schmaleres Zellenpolster und Silbentrennung (lang="de"): fünf Spalten
+       müssen in den Inhaltsbereich passen, ohne dass die Tabelle scrollt. */
+    .tabelle-karten th,
+    .tabelle-karten td {
+        display: table-cell;
+        padding: var(--abstand-3) var(--abstand-2);
+        border-top: 1px solid var(--farbe-rand);
+        hyphens: auto;
+    }
+
+    .tabelle-karten th:first-child,
+    .tabelle-karten td:first-child {
+        padding-left: var(--abstand-4);
+    }
+
+    .tabelle-karten th:last-child,
+    .tabelle-karten td:last-child {
+        padding-right: var(--abstand-4);
+    }
+
+    .tabelle-karten thead th {
+        border-top: 0;
+    }
+
+    .tabelle-karten td::before {
+        display: none;
+    }
+
+    /* Kurze Werte (Erwartung, Ist-Wert, Statusmarke) bleiben in einer Zeile;
+       Prüfpunkt und Erläuterung brechen um, statt die Tabelle über den
+       Inhaltsbereich zu weiten. */
+    .tabelle-karten .tabelle-kurz {
+        white-space: nowrap;
+        hyphens: none;
+    }
+}
+
 /* --- htmx --- */
 
 /*
