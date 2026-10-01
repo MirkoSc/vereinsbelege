@@ -104,6 +104,25 @@ final readonly class Pruefung
     }
 
     /**
+     * The checked receipts that wait to be locked (issue #38/M6-4), oldest
+     * first, narrowed to the viewer's scope in SQL.
+     *
+     * @return list<InboxItem>
+     */
+    public function geprueftListe(Zugriffsbereich $bereich): array
+    {
+        return $this->documents->geprueftListe($bereich, self::WARTESCHLANGE);
+    }
+
+    /**
+     * When the receipt was locked - plaintext structure, no vault needed.
+     */
+    public function festgeschriebenAm(Document $document): ?\DateTimeImmutable
+    {
+        return $this->invoices->findByDocument($document->id)?->lockedAt;
+    }
+
+    /**
      * The document after $nach in the queue, wrapping around to the start -
      * never $nach itself. Null when nothing else is waiting.
      */
@@ -279,6 +298,9 @@ final readonly class Pruefung
         string $ip,
         \DateTimeImmutable $now,
     ): PruefErgebnis {
+        if ($document->status === DocumentStatus::Festgeschrieben) {
+            throw new InvoiceRuleViolation('Dieser Beleg ist festgeschrieben und lässt sich nicht ändern. Zum Korrigieren zuerst die Festschreibung aufheben.');
+        }
         if (!$document->status->pruefbar()) {
             throw new InvoiceRuleViolation('Dieser Beleg ist nicht (mehr) in Prüfung und lässt sich hier nicht ändern.');
         }

@@ -376,7 +376,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 | `admin.system` (Backup, Update, Wartung) | ✓ | – | – | – | – | – |
 
 - Kein Vier-Augen-Prinzip (E-09): wer `document.edit` hat, darf auch
-  festschreiben.
+  festschreiben – und die Festschreibung (mit Begründung) wieder aufheben
+  (§7); auch die Person, die den Beleg selbst geprüft hat.
 - **Externe Rollen** (Kassenprüfer, Steuerberater): Konto mit Pflicht-
   Ablaufdatum (Default 60 Tage, verlängerbar), 2FA immer Pflicht,
   ausschließlich lesend. Beim Anlegen wählbar: Zugriff auf Zeitraum
@@ -564,7 +565,9 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   entzogen/per Wiederherstellungsschlüssel entsperrt (auch der
   Fehlschlag), Rolle angelegt/geändert/gelöscht, Kostenstelle angelegt/
   geändert/gelöscht (M4-1), Lieferant angelegt/geändert/gelöscht (M6-2,
-  Details nur Feldnamen), Mail-/Speicher-/Update-Kanal-Einstellungen,
+  Details nur Feldnamen), Beleg festgeschrieben / Festschreibung aufgehoben
+  (M6-4, Details nur der Grund der Aufhebung),
+  Mail-/Speicher-/Update-Kanal-Einstellungen,
   Update eingespielt/zurückgerollt, Wartung aufgehoben. Belege, Lieferanten,
   Buchungen, Abgleich, Festschreibung, Export und Import ergänzen ihre
   Aktionen, wenn es sie gibt (ab M4).
@@ -577,6 +580,54 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 - Ein geprüfter Beleg wird festgeschrieben (`locked_at`).
   Danach sind Betrag, Datum, Lieferant, Dokumente unveränderlich; Korrektur
   nur über „Festschreibung aufheben" (Recht + Pflicht-Begründung, Audit).
+
+### Umsetzung (M6-4, issue #38)
+
+- **Ablauf:** `App\Service\Invoice\Festschreibung`, aufgerufen von der
+  Prüfansicht (`POST /app/belege/pruefen/{id}/festschreiben` und
+  `…/festschreibung-aufheben`, Recht `document.edit`, Scope wie die
+  Prüfansicht: außerhalb 404, CSRF, Tresor entsperrt). `festschreiben`:
+  `geprueft` → `festgeschrieben` und `invoice.locked_by/locked_at`
+  (Migration 020), `festschreibung-aufheben`: `festgeschrieben` →
+  `in_pruefung`, `locked_*` **und** `checked_*` werden geleert. Beides in
+  **einer** Transaktion, die den Beleg zuerst im gelesenen Status sperrt
+  (`SELECT … FOR UPDATE`) und den Audit-Eintrag mitschreibt – zwei gleichzeitige
+  Entscheidungen gewinnen nicht beide. Status und `locked_at` stimmen immer
+  überein (`festgeschrieben` ⇔ `locked_at` gesetzt).
+- **Kein Vier-Augen-Prinzip (E-09):** dasselbe Recht `document.edit` für
+  Festschreiben und Aufheben, auch für die Person, die den Beleg geprüft hat.
+  Die Kontrolle liegt in Pflicht-Begründung und Audit-Log, nicht in einem
+  zweiten Recht.
+- **Was unveränderlich ist:** der **ganze** Beleg – alle Angaben der
+  Prüfansicht (Beträge, Datum, Nummer, Lieferant/Zahler, Kategorie,
+  Kostenstelle, Richtung, Belegart …), die Kostenstelle des Dokuments und die
+  Dokumente (Bilder/PDFs). Die Prüfansicht zeigt ihn nur lesbar, der
+  Posteingang bietet nichts mehr an.
+- **Serverseitig erzwungen, zweifach:** (1) die Services lehnen laut ab
+  (`Pruefung::speichern`, `Posteingang::kostenstelle`/`entscheiden`, die
+  Statusübergänge in `DocumentStatus`; `pruefbar()` schließt `festgeschrieben`
+  aus); (2) die Repositories fassen eine festgeschriebene Zeile gar nicht erst
+  an – `InvoiceRepository::update()`/`setzeGeprueft()` mit `locked_at IS NULL`,
+  `DocumentRepository::setzeKostenstelle()`/`setzePdfBlob()` mit
+  `status <> 'festgeschrieben'` in der SQL-Bedingung (stille No-Ops). Wer
+  künftig Belege schreibt (Lieferanten zusammenführen M6-5, Duplikaterkennung
+  M6-6, KI-Auslesen M7, Abgleich M10), muss das einhalten und einen
+  festgeschriebenen Beleg als unveränderlich behandeln.
+- **Korrekturweg:** „Festschreibung aufheben" mit **Pflicht-Begründung**
+  (höchstens 2000 Zeichen). Der Beleg ist danach wieder `in_pruefung`, steht
+  in der Warteschlange, wird in der Prüfansicht korrigiert, erneut „Geprüft"
+  und festgeschrieben. Den Grund trägt der Audit-Eintrag
+  `beleg.festschreibung_aufgehoben` (Details im Tresor, lesbar für `audit.view`
+  mit entsperrtem Tresor); `beleg.festgeschrieben` hat keine Details. Einen
+  stillen Weg (direktes Ändern, Statuswechsel ohne Grund) gibt es nicht.
+- **Oberfläche:** Prüfansicht (Button „Festschreiben" bei `geprueft`,
+  „Festschreibung aufheben" mit Begründung bei `festgeschrieben`), Abschnitt
+  „Geprüft – bereit zum Festschreiben" auf `/app/belege/pruefen`, im
+  Posteingang-Detail ein Link auf die Prüfansicht für geprüfte und
+  festgeschriebene Belege. Sammel-Festschreiben gibt es noch nicht.
+- **Grenzen:** Später verknüpfte Daten (Abgleich Beleg ↔ Buchung, M10) sind
+  eigene Tabellen; wie sich das Aufheben auf bestehende Zuordnungen auswirkt,
+  klärt M10.
 
 ## 8. Integritätscheck Code
 
@@ -604,3 +655,10 @@ global für Submit und Upload greift nach dem konfigurierten Limit und
 lässt Feld-Fehler unangetastet; Honeypot und Mindest-Ausfülldauer
 abgelehnt; Größen- und Seitenlimits durchgesetzt; Pause sperrt Formular
 und Upload (503) und zeigt auf `/einreichen` nur den Hinweis.
+Festschreibung (issue #38/M6-4): nur ein geprüfter Beleg lässt sich
+festschreiben, zweimal und veraltet wird abgelehnt (genau ein Audit-Eintrag);
+Recht/Scope/CSRF/Tresor; ein festgeschriebener Beleg ist über Prüfansicht,
+Posteingang und Repositories unveränderlich; Aufheben nur mit Grund, danach
+`in_pruefung` mit geleerten `locked_*`/`checked_*`, Grund nur im
+Audit-Chiffrat, erneutes Prüfen und Festschreiben möglich; Status und
+`locked_at` stimmen überein; Statusmatrix (`festgeschrieben → in_pruefung`).

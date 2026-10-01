@@ -13,6 +13,8 @@ use App\Domain\BlobMeta;
 use App\Domain\BlobStorage;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
+use App\Domain\InboxAction;
+use App\Domain\InvoiceStructure;
 use App\Domain\JobExecutor;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
@@ -49,7 +51,9 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
+use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
@@ -67,7 +71,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  * The review page end to end (issue #37/M6-3, docs/spec/
  * 03-erfassung-und-ki.md section 6 "Prüfansicht", docs/spec/
  * 02-datenmodell.md "Fachdaten"): the real route table, guard, controller,
- * service, repositories and schema.
+ * service, repositories and schema - plus locking a checked receipt and
+ * lifting the lock (issue #38/M6-4, docs/spec/01-sicherheit.md section 7).
  */
 final class PruefungFlowTest extends DatabaseTestCase
 {
@@ -622,6 +627,281 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertSame(0, $this->anzahlBelege());
     }
 
+    // ------------------------------------------------ Festschreibung (M6-4)
+
+    public function testACheckedReceiptIsLockedAndTheLogSaysSo(): void
+    {
+        $id = $this->gepruefterBeleg();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('action="/app/belege/pruefen/' . $id . '/festschreiben"', $seite);
+        self::assertStringNotContainsString('festschreibung-aufheben', $seite);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
+
+        self::assertSame(302, $antwort->status);
+        self::assertSame('/app/belege/pruefen/' . $id, $antwort->headers['Location']);
+        self::assertSame(DocumentStatus::Festgeschrieben, $this->belegStatus($id));
+        $zeile = $this->rechnung($id);
+        self::assertSame($this->userId, (int) $zeile['locked_by']);
+        self::assertNotNull($zeile['locked_at']);
+        $this->assertSperreStimmt($id);
+
+        $zeilen = $this->auditZeilen($id);
+        self::assertSame(AuditAction::BelegFestgeschrieben->value, $zeilen[0]->action);
+        self::assertSame($this->userId, $zeilen[0]->userId);
+        self::assertNull($this->audit->details($zeilen[0], $this->tresor), 'nothing of the receipt in the entry');
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Beleg #' . $id . ' festgeschrieben.', $seite);
+        self::assertStringContainsString('Dieser Beleg ist festgeschrieben (seit ' . date('d.m.Y') . ')', $seite);
+        self::assertStringContainsString('<fieldset class="pruefen-felder" disabled>', $seite);
+        self::assertStringContainsString('action="/app/belege/pruefen/' . $id . '/festschreibung-aufheben"', $seite);
+        self::assertStringNotContainsString('/festschreiben"', $seite);
+    }
+
+    public function testOnlyACheckedReceiptCanBeLocked(): void
+    {
+        $ohneErfassung = $this->beleg();
+        $inPruefung = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $inPruefung, $this->felder(['aktion' => 'speichern']));
+
+        foreach ([$ohneErfassung => DocumentStatus::BereitZurAuswertung, $inPruefung => DocumentStatus::InPruefung] as $id => $status) {
+            $antwort = $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
+
+            self::assertSame(422, $antwort->status);
+            self::assertStringContainsString('Nur ein geprüfter Beleg', $antwort->body);
+            self::assertSame($status, $this->belegStatus($id));
+        }
+        self::assertNull($this->rechnung($inPruefung)['locked_at']);
+        self::assertNotContains(AuditAction::BelegFestgeschrieben->value, $this->auditAktionen($inPruefung));
+    }
+
+    public function testLockingTwiceIsRefusedAndLogsOnce(): void
+    {
+        $id = $this->festgeschriebenerBeleg();
+        $vorher = $this->rechnung($id);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
+
+        self::assertSame(422, $antwort->status);
+        self::assertStringContainsString('bereits festgeschrieben', $antwort->body);
+        self::assertSame($vorher['locked_at'], $this->rechnung($id)['locked_at']);
+        self::assertSame(1, array_count_values($this->auditAktionen($id))[AuditAction::BelegFestgeschrieben->value]);
+    }
+
+    public function testAStaleDocumentIsNotLocked(): void
+    {
+        $id = $this->gepruefterBeleg();
+        $documents = new DocumentRepository($this->pdo());
+        $veraltet = $documents->find($id) ?? self::fail();
+
+        // Meanwhile somebody else locks it and lifts the lock again.
+        $this->festschreibung()->festschreiben($veraltet, $this->userId, self::IP, new \DateTimeImmutable());
+        $this->festschreibung()->aufheben($documents->find($id) ?? self::fail(), 'Test', $this->userId, self::IP, new \DateTimeImmutable());
+
+        // $veraltet still says "geprueft"; the document is in review again.
+        try {
+            $this->festschreibung()->festschreiben($veraltet, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('a stale document must not be locked');
+        } catch (InvoiceRuleViolation $e) {
+            self::assertStringContainsString('inzwischen anders bearbeitet', $e->getMessage());
+        }
+        self::assertSame(DocumentStatus::InPruefung, $this->belegStatus($id));
+        $this->assertSperreStimmt($id);
+    }
+
+    #[DataProvider('rollen')]
+    public function testOnlyDocumentEditLocksAndLiftsTheLock(SystemRole $rolle, bool $darf): void
+    {
+        $gesperrt = $this->festgeschriebenerBeleg();
+        $geprueft = $this->gepruefterBeleg();
+        $this->alsRolle($rolle);
+
+        self::assertSame($darf ? 302 : 403, $this->post('/app/belege/pruefen/' . $geprueft . '/festschreiben', [])->status);
+        self::assertSame($darf ? DocumentStatus::Festgeschrieben : DocumentStatus::Geprueft, $this->belegStatus($geprueft));
+
+        self::assertSame($darf ? 302 : 403, $this->post('/app/belege/pruefen/' . $gesperrt . '/festschreibung-aufheben', ['grund' => 'Test'])->status);
+        self::assertSame($darf ? DocumentStatus::InPruefung : DocumentStatus::Festgeschrieben, $this->belegStatus($gesperrt));
+    }
+
+    public function testLockingNeedsTheVaultTheScopeAndCsrf(): void
+    {
+        $id = $this->gepruefterBeleg();
+
+        // Without the unlocked vault nothing is written.
+        $antwort = $this->post('/app/belege/pruefen/' . $id . '/festschreiben', [], entsperrt: false);
+        self::assertSame(302, $antwort->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+
+        $antwort = $this->dispatch(new Request(
+            HttpMethod::Post,
+            '/app/belege/pruefen/' . $id . '/festschreiben',
+            cookies: $this->tresorCookie(),
+            post: ['_csrf' => 'falsch'],
+        ));
+        self::assertSame(302, $antwort->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+
+        // Outside the period scope the id answers 404, like one that does not exist.
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2099-01-01'), null);
+        self::assertSame(404, $this->post('/app/belege/pruefen/' . $id . '/festschreiben', [])->status);
+        self::assertSame(404, $this->post('/app/belege/pruefen/999/festschreiben', [])->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+    }
+
+    public function testALockedReceiptCannotBeChangedAnywhere(): void
+    {
+        $kostenstelle = new CostCenterRepository($this->pdo())->create('Herren');
+        $id = $this->festgeschriebenerBeleg();
+        $dokument = new DocumentRepository($this->pdo())->find($id) ?? self::fail();
+        $vorher = $this->rechnung($id);
+
+        // The review page: refused, nothing written.
+        foreach (['speichern', 'geprueft'] as $aktion) {
+            $antwort = $this->post('/app/belege/pruefen/' . $id, $this->felder(['brutto' => '1,00', 'kostenstelle' => (string) $kostenstelle, 'aktion' => $aktion]));
+            self::assertSame(422, $antwort->status);
+            self::assertStringContainsString('festgeschrieben und lässt sich nicht ändern', $antwort->body);
+        }
+        self::assertSame(123456, $this->pruefung()->beleg($dokument, $this->tresor)?->data->gross);
+
+        // The inbox: no cost center, no decision.
+        try {
+            $this->posteingang()->kostenstelle($dokument, $kostenstelle, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('the cost center of a locked receipt must not change');
+        } catch (InboxRuleViolation) {
+        }
+        foreach (InboxAction::cases() as $aktion) {
+            try {
+                $this->posteingang()->entscheiden($aktion, $dokument, $this->tresor, 'Grund', new \DateTimeImmutable('+1 day'), $this->userId, self::IP, new \DateTimeImmutable());
+                self::fail($aktion->name . ' must not touch a locked receipt');
+            } catch (InboxRuleViolation) {
+            }
+        }
+
+        self::assertSame($vorher, $this->rechnung($id));
+        self::assertNull($this->dokument($id)['cost_center_id']);
+        self::assertSame(DocumentStatus::Festgeschrieben, $this->belegStatus($id));
+        $this->assertSperreStimmt($id);
+    }
+
+    /**
+     * The services refuse loudly; the SQL is the second wall for whoever
+     * writes next (M6-5, M6-6, M7): a locked row simply does not match.
+     */
+    public function testTheRepositoriesDoNotTouchALockedReceipt(): void
+    {
+        $kostenstelle = new CostCenterRepository($this->pdo())->create('Herren');
+        $id = $this->festgeschriebenerBeleg();
+        $invoices = new InvoiceRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $record = $invoices->findByDocument($id) ?? self::fail();
+        $vorherRechnung = $this->rechnung($id);
+        $vorherDokument = $this->dokument($id);
+        $spaeter = new \DateTimeImmutable('+1 day');
+
+        $invoices->update($record->id, InvoiceStructure::aus($record), 'anderes Chiffrat', null, null, $spaeter);
+        $invoices->setzeGeprueft($record->id, null, $spaeter);
+        $invoices->setzeFestgeschrieben($record->id, null, $spaeter);
+        $documents->setzeKostenstelle($id, $kostenstelle);
+        self::assertFalse($documents->setzePdfBlob($id, $this->originale($id)[0]));
+
+        self::assertSame($vorherRechnung, $this->rechnung($id));
+        self::assertSame($vorherDokument, $this->dokument($id));
+    }
+
+    public function testLiftingTheLockNeedsAReasonAndSendsTheReceiptBackToReview(): void
+    {
+        $id = $this->festgeschriebenerBeleg();
+        $pfad = '/app/belege/pruefen/' . $id . '/festschreibung-aufheben';
+
+        foreach (['', '   ', str_repeat('x', Festschreibung::GRUND_MAX + 1)] as $grund) {
+            $antwort = $this->post($pfad, ['grund' => $grund]);
+            self::assertSame(422, $antwort->status);
+            self::assertStringContainsString('name="grund"', $antwort->body, 'the page comes back with the form');
+            self::assertSame(DocumentStatus::Festgeschrieben, $this->belegStatus($id));
+            $this->assertSperreStimmt($id);
+        }
+        self::assertSame(1, array_count_values($this->auditAktionen($id))[AuditAction::BelegFestgeschrieben->value]);
+        self::assertNotContains(AuditAction::BelegFestschreibungAufgehoben->value, $this->auditAktionen($id));
+
+        $antwort = $this->post($pfad, ['grund' => '  Betrag falsch abgetippt ']);
+
+        self::assertSame(302, $antwort->status);
+        self::assertSame(DocumentStatus::InPruefung, $this->belegStatus($id));
+        $zeile = $this->rechnung($id);
+        foreach (['locked_by', 'locked_at', 'checked_by', 'checked_at'] as $spalte) {
+            self::assertNull($zeile[$spalte], $spalte);
+        }
+        $this->assertSperreStimmt($id);
+
+        $zeilen = $this->auditZeilen($id);
+        self::assertSame(AuditAction::BelegFestschreibungAufgehoben->value, $zeilen[0]->action);
+        self::assertSame(['grund' => 'Betrag falsch abgetippt'], $this->audit->details($zeilen[0], $this->tresor));
+        self::assertStringNotContainsString('Betrag falsch', $this->rohTabelle('audit_log'), 'the reason is sealed to the vault');
+        self::assertTrue($this->audit->pruefeAbschnitt(0)->intakt());
+        self::assertStringContainsString(
+            'Die Festschreibung von Beleg #' . $id . ' ist aufgehoben',
+            $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body,
+        );
+    }
+
+    public function testACorrectedReceiptIsCheckedAndLockedAgain(): void
+    {
+        $id = $this->festgeschriebenerBeleg();
+        $this->post('/app/belege/pruefen/' . $id . '/festschreibung-aufheben', ['grund' => 'Betrag falsch']);
+
+        // Back in the review: in the queue, editable, as before.
+        self::assertStringContainsString('/app/belege/pruefen/' . $id . '"', $this->get('/app/belege/pruefen', entsperrt: true)->body);
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['brutto' => '99,90', 'netto' => '', 'steuer_satz_1' => '', 'steuer_betrag_1' => '']))->status);
+        self::assertSame(9990, $this->pruefung()->beleg(new DocumentRepository($this->pdo())->find($id) ?? self::fail(), $this->tresor)?->data->gross);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id . '/festschreiben', [])->status);
+        self::assertSame(DocumentStatus::Festgeschrieben, $this->belegStatus($id));
+        $this->assertSperreStimmt($id);
+        self::assertSame(
+            [AuditAction::BelegFestgeschrieben->value, AuditAction::BelegGeprueft->value, AuditAction::BelegBearbeitet->value, AuditAction::BelegFestschreibungAufgehoben->value, AuditAction::BelegFestgeschrieben->value],
+            array_slice($this->auditAktionen($id), 0, 5),
+        );
+    }
+
+    public function testOnlyALockedReceiptCanBeUnlocked(): void
+    {
+        $id = $this->gepruefterBeleg();
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id . '/festschreibung-aufheben', ['grund' => 'Test']);
+
+        self::assertSame(422, $antwort->status);
+        self::assertStringContainsString('nicht festgeschrieben', $antwort->body);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+    }
+
+    public function testTheListOffersTheCheckedReceiptsForLocking(): void
+    {
+        $leer = $this->get('/app/belege/pruefen', entsperrt: true)->body;
+        self::assertStringContainsString('Keine geprüften Belege', $leer);
+
+        $id = $this->gepruefterBeleg();
+        $liste = $this->get('/app/belege/pruefen', entsperrt: true)->body;
+        self::assertStringContainsString('Geprüft – bereit zum Festschreiben', $liste);
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $id . '"', $liste);
+
+        $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
+        self::assertStringContainsString('Keine geprüften Belege', $this->get('/app/belege/pruefen', entsperrt: true)->body);
+    }
+
+    public function testTheInboxLeadsToCheckedAndLockedReceipts(): void
+    {
+        $id = $this->gepruefterBeleg();
+        self::assertStringContainsString('Beleg ansehen oder festschreiben', $this->get('/app/posteingang/' . $id, entsperrt: true)->body);
+
+        $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
+        $seite = $this->get('/app/posteingang/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Beleg ansehen oder Festschreibung aufheben', $seite);
+        self::assertStringContainsString('lässt sich nicht mehr ändern', $seite);
+    }
+
     // -------------------------------------------------- service, schema
 
     /**
@@ -681,7 +961,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         self::assertSame([
             'id', 'document_id', 'doc_type', 'direction', 'supplier_id', 'invoice_date', 'due_date', 'service_from',
-            'service_to', 'category_id', 'sphere', 'cost_center_id', 'checked_by', 'checked_at', 'dek_sealed', 'data_enc',
+            'service_to', 'category_id', 'sphere', 'cost_center_id', 'checked_by', 'checked_at', 'locked_by', 'locked_at', 'dek_sealed', 'data_enc',
             'number_bi', 'created_by', 'created_at', 'updated_by', 'updated_at',
         ], $spalten);
     }
@@ -781,6 +1061,62 @@ final class PruefungFlowTest extends DatabaseTestCase
             new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
             $this->audit,
         );
+    }
+
+    private function festschreibung(): Festschreibung
+    {
+        $pdo = $this->pdo();
+
+        return new Festschreibung($pdo, new DocumentRepository($pdo), new InvoiceRepository($pdo), $this->audit);
+    }
+
+    private function posteingang(): Posteingang
+    {
+        $pdo = $this->pdo();
+
+        return new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit);
+    }
+
+    /**
+     * A receipt captured and marked as checked ("Geprüft, nächster").
+     */
+    private function gepruefterBeleg(): int
+    {
+        $id = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $id, $this->felder());
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+
+        return $id;
+    }
+
+    private function festgeschriebenerBeleg(): int
+    {
+        $id = $this->gepruefterBeleg();
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id . '/festschreiben', [])->status);
+        self::assertSame(DocumentStatus::Festgeschrieben, $this->belegStatus($id));
+
+        return $id;
+    }
+
+    /**
+     * The lock is written twice - the status and `invoice.locked_at` - and
+     * the two must always agree.
+     */
+    private function assertSperreStimmt(int $documentId): void
+    {
+        self::assertSame(
+            $this->belegStatus($documentId) === DocumentStatus::Festgeschrieben,
+            $this->rechnung($documentId)['locked_at'] !== null,
+            'status festgeschrieben <=> invoice.locked_at set',
+        );
+    }
+
+    /**
+     * @return list<string> the actions of the document's audit rows, newest first
+     */
+    private function auditAktionen(int $documentId): array
+    {
+        return array_map(static fn(AuditEntry $e): string => $e->action, $this->auditZeilen($documentId));
     }
 
     private function blobService(): BlobService
@@ -947,6 +1283,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             new Session(),
             new SessionVault(),
             $this->pruefung(),
+            $this->festschreibung(),
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
         );

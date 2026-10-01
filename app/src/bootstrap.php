@@ -98,6 +98,7 @@ use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobRunner;
 use App\Service\Mail\EinreichungBenachrichtigung;
@@ -469,6 +470,8 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
     $documents = new DocumentRepository($pdo);
     $audit = $auditFor($pdo);
 
+    $rechnungen = new InvoiceRepository($pdo);
+
     return new PruefungController(
         $view,
         new Session(),
@@ -476,7 +479,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
         new Pruefung(
             $pdo,
             $documents,
-            new InvoiceRepository($pdo),
+            $rechnungen,
             $kategorien,
             $kostenstellen,
             $lieferanten,
@@ -490,6 +493,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
             ),
             $audit,
         ),
+        new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
         $kostenstellen,
     );

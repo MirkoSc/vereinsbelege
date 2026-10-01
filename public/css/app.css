@@ -1020,6 +1020,16 @@ body.bereich-app:has(.pruefansicht) {
     font-variant-numeric: tabular-nums;
 }
 
+/* Spalte neben dem Beleg: das Formular und - je nach Status - Festschreiben
+   bzw. Festschreibung aufheben (Issue #38, M6-4). */
+.pruefen-spalte {
+    min-width: 0;
+}
+
+.pruefen-festschreiben {
+    margin-top: var(--abstand-5);
+}
+
 .pruefen-felder {
     min-width: 0;
     margin: 0;

@@ -73,6 +73,9 @@ enum AuditAction: string
     // never their values.
     case BelegBearbeitet = 'beleg.bearbeitet';
     case BelegGeprueft = 'beleg.geprueft';
+    // Festschreibung (issue #38/M6-4): lifting it records the reason.
+    case BelegFestgeschrieben = 'beleg.festgeschrieben';
+    case BelegFestschreibungAufgehoben = 'beleg.festschreibung_aufgehoben';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -127,6 +130,8 @@ enum AuditAction: string
             self::BelegKostenstelle => 'Kostenstelle des Belegs geändert',
             self::BelegBearbeitet => 'Beleg erfasst/bearbeitet',
             self::BelegGeprueft => 'Beleg geprüft',
+            self::BelegFestgeschrieben => 'Beleg festgeschrieben',
+            self::BelegFestschreibungAufgehoben => 'Festschreibung aufgehoben',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -158,7 +163,8 @@ enum AuditAction: string
             self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
-            self::BelegBearbeitet, self::BelegGeprueft => 'document',
+            self::BelegBearbeitet, self::BelegGeprueft,
+            self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung,
