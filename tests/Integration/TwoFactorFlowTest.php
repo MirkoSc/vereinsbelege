@@ -158,6 +158,94 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertNotNull(self::cookieValue($antwort, self::vaultCookieName()));
     }
 
+    public function testDerLoginMitEMailMethodeVerschicktGenauEinenCodeOhneKnopf(): void
+    {
+        $this->emailMethodeEinrichten();
+
+        $login = $this->passwortAnmelden();
+        $pendingCookie = self::cookieValue($login, self::pendingCookieName());
+        self::assertSame('/anmelden/bestaetigen', $login->headers['Location'] ?? null);
+        self::assertNotNull($pendingCookie);
+
+        self::assertSame(1, $this->anzahlQueueEintraege(), 'Genau ein Queue-Eintrag nach dem Login.');
+        self::assertCount(1, $this->mailTransport->gesendete, 'Sofortiger Versandversuch.');
+        self::assertStringStartsWith('Anmeldecode', $this->mailTransport->gesendete[0]->subject);
+
+        // The code from that mail - without anyone pressing "Code erneut
+        // senden" - finishes the login.
+        $antwort = $this->bestaetigen($this->letzterVersendeterCode(), [self::pendingCookieName() => $pendingCookie]);
+
+        self::assertSame('/app', $antwort->headers['Location'] ?? null);
+        self::assertSame(1, $this->anzahlQueueEintraege());
+    }
+
+    public function testNeuladenDerBestaetigungsseiteVerschicktNichtErneut(): void
+    {
+        $this->emailMethodeEinrichten();
+        $pendingCookie = (string) self::cookieValue($this->passwortAnmelden(), self::pendingCookieName());
+        $cookies = [self::pendingCookieName() => $pendingCookie];
+
+        for ($i = 0; $i < 3; $i++) {
+            $seite = $this->dispatch(new Request(HttpMethod::Get, '/anmelden/bestaetigen', ip: '198.51.100.7', cookies: $cookies));
+            self::assertSame(200, $seite->status);
+        }
+
+        self::assertSame(1, $this->anzahlQueueEintraege());
+        self::assertCount(1, $this->mailTransport->gesendete);
+    }
+
+    public function testDerLoginMitTotpMethodeVerschicktKeinenCode(): void
+    {
+        $this->totpEinrichten();
+
+        $login = $this->passwortAnmelden();
+
+        self::assertSame('/anmelden/bestaetigen', $login->headers['Location'] ?? null);
+        self::assertSame(0, $this->anzahlQueueEintraege());
+        self::assertSame([], $this->mailTransport->gesendete);
+    }
+
+    public function testBeiGesperrtemZweitemFaktorGehtBeimLoginKeinCodeRaus(): void
+    {
+        $this->emailMethodeEinrichten();
+        $mfa = new MfaService(
+            new MfaTotpRepository($this->pdo()),
+            new MfaEmailCodeRepository($this->pdo()),
+            new MfaBackupCodeRepository($this->pdo()),
+            new TrustedDeviceRepository($this->pdo()),
+            $this->crypto,
+            new RateLimiter(new RateLimitRepository($this->pdo()), MfaService::WINDOW_SECONDS),
+        );
+        for ($i = 0; $i < MfaService::LIMIT_PER_ACCOUNT; $i++) {
+            $mfa->registerFailure('203.0.113.9', $this->userId);
+        }
+        self::assertTrue($mfa->isBlocked('198.51.100.7', $this->userId), 'Testvorbereitung: Konto ist gesperrt.');
+
+        $login = $this->passwortAnmelden();
+
+        self::assertSame('/anmelden/bestaetigen', $login->headers['Location'] ?? null);
+        self::assertSame(0, $this->anzahlQueueEintraege());
+    }
+
+    public function testEinFehlgeschlagenerVersandBrichtDenLoginNichtAbUndWirdAngezeigt(): void
+    {
+        $this->emailMethodeEinrichten();
+        $this->mailTransport = new FakeMailTransport([false]);
+
+        $login = $this->passwortAnmelden();
+        $pendingCookie = (string) self::cookieValue($login, self::pendingCookieName());
+        self::assertSame('/anmelden/bestaetigen', $login->headers['Location'] ?? null);
+
+        $seite = $this->dispatch(new Request(
+            HttpMethod::Get,
+            '/anmelden/bestaetigen',
+            ip: '198.51.100.7',
+            cookies: [self::pendingCookieName() => $pendingCookie],
+        ));
+
+        self::assertStringContainsString('konnte nicht per E-Mail versendet werden', $seite->body);
+    }
+
     public function testEinAbgelaufenerEMailCodeWirdAbgelehnt(): void
     {
         $this->emailMethodeEinrichten();
@@ -483,6 +571,11 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         return $this->dispatch(new Request(HttpMethod::Post, '/anmelden/code-senden', post: $post, ip: '198.51.100.7', cookies: $cookies));
     }
 
+    private function anzahlQueueEintraege(): int
+    {
+        return (int) $this->pdo()->query('SELECT COUNT(*) FROM mail_queue')->fetchColumn();
+    }
+
     private function letzterVersendeterCode(): string
     {
         $mail = $this->mailTransport->gesendete[array_key_last($this->mailTransport->gesendete)] ?? null;
@@ -567,6 +660,8 @@ final class TwoFactorFlowTest extends DatabaseTestCase
 
         $audit = new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $crypto);
 
+        $mfaToolbox = fn(): MfaToolbox => new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $crypto, $audit);
+
         $auth = fn(): AuthController => new AuthController(
             $view,
             new Session(),
@@ -583,6 +678,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
                 new PasswordHasher(),
             ),
             fn(): MfaService => $mfaServiceFor($pdo),
+            $mfaToolbox,
             fn(): AuditLog => $audit,
         );
 
@@ -591,7 +687,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             new Session(),
             new PendingLogin(),
             new LoginCompleter(new Session(), new SessionVault()),
-            fn(): MfaToolbox => new MfaToolbox($mfaServiceFor($pdo), new UserRepository($pdo), $mailerFor($pdo), new SettingRepository($pdo), $crypto, $audit),
+            $mfaToolbox,
         );
 
         $sicherheit = fn(): SecurityController => new SecurityController(

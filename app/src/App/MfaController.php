@@ -131,12 +131,7 @@ final readonly class MfaController
             return $this->seiteOhnePending();
         }
 
-        $code = $tools->mfa->requestEmailCode($pending->userId);
-        $ergebnis = $tools->mailer->sendeMfaCode(
-            $tools->crypto->decrypt($user->emailEnc),
-            $code,
-            intdiv(MfaService::EMAIL_CODE_TTL_SECONDS, 60),
-        );
+        $ergebnis = $tools->sendEmailCode($user);
 
         return $this->seite(
             $pending->mfaMethod,
@@ -233,6 +228,9 @@ final readonly class MfaController
             'mfaMethod' => $mfaMethod,
             'fehler' => $fehler,
             'hinweis' => $hinweis,
+            // A flash from AuthController::submit(): the e-mail code that
+            // the login itself sent could not be delivered.
+            'flash' => $this->session->pullFlash(),
         ], Area::Oeffentlich));
     }
 
