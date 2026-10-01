@@ -47,6 +47,26 @@ nötig – Format ist überschaubar und so vollständig testbar):
   `?30` BIC, `?31` IBAN, `?32/?33` Name Gegenseite. Unstrukturiertes `:86:`
   als reiner Text tolerieren.
 
+Umsetzung (M9-2): `Mt940Parser::parse()` liefert je Auszug ein
+`Kontoauszug` (mit `Kontoangabe`, `Saldo`, `Umsatz`, `Umsatzdetails`) –
+reine Werteobjekte, nichts wird gespeichert oder geloggt; die Fehlermeldung
+(`Mt940Exception`) nennt nur Zeile und Feld. Festgelegte Regeln:
+
+- Buchungsdatum (`MMTT` ohne Jahr): das Jahr, das am nächsten an der Valuta
+  liegt. Tage hinter dem Monatsende (Zinsvaluta „30.02.") → letzter Tag.
+- Vorzeichen: `C`/`RD` positiv, `D`/`RC` negativ; `RC`/`RD` setzt `storno`.
+- Verwendungszweck-/Namensteilfelder (27 Zeichen) werden direkt
+  aneinandergehängt, wenn das vorige Teilfeld voll war, sonst mit
+  Leerzeichen. SEPA-Schlüssel zählen nur am Anfang eines Teilfelds;
+  `verwendungszweck` = `SVWZ+`, ohne Schlüssel der ganze Text.
+- `:25:` als IBAN (geprüft, ggf. mit Währung) oder `BLZ/Kontonummer`
+  (BLZ auch als BIC); sonst nur Rohwert. SWIFT-Kopfblöcke, `:NS:` und nicht
+  benötigte Felder (`:21:`, `:64:` …) werden übersprungen, ebenso ein
+  `:86:` ohne vorangehendes `:61:`.
+- Saldenprüfung je Auszug (`saldoStimmt()`, `saldoDifferenzCent()`) –
+  Abweichung ist eine Warnung, kein Abbruch; Fehlen von `:25:`, `:60x:`
+  oder `:62x:` ist ein Fehler.
+
 ## 3. CSV-Import
 
 - **Profile** (`csv_profile`): Trennzeichen, Encoding, Datumsformat,
