@@ -61,6 +61,7 @@ Datenbank – eine untätige Verbindung stirbt lokal genauso schnell wie dort.
 | [CLAUDE.md](CLAUDE.md) | Verbindliche Architektur-Referenz (Claude Code liest sie in jeder Session) |
 | [docs/VORGEHEN.md](docs/VORGEHEN.md) | Wie mit Claude Code gearbeitet wird – Schritt für Schritt |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Meilensteine M0–M13 mit Issues und Abnahmekriterien |
+| [docs/arbeitsplan.html](docs/arbeitsplan.html) | Reihenfolge der offenen Issues, was parallel geht, Modell/Effort/Modus je Sitzung (im Browser öffnen; Status live von GitHub) |
 | [docs/ENTSCHEIDUNGEN.md](docs/ENTSCHEIDUNGEN.md) | Getroffene und offene Grundsatzentscheidungen |
 | [docs/spec/](docs/spec/) | Detail-Spezifikationen je Bereich (werden bei Bedarf gelesen) |
 | [docs/spec/07-worker.md](docs/spec/07-worker.md) | Optionales Worker-Modul (Raspberry Pi): OCR, PDF/A, KI rund um die Uhr |
