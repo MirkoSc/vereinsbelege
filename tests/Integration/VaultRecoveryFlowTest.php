@@ -460,6 +460,7 @@ final class VaultRecoveryFlowTest extends DatabaseTestCase
                 new PasswordHasher(),
             ),
             fn(): MfaService => $mfaService,
+            static fn(): never => throw new \LogicException('MfaToolbox hätte hier nicht gebraucht werden dürfen.'),
             fn(): AuditLog => $audit,
         );
         $passwort = fn(): PasswordController => new PasswordController(

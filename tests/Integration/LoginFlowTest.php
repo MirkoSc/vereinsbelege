@@ -542,6 +542,7 @@ final class LoginFlowTest extends DatabaseTestCase
             // (setUp()), so App\App\AuthController::deviceIsTrusted() short-
             // circuits before it would use this.
             static fn(): never => throw new \LogicException('MfaService hätte hier nicht gebraucht werden dürfen.'),
+            static fn(): never => throw new \LogicException('MfaToolbox hätte hier nicht gebraucht werden dürfen.'),
             fn(): AuditLog => new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $this->crypto),
         );
 

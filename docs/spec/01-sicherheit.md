@@ -264,6 +264,15 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
     hat, kann auf der Bestätigungsseite trotzdem einen Code per E-Mail
     anfordern. Das ist eine bewusste Abwägung – wer die Mailbox kontrolliert,
     kommt damit auch an einem TOTP-Konto vorbei.
+    **Versand beim Login** (issue #153): ist E-Mail-Code die *eigene* Methode
+    des Kontos, erzeugt und versendet `App\App\AuthController::submit()` beim
+    Übergang auf `/anmelden/bestaetigen` genau einen Code (sofortiger
+    Versandversuch wie bei den anderen Sicherheitsmails, 06 §3) – nie die
+    Bestätigungsseite selbst, ein Neuladen verschickt also nichts. Bei TOTP
+    geht nichts raus; die Mail bleibt dort der Ausweichweg per Knopf.
+    Während das Limit des zweiten Faktors greift (`MfaService::isBlocked()`),
+    wird kein Code verschickt; scheitert der Versand, läuft die Anmeldung
+    weiter und die Seite weist per Flash auf „Code erneut senden“ hin.
   - 10 Einmal-Backup-Codes (gehasht, gleicher Blind-Index, Zweck
     `mfa.backup_code`) bei Einrichtung und bei „neu erzeugen"
     (`App\Service\Account\BackupCodes`, Crockford-Base32 wie der
@@ -592,7 +601,8 @@ Blind Index deterministisch; Benutzer-Lebenszyklus (Einladung → Freigabe →
 Passwort ändern → Reset → erneute Freigabe) inkl. „ohne Grant kein
 Entschlüsseln"; Wiederherstellungsschlüssel-Flow; Session ohne Cookie
 `__Host-vk` kann nicht entschlüsseln; TOTP (RFC-6238-Testvektoren),
-E-Mail-Code (Ablauf, Versuchslimit), Reset-Token (einmalig, Ablauf);
+E-Mail-Code (Ablauf, Versuchslimit, genau ein Versand beim Login nur bei
+E-Mail-Methode), Reset-Token (einmalig, Ablauf);
 Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);
 Kostenstellen-Scope; Zeitraum-Scope und Ablauf externer Konten

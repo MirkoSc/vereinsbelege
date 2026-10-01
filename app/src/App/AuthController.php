@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\App;
 
 use App\Domain\AuditAction;
+use App\Domain\User;
 use App\Http\Cookie;
 use App\Http\Request;
 use App\Http\Response;
@@ -13,10 +14,12 @@ use App\Http\Session;
 use App\Service\Account\LoginFailure;
 use App\Service\Audit\AuditLog;
 use App\Service\Account\LoginService;
+use App\Service\Account\MfaMethod;
 use App\Service\Account\MfaService;
 use App\Service\Account\PendingLogin;
 use App\Service\Account\SessionVault;
 use App\View\Area;
+use App\View\FlashArt;
 use App\View\View;
 
 /**
@@ -55,6 +58,9 @@ final readonly class AuthController
         /** @var \Closure(): MfaService built lazily, like $login - only a
          *  successful password check ever needs the trusted-device check. */
         private \Closure $mfa,
+        /** @var \Closure(): MfaToolbox built lazily, like $mfa - only an
+         *  account whose own method is the e-mail code needs it at login. */
+        private \Closure $mfaTools,
         /** @var \Closure(): AuditLog built lazily, like $login - the login
          *  FORM needs no database. */
         private \Closure $audit,
@@ -129,6 +135,10 @@ final readonly class AuthController
                 sessionEpoch: $user->sessionEpoch,
             );
 
+            if ($user->mfaMethod === MfaMethod::EMail) {
+                $this->sendeLoginCode($user, $request->ip);
+            }
+
             return Response::redirect('/anmelden/bestaetigen')->withCookie(
                 Cookie::pendingLoginKey($cookieValue, Request::httpsFromGlobals()),
             );
@@ -146,6 +156,35 @@ final readonly class AuthController
         ]);
 
         return $this->completer->complete($user->id, $ergebnis->vault, $ergebnis->vaultAccess, $weiter, $user->sessionEpoch);
+    }
+
+    /**
+     * The e-mail code of an account whose own method it is, sent exactly once
+     * on the way to the confirmation page (issue #153) - never from the page
+     * itself, so reloading it sends nothing; "Code erneut senden" stays the
+     * explicit way to ask again. A TOTP account gets nothing here: the mail
+     * is only its fallback (docs/spec/01-sicherheit.md section 3).
+     *
+     * The same second-factor limit as everywhere else applies: while it
+     * holds, no mail goes out, and the page's own submit refuses the code
+     * anyway. A mail that cannot be sent does not stop the login - the flash
+     * tells the user to ask again.
+     */
+    private function sendeLoginCode(User $user, string $ip): void
+    {
+        /** @var MfaToolbox $tools */
+        $tools = ($this->mfaTools)();
+
+        if ($tools->mfa->isBlocked($ip, $user->id)) {
+            return;
+        }
+
+        if (!$tools->sendEmailCode($user)->erfolg) {
+            $this->session->flash(
+                'Der Code konnte nicht per E-Mail versendet werden. Bitte versuchen Sie es mit „Code erneut senden“ noch einmal.',
+                FlashArt::Fehler,
+            );
+        }
     }
 
     private function audit(): AuditLog
