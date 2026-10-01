@@ -10,6 +10,11 @@ use App\Domain\AuditAction;
 use App\Domain\AuditEntry;
 use App\Domain\Category;
 use App\Domain\CategoryDirection;
+use App\Domain\DocumentSource;
+use App\Domain\DocumentStatus;
+use App\Domain\InvoiceDirection;
+use App\Domain\InvoiceStructure;
+use App\Domain\InvoiceType;
 use App\Domain\SupplierData;
 use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRole;
@@ -25,6 +30,8 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\DocumentRepository;
+use App\Repository\InvoiceRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserAccessRepository;
@@ -35,11 +42,13 @@ use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
+use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\SupplierKeys;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -359,6 +368,198 @@ final class SupplierFlowTest extends DatabaseTestCase
         self::assertSame(['id', 'supplier_id', 'kind', 'value_bi'], $this->spalten('supplier_key'));
     }
 
+    // ------------------------------------------------- merging (M6-5)
+
+    /**
+     * Acceptance criteria "Zwei Lieferanten zusammenführen" and "IBANs und
+     * Aliasse werden übernommen": the preview shows the result, the merge
+     * writes it; the source leaves the list, its keys move to the target.
+     */
+    public function testTwoSuppliersAreMergedWithTheirIbansAndAliases(): void
+    {
+        $quelle = $this->lieferant(['name' => 'Getränke Müller', 'aliases' => 'GM Getränke', 'ibans' => self::IBAN_1, 'email' => 'alt@example.org', 'mandate_refs' => 'M-1']);
+        $ziel = $this->lieferant(['name' => 'Getränke Müller GmbH', 'ibans' => self::IBAN_2, 'email' => 'neu@example.org', 'vat_id' => 'DE123456789']);
+
+        $seite = $this->get('/app/lieferanten/' . $quelle);
+        self::assertStringContainsString('action="/app/lieferanten/' . $quelle . '/zusammenfuehren"', $seite->body);
+        self::assertStringContainsString('<option value="' . $ziel . '">Getränke Müller GmbH – DE02 1203 0000 0000 2020 51</option>', $seite->body);
+        self::assertStringNotContainsString('<option value="' . $quelle . '">Getränke Müller', $seite->body, 'not with itself');
+
+        $vorschau = $this->get('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+        self::assertSame(200, $vorschau->status);
+        self::assertStringContainsString('„Getränke Müller“ geht in „Getränke Müller GmbH“ auf', $vorschau->body);
+        self::assertStringContainsString('DE02 1203 0000 0000 2020 51<br>DE89 3704 0044 0532 0130 00', $vorschau->body);
+        self::assertStringContainsString('Getränke Müller<br>GM Getränke', $vorschau->body);
+        self::assertStringContainsString('href="/app/lieferanten/' . $ziel . '/zusammenfuehren?ziel=' . $quelle . '"', $vorschau->body, 'the other way round');
+        self::assertCount(2, $this->lieferanten->all(), 'the preview writes nothing');
+
+        $antwort = $this->post('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+        self::assertSame(302, $antwort->status);
+        self::assertSame('/app/lieferanten/' . $ziel, $antwort->headers['Location'] ?? null);
+        self::assertSame('Lieferanten zusammengeführt.', $_SESSION['flash']['text'] ?? null);
+
+        $alle = $this->lieferanten->all();
+        self::assertSame([$ziel], array_map(static fn($r): int => $r->id, $alle), 'the source left the list');
+        self::assertSame($ziel, $this->lieferanten->find($quelle)?->mergedInto, 'the row stays, pointing at the target');
+
+        $daten = $this->daten($ziel);
+        self::assertSame('Getränke Müller GmbH', $daten->name);
+        self::assertSame(['Getränke Müller', 'GM Getränke'], $daten->aliases);
+        self::assertSame([self::IBAN_2, self::IBAN_1], $daten->ibans);
+        self::assertSame(['M-1'], $daten->mandateRefs);
+        self::assertSame('neu@example.org', $daten->email);
+        self::assertStringContainsString('E-Mail: alt@example.org', $daten->notes);
+
+        self::assertSame($this->erwarteteKeys($daten), $this->gespeicherteKeys($ziel), 'the target carries every key');
+        self::assertSame([], $this->lieferanten->keys($quelle), 'the source carries none');
+        $iban1 = $this->tresor->blindIndex()->forValue('supplier.iban', self::IBAN_1);
+        self::assertSame([$ziel], $this->lieferanten->idsWithKey(SupplierKeyKind::Iban, $iban1));
+
+        // The source's IBAN now belongs to the target: no third supplier may take it.
+        $dritter = $this->post('/app/lieferanten', $this->felder(['name' => 'Dritter', 'ibans' => self::IBAN_1]));
+        self::assertSame(422, $dritter->status);
+        self::assertStringContainsString('„Getränke Müller GmbH“', $dritter->body);
+
+        $roh = $this->rohTabelle('supplier') . $this->rohTabelle('supplier_key') . $this->rohTabelle('audit_log');
+        foreach (['Getränke Müller', 'GM Getränke', self::IBAN_1, 'alt@example.org'] as $klartext) {
+            self::assertStringNotContainsStringIgnoringCase($klartext, $roh, $klartext . ' is not stored in the clear');
+        }
+    }
+
+    /**
+     * Acceptance criterion "Zugeordnete Belege zeigen danach auf den
+     * Ziel-Lieferanten" - except the locked ones, which are immutable
+     * (docs/spec/01-sicherheit.md section 7) and are resolved through
+     * `merged_into` instead.
+     */
+    public function testReceiptsMoveToTheTargetButLockedOnesStay(): void
+    {
+        $quelle = $this->lieferant(['name' => 'Doppelt']);
+        $ziel = $this->lieferant(['name' => 'Ziel']);
+        $frueher = $this->lieferant(['name' => 'Früher zusammengeführt']);
+        $offen1 = $this->rechnungFuer($quelle);
+        $offen2 = $this->rechnungFuer($quelle);
+        $fest = $this->rechnungFuer($quelle, festgeschrieben: true);
+        $andere = $this->rechnungFuer($ziel);
+        self::assertSame(302, $this->post('/app/lieferanten/' . $frueher . '/zusammenfuehren', ['ziel' => (string) $quelle])->status);
+        $festVorher = $this->rechnungsZeile($fest);
+
+        $vorschau = $this->get('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel])->body;
+        self::assertStringContainsString('2 Belege werden auf „Ziel“ umgehängt.', $vorschau);
+        self::assertStringContainsString('1 Beleg ist festgeschrieben und', $vorschau);
+
+        $this->post('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+
+        self::assertStringContainsString('2 Belege umgehängt. 1 festgeschriebener Beleg bleibt unverändert', (string) ($_SESSION['flash']['text'] ?? ''));
+        foreach ([$offen1, $offen2, $andere] as $rechnung) {
+            self::assertSame($ziel, (int) $this->rechnungsZeile($rechnung)['supplier_id']);
+        }
+        self::assertSame($this->userId, (int) $this->rechnungsZeile($offen1)['updated_by']);
+        self::assertSame($festVorher, $this->rechnungsZeile($fest), 'the locked receipt is not touched at all');
+        self::assertSame($ziel, $this->lieferanten->aufgeloest($quelle), 'and resolves to the target');
+
+        self::assertSame($ziel, $this->lieferanten->find($frueher)?->mergedInto, 'merged before: now points at the target directly');
+        self::assertSame($ziel, $this->lieferanten->aufgeloest($frueher));
+        self::assertSame('Früher zusammengeführt', $this->daten($ziel)->aliases[1] ?? null, 'its name came along');
+    }
+
+    /**
+     * Acceptance criterion "Vorgang steht im Audit-Log": ids and counts,
+     * the names of the changed fields, never a value.
+     */
+    public function testTheMergeIsAuditedWithIdsAndFieldNamesOnly(): void
+    {
+        $quelle = $this->lieferant(['name' => 'Anna Beispiel', 'rolle' => 'zahler', 'ibans' => self::IBAN_1]);
+        $ziel = $this->lieferant(['name' => 'A. Beispiel', 'rolle' => 'zahler']);
+        $this->rechnungFuer($quelle);
+
+        $this->post('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $quelle), null, 10);
+        self::assertSame(AuditAction::LieferantZusammengefuehrt->value, $zeilen[0]->action);
+        self::assertSame($this->userId, $zeilen[0]->userId);
+        self::assertSame(
+            ['ziel' => $ziel, 'belege' => 1, 'festgeschrieben' => 0, 'felder' => ['aliases', 'iban']],
+            $this->audit->details($zeilen[0], $this->tresor),
+        );
+    }
+
+    public function testDifferentVatIdsAreRefusedAndNothingChanges(): void
+    {
+        $quelle = $this->lieferant(['name' => 'Muster', 'vat_id' => 'DE111111111']);
+        $ziel = $this->lieferant(['name' => 'Muster GmbH', 'vat_id' => 'DE222222222']);
+        $this->rechnungFuer($quelle);
+
+        $vorschau = $this->get('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+        self::assertSame(422, $vorschau->status);
+        self::assertStringContainsString('unterschiedliche USt-IDs', $vorschau->body);
+        self::assertStringNotContainsString('name="ziel"', $vorschau->body, 'no button to merge');
+
+        $antwort = $this->post('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ziel]);
+        self::assertSame(422, $antwort->status);
+        self::assertCount(2, $this->lieferanten->all());
+        self::assertSame($quelle, (int) $this->pdo()->query('SELECT supplier_id FROM invoice')->fetchColumn());
+        self::assertNotContains(AuditAction::LieferantZusammengefuehrt->value, $this->aktionen());
+    }
+
+    public function testNotWithItselfNorAMergedOneNorAnUnknownOne(): void
+    {
+        $a = $this->lieferant(['name' => 'A']);
+        $b = $this->lieferant(['name' => 'B']);
+        $c = $this->lieferant(['name' => 'C']);
+
+        $selbst = $this->post('/app/lieferanten/' . $a . '/zusammenfuehren', ['ziel' => (string) $a]);
+        self::assertSame(422, $selbst->status);
+        self::assertStringContainsString('mit sich selbst', $selbst->body);
+        self::assertSame(422, $this->get('/app/lieferanten/' . $a . '/zusammenfuehren', ['ziel' => '999'])->status);
+        $ohneZiel = $this->get('/app/lieferanten/' . $a . '/zusammenfuehren');
+        self::assertSame(302, $ohneZiel->status);
+        self::assertSame('/app/lieferanten/' . $a, $ohneZiel->headers['Location'] ?? null);
+        self::assertSame(404, $this->get('/app/lieferanten/999/zusammenfuehren', ['ziel' => (string) $a])->status);
+
+        $this->post('/app/lieferanten/' . $a . '/zusammenfuehren', ['ziel' => (string) $b]);
+
+        // Into a merged one: refused, with a link to where it went.
+        $inZusammengefuehrten = $this->post('/app/lieferanten/' . $c . '/zusammenfuehren', ['ziel' => (string) $a]);
+        self::assertSame(422, $inZusammengefuehrten->status);
+        self::assertStringContainsString('bereits mit einem anderen zusammengeführt', $inZusammengefuehrten->body);
+        self::assertStringContainsString('href="/app/lieferanten/' . $b . '"', $inZusammengefuehrten->body);
+        self::assertNull($this->lieferanten->find($c)?->mergedInto);
+
+        // The merged one has no page, form or delete of its own any more.
+        foreach (['/app/lieferanten/' . $a, '/app/lieferanten/' . $a . '/zusammenfuehren?ziel=' . $c] as $pfad) {
+            [$weg, $abfrage] = explode('?', $pfad, 2) + [1 => ''];
+            parse_str($abfrage, $query);
+            $antwort = $this->get($weg, array_map(strval(...), $query));
+            self::assertSame(302, $antwort->status, $pfad);
+            self::assertSame('/app/lieferanten/' . $b, $antwort->headers['Location'] ?? null, $pfad);
+        }
+        $speichern = $this->post('/app/lieferanten/' . $a, $this->felder(['name' => 'A geändert']));
+        self::assertSame('/app/lieferanten/' . $b, $speichern->headers['Location'] ?? null);
+        self::assertSame('A', $this->daten($a)->name, 'not saved');
+        $this->post('/app/lieferanten/' . $a . '/loeschen', []);
+        self::assertNotNull($this->lieferanten->find($a), 'not deleted');
+    }
+
+    public function testMergingNeedsTheVaultAndTheCsrfToken(): void
+    {
+        $a = $this->lieferant(['name' => 'A']);
+        $b = $this->lieferant(['name' => 'B']);
+
+        $ohneTresor = $this->post('/app/lieferanten/' . $a . '/zusammenfuehren', ['ziel' => (string) $b], entsperrt: false);
+        self::assertSame(302, $ohneTresor->status);
+        self::assertSame(302, $this->get('/app/lieferanten/' . $a . '/zusammenfuehren', ['ziel' => (string) $b], entsperrt: false)->status);
+
+        $falsch = $this->dispatch(new Request(
+            HttpMethod::Post,
+            '/app/lieferanten/' . $a . '/zusammenfuehren',
+            cookies: $this->tresorCookie(),
+            post: ['ziel' => (string) $b, '_csrf' => 'falsch'],
+        ));
+        self::assertSame(302, $falsch->status);
+        self::assertCount(2, $this->lieferanten->all(), 'nothing merged');
+    }
+
     // ---------------------------------------------------------- helpers
 
     /**
@@ -373,6 +574,79 @@ final class SupplierFlowTest extends DatabaseTestCase
             'address' => '', 'bic' => '', 'vat_id' => '', 'tax_number' => '', 'creditor_id' => '', 'mandate_refs' => '',
             'email' => '', 'website' => '', 'customer_number' => '', 'notes' => '',
         ], ...$felder];
+    }
+
+    /**
+     * @param array<string, string> $felder
+     */
+    private function lieferant(array $felder): int
+    {
+        $vorher = array_map(static fn($r): int => $r->id, $this->lieferanten->all());
+        self::assertSame(302, $this->post('/app/lieferanten', $this->felder($felder))->status);
+        $neu = array_values(array_diff(array_map(static fn($r): int => $r->id, $this->lieferanten->all()), $vorher));
+        self::assertCount(1, $neu);
+
+        return $neu[0];
+    }
+
+    private function daten(int $id): SupplierData
+    {
+        $lieferant = new SupplierService($this->pdo(), $this->lieferanten, $this->kategorien)->finde($this->tresor, $id);
+        self::assertNotNull($lieferant);
+
+        return $lieferant->data;
+    }
+
+    /**
+     * A receipt of this supplier, structure only - the merge never reads
+     * its ciphertext.
+     */
+    private function rechnungFuer(int $lieferant, bool $festgeschrieben = false): int
+    {
+        $jetzt = new \DateTimeImmutable('2026-03-01 10:00:00');
+        $dokument = new DocumentRepository($this->pdo())->insert(
+            DocumentSource::Intern,
+            null,
+            [],
+            $this->tresor->sealDataKey(DataKey::generate()),
+            $jetzt,
+            $festgeschrieben ? DocumentStatus::Festgeschrieben : DocumentStatus::InPruefung,
+        );
+        $rechnungen = new InvoiceRepository($this->pdo());
+        $id = $rechnungen->insert(
+            $dokument,
+            new InvoiceStructure(InvoiceType::Rechnung, InvoiceDirection::Ausgabe, $lieferant, new \DateTimeImmutable('2026-02-27'), null, null, null, null, null),
+            $this->tresor->sealDataKey(DataKey::generate()),
+            null,
+            null,
+            $jetzt,
+        );
+        if ($festgeschrieben) {
+            $rechnungen->setzeFestgeschrieben($id, null, $jetzt);
+        }
+
+        return $id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function rechnungsZeile(int $id): array
+    {
+        $stmt = $this->pdo()->prepare('SELECT * FROM invoice WHERE id = ?');
+        $stmt->execute([$id]);
+        $zeile = $stmt->fetch();
+        self::assertIsArray($zeile);
+
+        return $zeile;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function aktionen(): array
+    {
+        return array_map(strval(...), $this->pdo()->query('SELECT action FROM audit_log')->fetchAll(\PDO::FETCH_COLUMN));
     }
 
     private function einzigerLieferant(): int
@@ -498,13 +772,15 @@ final class SupplierFlowTest extends DatabaseTestCase
                 return $user === null ? null : new SessionUser($user, 'Test', new UserAccessRepository($pdo)->berechtigungen($id));
             },
         );
+        $service = new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo));
         $lieferanten = fn(): SupplierController => new SupplierController(
             $view,
             new Session(),
             new SessionVault(),
-            new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
+            $service,
             new CategoryRepository($pdo),
             $this->audit,
+            new SupplierZusammenfuehrung($pdo, new SupplierRepository($pdo), new InvoiceRepository($pdo), $service, $this->audit),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

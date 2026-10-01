@@ -621,7 +621,11 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `status <> 'festgeschrieben'` in der SQL-Bedingung (stille No-Ops). Wer
   künftig Belege schreibt (Lieferanten zusammenführen M6-5, Duplikaterkennung
   M6-6, KI-Auslesen M7, Abgleich M10), muss das einhalten und einen
-  festgeschriebenen Beleg als unveränderlich behandeln.
+  festgeschriebenen Beleg als unveränderlich behandeln. Das Zusammenführen
+  (M6-5) hängt nur nicht festgeschriebene Belege um
+  (`InvoiceRepository::haengeLieferantUm()` mit `locked_at IS NULL`); ein
+  festgeschriebener behält den zusammengeführten Lieferanten und wird über
+  dessen `merged_into` aufgelöst (03 §7 „Stand M6-5“).
 - **Korrekturweg:** „Festschreibung aufheben" mit **Pflicht-Begründung**
   (höchstens 2000 Zeichen). Der Beleg ist danach wieder `in_pruefung`, steht
   in der Warteschlange, wird in der Prüfansicht korrigiert, erneut „Geprüft"

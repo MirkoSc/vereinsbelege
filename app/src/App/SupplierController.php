@@ -21,6 +21,7 @@ use App\Service\Crypto\Vault;
 use App\Service\MasterData\SupplierRuleViolation;
 use App\Service\MasterData\SupplierSaved;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -28,7 +29,8 @@ use App\View\View;
 /**
  * Suppliers and payers /app/lieferanten (M6-2, issue #36, docs/spec/
  * 03-erfassung-und-ki.md section 7): the list with search and role filter,
- * a new supplier, changing and deleting one.
+ * a new supplier, changing and deleting one, merging a duplicate into
+ * another (M6-5, issue #39) - first a preview, then the merge.
  *
  * Behind `supplier.manage` (Admin, Finanzen - app/src/routes.php). Names,
  * IBANs and everything else of a supplier are vault data, and even writing
@@ -38,6 +40,9 @@ use App\View\View;
  * Nothing of a supplier goes into a URL, a flash message or the audit log -
  * the log keeps the names of the changed fields, never their values
  * (docs/spec/01-sicherheit.md section 6: a payer may well be a person).
+ *
+ * A supplier merged into another has no page of its own any more: it
+ * leads to the one it was merged into.
  */
 final readonly class SupplierController
 {
@@ -50,6 +55,7 @@ final readonly class SupplierController
         private SupplierService $service,
         private CategoryRepository $kategorien,
         private AuditLog $audit,
+        private SupplierZusammenfuehrung $zusammenfuehrung,
     ) {
     }
 
@@ -120,8 +126,11 @@ final readonly class SupplierController
         if ($lieferant === null) {
             return $this->nichtGefunden();
         }
+        if ($lieferant->mergedInto !== null) {
+            return $this->zumZiel($lieferant->mergedInto);
+        }
 
-        return $this->formular($lieferant, self::felderAus($lieferant), null);
+        return $this->formular($lieferant, self::felderAus($lieferant), null, andere: $this->andere($tresor, $lieferant->id));
     }
 
     /**
@@ -142,12 +151,17 @@ final readonly class SupplierController
         if ($lieferant === null) {
             return $this->nichtGefunden();
         }
+        if ($lieferant->mergedInto !== null) {
+            $this->session->flash('Die Änderung wurde nicht übernommen – der Lieferant wurde inzwischen zusammengeführt.', FlashArt::Fehler);
+
+            return Response::redirect('/app/lieferanten/' . $lieferant->mergedInto);
+        }
 
         $felder = self::felder($request);
         try {
             $ergebnis = $this->service->aendern($tresor, $id, $felder, new \DateTimeImmutable());
         } catch (SupplierRuleViolation $e) {
-            return $this->formular($lieferant, $felder, $e, 422);
+            return $this->formular($lieferant, $felder, $e, 422, $this->andere($tresor, $id));
         }
 
         if ($ergebnis->geaenderteFelder !== []) {
@@ -189,9 +203,124 @@ final readonly class SupplierController
     }
 
     /**
-     * @param array<string, string> $felder
+     * The preview of merging this supplier into the one chosen on its page
+     * (`?ziel=`). Shows the result and what happens to the receipts; a merge
+     * that is not possible shows why instead.
+     *
+     * @param array<string, string> $params
      */
-    private function formular(?Supplier $lieferant, array $felder, ?SupplierRuleViolation $fehler, int $status = 200): ResponseInterface
+    public function zusammenfuehrenVorschau(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt();
+        }
+        $quelle = $this->service->finde($tresor, (int) $params['id']);
+        if ($quelle === null) {
+            return $this->nichtGefunden();
+        }
+        if ($quelle->mergedInto !== null) {
+            return $this->zumZiel($quelle->mergedInto);
+        }
+        $ziel = self::abfrage($request, 'ziel');
+        if (!ctype_digit($ziel)) {
+            $this->session->flash('Bitte den Lieferanten wählen, in den dieser überführt werden soll.', FlashArt::Fehler);
+
+            return Response::redirect('/app/lieferanten/' . $quelle->id);
+        }
+
+        return $this->zusammenfuehrenSeite($tresor, $quelle, (int) $ziel, null);
+    }
+
+    /**
+     * @param array<string, string> $params
+     */
+    public function zusammenfuehren(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = $request->post['ziel'] ?? '';
+        $ziel = is_string($ziel) && ctype_digit($ziel) ? (int) $ziel : 0;
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/app/lieferanten/' . $id . '/zusammenfuehren?ziel=' . $ziel);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt(true);
+        }
+        $quelle = $this->service->finde($tresor, $id);
+        if ($quelle === null) {
+            return $this->nichtGefunden();
+        }
+
+        try {
+            $ergebnis = $this->zusammenfuehrung->ausfuehren($tresor, $id, $ziel, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        } catch (SupplierRuleViolation $e) {
+            return $this->zusammenfuehrenSeite($tresor, $quelle, $ziel, $e);
+        }
+
+        $text = 'Lieferanten zusammengeführt.';
+        if ($ergebnis->umgehaengt > 0) {
+            $text .= sprintf(' %d %s umgehängt.', $ergebnis->umgehaengt, $ergebnis->umgehaengt === 1 ? 'Beleg' : 'Belege');
+        }
+        if ($ergebnis->festgeschrieben > 0) {
+            $text .= sprintf(
+                $ergebnis->festgeschrieben === 1
+                    ? ' %d festgeschriebener Beleg bleibt unverändert und gehört jetzt zu diesem Lieferanten.'
+                    : ' %d festgeschriebene Belege bleiben unverändert und gehören jetzt zu diesem Lieferanten.',
+                $ergebnis->festgeschrieben,
+            );
+        }
+        $this->session->flash($text);
+
+        return Response::redirect('/app/lieferanten/' . $ergebnis->zielId);
+    }
+
+    private function zusammenfuehrenSeite(Vault $tresor, Supplier $quelle, int $zielId, ?SupplierRuleViolation $fehler): ResponseInterface
+    {
+        $vorschau = null;
+        if ($fehler === null) {
+            try {
+                $vorschau = $this->zusammenfuehrung->vorschau($tresor, $quelle->id, $zielId);
+            } catch (SupplierRuleViolation $e) {
+                $fehler = $e;
+            }
+        }
+
+        return Response::html($this->view->render('app/lieferant-zusammenfuehren', [
+            'title' => 'Lieferanten zusammenführen',
+            'quelle' => $quelle,
+            'vorschau' => $vorschau,
+            'fehler' => $fehler?->getMessage(),
+            'konfliktId' => $fehler?->konfliktId,
+            'flash' => $this->session->pullFlash(),
+            'kategorien' => $this->kategorieNamen(),
+        ], Area::App), $fehler === null ? 200 : 422);
+    }
+
+    /**
+     * Every other supplier this one could be merged into, sorted by name.
+     *
+     * @return list<Supplier>
+     */
+    private function andere(Vault $tresor, int $id): array
+    {
+        return array_values(array_filter($this->service->liste($tresor), static fn(Supplier $s): bool => $s->id !== $id));
+    }
+
+    private function zumZiel(int $zielId): ResponseInterface
+    {
+        $this->session->flash('Dieser Lieferant wurde mit einem anderen zusammengeführt – hier ist der verbliebene.', FlashArt::Info);
+
+        return Response::redirect('/app/lieferanten/' . $zielId);
+    }
+
+    /**
+     * @param array<string, string> $felder
+     * @param list<Supplier> $andere the choice for merging, see andere()
+     */
+    private function formular(?Supplier $lieferant, array $felder, ?SupplierRuleViolation $fehler, int $status = 200, array $andere = []): ResponseInterface
     {
         return Response::html($this->view->render('app/lieferant', [
             'title' => $lieferant === null ? 'Neuer Lieferant' : 'Lieferant bearbeiten',
@@ -202,6 +331,7 @@ final readonly class SupplierController
             'flash' => $this->session->pullFlash(),
             'kategorien' => $this->kategorieAuswahl($felder['kategorie'] ?? ''),
             'verwendungen' => $lieferant === null ? 0 : $this->service->verwendungen($lieferant->id),
+            'andere' => $andere,
         ], Area::App), $status);
     }
 

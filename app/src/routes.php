@@ -432,6 +432,9 @@ return static function (
     $get('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->bearbeiten($r, $params));
     $post('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->speichern($r, $params));
     $post('/app/lieferanten/{id:\d+}/loeschen', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->loeschen($r, $params));
+    // Merging a duplicate (M6-5, issue #39): preview, then the merge.
+    $get('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehrenVorschau($r, $params));
+    $post('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehren($r, $params));
 
     // The review page (M6-3, issue #37, docs/spec/03-erfassung-und-ki.md
     // section 6 "Prüfansicht"): the queue and one document captured by hand

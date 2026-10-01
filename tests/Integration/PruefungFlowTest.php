@@ -57,6 +57,7 @@ use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -894,6 +895,43 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         $this->post('/app/belege/pruefen/' . $id . '/festschreiben', []);
         self::assertStringContainsString('Keine geprüften Belege', $this->get('/app/belege/pruefen', entsperrt: true)->body);
+    }
+
+    // ------------------------------------- merged suppliers (M6-5, #39)
+
+    /**
+     * Merging (issue #39) leaves a locked receipt untouched - it keeps the
+     * merged supplier - but the review page shows the one it was merged
+     * into, and once the lock is lifted, saving moves the receipt there.
+     */
+    public function testALockedReceiptOfAMergedSupplierShowsAndLaterTakesTheTarget(): void
+    {
+        $doppelt = $this->lieferant('Getränke Müller', SupplierRole::Lieferant);
+        $ziel = $this->lieferant('Getränke Müller GmbH', SupplierRole::Lieferant);
+        $offen = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $offen, $this->felder(['lieferant' => (string) $doppelt, 'aktion' => 'speichern']));
+        $fest = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $fest, $this->felder(['lieferant' => (string) $doppelt]));
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $fest . '/festschreiben', [])->status);
+        $vorher = $this->rechnung($fest);
+
+        $pdo = $this->pdo();
+        $ergebnis = new SupplierZusammenfuehrung($pdo, new SupplierRepository($pdo), new InvoiceRepository($pdo), $this->supplierService(), $this->audit)
+            ->ausfuehren($this->tresor, $doppelt, $ziel, $this->userId, self::IP, new \DateTimeImmutable());
+
+        self::assertSame(1, $ergebnis->umgehaengt);
+        self::assertSame(1, $ergebnis->festgeschrieben);
+        self::assertSame($ziel, (int) $this->rechnung($offen)['supplier_id']);
+        self::assertSame($vorher, $this->rechnung($fest), 'the locked receipt is not touched at all');
+        $this->assertSperreStimmt($fest);
+
+        $seite = $this->get('/app/belege/pruefen/' . $fest, entsperrt: true)->body;
+        self::assertStringContainsString('<option value="' . $ziel . '" selected>Getränke Müller GmbH</option>', $seite);
+        self::assertStringNotContainsString('>Getränke Müller</option>', $seite, 'the merged supplier is no choice any more');
+
+        $this->post('/app/belege/pruefen/' . $fest . '/festschreibung-aufheben', ['grund' => 'Korrektur']);
+        $this->post('/app/belege/pruefen/' . $fest, $this->felder(['lieferant' => (string) $ziel]));
+        self::assertSame($ziel, (int) $this->rechnung($fest)['supplier_id']);
     }
 
     // -------------------------------------------------- service, schema
