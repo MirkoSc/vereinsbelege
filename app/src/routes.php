@@ -442,6 +442,14 @@ return static function (
     $post('/app/belege/pruefen/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $pruefung()->speichern($r, $params));
     $get('/app/belege/pruefen/{id:\d+}/datei/{blob:\d+}', $documentEdit, static fn(Request $r, array $params) => $pruefung()->datei($r, $params));
 
+    // Festschreibung (M6-4, issue #38, docs/spec/01-sicherheit.md section 7,
+    // E-09): locking a checked receipt and - with a mandatory reason - lifting
+    // the lock again. Same right as capturing it (`document.edit`: no
+    // four-eyes principle), same scope, CSRF on both writes, the unlocked
+    // vault required like for everything on the review page.
+    $post('/app/belege/pruefen/{id:\d+}/festschreiben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreiben($r, $params));
+    $post('/app/belege/pruefen/{id:\d+}/festschreibung-aufheben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreibungAufheben($r, $params));
+
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
     // Vorstand, Finanzen, Kassenprüfer, Steuerberater) to see the list, an

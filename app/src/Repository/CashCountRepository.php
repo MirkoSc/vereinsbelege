@@ -8,7 +8,7 @@ use App\Domain\CashCountRecord;
 use App\Domain\Zugriffsbereich;
 
 /**
- * The `cash_count` table (migrations/020_bank_account.sql,
+ * The `cash_count` table (migrations/021_bank_account.sql,
  * docs/spec/02-datenmodell.md "Konten"). SQL only - encrypting and the
  * rules live in App\Service\Bank\Kassensturz. Append-only: there is no
  * update and no delete.

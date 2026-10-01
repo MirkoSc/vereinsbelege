@@ -8,7 +8,7 @@ use App\Domain\BankAccountKind;
 use App\Domain\BankAccountRecord;
 
 /**
- * The `bank_account` table (migrations/020_bank_account.sql,
+ * The `bank_account` table (migrations/021_bank_account.sql,
  * docs/spec/02-datenmodell.md "Konten"). SQL only - encrypting and the
  * rules live in App\Service\Bank\BankAccountService.
  *

@@ -791,7 +791,10 @@ textarea[aria-invalid="true"] {
     flex-direction: column;
     align-items: center;
     gap: var(--abstand-2);
-    width: 7rem;
+    /* Breit genug für ↑ ↓ ✕ nebeneinander mit je --tippflaeche (3 × 2,75 rem
+       + 2 Abstände + Kartenpadding und -rand), sonst ragt die Knopfreihe
+       über die Karte (Issue #145). Bei 360 px passt damit eine Karte je Zeile. */
+    width: 10rem;
     padding: var(--abstand-2);
     background: var(--farbe-flaeche);
     border: 1px solid var(--farbe-rand);
@@ -829,6 +832,13 @@ textarea[aria-invalid="true"] {
 .einreichen-seite-knopfreihe {
     display: flex;
     gap: var(--abstand-1);
+}
+
+/* .knopf-still hebt min-height auf; auf den Karten muss die Tippfläche
+   (docs/spec/03 §2, Designsystem) trotzdem mindestens 44 px bleiben. */
+.einreichen-seite .knopf {
+    min-width: var(--tippflaeche);
+    min-height: var(--tippflaeche);
 }
 
 /* Honeypot (issue #25/M4-3, docs/spec/01-sicherheit.md Abschnitt 5): anders
@@ -1018,6 +1028,16 @@ body.bereich-app:has(.pruefansicht) {
     min-width: 5rem;
     text-align: center;
     font-variant-numeric: tabular-nums;
+}
+
+/* Spalte neben dem Beleg: das Formular und - je nach Status - Festschreiben
+   bzw. Festschreibung aufheben (Issue #38, M6-4). */
+.pruefen-spalte {
+    min-width: 0;
+}
+
+.pruefen-festschreiben {
+    margin-top: var(--abstand-5);
 }
 
 .pruefen-felder {

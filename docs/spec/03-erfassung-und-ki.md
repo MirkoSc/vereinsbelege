@@ -702,6 +702,17 @@ Migration 019), Recht `document.edit` (Admin, Finanzen) samt dessen Scope.
   Zeile) und `beleg.geprueft`; ein neu angelegter Partner zusätzlich
   `lieferant.angelegt`.
 
+**Stand M6-4** (issue #38, Details 01 §7): zwei weitere Aktionen der
+Prüfansicht. `POST …/festschreiben` (Beleg `geprueft` → `festgeschrieben`)
+und `POST …/festschreibung-aufheben` (Pflicht-Grund, → `in_pruefung`),
+beide `document.edit` mit Scope, in `App\Service\Invoice\Festschreibung`.
+Auf `/app/belege/pruefen` steht unter der Warteschlange der Abschnitt
+„Geprüft – bereit zum Festschreiben“; ein festgeschriebener Beleg ist in der
+Prüfansicht nur lesbar und zeigt „Festschreibung aufheben“. Audit
+`beleg.festgeschrieben` und `beleg.festschreibung_aufgehoben` (Details: nur
+der Grund). Tests: `PruefungFlowTest` (Abschnitt Festschreibung),
+`DocumentStatusTest`.
+
 **Pflicht-Tests M6-3:** `BetragTest` (Parsing deutsch/englisch/negativ,
 Ablehnung Mehrdeutiges, Formatierung, Summenprüfung, Steuersatz);
 `DocumentStatusTest` (neue Übergänge, `pruefbare()`); `PruefungFlowTest`
@@ -730,7 +741,9 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
 - Neu gelernte Merkmale (weitere IBAN, Alias-Name) werden dem Lieferanten
   nach Bestätigung hinzugefügt.
 - Zusammenführen doppelter Lieferanten (alle Belege/Regeln umhängen,
-  `merged_into` setzen, Audit).
+  `merged_into` setzen, Audit). **Festgeschriebene Belege** (01 §7) sind
+  unveränderlich und werden nicht umgehängt – wie das Zusammenführen damit
+  umgeht (z. B. Auflösung über `merged_into`), klärt M6-5 (issue #39).
 - Lieferant hat Default-Kategorie/-Sphäre; ab dem 2. bestätigten Beleg mit
   gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI).
 - **Stand M6-2** (issue #36): Stammdaten-Pflege unter `/app/lieferanten`

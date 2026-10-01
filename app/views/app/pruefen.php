@@ -21,6 +21,7 @@
  * @var bool $entsperrt
  * @var bool $bearbeitbar the form may be saved
  * @var bool $ansehbar the form is shown at all (read-only once checked)
+ * @var \DateTimeImmutable|null $festgeschriebenAm when the receipt was locked (issue #38/M6-4)
  * @var array{bilder: list<array{blobId: int, titel: string, originalId: ?int}>, pdfs: list<array{blobId: int, titel: string}>} $seiten
  * @var array<string, string> $felder
  * @var string|null $fehler
@@ -42,6 +43,7 @@
 use App\Domain\CategoryDirection;
 use App\Domain\DocumentStatus;
 use App\Domain\SupplierRole;
+use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 
 $document = $eintrag->document;
@@ -92,7 +94,7 @@ $rollenGruppe = [
     <?php elseif (!$bearbeitbar): ?>
         <p class="hinweis hinweis-info">
             <?= $document->status === DocumentStatus::Festgeschrieben
-                ? 'Dieser Beleg ist festgeschrieben und lässt sich nicht mehr ändern.'
+                ? 'Dieser Beleg ist festgeschrieben' . ($festgeschriebenAm === null ? '' : ' (seit ' . $festgeschriebenAm->format('d.m.Y') . ')') . ' und lässt sich nicht mehr ändern. Eine Korrektur geht nur über „Festschreibung aufheben“ mit Begründung.'
                 : 'Dieser Beleg ist geprüft. Die Angaben sind nur noch zu lesen.' ?>
         </p>
     <?php endif; ?>
@@ -151,6 +153,7 @@ $rollenGruppe = [
         <?php endif; ?>
     </section>
 
+    <div class="pruefen-spalte">
     <form method="post" action="<?= e($basis) ?>" class="pruefen-formular">
         <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
         <fieldset class="pruefen-felder"<?= $gesperrt ?>>
@@ -307,5 +310,41 @@ $rollenGruppe = [
             <p class="feld-hilfe">Enter in einem Feld = „Geprüft, nächster“.</p>
         <?php endif; ?>
     </form>
+
+    <?php if ($document->status === DocumentStatus::Geprueft): ?>
+        <form method="post" action="<?= e($basis) ?>/festschreiben" class="formular pruefen-festschreiben">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <fieldset>
+                <legend>Festschreiben</legend>
+                <p class="gedaempft">
+                    Danach sind Beträge, Datum, Lieferant, Kategorie, Kostenstelle und die Belegdateien nicht mehr
+                    änderbar. Korrigieren lässt sich nur noch über „Festschreibung aufheben“ mit Begründung – das
+                    steht im Protokoll.
+                </p>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf knopf-primaer">Festschreiben</button>
+                </p>
+            </fieldset>
+        </form>
+    <?php elseif ($document->status === DocumentStatus::Festgeschrieben): ?>
+        <form method="post" action="<?= e($basis) ?>/festschreibung-aufheben" class="formular pruefen-festschreiben">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <fieldset>
+                <legend>Festschreibung aufheben</legend>
+                <label for="aufheben-grund">Grund <span class="pflicht">*</span>
+                    <textarea id="aufheben-grund" name="grund" rows="3" required
+                              maxlength="<?= e((string) Festschreibung::GRUND_MAX) ?>"<?= $fehlerAn('grund') ?>></textarea>
+                </label>
+                <p class="gedaempft klein">
+                    Der Beleg ist danach wieder „In Prüfung“ und muss nach der Korrektur erneut geprüft und
+                    festgeschrieben werden. Grund und Aufhebung stehen im Protokoll.
+                </p>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf knopf-gefahr">Festschreibung aufheben</button>
+                </p>
+            </fieldset>
+        </form>
+    <?php endif; ?>
+    </div>
 </div>
 <?php endif; ?>
