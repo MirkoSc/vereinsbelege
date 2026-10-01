@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\App;
 
 use App\Domain\Berechtigungen;
+use App\Domain\Document;
 use App\Domain\DocumentStatus;
 use App\Domain\InboxItem;
 use App\Domain\InvoiceDirection;
@@ -23,6 +24,7 @@ use App\Repository\CostCenterRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
 use App\View\Area;
@@ -43,6 +45,10 @@ use App\View\View;
  * supplier from the form additionally needs `supplier.manage`, checked
  * again by App\Service\Invoice\Pruefung.
  *
+ * Locking a checked receipt and lifting the lock with a reason (issue
+ * #38/M6-4, App\Service\Invoice\Festschreibung) are two more actions of the
+ * page, behind the same right and scope.
+ *
  * Nothing of a receipt goes into a URL or a flash message.
  */
 final readonly class PruefungController
@@ -54,6 +60,7 @@ final readonly class PruefungController
         private Session $session,
         private SessionVault $sessionVault,
         private Pruefung $pruefung,
+        private Festschreibung $festschreibung,
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
     ) {
@@ -69,6 +76,7 @@ final readonly class PruefungController
             'title' => 'Belege prüfen',
             'flash' => $this->session->pullFlash(),
             'eintraege' => $eintraege,
+            'geprueft' => $this->pruefung->geprueftListe($this->bereich()),
             'abgeschnitten' => count($eintraege) >= Pruefung::WARTESCHLANGE,
             'kostenstellen' => $this->kostenstellenNamen(),
             'entsperrt' => $this->tresor($request) !== null,
@@ -161,6 +169,82 @@ final readonly class PruefungController
     }
 
     /**
+     * Locks a checked receipt (issue #38/M6-4, docs/spec/01-sicherheit.md
+     * section 7). `document.edit` is enough - no four-eyes principle (E-09).
+     *
+     * @param array<string, string> $params
+     */
+    public function festschreiben(Request $request, array $params): ResponseInterface
+    {
+        return $this->festschreibAktion($request, $params, function (Document $document, string $referenz) use ($request): string {
+            $this->festschreibung->festschreiben($document, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+
+            return sprintf('Beleg %s festgeschrieben.', $referenz);
+        });
+    }
+
+    /**
+     * Lifts the lock again - the one correction path. The reason is
+     * mandatory and goes into the audit log; the receipt is back in review.
+     *
+     * @param array<string, string> $params
+     */
+    public function festschreibungAufheben(Request $request, array $params): ResponseInterface
+    {
+        return $this->festschreibAktion($request, $params, function (Document $document, string $referenz) use ($request): string {
+            $grund = $request->post['grund'] ?? '';
+            $this->festschreibung->aufheben($document, is_string($grund) ? $grund : '', $this->session->userId(), $request->ip, new \DateTimeImmutable());
+
+            return sprintf('Die Festschreibung von Beleg %s ist aufgehoben – der Beleg ist wieder in Prüfung.', $referenz);
+        });
+    }
+
+    /**
+     * What both lock actions share: CSRF, the scope (an id outside it
+     * answers 404), the unlocked vault, and the page answering a refusal.
+     *
+     * @param array<string, string> $params
+     * @param \Closure(Document, string): string $aktion does it and returns
+     *        the message for the next page
+     */
+    private function festschreibAktion(Request $request, array $params, \Closure $aktion): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = '/app/belege/pruefen/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $eintrag = $this->pruefung->eintrag($id, $this->bereich());
+        if ($eintrag === null) {
+            return $this->nichtGefunden();
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            $this->session->flash(self::TRESOR_GESPERRT, FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        try {
+            $meldung = $aktion($eintrag->document, $eintrag->referenz ?? '#' . $id);
+        } catch (InvoiceRuleViolation $e) {
+            // The page as it is now, not as it was read before the refusal.
+            $aktuell = $this->pruefung->eintrag($id, $this->bereich()) ?? $eintrag;
+            $document = $aktuell->document;
+
+            return $this->seite($aktuell, $tresor, $this->pruefung->felder($document, $this->pruefung->beleg($document, $tresor)), $e, 422);
+        }
+
+        $this->session->flash($meldung);
+
+        return Response::redirect($ziel);
+    }
+
+    /**
      * One page, decrypted piece by piece into the response - like the
      * inbox's (App\App\InboxController::datei()), plus the page images of
      * the document's PDFs.
@@ -212,6 +296,7 @@ final readonly class PruefungController
             'eintrag' => $eintrag,
             'entsperrt' => $tresor !== null,
             'bearbeitbar' => $bearbeitbar,
+            'festgeschriebenAm' => $tresor !== null && $document->status === DocumentStatus::Festgeschrieben ? $this->pruefung->festgeschriebenAm($document) : null,
             'ansehbar' => $tresor !== null && ($bearbeitbar || in_array($document->status, [DocumentStatus::Geprueft, DocumentStatus::Festgeschrieben], true)),
             'seiten' => $tresor === null ? ['bilder' => [], 'pdfs' => []] : $this->pruefung->seiten($document, $tresor),
             'felder' => $felder,

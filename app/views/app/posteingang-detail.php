@@ -134,6 +134,12 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
         <p class="knopfreihe">
             <a class="knopf knopf-primaer" href="/app/belege/pruefen/<?= e((string) $document->id) ?>">Beleg prüfen und erfassen</a>
         </p>
+    <?php elseif ($darfEntscheiden && in_array($document->status, [DocumentStatus::Geprueft, DocumentStatus::Festgeschrieben], true)): ?>
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/belege/pruefen/<?= e((string) $document->id) ?>">
+                <?= $document->status === DocumentStatus::Festgeschrieben ? 'Beleg ansehen oder Festschreibung aufheben' : 'Beleg ansehen oder festschreiben' ?>
+            </a>
+        </p>
     <?php endif; ?>
 
     <?php if ($aktionen !== []): ?>
@@ -184,7 +190,7 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                 </fieldset>
             </form>
         <?php endif; ?>
-    <?php elseif ($darfEntscheiden && $entsperrt && $document->status->istEndzustand()): ?>
+    <?php elseif ($darfEntscheiden && $entsperrt && ($document->status->istEndzustand() || $document->status === DocumentStatus::Festgeschrieben)): ?>
         <p class="gedaempft">Über diese Einreichung ist entschieden – sie lässt sich nicht mehr ändern.</p>
     <?php endif; ?>
 

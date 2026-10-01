@@ -17,12 +17,17 @@ namespace App\Domain;
  *   bereit_zur_auswertung/ki_fehler -> in_pruefung (manual capture in the
  *   review page, issue #37/M6-3 - without or instead of the AI)
  *
+ *   festgeschrieben -> in_pruefung (only by lifting the lock with a reason,
+ *   issue #38/M6-4, App\Service\Invoice\Festschreibung)
+ *
  * A freshly received document (issue #24/M4-2, either from the public
  * submission or the internal capture of issue #28/M4-6) starts at
  * `Eingegangen`.
  * uebergaenge() is the one table every status change is checked against
  * (issue #27/M4-5): the inbox (App\Domain\InboxAction) as well as the AI
- * pipeline later (M7). `Festgeschrieben` and `Abgelehnt` are final.
+ * pipeline later (M7). `Abgelehnt` is final; `Festgeschrieben` is not, but
+ * its only way out is the correction path of docs/spec/01-sicherheit.md
+ * section 7.
  */
 enum DocumentStatus: string
 {
@@ -51,7 +56,8 @@ enum DocumentStatus: string
             self::Geprueft => [self::Festgeschrieben],
             self::KiFehler => [self::BereitZurAuswertung, self::Wiedervorlage, self::InPruefung],
             self::Wiedervorlage => [self::BereitZurAuswertung, self::Abgelehnt],
-            self::Festgeschrieben, self::Abgelehnt => [],
+            self::Festgeschrieben => [self::InPruefung],
+            self::Abgelehnt => [],
         };
     }
 
@@ -63,11 +69,13 @@ enum DocumentStatus: string
     /**
      * Whether the review page (issue #37/M6-3, App\Service\Invoice\Pruefung)
      * may capture the document: every status from which `in_pruefung` is
-     * reachable, and `in_pruefung` itself.
+     * reachable, and `in_pruefung` itself. Not `festgeschrieben`, although
+     * lifting the lock leads to `in_pruefung`: a locked receipt is not
+     * captured, its lock is lifted first (issue #38/M6-4).
      */
     public function pruefbar(): bool
     {
-        return $this === self::InPruefung || $this->kannWechselnZu(self::InPruefung);
+        return $this === self::InPruefung || ($this !== self::Festgeschrieben && $this->kannWechselnZu(self::InPruefung));
     }
 
     /**

@@ -23,7 +23,8 @@ final class DocumentStatusTest extends TestCase
         'ausgewertet' => ['in_pruefung', 'ki_fehler', 'wiedervorlage'],
         'in_pruefung' => ['geprueft', 'abgelehnt'],
         'geprueft' => ['festgeschrieben'],
-        'festgeschrieben' => [],
+        // Only by lifting the lock with a reason (issue #38/M6-4).
+        'festgeschrieben' => ['in_pruefung'],
         'ki_fehler' => ['bereit_zur_auswertung', 'wiedervorlage', 'in_pruefung'],
         'wiedervorlage' => ['bereit_zur_auswertung', 'abgelehnt'],
         'abgelehnt' => [],
@@ -62,10 +63,10 @@ final class DocumentStatusTest extends TestCase
         }
     }
 
-    public function testFixedAndRejectedAreFinal(): void
+    public function testOnlyRejectedIsFinal(): void
     {
-        self::assertTrue(DocumentStatus::Festgeschrieben->istEndzustand());
         self::assertTrue(DocumentStatus::Abgelehnt->istEndzustand());
+        self::assertFalse(DocumentStatus::Festgeschrieben->istEndzustand());
         self::assertFalse(DocumentStatus::Eingegangen->istEndzustand());
         self::assertFalse(DocumentStatus::Wiedervorlage->istEndzustand());
     }

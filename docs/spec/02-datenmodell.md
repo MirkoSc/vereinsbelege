@@ -184,7 +184,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, cost_center_id NULL (Klartext-Strukturfeld wie bei `invoice`, FK `RESTRICT`; aus der Mannschaftswahl der Einreichung, im Posteingang änderbar – Filter und Scope „eigene Kostenstelle“ von `inbox.view`, seit M4-5/Migration 014), original_blob_ids JSON, processed_blob_ids JSON NULL (parallel zu `original_blob_ids`: je Seite die aufbereitete Fassung des Scanners oder null; NULL, wenn keine Seite eine hat – seit M5-4/Migration 016, Details 03 §1/§2), pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), resubmit_on DATE NULL (Wiedervorlage-Datum), status_note_enc NULL (Ablehnungsgrund bzw. Wiedervorlage-Notiz, AEAD mit Zeilen-DEK), status_changed_at/by NULL, content_bi (Duplikaterkennung), dek_sealed, created_by NULL (bei `intern` das erfassende Konto, M4-6), created_at | T |
 | `submission_upload` | blob_id (FK `file_blob`, `ON DELETE CASCADE`), form_hash, created_at – Blobs, die das Formular-Token hochgeladen hat, bis eine Einreichung sie beansprucht (Zeile gelöscht) oder der Cron sie nach 24 h abräumt (`App\Service\Cron\SubmissionUploadCleanupTask`, M4-2) | – (nur IDs/Hash) |
 | `document_artifact` | document_id, kind (`page_image`/`pdfa`/`text`/`extraction`), seq, blob_id NULL, dek_sealed, data_enc NULL, producer (`session`/`browser`/`worker`), job_id NULL (kein FK, wie `job.ref_id` – der Job wird nach 7 Tagen aufgeräumt, das Artefakt bleibt; seit M4-8/Migration 015), created_at – jedes Artefakt mit eigenem DEK, damit auch der Worker (ohne Zeilen-DEK des Dokuments) Ergebnisse ablegen kann; das jeweils neueste je kind gilt. **Stand M4-8** (issue #30): Kind `page_image`, Producer `browser`, durch `App\Service\Document\PdfRasterung` (`render_pages`-Job) – das per-Artefakt-DEK wird auch hier gesetzt, ist aber ungenutzt, weil `blob_id` bereits sein eigenes trägt (Details: 03 §3). `UNIQUE(document_id, kind, job_id, seq)`, `blob_id` mit `ON DELETE CASCADE` – ein gelöschtes Blob (ein abgelöster Rendering-Lauf) nimmt die Zeile mit | T |
-| `invoice` (fachlicher Beleg) | document_id UNIQUE (FK `RESTRICT`), doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`, `App\Domain\InvoiceType`), supplier_id NULL (FK `RESTRICT`), invoice_date, due_date NULL, service_from/to NULL, category_id NULL (FK `RESTRICT`), sphere NULL, cost_center_id NULL (FK `RESTRICT`), recurring_series_id NULL, direction (`ausgabe`/`einnahme`, `App\Domain\InvoiceDirection`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[{rate, amount}], currency, purpose_short, notes, payment_hint}, number_bi (Blind Index der Rechnungsnummer, Zweck `invoice.number`, Leerraum entfernt; `INDEX(supplier_id, number_bi)` für die Duplikaterkennung M6-6), created_by/at, updated_by/at. **Stand M6-3** (issue #37, Migration 019): angelegt von der Prüfansicht (03 §6), ohne `recurring_series_id` (kommt mit M8 – die Zieltabelle fehlt noch), `locked_by/at` (M6-4) und `payment_status` (Abgleich M9/M10); `data_enc` noch ohne `payment_hint`. Beträge Integer-Cent, Steuersatz als Dezimal-String mit Punkt („19“, „5.5“) | T |
+| `invoice` (fachlicher Beleg) | document_id UNIQUE (FK `RESTRICT`), doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`, `App\Domain\InvoiceType`), supplier_id NULL (FK `RESTRICT`), invoice_date, due_date NULL, service_from/to NULL, category_id NULL (FK `RESTRICT`), sphere NULL, cost_center_id NULL (FK `RESTRICT`), recurring_series_id NULL, direction (`ausgabe`/`einnahme`, `App\Domain\InvoiceDirection`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[{rate, amount}], currency, purpose_short, notes, payment_hint}, number_bi (Blind Index der Rechnungsnummer, Zweck `invoice.number`, Leerraum entfernt; `INDEX(supplier_id, number_bi)` für die Duplikaterkennung M6-6), created_by/at, updated_by/at. **Stand M6-3** (issue #37, Migration 019): angelegt von der Prüfansicht (03 §6), ohne `recurring_series_id` (kommt mit M8 – die Zieltabelle fehlt noch) und `payment_status` (Abgleich M9/M10); `data_enc` noch ohne `payment_hint`. **Stand M6-4** (issue #38, Migration 020): `locked_by/at` (Klartext-Strukturfelder, FK `locked_by` → `user` `SET NULL`) – gesetzt von „Festschreiben“, geleert (samt `checked_by/at`) von „Festschreibung aufheben“; solange `locked_at` gesetzt ist, schreiben die Repositories die Zeile nicht mehr (01 §7). Beträge Integer-Cent, Steuersatz als Dezimal-String mit Punkt („19“, „5.5“) | T |
 | `supplier` (Lieferant bzw. Zahler) | role (`lieferant`/`zahler`/`beide`, Klartext – filtert Liste und später die Auswahl in der Prüfansicht), dek_sealed, data_enc {name, aliases[], address, iban[], bic, vat_id, tax_number, email, website, creditor_id, mandate_refs[], customer_number, notes}, default_category_id NULL (FK `RESTRICT`), default_sphere NULL, created_via (`ki`/`manuell`/`archiv`), needs_review, merged_into NULL (FK auf `supplier`), created_at, updated_at – **keine** `*_bi`-Spalten, alle Blind Indexes stehen in `supplier_key` (Migration 018, M6-2, s. u. „Lieferanten“) | T |
 | `supplier_key` | supplier_id (FK `CASCADE`), kind (`name`/`iban`/`vat_id`/`tax_number`/`creditor_id`/`mandate`), value_bi – mehrere Zeilen je Kind; `INDEX(kind, value_bi)` für die Auflösung (Migration 018, M6-2) | – (nur BI) |
 | `category` | name UNIQUE, direction (`einnahme`/`ausgabe`/`beide`), parent_id NULL (FK `RESTRICT`), default_sphere NULL, color NULL (Schlüssel der Palette `App\Domain\CategoryColor`), sort (je Richtung), active, ai_hint (Beschreibung für den Prompt, max. 500 Zeichen) (Migration 017, M6-1; Pflege `/admin/kategorien`, Recht `admin.settings`, s. u. „Kategorien“) | – |
@@ -210,6 +210,7 @@ eingegangen ──(Annehmen im Posteingang)──► bereit_zur_auswertung
      └──► abgelehnt              ki_fehler ◄──┘ (auch aus bereit_zur_auswertung)
 
 bereit_zur_auswertung / ki_fehler ──(Prüfansicht, manuell)──► in_pruefung
+festgeschrieben ──(Festschreibung aufheben, Begründung Pflicht)──► in_pruefung
 ```
 
 Übergänge vollständig (maßgeblich ist `App\Domain\DocumentStatus::uebergaenge()`,
@@ -224,7 +225,8 @@ Test `tests/Domain/DocumentStatusTest.php`; seit M4-5/issue #27):
 | `geprueft` | `festgeschrieben` |
 | `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage`, `in_pruefung` |
 | `wiedervorlage` | `bereit_zur_auswertung`, `abgelehnt` |
-| `festgeschrieben`, `abgelehnt` | – (Endzustände) |
+| `festgeschrieben` | `in_pruefung` – nur über „Festschreibung aufheben“ mit Pflicht-Begründung (M6-4, 01 §7) |
+| `abgelehnt` | – (Endzustand) |
 
 Aktionen im Posteingang (`App\Domain\InboxAction`, Recht `document.edit`):
 **Annehmen** aus `eingegangen`/`wiedervorlage` → `bereit_zur_auswertung`;
@@ -247,7 +249,11 @@ oder er dort steht (`DocumentStatus::pruefbar()`: `bereit_zur_auswertung`,
 `geprueft` samt `invoice.checked_by/at`. Beides in einer Transaktion, die den
 Beleg zuerst im gelesenen Status sperrt (`SELECT … FOR UPDATE`). Ein
 geprüfter Beleg ist in der Prüfansicht nur noch lesbar; Zurücknehmen gibt es
-noch nicht.
+noch nicht. Festschreiben (`geprueft` → `festgeschrieben`) und Aufheben
+(`festgeschrieben` → `in_pruefung`, Grund Pflicht) sind zwei weitere Aktionen
+der Prüfansicht (M6-4, issue #38, Recht `document.edit`, Details 01 §7);
+`pruefbar()` schließt `festgeschrieben` aus, obwohl von dort `in_pruefung`
+erreichbar ist – ein festgeschriebener Beleg wird nicht erfasst, erst entsperrt.
 
 `duplikat_verdacht` ist ein Flag (content_bi gleich oder Lieferant +
 Rechnungsnummer gleich), kein Status.

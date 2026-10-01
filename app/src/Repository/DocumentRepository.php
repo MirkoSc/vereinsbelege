@@ -92,13 +92,15 @@ final readonly class DocumentRepository
      * have one yet: two racing job attempts must not overwrite each other's
      * blob, and the loser has to know it lost so it can delete what it made
      * (App\Service\Document\PdfErzeugung). Returns whether this call is the
-     * one that won.
+     * one that won. A locked document (issue #38/M6-4) takes none: its
+     * documents are fixed.
      */
     public function setzePdfBlob(int $id, int $blobId): bool
     {
-        $stmt = $this->pdo->prepare('UPDATE document SET pdf_blob_id = ? WHERE id = ? AND pdf_blob_id IS NULL');
+        $stmt = $this->pdo->prepare('UPDATE document SET pdf_blob_id = ? WHERE id = ? AND pdf_blob_id IS NULL AND status <> ?');
         $stmt->bindValue(1, $blobId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(3, DocumentStatus::Festgeschrieben->value);
         $stmt->execute();
 
         return $stmt->rowCount() === 1;
@@ -167,7 +169,27 @@ final readonly class DocumentRepository
      */
     public function pruefListe(Zugriffsbereich $bereich, int $limit): array
     {
-        $status = DocumentStatus::pruefbare();
+        return $this->imStatus(DocumentStatus::pruefbare(), $bereich, $limit);
+    }
+
+    /**
+     * The receipts that are checked and wait to be locked (issue #38/M6-4),
+     * oldest first, narrowed to $bereich like the queue.
+     *
+     * @return list<InboxItem>
+     */
+    public function geprueftListe(Zugriffsbereich $bereich, int $limit): array
+    {
+        return $this->imStatus([DocumentStatus::Geprueft], $bereich, $limit);
+    }
+
+    /**
+     * @param list<DocumentStatus> $status
+     *
+     * @return list<InboxItem>
+     */
+    private function imStatus(array $status, Zugriffsbereich $bereich, int $limit): array
+    {
         [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
         $stmt = $this->pdo->prepare(
             self::INBOX_SELECT . ' WHERE d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope
@@ -223,11 +245,16 @@ final readonly class DocumentRepository
         return $stmt->fetch() !== false;
     }
 
+    /**
+     * A locked document (issue #38/M6-4) keeps its cost center: the
+     * condition is in the SQL, the services refuse loudly before.
+     */
     public function setzeKostenstelle(int $id, ?int $costCenterId): void
     {
-        $stmt = $this->pdo->prepare('UPDATE document SET cost_center_id = ? WHERE id = ?');
+        $stmt = $this->pdo->prepare('UPDATE document SET cost_center_id = ? WHERE id = ? AND status <> ?');
         $stmt->bindValue(1, $costCenterId, $costCenterId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(3, DocumentStatus::Festgeschrieben->value);
         $stmt->execute();
     }
 
