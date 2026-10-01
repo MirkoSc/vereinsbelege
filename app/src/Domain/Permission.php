@@ -41,7 +41,7 @@ enum Permission: string
             self::DocumentSubmitInternal => 'Belege intern hochladen',
             self::SupplierManage => 'Lieferanten verwalten',
             self::BankImport => 'Kontoauszüge importieren',
-            self::BankBook => 'Manuell buchen, Kasse führen',
+            self::BankBook => 'Manuell buchen, Kasse führen, Konten pflegen',
             self::BankView => 'Konten und Buchungen sehen',
             self::MatchingEdit => 'Abgleich Beleg ↔ Buchung',
             self::ReportView => 'Auswertungen sehen',

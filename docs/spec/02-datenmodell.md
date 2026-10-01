@@ -190,7 +190,8 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `category` | name UNIQUE, direction (`einnahme`/`ausgabe`/`beide`), parent_id NULL (FK `RESTRICT`), default_sphere NULL, color NULL (Schlüssel der Palette `App\Domain\CategoryColor`), sort (je Richtung), active, ai_hint (Beschreibung für den Prompt, max. 500 Zeichen) (Migration 017, M6-1; Pflege `/admin/kategorien`, Recht `admin.settings`, s. u. „Kategorien“) | – |
 | `cost_center` | name UNIQUE (z. B. „Herren", „E-Jugend", „Vereinsheim"), sort, active (Tabelle seit Migration 010, M3-6; Pflege `/admin/kostenstellen`, Recht `admin.settings`, seit M4-1/Migration 012: Löschen nur ohne Zuweisung, `ON DELETE RESTRICT` auf `user_cost_center`; als Verwendung zählen auch `document` und – seit M6-3 – `invoice`, `CostCenterRepository::documentCount()`) | – |
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
-| `bank_account` | kind (`bank`/`kasse`), dek_sealed, data_enc {name, iban, bic, bank}, iban_bi, opening_balance_enc, active | T |
+| `bank_account` | kind (`bank`/`kasse`, `App\Domain\BankAccountKind`, nach dem Anlegen fest), dek_sealed, data_enc {name, iban, bic, bank} (Kasse: nur name), iban_bi NULL **UNIQUE** (Zweck `bank_account.iban`), opening_balance_enc {amount (Cent), currency} (Saldo zu Beginn des Stichtags), opening_date (Stichtag, Klartext), active, created_at, updated_at. **Stand M9-1** (issue #59, Migration 021, s. u. „Konten“) | T |
+| `cash_count` (Kassensturz) | account_id (FK `RESTRICT`), counted_on DATE (Klartext – Zeitraum-Scope), dek_sealed, data_enc {expected, counted (Cent), currency, note}, created_by NULL (FK `SET NULL`), created_at – append-only; Differenz = counted − expected wird abgeleitet, nicht gespeichert (Migration 021, M9-1) | T |
 | `bank_import` | account_id, format (`mt940`/`csv:<profil>`), file_blob_id, imported_by, imported_at, stats JSON (neu/duplikat/fehler), balance_check (`ok`/`abweichung`/`n.v.`) | – |
 | `bank_transaction` | account_id, import_id, booking_date, value_date, direction, dek_sealed, data_enc {amount, currency, counterparty_name, counterparty_iban, purpose, eref, mref, cred, gvc, booking_text}, dedup_bi UNIQUE (je Konto), counterparty_bi, category_id NULL, doc_required (Default: Ausgabe 1, Einnahme 0 – Setting), doc_status (`fehlt`/`zugeordnet`/`nicht_noetig`), source (`import`/`manuell`) | T |
 | `csv_profile` | name, header_signature, mapping JSON, delimiter, encoding, date_format, decimal_sep | – |
@@ -406,3 +407,80 @@ IDs/Feldnamen, Widerspruch ohne Änderung, nicht mit sich selbst/in einen
 zusammengeführten, zusammengeführter nicht änderbar/löschbar, Tresor,
 CSRF); `PruefungFlowTest` (festgeschriebener Beleg zeigt das Ziel und
 nimmt es nach dem Aufheben).
+
+## Konten
+
+**Umsetzung (M9-1, issue #59, Migration 021):** Bankkonten und Kassen sind
+eine Tabelle `bank_account`; die Art (`App\Domain\BankAccountKind`: `bank`,
+`kasse`) wird beim Anlegen gewählt und ist danach fest. Pflege unter
+`/app/konten` (`App\App\AccountController`, Regeln und Verschlüsselung in
+`App\Service\Bank\BankAccountService`). Rechte: **Lesen `bank.view`**
+(Admin, Vorstand, Finanzen, Kassenprüfer, Steuerberater – ohne Formular,
+nur die gespeicherten Werte), **Anlegen/Ändern/Löschen und Kassensturz
+`bank.book`** (Admin, Finanzen).
+
+- **Tresor-Daten:** `data_enc` (AAD `bank_account|<id>|data_enc`) und
+  `opening_balance_enc` (AAD `bank_account|<id>|opening_balance_enc`) unter
+  dem Zeilen-DEK; zweistufig in einer Transaktion geschrieben. Lesen **und**
+  Schreiben brauchen den entsperrten Tresor (Schreiben wegen `iban_bi`);
+  ohne Tresor zeigen die Seiten nur einen Hinweis. Sortierung (aktive
+  zuerst, Bank vor Kasse, dann Name) in PHP.
+- **Bankkonto:** IBAN optional (Sparbuch ohne IBAN), wenn angegeben gültig
+  (`App\Domain\Iban`), groß ohne Leerraum gespeichert; **eine IBAN gehört
+  zu genau einem Konto** – geprüft im Service (Meldung mit Link auf das
+  andere Konto), `UNIQUE(iban_bi)` als Netz. Der Kontoauszug-Import (M9-4)
+  findet das Konto über diesen Blind Index. BIC optional (8/11 Zeichen),
+  Bankname optional. Anfangssaldo darf negativ sein.
+- **Kasse:** nur Name und Anfangsbestand, keine Bankverbindung (abgelehnt,
+  falls doch gesendet), Anfangsbestand ≥ 0.
+- **Anfangssaldo** = Bestand **zu Beginn** des Stichtags in Integer-Cent
+  (`App\Service\Processing\Betrag`, Eingabe wie „1.234,56“), Währung EUR
+  mit gespeichert. Buchungen ab dem Stichtag kommen hinzu. Der Stichtag
+  liegt nicht in der Zukunft und nicht nach dem ersten Kassensturz der Kasse
+  (`BankAccountRepository::firstCashCountOn()`) – ein gespeicherter
+  Kassensturz bleibt so auf seinen Anfangsbestand bezogen.
+- **Löschen nur ohne Verwendung, sonst deaktivieren** (`active`). Was als
+  Verwendung zählt, entscheidet allein `BankAccountRepository::usageCount()`
+  – heute `cash_count`. Jede spätere Tabelle mit `account_id`
+  (`bank_import`, `bank_transaction`) legt ihren Fremdschlüssel mit
+  `ON DELETE RESTRICT` an **und** zählt dort mit. Deaktivierte Konten
+  bleiben lesbar, nehmen aber keinen Kassensturz mehr an.
+- **Kassensturz** (`App\Service\Bank\Kassensturz`, Tabelle `cash_count`,
+  nur für eine aktive Kasse): Datum (≥ Stichtag, ≤ heute), gezählter
+  Bestand (≥ 0), Notiz (≤ 500 Zeichen). Den Soll-Bestand rechnet der Server
+  (`sollBestand()`: Anfangsbestand + Kassenbuchungen vom Stichtag bis
+  einschließlich Datum – bis M9-5 gibt es keine Buchungen, also der
+  Anfangsbestand). „Differenz berechnen“ zeigt Soll/Ist/Differenz mit
+  Ergebnis (`App\Domain\CashCountOutcome`: Kasse stimmt / Fehlbetrag /
+  Überschuss) ohne zu speichern; „Kassensturz speichern“ hält Soll und Ist
+  **zum Zeitpunkt der Zählung** fest – spätere Buchungen ändern einen alten
+  Kassensturz nicht. Kein Ändern, kein Löschen. Die Differenz als Buchung
+  „Kassendifferenz“ vorzuschlagen, übernimmt M9-5 (issue #63), sobald es
+  Kassenbuchungen gibt.
+- **Zeitraum-Scope:** Die Kassensturz-Liste filtert per
+  `Zugriffsbereich::sqlBedingung('c.counted_on', null)` in SQL. Konten
+  selbst sind Stammdaten und bleiben sichtbar; den **Anfangssaldo** sieht
+  ein Leser ohne `bank.book` nur, wenn der Stichtag in seinem Zeitraum liegt
+  (sonst „außerhalb Ihres Zeitraums“) – er ist der Bestand eines Tages.
+- **Audit:** `konto.angelegt` (Details: Art und Namen der Felder mit Wert),
+  `konto.geaendert` (nur Namen der geänderten Felder; ohne Änderung weder
+  Zeile noch Schreibzugriff, `updated_at` bleibt), `konto.geloescht` (Art) – Entität `bank_account`;
+  `kassensturz.erfasst` – Entität `cash_count`, **ohne Details**. Nie
+  Name, IBAN oder Betrag im Log oder in Flash-Meldungen.
+
+**Pflicht-Tests:** `BankAccountFlowTest` (Bankkonto: IBAN/Name/Betrag nicht
+im Klartext, `iban_bi` = nachgerechneter Blind Index, Betrag als Cent;
+Kasse ohne Bankverbindung und nicht negativ, Bankkonto darf negativ sein;
+Validierung mit markiertem Feld, Stichtag nicht in der Zukunft; doppelte
+IBAN mit Link abgelehnt, eigene kein Konflikt; Ändern mit Feldnamen im
+Audit, Art unveränderlich, ohne Änderung keine Zeile und kein Schreiben;
+Stichtag höchstens bis zum ersten Kassensturz; verwendete Kasse nicht löschbar – auch der FK allein
+nicht –, deaktivierbar; ungenutztes Konto löschbar; Leserechte ohne
+Formular; Anfangssaldo außerhalb des Zeitraums verborgen; ohne Tresor
+nichts sichtbar und nichts geschrieben; CSRF; 404 (auch Löschen ohne
+liegen gebliebene Meldung);
+Spaltenlisten; Kassensturz: Differenz-Anzeige ohne Speichern für
+Fehlbetrag/stimmt/Überschuss, Speichern verschlüsselt mit Soll vom Server
+und Audit ohne Details, Regeln für Datum/Betrag/Notiz/inaktive Kasse,
+Zeitraum-Scope); `CashCountTest` (Differenz und Ergebnis);
+`RoutePermissionMatrixTest` (Lesen `bank.view`, Schreiben `bank.book`).

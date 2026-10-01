@@ -17,6 +17,16 @@
   Kassensturz: Ist-Bestand eingeben → Differenz wird als Buchung mit Grund
   „Kassendifferenz" vorgeschlagen.
 
+**Umsetzung (M9-1, issue #59):** `/app/konten`, Tabellen `bank_account` und
+`cash_count` (Migration 021) – Regeln, Rechte und Pflicht-Tests in
+02-datenmodell.md „Konten“. Kurz: Bankkonto und Kasse sind ein Modell
+(`kind`), IBAN/Name/Anfangssaldo im Tresor, IBAN eindeutig über
+`iban_bi`; Lesen `bank.view`, Pflegen und Kassensturz `bank.book`. Der
+Kassensturz zeigt Soll/Ist/Differenz vor dem Speichern und hält beides
+append-only fest. **Den Buchungsvorschlag „Kassendifferenz“ übernimmt M9-5**
+(issue #63) zusammen mit den manuellen Kassenbuchungen – bis dahin ist der
+Soll-Bestand der Anfangsbestand.
+
 ## 2. MT940-Import
 
 Eigener Parser `Service/Bank/Mt940Parser` (reines PHP, keine Bibliothek
@@ -36,6 +46,26 @@ nötig – Format ist überschaubar und so vollständig testbar):
   `EREF+`, `KREF+`, `MREF+`, `CRED+`, `SVWZ+`, `ABWA+`, `ABWE+` herauslösen,
   `?30` BIC, `?31` IBAN, `?32/?33` Name Gegenseite. Unstrukturiertes `:86:`
   als reiner Text tolerieren.
+
+Umsetzung (M9-2): `Mt940Parser::parse()` liefert je Auszug ein
+`Kontoauszug` (mit `Kontoangabe`, `Saldo`, `Umsatz`, `Umsatzdetails`) –
+reine Werteobjekte, nichts wird gespeichert oder geloggt; die Fehlermeldung
+(`Mt940Exception`) nennt nur Zeile und Feld. Festgelegte Regeln:
+
+- Buchungsdatum (`MMTT` ohne Jahr): das Jahr, das am nächsten an der Valuta
+  liegt. Tage hinter dem Monatsende (Zinsvaluta „30.02.") → letzter Tag.
+- Vorzeichen: `C`/`RD` positiv, `D`/`RC` negativ; `RC`/`RD` setzt `storno`.
+- Verwendungszweck-/Namensteilfelder (27 Zeichen) werden direkt
+  aneinandergehängt, wenn das vorige Teilfeld voll war, sonst mit
+  Leerzeichen. SEPA-Schlüssel zählen nur am Anfang eines Teilfelds;
+  `verwendungszweck` = `SVWZ+`, ohne Schlüssel der ganze Text.
+- `:25:` als IBAN (geprüft, ggf. mit Währung) oder `BLZ/Kontonummer`
+  (BLZ auch als BIC); sonst nur Rohwert. SWIFT-Kopfblöcke, `:NS:` und nicht
+  benötigte Felder (`:21:`, `:64:` …) werden übersprungen, ebenso ein
+  `:86:` ohne vorangehendes `:61:`.
+- Saldenprüfung je Auszug (`saldoStimmt()`, `saldoDifferenzCent()`) –
+  Abweichung ist eine Warnung, kein Abbruch; Fehlen von `:25:`, `:60x:`
+  oder `:62x:` ist ein Fehler.
 
 ## 3. CSV-Import
 

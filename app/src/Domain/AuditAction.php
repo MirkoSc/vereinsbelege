@@ -62,6 +62,11 @@ enum AuditAction: string
     /** Issue #39/M6-5: entity is the merged-away supplier, the target is in the details. */
     case LieferantZusammengefuehrt = 'lieferant.zusammengefuehrt';
 
+    case KontoAngelegt = 'konto.angelegt';
+    case KontoGeaendert = 'konto.geaendert';
+    case KontoGeloescht = 'konto.geloescht';
+    case KassensturzErfasst = 'kassensturz.erfasst';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -125,6 +130,10 @@ enum AuditAction: string
             self::LieferantGeaendert => 'Lieferant geändert',
             self::LieferantGeloescht => 'Lieferant gelöscht',
             self::LieferantZusammengefuehrt => 'Lieferanten zusammengeführt',
+            self::KontoAngelegt => 'Konto angelegt',
+            self::KontoGeaendert => 'Konto geändert',
+            self::KontoGeloescht => 'Konto gelöscht',
+            self::KassensturzErfasst => 'Kassensturz erfasst',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -165,6 +174,8 @@ enum AuditAction: string
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
             self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht,
             self::LieferantZusammengefuehrt => 'supplier',
+            self::KontoAngelegt, self::KontoGeaendert, self::KontoGeloescht => 'bank_account',
+            self::KassensturzErfasst => 'cash_count',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -188,6 +199,8 @@ enum AuditAction: string
             'cost_center' => 'Kostenstelle',
             'category' => 'Kategorie',
             'supplier' => 'Lieferant',
+            'bank_account' => 'Konto',
+            'cash_count' => 'Kassensturz',
             'document' => 'Beleg',
             default => $entity,
         };

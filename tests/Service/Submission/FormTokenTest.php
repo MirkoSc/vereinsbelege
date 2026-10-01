@@ -43,9 +43,17 @@ final class FormTokenTest extends TestCase
         $token = new FormToken(str_repeat('k', 32));
         $ausgestellt = $token->ausstellen();
 
-        $verfaelscht = substr($ausgestellt, 0, -1) . ($ausgestellt[-1] === 'A' ? 'B' : 'A');
+        // 85 bytes encode to 114 characters, and the last one carries only 4
+        // data bits - its low 2 bits are padding that base64_decode() ignores.
+        // Swapping the last character (A <-> B) can therefore leave the bytes
+        // unchanged and the token valid, so tamper with characters that carry
+        // all 6 bits instead: one in the payload, one in the MAC.
+        foreach ([10, 60] as $position) {
+            $verfaelscht = $ausgestellt;
+            $verfaelscht[$position] = $ausgestellt[$position] === 'A' ? 'B' : 'A';
 
-        self::assertNull($token->pruefen($verfaelscht));
+            self::assertNull($token->pruefen($verfaelscht), 'tampered character at ' . $position);
+        }
     }
 
     public function testATokenFromAnotherKeyIsRejected(): void

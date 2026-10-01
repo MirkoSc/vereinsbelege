@@ -17,6 +17,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
+use App\App\AccountController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\ErfassungController;
@@ -128,6 +129,8 @@ use App\View\View;
  * @param \Closure(): PruefungController $pruefung built lazily, same
  *        reason as $mail: only the review pages need the database
  *        (issue #37/M6-3).
+ * @param \Closure(): AccountController $konten built lazily, same reason
+ *        as $mail: only the account pages need the database (issue #59/M9-1).
  */
 return static function (
     Router $router,
@@ -159,6 +162,7 @@ return static function (
     \Closure $kategorien,
     \Closure $lieferanten,
     \Closure $pruefung,
+    \Closure $konten,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -448,6 +452,26 @@ return static function (
     // vault required like for everything on the review page.
     $post('/app/belege/pruefen/{id:\d+}/festschreiben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreiben($r, $params));
     $post('/app/belege/pruefen/{id:\d+}/festschreibung-aufheben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreibungAufheben($r, $params));
+
+    // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
+    // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
+    // Vorstand, Finanzen, Kassenprüfer, Steuerberater) to see the list, an
+    // account and the cash counts of a cash box - the period scope of
+    // external roles narrows the counts in SQL; `bank.book` (Admin, Finanzen)
+    // for everything that writes: creating, changing, deleting an account
+    // and recording a cash count. CSRF on every write. Names, IBANs and
+    // amounts are vault data, so the pages show nothing and write nothing
+    // without the unlocked vault (App\App\AccountController).
+    $kontenLesen = Zugriff::recht(Permission::BankView);
+    $kontenPflege = Zugriff::recht(Permission::BankBook);
+    $get('/app/konten', $kontenLesen, static fn(Request $r) => $konten()->liste($r));
+    $get('/app/konten/neu', $kontenPflege, static fn(Request $r) => $konten()->neu($r));
+    $post('/app/konten', $kontenPflege, static fn(Request $r) => $konten()->anlegen($r));
+    $get('/app/konten/{id:\d+}', $kontenLesen, static fn(Request $r, array $params) => $konten()->ansicht($r, $params));
+    $post('/app/konten/{id:\d+}', $kontenPflege, static fn(Request $r, array $params) => $konten()->speichern($r, $params));
+    $post('/app/konten/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $konten()->loeschen($r, $params));
+    $get('/app/konten/{id:\d+}/kassensturz', $kontenPflege, static fn(Request $r, array $params) => $konten()->kassensturz($r, $params));
+    $post('/app/konten/{id:\d+}/kassensturz', $kontenPflege, static fn(Request $r, array $params) => $konten()->kassensturzErfassen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).
