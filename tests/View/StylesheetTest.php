@@ -95,6 +95,36 @@ final class StylesheetTest extends TestCase
     }
 
     /**
+     * Issue #145: the ↑/↓/✕ row under a page card was wider than the card
+     * (fixed 7rem) and stuck out on both sides at 360 px. The needed width is
+     * derived from the tokens, so raising --tippflaeche or the gaps without
+     * widening the card fails here instead of in a phone.
+     */
+    public function testPageCardIsWideEnoughForItsThreeTapTargets(): void
+    {
+        $css = self::css();
+
+        $rem = static function (string $token) use ($css): float {
+            self::assertSame(1, preg_match('/' . preg_quote($token, '/') . ':\s*([\d.]+)rem/', $css, $m), $token);
+
+            return (float) $m[1];
+        };
+
+        self::assertSame(1, preg_match('/\.einreichen-seite\s*\{[^}]*?\bwidth:\s*([\d.]+)rem/s', $css, $breite));
+
+        $border = 2 / 16; // 1px on each side, as in `border: 1px solid`
+        $benoetigt = 3 * $rem('--tippflaeche') + 2 * $rem('--abstand-1') + 2 * $rem('--abstand-2') + $border;
+
+        self::assertGreaterThanOrEqual($benoetigt, (float) $breite[1], 'card narrower than its button row');
+
+        // .knopf-still resets min-height; the cards must restore the tap target.
+        self::assertMatchesRegularExpression(
+            '/\.einreichen-seite\s+\.knopf\s*\{[^}]*min-width:\s*var\(--tippflaeche\)[^}]*min-height:\s*var\(--tippflaeche\)/s',
+            $css,
+        );
+    }
+
+    /**
      * Mobile first is an acceptance criterion: the base rules have to hold
      * at 360 px, and media queries may only add to them. A max-width query
      * would mean the narrow case is the exception.
