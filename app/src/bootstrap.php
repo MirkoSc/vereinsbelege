@@ -662,6 +662,22 @@ $einladung = static function () use ($connections, $view, $serverCrypto, $paths,
     );
 };
 
+// The database-backed collaborators of the second factor at login, shared by
+// $auth (sends the e-mail code on the way to the confirmation page, issue
+// #153) and $mfaController.
+$mfaToolbox = static function () use ($connections, $serverCrypto, $mfaServiceFor, $mailerFor, $auditFor): MfaToolbox {
+    $pdo = $connections->pdo();
+
+    return new MfaToolbox(
+        $mfaServiceFor($pdo),
+        new UserRepository($pdo),
+        $mailerFor($pdo),
+        new SettingRepository($pdo),
+        $serverCrypto,
+        $auditFor($pdo),
+    );
+};
+
 // Login and vault unlock (M3-3/M3-4, issues #16/#17). Built lazily like the
 // rest: the login FORM needs no database, only the attempt behind it does -
 // and the guard reads the timeout settings only once a protected route
@@ -686,6 +702,7 @@ $auth = static fn(): AuthController => new AuthController(
         );
     },
     static fn(): MfaService => $mfaServiceFor($connections->pdo()),
+    $mfaToolbox,
     static fn(): AuditLog => $auditFor($connections->pdo()),
 );
 
@@ -697,18 +714,7 @@ $mfaController = static fn(): MfaController => new MfaController(
     new Session(),
     new PendingLogin(),
     new LoginCompleter(new Session(), new SessionVault()),
-    static function () use ($connections, $serverCrypto, $mfaServiceFor, $mailerFor, $auditFor): MfaToolbox {
-        $pdo = $connections->pdo();
-
-        return new MfaToolbox(
-            $mfaServiceFor($pdo),
-            new UserRepository($pdo),
-            $mailerFor($pdo),
-            new SettingRepository($pdo),
-            $serverCrypto,
-            $auditFor($pdo),
-        );
-    },
+    $mfaToolbox,
 );
 
 // Managing an already set-up (or not-yet-set-up) second factor (M3-4, issue
