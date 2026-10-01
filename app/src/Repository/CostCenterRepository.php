@@ -133,13 +133,17 @@ final readonly class CostCenterRepository
 
     /**
      * Receipts carrying this cost center (`document.cost_center_id`, issue
-     * #27/M4-5) - RESTRICT like the account assignment, so deleting one
-     * would fail in the schema too.
+     * #27/M4-5, and `invoice.cost_center_id`, issue #37/M6-3) - RESTRICT
+     * like the account assignment, so deleting one would fail in the
+     * schema too.
      */
     public function documentCount(int $id): int
     {
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document WHERE cost_center_id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->pdo->prepare(
+            'SELECT (SELECT COUNT(*) FROM document WHERE cost_center_id = ?)
+                  + (SELECT COUNT(*) FROM invoice WHERE cost_center_id = ?)',
+        );
+        $stmt->execute([$id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

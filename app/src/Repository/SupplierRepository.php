@@ -156,15 +156,18 @@ final readonly class SupplierRepository
 
     /**
      * How often the supplier is referred to - a supplier in use is not
-     * deleted. Today that is only a supplier merged into this one; every
-     * later table with a supplier_id (invoice, recurring_series,
-     * assignment_rule) adds its foreign key with ON DELETE RESTRICT and is
-     * counted here.
+     * deleted: a supplier merged into this one and the receipts of the
+     * review page (`invoice`, issue #37/M6-3). Every later table with a
+     * supplier_id (recurring_series, assignment_rule) adds its foreign key
+     * with ON DELETE RESTRICT and is counted here.
      */
     public function usageCount(int $id): int
     {
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM supplier WHERE merged_into = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->pdo->prepare(
+            'SELECT (SELECT COUNT(*) FROM supplier WHERE merged_into = ?)
+                  + (SELECT COUNT(*) FROM invoice WHERE supplier_id = ?)',
+        );
+        $stmt->execute([$id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

@@ -162,11 +162,15 @@ final readonly class Posteingang
      * not one of this document's, not finished, or of a type the preview
      * does not send.
      *
+     * @param list<int> $weitere blobs the caller has already tied to this
+     *        document beyond its own (the page images of its PDFs, issue
+     *        #37/M6-3 - App\Service\Invoice\Pruefung::seiten())
+     *
      * @return array{chunks: \Generator<string>, mime: string, dateiname: string}|null
      */
-    public function datei(InboxItem $item, int $blobId, Vault $vault): ?array
+    public function datei(InboxItem $item, int $blobId, Vault $vault, array $weitere = []): ?array
     {
-        $position = array_search($blobId, $item->document->blobIds(), true);
+        $position = array_search($blobId, [...$item->document->blobIds(), ...$weitere], true);
         if ($position === false) {
             return null;
         }

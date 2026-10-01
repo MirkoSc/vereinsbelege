@@ -14,6 +14,8 @@ namespace App\Domain;
  *   bereit_zur_auswertung/ausgewertet -> ki_fehler -> (neuer Versuch)
  *   eingegangen/wiedervorlage/in_pruefung -> abgelehnt (mit Grund, bleibt
  *   erhalten)
+ *   bereit_zur_auswertung/ki_fehler -> in_pruefung (manual capture in the
+ *   review page, issue #37/M6-3 - without or instead of the AI)
  *
  * A freshly received document (issue #24/M4-2, either from the public
  * submission or the internal capture of issue #28/M4-6) starts at
@@ -43,11 +45,11 @@ enum DocumentStatus: string
     {
         return match ($this) {
             self::Eingegangen => [self::BereitZurAuswertung, self::Wiedervorlage, self::Abgelehnt],
-            self::BereitZurAuswertung => [self::Ausgewertet, self::KiFehler],
+            self::BereitZurAuswertung => [self::Ausgewertet, self::KiFehler, self::InPruefung],
             self::Ausgewertet => [self::InPruefung, self::KiFehler, self::Wiedervorlage],
             self::InPruefung => [self::Geprueft, self::Abgelehnt],
             self::Geprueft => [self::Festgeschrieben],
-            self::KiFehler => [self::BereitZurAuswertung, self::Wiedervorlage],
+            self::KiFehler => [self::BereitZurAuswertung, self::Wiedervorlage, self::InPruefung],
             self::Wiedervorlage => [self::BereitZurAuswertung, self::Abgelehnt],
             self::Festgeschrieben, self::Abgelehnt => [],
         };
@@ -56,6 +58,25 @@ enum DocumentStatus: string
     public function kannWechselnZu(self $ziel): bool
     {
         return in_array($ziel, $this->uebergaenge(), true);
+    }
+
+    /**
+     * Whether the review page (issue #37/M6-3, App\Service\Invoice\Pruefung)
+     * may capture the document: every status from which `in_pruefung` is
+     * reachable, and `in_pruefung` itself.
+     */
+    public function pruefbar(): bool
+    {
+        return $this === self::InPruefung || $this->kannWechselnZu(self::InPruefung);
+    }
+
+    /**
+     * @return list<self> every status pruefbar() accepts, in the order of the
+     *         status model
+     */
+    public static function pruefbare(): array
+    {
+        return array_values(array_filter(self::cases(), static fn(self $s): bool => $s->pruefbar()));
     }
 
     public function istEndzustand(): bool

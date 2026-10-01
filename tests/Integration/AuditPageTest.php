@@ -309,6 +309,7 @@ final class AuditPageTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,
+            $unerreichbar,
         );
 
         return new Kernel(

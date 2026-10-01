@@ -655,6 +655,66 @@ sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
   KI-Warnungen oben. Tastatur-freundlich (Tab-Reihenfolge, Enter =
   „Geprüft, nächster Beleg").
 
+**Stand M6-3** (issue #37, vollständig manuell – M7-5 belegt dasselbe
+Formular nur vor): `App\App\PruefungController`, Regeln und Verschlüsselung
+in `App\Service\Invoice\Pruefung`, Tabelle `invoice` (02 „Fachdaten“,
+Migration 019), Recht `document.edit` (Admin, Finanzen) samt dessen Scope.
+- **Routen:** `/app/belege/pruefen` ist die Warteschlange (alle Belege, aus
+  deren Status `in_pruefung` erreichbar ist, älteste zuerst – nur
+  Klartextspalten, Navigationseintrag „Belege prüfen“);
+  `/app/belege/pruefen/{id}` das Formular, `POST` dorthin speichert
+  (`aktion=speichern`) oder schließt ab (`aktion=geprueft`);
+  `…/datei/{blob}` streamt eine Seite wie der Posteingang.
+- **Felder:** Richtung (Ausgabe/Einnahme), Belegart, Belegdatum (Pflicht),
+  Belegnummer, Brutto (Pflicht), Währung (Standard EUR), Netto und bis zu
+  drei Steuerzeilen (Satz, Betrag), Lieferant bzw. Zahler, Kategorie,
+  Kostenstelle, Fälligkeit, Leistungszeitraum, Zweck, Notiz. Neu belegt:
+  Ausgabe, Rechnung, EUR und die Kostenstelle des Dokuments.
+- **Beträge** werden mit `App\Service\Processing\Betrag` in Cent geparst
+  (rahmenwerkfrei, auch für M7-5): deutsch „1.234,56“ und englisch
+  „1234.56“, Vorzeichen vorn oder hinten (Kassenbon „12,50-“), höchstens
+  zwei Nachkommastellen; „1,234“ ist mehrdeutig und wird abgelehnt statt
+  geraten. Die Summenprüfung (Netto + Steuern = Brutto, 1 Cent Toleranz je
+  Steuerzeile) **warnt nur**, sie blockiert nicht.
+- **Passend zur Richtung:** Kategorie `ausgabe`/`einnahme` bzw. `beide`,
+  aktiv (außer der schon gespeicherten); Partner mit Rolle
+  `lieferant`/`zahler` bzw. `beide`, nicht zusammengeführt. Ohne JavaScript
+  bietet die Seite alles gruppiert an, `public/js/pruefansicht.js` blendet
+  die unpassenden Gruppen aus – geprüft wird serverseitig.
+- **Lieferant bzw. Zahler neu anlegen** direkt im Formular (Name, optional
+  IBAN) über `SupplierService::anlegen()` mit der Rolle aus der Richtung –
+  nur mit `supplier.manage`, und nur statt, nicht neben einer Auswahl.
+  Anlegen läuft vor der Transaktion des Belegs (eigene Transaktion des
+  Lieferanten-Service); eine doppelte IBAN verweist auf den vorhandenen.
+- **Kostenstelle** des Belegs wird in `document.cost_center_id`
+  übernommen – daran hängt der Scope „eigene Kostenstelle“ des Posteingangs.
+- **Beleganzeige:** Bilder (aufbereitete Fassung, Original einen Klick
+  entfernt) und die Seitenbilder der PDF-Rasterung (M4-8, jeweils der
+  neueste Lauf) blätterbar mit Zoom-Stufen 100/150/200/300 %; PDFs selbst
+  als Link (CSP). Ab 64rem nebeneinander (Beleg mitlaufend), darunter
+  gestapelt mit eigenem Bildlauf – auf 360 px geprüft.
+- **Tastatur:** Felder in Lesereihenfolge, erster Absende-Knopf ist
+  „Geprüft, nächster“ (Enter), danach „Nur speichern“ und „Überspringen“.
+  „Nächster“ ist der folgende Beleg der Warteschlange, am Ende wieder von
+  vorn; ist keiner mehr offen, geht es zurück zur Liste.
+- **Audit** `beleg.bearbeitet` (Details: nur die **Namen** geänderter
+  Felder und ggf. der Ausgangsstatus; Speichern ohne Änderung schreibt keine
+  Zeile) und `beleg.geprueft`; ein neu angelegter Partner zusätzlich
+  `lieferant.angelegt`.
+
+**Pflicht-Tests M6-3:** `BetragTest` (Parsing deutsch/englisch/negativ,
+Ablehnung Mehrdeutiges, Formatierung, Summenprüfung, Steuersatz);
+`DocumentStatusTest` (neue Übergänge, `pruefbare()`); `PruefungFlowTest`
+(Warteschlange älteste zuerst, Formular mit Seiten und Seitenbildern,
+Enter = „Geprüft, nächster“, verschlüsselt gespeichert – kein Klartext in
+`invoice`/`audit_log`, Blind Index nachgerechnet, Audit nur Feldnamen,
+nächster Beleg inkl. Umlauf, geprüft nur lesbar, nicht freigegebener
+Beleg, KI-Fehler manuell erfassbar, Summen-Warnung, Validierung je Feld,
+Richtung ↔ Kategorie/Partner, Partner neu anlegen inkl. Rechteprüfung und
+doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
+überschrieben, Verwendungszähler und FKs, Spaltenliste);
+`RoutePermissionMatrixTest`; `tests/js/pruefansicht.test.js`.
+
 ## 7. Lieferanten
 
 - Auflösung in `resolve_supplier` in fester Reihenfolge:

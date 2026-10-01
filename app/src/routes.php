@@ -24,6 +24,7 @@ use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\MfaController;
 use App\App\PasswordController;
+use App\App\PruefungController;
 use App\App\SecurityController;
 use App\App\SupplierController;
 use App\Domain\Berechtigungen;
@@ -124,6 +125,9 @@ use App\View\View;
  * @param \Closure(): SupplierController $lieferanten built lazily, same
  *        reason as $mail: only the supplier pages need the database
  *        (issue #36/M6-2).
+ * @param \Closure(): PruefungController $pruefung built lazily, same
+ *        reason as $mail: only the review pages need the database
+ *        (issue #37/M6-3).
  */
 return static function (
     Router $router,
@@ -154,6 +158,7 @@ return static function (
     \Closure $rasterung,
     \Closure $kategorien,
     \Closure $lieferanten,
+    \Closure $pruefung,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -418,6 +423,20 @@ return static function (
     $get('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->bearbeiten($r, $params));
     $post('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->speichern($r, $params));
     $post('/app/lieferanten/{id:\d+}/loeschen', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->loeschen($r, $params));
+
+    // The review page (M6-3, issue #37, docs/spec/03-erfassung-und-ki.md
+    // section 6 "Prüfansicht"): the queue and one document captured by hand
+    // next to its pages. Permission: `document.edit` (Admin, Finanzen) -
+    // capturing is editing the receipt; its scope narrows the queue in SQL
+    // (App\Repository\DocumentRepository). Creating a supplier from the form
+    // additionally needs `supplier.manage`, checked by App\Service\Invoice\
+    // Pruefung itself. CSRF on the write. Everything shown is vault data:
+    // without the unlocked vault the page shows and writes nothing, and the
+    // file route streams one decrypted page like the inbox's.
+    $get('/app/belege/pruefen', $documentEdit, static fn(Request $r) => $pruefung()->liste($r));
+    $get('/app/belege/pruefen/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $pruefung()->formular($r, $params));
+    $post('/app/belege/pruefen/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $pruefung()->speichern($r, $params));
+    $get('/app/belege/pruefen/{id:\d+}/datei/{blob:\d+}', $documentEdit, static fn(Request $r, array $params) => $pruefung()->datei($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

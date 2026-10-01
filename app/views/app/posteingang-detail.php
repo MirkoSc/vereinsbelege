@@ -16,6 +16,9 @@
  * A page the scanner processed (issue #34/M5-4) shows its processed version;
  * the untouched original is one link away (decision E-10).
  *
+ * An accepted document links to the review page (issue #37/M6-3), where it
+ * is captured as a receipt.
+ *
  * @var \App\Service\Inbox\InboxEintrag $eintrag
  * @var list<array{blobId: int, mime: string, seite: int, pdf: bool, originalId: ?int}> $seiten
  * @var list<\App\Domain\InboxAction> $aktionen
@@ -125,6 +128,12 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                 <?php endforeach; ?>
             </ul>
         <?php endif; ?>
+    <?php endif; ?>
+
+    <?php if ($darfEntscheiden && $document->status->pruefbar()): ?>
+        <p class="knopfreihe">
+            <a class="knopf knopf-primaer" href="/app/belege/pruefen/<?= e((string) $document->id) ?>">Beleg prüfen und erfassen</a>
+        </p>
     <?php endif; ?>
 
     <?php if ($aktionen !== []): ?>
