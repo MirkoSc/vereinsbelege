@@ -742,8 +742,8 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   nach Bestätigung hinzugefügt.
 - Zusammenführen doppelter Lieferanten (alle Belege/Regeln umhängen,
   `merged_into` setzen, Audit). **Festgeschriebene Belege** (01 §7) sind
-  unveränderlich und werden nicht umgehängt – wie das Zusammenführen damit
-  umgeht (z. B. Auflösung über `merged_into`), klärt M6-5 (issue #39).
+  unveränderlich und werden nicht umgehängt, sondern über `merged_into`
+  aufgelöst – Details unter „Stand M6-5“.
 - Lieferant hat Default-Kategorie/-Sphäre; ab dem 2. bestätigten Beleg mit
   gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI).
 - **Stand M6-2** (issue #36): Stammdaten-Pflege unter `/app/lieferanten`
@@ -753,6 +753,43 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   `App\Service\MasterData\SupplierKeys` – die Stufen 1–4 sind damit reine
   Nachschlagevorgänge. IBAN/USt-ID/Steuernummer/Gläubiger-ID sind eindeutig
   je Lieferant. Details: 02 „Lieferanten“.
+- **Stand M6-5** (issue #39): Zusammenführen unter
+  `/app/lieferanten/{id}/zusammenfuehren?ziel=…` (Vorschau, `GET`) und
+  `POST` dorthin (Ausführen), Recht `supplier.manage`, CSRF, Tresor
+  entsperrt. Der Lieferant `{id}` (Quelle) geht im Ziel auf; die Vorschau
+  zeigt das Ergebnis, welche Angaben sich ändern und was mit den Belegen
+  passiert („Andersherum zusammenführen“ tauscht die Richtung). Regeln
+  (`App\Service\MasterData\SupplierMerge`, reine Funktion):
+  - Name und Aliasse der Quelle werden Aliasse des Ziels; IBANs und
+    Mandatsreferenzen werden vereinigt. Mehr als 20 je Feld → Ablehnung.
+  - USt-ID, Steuernummer, Gläubiger-ID: das Ziel übernimmt den Wert der
+    Quelle, wenn es keinen hat; zwei **verschiedene** Werte → Ablehnung
+    (kein Duplikat oder ein Wert falsch – erst korrigieren).
+  - Übrige Einzelwerte (Anschrift, BIC, E-Mail, Website, Kundennummer):
+    das Ziel gewinnt, ein abweichender Wert der Quelle wird – wie deren
+    Notiz – an die Notiz des Ziels angehängt („Übernommen von …“). Notiz
+    länger als 2000 Zeichen → Ablehnung. So geht nichts verloren.
+  - Verschiedene Rollen → `beide`; Standard-Kategorie des Ziels, sonst die
+    der Quelle. `created_via`/`needs_review` bleiben die des Ziels.
+  - Ablauf (`App\Service\MasterData\SupplierZusammenfuehrung`) in **einer**
+    Transaktion: beide Zeilen `FOR UPDATE` (kleinere ID zuerst), im Lock
+    neu entschlüsselt und geplant, Ziel neu verschlüsselt samt
+    `supplier_key` (Eindeutigkeit gegen alle Dritten geprüft), offene
+    Belege umgehängt (`InvoiceRepository::haengeLieferantUm()` mit
+    `locked_at IS NULL`), Quelle `merged_into` = Ziel, Lieferanten, die
+    früher in die Quelle zusammengeführt wurden, zeigen direkt aufs Ziel
+    (`merged_into` ist nie mehr als ein Schritt), Schlüssel der Quelle
+    gelöscht, Audit-Eintrag.
+  - **Festgeschriebene Belege** behalten `supplier_id` der Quelle; die
+    Zeile der Quelle bleibt deshalb bestehen (FK `RESTRICT`). Angezeigt
+    wird über `SupplierRepository::aufgeloest()` das Ziel (Prüfansicht);
+    nach „Festschreibung aufheben“ speichert die Prüfansicht das Ziel.
+    Wer später nach Lieferant filtert oder auswertet (M11), löst ebenso
+    über `merged_into` auf.
+  - Ein zusammengeführter Lieferant hat keine eigene Seite mehr (Weiterleitung
+    aufs Ziel), lässt sich weder ändern noch löschen und ist keine Auswahl
+    in der Prüfansicht. Nicht mit sich selbst, nicht in einen bereits
+    zusammengeführten.
 
 ## 8. Kategorisierung
 

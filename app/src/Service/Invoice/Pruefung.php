@@ -243,7 +243,10 @@ final readonly class Pruefung
             'faellig' => $datum($r->dueDate),
             'leistung_von' => $datum($r->serviceFrom),
             'leistung_bis' => $datum($r->serviceTo),
-            'lieferant' => $id($r->supplierId),
+            // A locked receipt may still point at a supplier merged away
+            // since (issue #39/M6-5): it shows - and once unlocked saves -
+            // the one it was merged into.
+            'lieferant' => $id($r->supplierId === null ? null : $this->lieferantenRepository->aufgeloest($r->supplierId)),
             'kategorie' => $id($r->categoryId),
             'kostenstelle' => $id($r->costCenterId),
             'nummer' => $d->invoiceNumber,

@@ -54,6 +54,30 @@ final readonly class SupplierRepository
     }
 
     /**
+     * The row under a row lock until the transaction ends - merging
+     * (issue #39/M6-5) reads both suppliers this way, so two merges or a
+     * merge and a save cannot interleave.
+     */
+    public function sperre(int $id): ?SupplierRecord
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM supplier WHERE id = ? FOR UPDATE');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : self::hydrate($row);
+    }
+
+    /**
+     * The supplier a receipt should show: a merged one stands for the one
+     * it was merged into. One step is enough - markiereZusammengefuehrt()
+     * keeps the chains flat.
+     */
+    public function aufgeloest(int $id): int
+    {
+        return $this->find($id)?->mergedInto ?? $id;
+    }
+
+    /**
      * First step of a new row: everything but the ciphertext, whose AAD
      * needs the id this returns. The caller writes setData() in the same
      * transaction.
@@ -170,6 +194,26 @@ final readonly class SupplierRepository
         $stmt->execute([$id, $id]);
 
         return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Second half of merging (issue #39/M6-5): the source points at the
+     * target, and so does every supplier merged into the source before -
+     * `merged_into` is never more than one step. The source's keys go: the
+     * target now carries them, and a merged supplier must not be found by
+     * the uniqueness check or the resolution (M7-6). The row itself stays;
+     * locked receipts still refer to it.
+     */
+    public function markiereZusammengefuehrt(int $quelle, int $ziel, \DateTimeImmutable $now): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE supplier SET merged_into = ?, updated_at = ? WHERE merged_into = ? OR id = ?');
+        $stmt->bindValue(1, $ziel, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $now->format(self::FORMAT));
+        $stmt->bindValue(3, $quelle, \PDO::PARAM_INT);
+        $stmt->bindValue(4, $quelle, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        $this->replaceKeys($quelle, []);
     }
 
     /** The keys go with the row (ON DELETE CASCADE). */

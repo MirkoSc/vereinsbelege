@@ -59,6 +59,8 @@ enum AuditAction: string
     case LieferantAngelegt = 'lieferant.angelegt';
     case LieferantGeaendert = 'lieferant.geaendert';
     case LieferantGeloescht = 'lieferant.geloescht';
+    /** Issue #39/M6-5: entity is the merged-away supplier, the target is in the details. */
+    case LieferantZusammengefuehrt = 'lieferant.zusammengefuehrt';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -122,6 +124,7 @@ enum AuditAction: string
             self::LieferantAngelegt => 'Lieferant angelegt',
             self::LieferantGeaendert => 'Lieferant geändert',
             self::LieferantGeloescht => 'Lieferant gelöscht',
+            self::LieferantZusammengefuehrt => 'Lieferanten zusammengeführt',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -160,7 +163,8 @@ enum AuditAction: string
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
-            self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
+            self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht,
+            self::LieferantZusammengefuehrt => 'supplier',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,

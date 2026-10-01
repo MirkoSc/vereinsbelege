@@ -101,6 +101,42 @@ final readonly class InvoiceRepository
         $stmt->execute();
     }
 
+    /**
+     * Merging suppliers (issue #39/M6-5): every receipt of one supplier
+     * that is not locked moves to the other. A locked one keeps its
+     * supplier - the condition is in the SQL like in update(); the merged
+     * supplier's `merged_into` leads to the new one. Returns how many moved.
+     */
+    public function haengeLieferantUm(int $von, int $nach, ?int $userId, \DateTimeImmutable $now): int
+    {
+        $stmt = $this->pdo->prepare('UPDATE invoice SET supplier_id = ?, updated_by = ?, updated_at = ? WHERE supplier_id = ? AND locked_at IS NULL');
+        $stmt->bindValue(1, $nach, \PDO::PARAM_INT);
+        self::bindNullable($stmt, 2, $userId, \PDO::PARAM_INT);
+        $stmt->bindValue(3, $now->format(self::FORMAT));
+        $stmt->bindValue(4, $von, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->rowCount();
+    }
+
+    /**
+     * The receipts of a supplier, split into those a merge would move and
+     * the locked ones it leaves where they are.
+     *
+     * @return array{offen: int, festgeschrieben: int}
+     */
+    public function anzahlNachLieferant(int $supplierId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COALESCE(SUM(locked_at IS NULL), 0) AS offen, COALESCE(SUM(locked_at IS NOT NULL), 0) AS festgeschrieben
+             FROM invoice WHERE supplier_id = ?',
+        );
+        $stmt->execute([$supplierId]);
+        $row = $stmt->fetch();
+
+        return ['offen' => (int) ($row['offen'] ?? 0), 'festgeschrieben' => (int) ($row['festgeschrieben'] ?? 0)];
+    }
+
     /** Who marked the receipt as checked, and when ("Geprüft, nächster"). */
     public function setzeGeprueft(int $id, ?int $userId, \DateTimeImmutable $now): void
     {

@@ -15,8 +15,10 @@
  * @var int|null $konfliktId the other supplier of a duplicate identifier
  * @var array<string, array<int, string>> $kategorien group => id => name
  * @var int $verwendungen
+ * @var list<\App\Domain\Supplier> $andere the suppliers this one could be merged into
  */
 
+use App\Domain\Iban;
 use App\Domain\SupplierRole;
 use App\Service\MasterData\SupplierService;
 
@@ -149,6 +151,28 @@ $text = static fn(string $feld, string $label, int $max = SupplierService::TEXT_
             <?= e($lieferant->createdVia->label()) ?> am <?= e($lieferant->createdAt->format('d.m.Y')) ?>,
             zuletzt geändert am <?= e($lieferant->updatedAt->format('d.m.Y H:i')) ?>.
         </p>
+
+        <?php if ($andere !== []): ?>
+            <h3>Mit anderem Lieferanten zusammenführen</h3>
+            <p class="gedaempft">
+                Doppelt angelegt? Dann geht dieser Lieferant im gewählten auf: Belege, Name, Aliasse, IBANs
+                und die übrigen Angaben wandern dorthin, dieser verschwindet aus der Liste.
+                Vorher zeigt eine Vorschau das Ergebnis.
+            </p>
+            <form method="get" action="/app/lieferanten/<?= e((string) $lieferant->id) ?>/zusammenfuehren" class="formular">
+                <label for="lieferant-ziel">Zusammenführen mit
+                    <select id="lieferant-ziel" name="ziel" required>
+                        <option value="">Bitte wählen</option>
+                        <?php foreach ($andere as $anderer): ?>
+                            <option value="<?= e((string) $anderer->id) ?>"><?= e($anderer->data->name . ($anderer->data->ibans === [] ? '' : ' – ' . Iban::formatieren($anderer->data->ibans[0]))) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf">Vorschau</button>
+                </p>
+            </form>
+        <?php endif; ?>
 
         <h3>Lieferant löschen</h3>
         <?php if ($verwendungen > 0): ?>

@@ -110,6 +110,7 @@ use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
@@ -448,14 +449,18 @@ $kategorien = static function () use ($connections, $view, $auditFor): CategoryC
 $lieferanten = static function () use ($connections, $view, $auditFor): SupplierController {
     $pdo = $connections->pdo();
     $kategorien = new CategoryRepository($pdo);
+    $repository = new SupplierRepository($pdo);
+    $service = new SupplierService($pdo, $repository, $kategorien);
+    $audit = $auditFor($pdo);
 
     return new SupplierController(
         $view,
         new Session(),
         new SessionVault(),
-        new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+        $service,
         $kategorien,
-        $auditFor($pdo),
+        $audit,
+        new SupplierZusammenfuehrung($pdo, $repository, new InvoiceRepository($pdo), $service, $audit),
     );
 };
 
