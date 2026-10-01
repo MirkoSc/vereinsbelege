@@ -454,8 +454,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 - Bestehende Routen: `/app`, `/app/sicherheit*` = angemeldet;
   `/api/upload*` = `document.submit_internal`; `/admin/designsystem` =
   `admin.*`; `/admin/speicher*`, `/admin/mail*`, `/admin/kostenstellen*`
-  (M4-1) = `admin.settings`; `/admin/update*`, `/admin/wartung/aufheben` =
-  `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
+  (M4-1) = `admin.settings`; `/admin/update*`, `/admin/wartung/aufheben`,
+  `/admin/systemcheck` (M3-10) = `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
   `/admin/tresor*` = `admin.vault_grant` (M3-7); `/anmelden/einladung` =
   öffentlich (M3-7); `/app/audit*` = `audit.view` (M3-8);
   `/app/posteingang`, `/app/posteingang/{id}`,

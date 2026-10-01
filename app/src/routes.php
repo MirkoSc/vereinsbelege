@@ -11,6 +11,7 @@ use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
 use App\Admin\SubmissionSettingsController;
+use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
@@ -131,6 +132,9 @@ use App\View\View;
  *        (issue #37/M6-3).
  * @param \Closure(): AccountController $konten built lazily, same reason
  *        as $mail: only the account pages need the database (issue #59/M9-1).
+ * @param \Closure(): SystemCheckController $systemcheck built lazily, same
+ *        reason as $mail: the check reads wait_timeout from the database
+ *        (issue #107/M3-10).
  */
 return static function (
     Router $router,
@@ -163,6 +167,7 @@ return static function (
     \Closure $lieferanten,
     \Closure $pruefung,
     \Closure $konten,
+    \Closure $systemcheck,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -607,4 +612,10 @@ return static function (
         static fn(Request $r, array $params) => $updates()->step($r, $params),
     );
     $post('/admin/wartung/aufheben', $system, static fn(Request $r) => $updates()->releaseMaintenance($r));
+
+    // System check (06 section 5, issue #107/M3-10): do the M0 hosting
+    // assumptions still hold? Read only, so no CSRF and no write route.
+    // Permission: `admin.system`, the same right as Update - the findings are
+    // what an update or a maintenance run depends on.
+    $get('/admin/systemcheck', $system, static fn(Request $r) => $systemcheck()->page($r));
 };

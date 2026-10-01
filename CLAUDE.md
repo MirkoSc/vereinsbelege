@@ -85,7 +85,7 @@ Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
   Kassenprüfer, die kein `admin.*`-Recht haben) – je nach Rolle.
 - **Adminseite** (`/admin/...`): Benutzer, Rollen, Tresor-Freigaben,
   KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
-  Update.
+  Update, Systemcheck.
 
 Jede Seite wählt ihren Bereich über `App\View\Area`; daran hängen
 Navigation, Inhaltsbreite und ob die Seite eine Session haben darf. Es gibt

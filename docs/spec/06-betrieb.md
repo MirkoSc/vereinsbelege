@@ -568,3 +568,47 @@ unter PHPUnit mit.
 
 Ergebnis wird in `docs/hosting-befunde.md` eingetragen; Abweichungen von
 den Annahmen dieser Specs werden als Issues angelegt.
+
+### Laufzeit-Gegenstück: Systemcheck (M3-10)
+
+Der Hosting-Check läuft **einmal vor** der Installation und ist
+abhängigkeitsfrei. Die Adminseite **`/admin/systemcheck`** beantwortet im
+installierten System „gilt das noch?" – denn beide M0-Befunde scheitern
+sonst still: Setzt der Hoster `zend.exception_ignore_args` zurück oder senkt
+er `wait_timeout` weiter, merkt es niemand, bis ein Trace Argumente
+ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
+
+- Dienst `App\Service\SystemCheck\SystemCheck` ohne Abhängigkeit zu Http,
+  Session oder Repository; `all()` liefert `CheckResult`-Zeilen (Prüfpunkt,
+  Erwartung, Ist-Wert, Status `ok`/`warn`/`fail`, Erläuterung). Gesamtstatus
+  = schlechtester Einzelstatus. Die Schwellen sind die des Hosting-Checks.
+- Geprüft werden nur die Punkte, die sich im Betrieb ändern können:
+  effektives `zend.exception_ignore_args` (Soll On, sonst `fail`),
+  `wait_timeout` des Datenbankservers (Soll ≥ 600 s, darunter `warn`),
+  `max_execution_time` (≥ 30 s), `memory_limit` (≥ 256 MiB, ab 128 MiB
+  `warn`), `upload_max_filesize` und `post_max_size` (je ≥ 2 MiB, ein Chunk),
+  die Erweiterungen sodium, gd, zip und curl, `PASSWORD_ARGON2ID` und die
+  Schreibrechte auf `shared/var/` (echter Schreibversuch mit einer
+  Prüfdatei, die sofort wieder verschwindet). Alles Weitere – Erreichbarkeit
+  externer Hosts, Dauer-Messungen, `.htaccess`-Auswertung – bleibt dem
+  Hosting-Check vorbehalten.
+- **Recht `admin.system`**, wie Update und Wartung; nur lesend, deshalb
+  weder CSRF noch Audit-Eintrag. Der Tresor muss nicht entsperrt sein: kein
+  Wert ist eine fachliche Angabe.
+- **Keine Geheimnisse in der Ausgabe.** Ein `CheckResult` hat sechs
+  Textfelder, das JSON entsteht ausschließlich daraus; Zugangsdaten, Token und
+  Schlüssel aus `config.php` kommen nie in die Nähe, und auch der Pfad von
+  `shared/var/` bleibt draußen.
+- Ausgabe: Gesamtstatus oben, darunter die Tabelle (unter 48 rem als Karten,
+  ohne waagerechtes Scrollen) und das Ergebnis als JSON zum Kopieren in ein
+  Issue (Knopf nur mit JavaScript, sonst bleibt das markierbare Textfeld).
+
+**Pflicht-Tests:** `tests/Service/SystemCheck/SystemCheckTest.php` (Bewertung
+der Mindestwerte, `parseBytes`/`formatBytes`, Erweiterungen, Argon2id,
+Schreibprobe samt Aufräumen, schlechtester Status, JSON ohne Geheimnisse und
+ohne Serverpfad), `tests/Integration/SystemCheckWaitTimeoutTest.php`
+(`wait_timeout` gegen einen echten Server), `tests/Admin/SystemCheckPageTest.php`
+(Tabelle, `data-label` für die Kartenansicht, Gesamtstatus, JSON, externes
+Skript statt Inline-JS) und `RoutePermissionMatrixTest` (nur `admin.system`
+öffnet die Seite); die Kopierlogik testet `tests/js/systemcheck.test.js`.
+

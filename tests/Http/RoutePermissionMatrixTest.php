@@ -209,6 +209,11 @@ final class RoutePermissionMatrixTest extends TestCase
         $router = $this->router();
         $faelle = [
             [SystemRole::Admin, HttpMethod::Get, '/admin/update', true],
+            // Systemcheck (M3-10): admin.system, like Update - and read only.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/systemcheck', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/systemcheck', false],
+            [SystemRole::Finanzen, HttpMethod::Get, '/admin/systemcheck', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -467,6 +472,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,
