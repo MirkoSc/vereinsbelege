@@ -373,7 +373,7 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 | `document.edit` Belege prüfen/bearbeiten/festschreiben | ✓ | – | ✓ | – | – | – |
 | `document.submit_internal` intern hochladen | ✓ | ✓ | ✓ | – | – | ✓ |
 | `supplier.manage` | ✓ | – | ✓ | – | – | – |
-| `bank.import` / `bank.book` (manuelle Buchung, Kasse) | ✓ | – | ✓ | – | – | – |
+| `bank.import` / `bank.book` (manuelle Buchung, Kasse, Konten pflegen) | ✓ | – | ✓ | – | – | – |
 | `bank.view` | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 | `matching.edit` Abgleich | ✓ | – | ✓ | – | – | – |
 | `report.view` Auswertungen | ✓ | ✓ | ✓ | ✓ | ✓ | eigene Kostenstelle |

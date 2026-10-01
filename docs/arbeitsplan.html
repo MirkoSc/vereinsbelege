@@ -206,7 +206,7 @@ const PLAN = [
   { n: 60, t: 'M9-2 MT940-Parser', s: 'B', m: 'opus', e: 'high', mo: 'auto', d: [], x: 'Braucht anonymisierte echte Dateien (Sparkasse, VR Bank).' },
   { n: 61, t: 'M9-3 CSV-Profile + Mapping-Assistent', s: 'B', m: 'opus', e: 'high', mo: 'plan', d: [], mig: true, x: 'Braucht anonymisierte echte CSV-Exporte.' },
   { n: 62, t: 'M9-4 Import mit Vorschau/Salden/Duplikaten', s: 'B', m: 'opus', e: 'xhigh', mo: 'plan', d: [59, 60, 61], mig: true },
-  { n: 63, t: 'M9-5 Buchungsliste + manuelle Buchungen', s: 'B', m: 'opus', e: 'high', mo: 'auto', d: [62] },
+  { n: 63, t: 'M9-5 Buchungsliste + manuelle Buchungen', s: 'B', m: 'opus', e: 'high', mo: 'auto', d: [62], x: 'Übernimmt aus #59: Kassensturz-Differenz als Buchung „Kassendifferenz“ vorschlagen, Soll-Bestand um Kassenbuchungen ergänzen.' },
   { n: 64, t: 'M9-6 Regeln „kein Beleg nötig“', s: 'B', m: 'opus', e: 'high', mo: 'plan', d: [63], mig: true },
 
   { n: 151, t: 'TOTP-QR-Code: SVG-Pfad reparieren', s: 'C', m: 'sonnet', e: 'high', mo: 'auto', d: [] },

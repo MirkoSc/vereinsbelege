@@ -17,6 +17,16 @@
   Kassensturz: Ist-Bestand eingeben → Differenz wird als Buchung mit Grund
   „Kassendifferenz" vorgeschlagen.
 
+**Umsetzung (M9-1, issue #59):** `/app/konten`, Tabellen `bank_account` und
+`cash_count` (Migration 021) – Regeln, Rechte und Pflicht-Tests in
+02-datenmodell.md „Konten“. Kurz: Bankkonto und Kasse sind ein Modell
+(`kind`), IBAN/Name/Anfangssaldo im Tresor, IBAN eindeutig über
+`iban_bi`; Lesen `bank.view`, Pflegen und Kassensturz `bank.book`. Der
+Kassensturz zeigt Soll/Ist/Differenz vor dem Speichern und hält beides
+append-only fest. **Den Buchungsvorschlag „Kassendifferenz“ übernimmt M9-5**
+(issue #63) zusammen mit den manuellen Kassenbuchungen – bis dahin ist der
+Soll-Bestand der Anfangsbestand.
+
 ## 2. MT940-Import
 
 Eigener Parser `Service/Bank/Mt940Parser` (reines PHP, keine Bibliothek

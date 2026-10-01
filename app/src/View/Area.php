@@ -73,7 +73,7 @@ enum Area: string
                 new NavItem('Belege prüfen', '/app/belege/pruefen', recht: Permission::DocumentEdit),
                 new NavItem('Belege', meilenstein: 'M6', recht: Permission::InboxView),
                 new NavItem('Lieferanten', '/app/lieferanten', recht: Permission::SupplierManage),
-                new NavItem('Konten', meilenstein: 'M8', recht: Permission::BankView),
+                new NavItem('Konten', '/app/konten', recht: Permission::BankView),
                 new NavItem('Abgleich', meilenstein: 'M10', recht: Permission::MatchingEdit),
                 new NavItem('Auswertungen', meilenstein: 'M11', recht: Permission::ReportView),
                 new NavItem('Audit-Log', '/app/audit', recht: Permission::AuditView),
