@@ -140,6 +140,39 @@ final class QrCodeTest extends TestCase
         self::assertStringContainsString('width="164"', $svg);
     }
 
+    public function testDiePfaddatenSindGueltigeSvgPfadsyntax(): void
+    {
+        $svg = QrCode::svg('otpauth://totp/Test:a@b.c?secret=JBSWY3DPEHPK3PXP&issuer=Test', moduleSize: 4, quietZone: 4);
+
+        self::assertSame(1, preg_match('/<path d="([^"]*)"/', $svg, $treffer));
+        $pfad = $treffer[1];
+
+        // Regression: "h-%d" combined with a negative argument once produced
+        // "h--4", which a browser rejects after the first module.
+        self::assertStringNotContainsString('--', $pfad);
+
+        // Every module is exactly "M<x> <y>h<n>v<n>h-<n>z" with plain integers.
+        self::assertMatchesRegularExpression(
+            '/^(?:M\d+ \d+h(\d+)v\1h-\1z)+$/',
+            $pfad,
+        );
+    }
+
+    public function testJedesDunkleModulErgibtGenauEinRechteckImPfad(): void
+    {
+        $data = 'otpauth://totp/Test:a@b.c?secret=JBSWY3DPEHPK3PXP&issuer=Test';
+        $dunkel = 0;
+        foreach (QrCode::matrix($data) as $zeile) {
+            $dunkel += count(array_filter($zeile));
+        }
+
+        $svg = QrCode::svg($data);
+        preg_match('/<path d="([^"]*)"/', $svg, $treffer);
+
+        self::assertSame($dunkel, substr_count($treffer[1], 'z'));
+        self::assertSame($dunkel, substr_count($treffer[1], 'M'));
+    }
+
     public function testZweiAufrufeMitDemselbenInhaltLiefernDasselbeErgebnis(): void
     {
         $data = 'otpauth://totp/Vereinsbelege:kasse@example.org?secret=JBSWY3DPEHPK3PXP&issuer=Vereinsbelege';

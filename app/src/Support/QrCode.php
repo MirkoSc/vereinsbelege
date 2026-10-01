@@ -97,7 +97,7 @@ final class QrCode
                 if ($dark) {
                     $x = ($col + $quietZone) * $moduleSize;
                     $y = ($row + $quietZone) * $moduleSize;
-                    $path .= sprintf('M%d %dh%dv%dh-%dz', $x, $y, $moduleSize, $moduleSize, -$moduleSize);
+                    $path .= sprintf('M%d %dh%dv%dh%dz', $x, $y, $moduleSize, $moduleSize, -$moduleSize);
                 }
             }
         }
