@@ -1,0 +1,7 @@
+"Auftragskonto";"Buchungstag";"Valutadatum";"Buchungstext";"Verwendungszweck";"Glaeubiger ID";"Mandatsreferenz";"Kundenreferenz (End-to-End)";"Sammlerreferenz";"Lastschrift Ursprungsbetrag";"Auslagenersatz Ruecklastschrift";"Beguenstigter/Zahlungspflichtiger";"Kontonummer/IBAN";"BIC (SWIFT-Code)";"Betrag";"Waehrung";"Info"
+"DE89370400440532013000";"29.03.24";"29.03.24";"FOLGELASTSCHRIFT";"Platzmiete April";"DE11ZZZ00000000001";"PLATZ-07";"E2E-PLATZ-2404";"";"";"";"Gemeinde Beispielstadt";"DE68210501700012345678";"NOLADE21XXX";"-120,00";"EUR";"Umsatz vorgemerkt"
+"DE89370400440532013000";"28.03.24";"28.03.24";"FOLGELASTSCHRIFT";"Strom Abschlag Maerz Vertragskonto 4711";"DE98ZZZ09999999999";"MANDAT-0815";"E2E-STROM-2403";"";"";"";"Stadtwerke Musterstadt GmbH";"DE02120300000000202051";"BYLADEM1001";"-89,00";"EUR";"Umsatz gebucht"
+"DE89370400440532013000";"27.03.24";"27.03.24";"GUTSCHR. UEBERWEISUNG";"Mitgliedsbeitrag 2024 Jugend; Familie Müßig";"";"";"NOTPROVIDED";"";"";"";"Jörg Müßig";"DE12500105170648489890";"INGDDEFFXXX";"1.250,00";"EUR";"Umsatz gebucht"
+"DE89370400440532013000";"26.03.24";"26.03.24";"KARTENZAHLUNG";"Getraenkemarkt Beispiel
+Kasse 3";"";"";"";"";"";"";"Getränkemarkt Beispiel";"";"";"-45,90";"EUR";"Umsatz gebucht"
+"DE89370400440532013000";"02.01.24";"29.12.23";"ABSCHLUSS";"Kontofuehrung 4. Quartal";"";"";"";"";"";"";"";"";"";"-7,50";"EUR";"Umsatz gebucht"

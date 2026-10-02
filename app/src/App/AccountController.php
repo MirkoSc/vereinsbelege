@@ -84,6 +84,7 @@ final readonly class AccountController
             'gruppen' => $gruppen,
             'saldoVerborgen' => $saldoVerborgen,
             'darfPflegen' => $this->berechtigungen()->darf(Permission::BankBook),
+            'darfImportieren' => $this->berechtigungen()->darf(Permission::BankImport),
         ], Area::App));
     }
 

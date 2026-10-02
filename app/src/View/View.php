@@ -162,6 +162,20 @@ final class View
     }
 
     /**
+     * A template without the layout - the answer to an htmx request that
+     * swaps one part of a page (first used by the CSV mapping assistant,
+     * issue #61/M9-3). Gets the CSRF token like a full page.
+     *
+     * @param array<string, mixed> $data
+     */
+    public function fragment(string $template, array $data = []): string
+    {
+        $data['csrf'] ??= $this->csrfToken;
+
+        return $this->renderFile($this->viewsDir . '/' . $template . '.php', $data);
+    }
+
+    /**
      * @param array<string, mixed> $data
      */
     private function renderFile(string $file, array $data): string

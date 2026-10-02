@@ -19,6 +19,7 @@ use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
 use App\App\AccountController;
+use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\ErfassungController;
@@ -49,6 +50,7 @@ use App\Repository\BankAccountRepository;
 use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentArtifactRepository;
@@ -535,6 +537,14 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
     new Session(),
     new SystemCheck($connections->pdo(), $paths->varDir()),
 );
+// CSV formats for the statement import (M9-3, issue #61): plaintext column
+// names and formats, no vault needed - only these pages open the
+// connection.
+$csvFormate = static function () use ($connections, $view, $auditFor): CsvFormatController {
+    $pdo = $connections->pdo();
+
+    return new CsvFormatController($view, new Session(), new CsvProfileRepository($pdo), $auditFor($pdo));
+};
 
 // The public submission page itself (issue #24/M4-2): renders the form,
 // validates and stores what comes back. Built lazily like $mail - rendering
@@ -1008,6 +1018,7 @@ $router = new Router();
     $pruefungSeite,
     $konten,
     $systemcheck,
+    $csvFormate,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
