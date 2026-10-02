@@ -181,7 +181,8 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | Tabelle | Spalten | Verschl. |
 |---|---|---|
 | `submission` (öffentliche Einreichung, seit M4-6 auch je intern erfasstem Beleg) | reference_code UNIQUE NULL (zweistufig geschrieben wie `file_blob`, s. u.), form_hash (SHA-256 des Formular-Token-Nonce, UNIQUE – macht ein wiederholtes Absenden idempotent), received_at, status, dek_sealed, payload_enc {name, email, erstattung: {art: `ueberweisung`/`bar`/`keine`, iban, kontoinhaber}, freitext, kostenstelle_hinweis} – intern erfasst: name = Anzeigename des Kontos, ohne email, erstattung nur wenn angegeben, freitext ggf. leer | T |
-| `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, cost_center_id NULL (Klartext-Strukturfeld wie bei `invoice`, FK `RESTRICT`; aus der Mannschaftswahl der Einreichung, im Posteingang änderbar – Filter und Scope „eigene Kostenstelle“ von `inbox.view`, seit M4-5/Migration 014), original_blob_ids JSON, processed_blob_ids JSON NULL (parallel zu `original_blob_ids`: je Seite die aufbereitete Fassung des Scanners oder null; NULL, wenn keine Seite eine hat – seit M5-4/Migration 016, Details 03 §1/§2), pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), resubmit_on DATE NULL (Wiedervorlage-Datum), status_note_enc NULL (Ablehnungsgrund bzw. Wiedervorlage-Notiz, AEAD mit Zeilen-DEK), status_changed_at/by NULL, content_bi (Duplikaterkennung), dek_sealed, created_by NULL (bei `intern` das erfassende Konto, M4-6), created_at | T |
+| `document` (Beleg-Dokument) | source (`einreichung`/`intern`/`archiv`/`erechnung`), submission_id NULL, cost_center_id NULL (Klartext-Strukturfeld wie bei `invoice`, FK `RESTRICT`; aus der Mannschaftswahl der Einreichung, im Posteingang änderbar – Filter und Scope „eigene Kostenstelle“ von `inbox.view`, seit M4-5/Migration 014), original_blob_ids JSON, processed_blob_ids JSON NULL (parallel zu `original_blob_ids`: je Seite die aufbereitete Fassung des Scanners oder null; NULL, wenn keine Seite eine hat – seit M5-4/Migration 016, Details 03 §1/§2), pdf_blob_id (aufbereitetes PDF bzw. Upload), status (s. u.), ocr_status (`keine`/`ausstehend`/`fertig`/`uebersprungen`), resubmit_on DATE NULL (Wiedervorlage-Datum), status_note_enc NULL (Ablehnungsgrund bzw. Wiedervorlage-Notiz, AEAD mit Zeilen-DEK), status_changed_at/by NULL, content_bi NULL (Duplikaterkennung, seit M6-6/Migration 023: Blind Index der Originaldateien in Seitenreihenfolge – je Datei SHA-256 → Zweck `document.content_file`, darüber Zweck `document.content`, `App\Service\Processing\Inhaltsindex`; einmalig gesetzt (`WHERE content_bi IS NULL`) vom Session-Job `detect_duplicate`, auch bei festgeschriebenen Belegen – ein abgeleiteter Index, kein Teil des Belegs, 01 §7; `INDEX(content_bi)`), dek_sealed, created_by NULL (bei `intern` das erfassende Konto, M4-6), created_at | T |
+| `document_duplicate_kept` | document_low_id, document_high_id (PK aus beiden, kleinere ID zuerst, FK `document` `CASCADE`), kept_by NULL (FK `user` `SET NULL`), kept_at – „Bewusst behalten“: ein Paar, das jemand als verschiedene Belege bestätigt hat (Migration 023, M6-6, s. u. „Statusmodell“) | – (nur IDs) |
 | `submission_upload` | blob_id (FK `file_blob`, `ON DELETE CASCADE`), form_hash, created_at – Blobs, die das Formular-Token hochgeladen hat, bis eine Einreichung sie beansprucht (Zeile gelöscht) oder der Cron sie nach 24 h abräumt (`App\Service\Cron\SubmissionUploadCleanupTask`, M4-2) | – (nur IDs/Hash) |
 | `document_artifact` | document_id, kind (`page_image`/`pdfa`/`text`/`extraction`), seq, blob_id NULL, dek_sealed, data_enc NULL, producer (`session`/`browser`/`worker`), job_id NULL (kein FK, wie `job.ref_id` – der Job wird nach 7 Tagen aufgeräumt, das Artefakt bleibt; seit M4-8/Migration 015), created_at – jedes Artefakt mit eigenem DEK, damit auch der Worker (ohne Zeilen-DEK des Dokuments) Ergebnisse ablegen kann; das jeweils neueste je kind gilt. **Stand M4-8** (issue #30): Kind `page_image`, Producer `browser`, durch `App\Service\Document\PdfRasterung` (`render_pages`-Job) – das per-Artefakt-DEK wird auch hier gesetzt, ist aber ungenutzt, weil `blob_id` bereits sein eigenes trägt (Details: 03 §3). `UNIQUE(document_id, kind, job_id, seq)`, `blob_id` mit `ON DELETE CASCADE` – ein gelöschtes Blob (ein abgelöster Rendering-Lauf) nimmt die Zeile mit | T |
 | `invoice` (fachlicher Beleg) | document_id UNIQUE (FK `RESTRICT`), doc_type (`rechnung`/`quittung`/`gutschrift`/`kassenbon`/`sonstiges`, `App\Domain\InvoiceType`), supplier_id NULL (FK `RESTRICT`), invoice_date, due_date NULL, service_from/to NULL, category_id NULL (FK `RESTRICT`), sphere NULL, cost_center_id NULL (FK `RESTRICT`), recurring_series_id NULL, direction (`ausgabe`/`einnahme`, `App\Domain\InvoiceDirection`), payment_status (`offen`/`teilbezahlt`/`bezahlt`/`erstattung_offen`/`erstattet`/`kein_zahlungsbezug`), checked_by/at, locked_by/at, dek_sealed, data_enc {invoice_number, gross, net, taxes[{rate, amount}], currency, purpose_short, notes, payment_hint}, number_bi (Blind Index der Rechnungsnummer, Zweck `invoice.number`, Leerraum entfernt; `INDEX(supplier_id, number_bi)` für die Duplikaterkennung M6-6), created_by/at, updated_by/at. **Stand M6-3** (issue #37, Migration 019): angelegt von der Prüfansicht (03 §6), ohne `recurring_series_id` (kommt mit M8 – die Zieltabelle fehlt noch) und `payment_status` (Abgleich M9/M10); `data_enc` noch ohne `payment_hint`. **Stand M6-4** (issue #38, Migration 020): `locked_by/at` (Klartext-Strukturfelder, FK `locked_by` → `user` `SET NULL`) – gesetzt von „Festschreiben“, geleert (samt `checked_by/at`) von „Festschreibung aufheben“; solange `locked_at` gesetzt ist, schreiben die Repositories die Zeile nicht mehr (01 §7). Beträge Integer-Cent, Steuersatz als Dezimal-String mit Punkt („19“, „5.5“) | T |
@@ -212,6 +213,8 @@ eingegangen ──(Annehmen im Posteingang)──► bereit_zur_auswertung
 
 bereit_zur_auswertung / ki_fehler ──(Prüfansicht, manuell)──► in_pruefung
 festgeschrieben ──(Festschreibung aufheben, Begründung Pflicht)──► in_pruefung
+bereit_zur_auswertung / ausgewertet / ki_fehler / geprueft
+                  ──(nur „Als Duplikat verwerfen“, M6-6)──► abgelehnt
 ```
 
 Übergänge vollständig (maßgeblich ist `App\Domain\DocumentStatus::uebergaenge()`,
@@ -220,14 +223,18 @@ Test `tests/Domain/DocumentStatusTest.php`; seit M4-5/issue #27):
 | von | nach |
 |---|---|
 | `eingegangen` | `bereit_zur_auswertung`, `wiedervorlage`, `abgelehnt` |
-| `bereit_zur_auswertung` | `ausgewertet`, `ki_fehler`, `in_pruefung` |
-| `ausgewertet` | `in_pruefung`, `ki_fehler`, `wiedervorlage` |
+| `bereit_zur_auswertung` | `ausgewertet`, `ki_fehler`, `in_pruefung`, `abgelehnt`¹ |
+| `ausgewertet` | `in_pruefung`, `ki_fehler`, `wiedervorlage`, `abgelehnt`¹ |
 | `in_pruefung` | `geprueft`, `abgelehnt` |
-| `geprueft` | `festgeschrieben` |
-| `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage`, `in_pruefung` |
+| `geprueft` | `festgeschrieben`, `abgelehnt`¹ |
+| `ki_fehler` | `bereit_zur_auswertung` (neuer Versuch), `wiedervorlage`, `in_pruefung`, `abgelehnt`¹ |
 | `wiedervorlage` | `bereit_zur_auswertung`, `abgelehnt` |
 | `festgeschrieben` | `in_pruefung` – nur über „Festschreibung aufheben“ mit Pflicht-Begründung (M6-4, 01 §7) |
 | `abgelehnt` | – (Endzustand) |
+
+¹ Nur über „Als Duplikat verwerfen“ (M6-6, s. u.): `App\Service\Document\Duplikatpruefung`
+prüft im Lock, dass noch ein Duplikat-Verdacht besteht. Das allgemeine „Ablehnen“ des
+Posteingangs (`InboxAction`) bleibt auf `eingegangen`/`wiedervorlage`/`in_pruefung` beschränkt.
 
 Aktionen im Posteingang (`App\Domain\InboxAction`, Recht `document.edit`):
 **Annehmen** aus `eingegangen`/`wiedervorlage` → `bereit_zur_auswertung`;
@@ -258,6 +265,43 @@ erreichbar ist – ein festgeschriebener Beleg wird nicht erfasst, erst entsperr
 
 `duplikat_verdacht` ist ein Flag (content_bi gleich oder Lieferant +
 Rechnungsnummer gleich), kein Status.
+
+**Stand M6-6** (issue #40, Migration 023):
+- **Abgeleitet, nicht gespeichert:** `App\Repository\DocumentDuplicateRepository` bildet
+  den Verdacht bei jedem Lesen in SQL aus zwei Blind Indexes – nichts kann veralten
+  (geänderte Rechnungsnummer, abgelehntes Gegenstück). Zwei Belege sind ein Paar bei
+  gleichem `document.content_bi` (dieselben Originaldateien, byte-gleich, gleiche
+  Seitenreihenfolge) **oder** gleichem `invoice.number_bi` bei gleichem Lieferanten –
+  ein zusammengeführter Lieferant zählt als sein Ziel (`merged_into`, 03 §7 „Stand M6-5“).
+  Zwei Fotos desselben Papierbelegs erkennt nur der zweite Weg (nach der Erfassung).
+- **`content_bi`** berechnet der Session-Job `detect_duplicate`
+  (`App\Service\Document\Duplikatindex`, Recht `document.edit`, 03 §5): eingereiht von
+  jeder neuen Einreichung/internen Erfassung neben `pdf_erzeugen`, für ältere Belege
+  einmalig von Migration 023. Ein Schritt je Originaldatei; bis zum letzten stehen die
+  Datei-Indizes (HMAC wie jede `*_bi`-Spalte, kein reiner Hash) in `job.state`.
+- **Symmetrisch:** beide Belege eines Paars tragen den Verdacht. Er zählt nicht, wenn das
+  Gegenstück `abgelehnt` ist, wenn der Beleg selbst `abgelehnt` oder `festgeschrieben`
+  ist (ein festgeschriebener bleibt aber Gegenstück) oder wenn das Paar in
+  `document_duplicate_kept` steht.
+- **Anzeige:** Marke „Duplikat?“ in der Status-Spalte von Posteingang und Prüf-Warteschlange
+  (beide Abschnitte), Hinweis mit Gegenstück(en), Grund, Eingang und Status auf dem
+  Posteingang-Detail und in der Prüfansicht. Ein Gegenstück außerhalb des eigenen
+  Bereichs wird nur gezählt (ohne Link/Referenz). Die Marke braucht keinen Tresor.
+  Speichern in der Prüfansicht hängt einen Hinweis an die Meldung (für „Geprüft,
+  nächster“). Ein offener Verdacht blockiert weder Prüfen noch Festschreiben.
+- **Auflösen** (Recht `document.edit`, CSRF, Tresor entsperrt, Scope der jeweiligen
+  Seite – außerhalb 404; `POST /app/posteingang/{id}/duplikat-verwerfen|duplikat-behalten`
+  und `POST /app/belege/pruefen/{id}/duplikat-verwerfen|duplikat-behalten`), in einer
+  Transaktion mit `SELECT … FOR UPDATE` im gelesenen Status und erneuter Prüfung des
+  Verdachts im Lock:
+  - **Als Duplikat verwerfen** → `abgelehnt` (Fußnote ¹ oben) mit vom System geschriebenem
+    Grund „Als Duplikat verworfen: gleicher Inhalt wie R-2026-0012.“ (sichtbare Referenzen,
+    weitere gezählt) in `status_note_enc`; aus `geprueft` werden `invoice.checked_by/at`
+    geleert. Audit `beleg.duplikat_verworfen` {von, andere (IDs), gruende}.
+  - **Bewusst behalten** → je aktuellem Gegenstück eine Zeile in `document_duplicate_kept`;
+    eine später eintreffende weitere Kopie ist ein neues Paar und markiert wieder.
+    Audit `beleg.duplikat_behalten` {andere, gruende}.
+  - Festgeschriebene oder abgelehnte Belege werden laut abgelehnt und nie geschrieben.
 
 ## Sphären (steuerliche Zuordnung eines gemeinnützigen Vereins)
 

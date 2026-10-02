@@ -167,7 +167,12 @@ final class PublicSubmissionTest extends DatabaseTestCase
         self::assertSame([], self::entries($this->uploadDir), 'the plaintext chunks are gone');
     }
 
-    public function testSubmittingQueuesExactlyOnePdfGenerationJob(): void
+    /**
+     * The PDF working copy (issue #26/M4-4) and the content index of
+     * duplicate detection (issue #40/M6-6) - both need the unlocked vault,
+     * so both wait for a session.
+     */
+    public function testSubmittingQueuesThePdfAndTheDuplicateIndexJob(): void
     {
         $token = $this->issuedToken();
         $seite = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Seite");
@@ -176,13 +181,14 @@ final class PublicSubmissionTest extends DatabaseTestCase
         $dokument = $this->pdo()->query('SELECT id FROM document')->fetch();
         self::assertNotFalse($dokument);
 
-        $jobs = $this->pdo()->query('SELECT * FROM job')->fetchAll();
-        self::assertCount(1, $jobs);
-        self::assertSame('pdf_erzeugen', $jobs[0]['typ']);
-        self::assertSame('session', $jobs[0]['executor']);
-        self::assertSame('document', $jobs[0]['ref_type']);
-        self::assertSame((int) $dokument['id'], (int) $jobs[0]['ref_id']);
-        self::assertSame('offen', $jobs[0]['status']);
+        $jobs = $this->pdo()->query('SELECT * FROM job ORDER BY id')->fetchAll();
+        self::assertSame(['pdf_erzeugen', 'detect_duplicate'], array_column($jobs, 'typ'));
+        foreach ($jobs as $job) {
+            self::assertSame('session', $job['executor']);
+            self::assertSame('document', $job['ref_type']);
+            self::assertSame((int) $dokument['id'], (int) $job['ref_id']);
+            self::assertSame('offen', $job['status']);
+        }
     }
 
     public function testNoPlaintextOfTheFormLeaksIntoAnyColumn(): void

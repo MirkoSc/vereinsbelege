@@ -26,7 +26,9 @@ use App\Http\StreamResponse;
 use App\Repository\AuditLogRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\InvoiceRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\UserAccessRepository;
@@ -41,6 +43,7 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Inbox\Posteingang;
 use App\Service\Migration\Migrator;
 use App\Service\MasterData\CostCenterRuleViolation;
@@ -789,6 +792,7 @@ final class InboxFlowTest extends DatabaseTestCase
             new SessionVault(),
             new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit),
             new CostCenterRepository($pdo),
+            new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

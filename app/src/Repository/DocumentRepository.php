@@ -20,7 +20,8 @@ use App\Service\Inbox\InboxFilter;
  * insert() (issue #24/M4-2, the public submission writes the first row a
  * document ever gets), find()/setzePdfBlob() (issue #26/M4-4, the
  * `pdf_erzeugen` job) and the inbox (issue #27/M4-5): the filtered list,
- * status changes and the cost center; the review queue (issue #37/M6-3).
+ * status changes and the cost center; the review queue (issue #37/M6-3);
+ * the content index of duplicate detection (issue #40/M6-6).
  * Every inbox read takes the viewer's
  * App\Domain\Zugriffsbereich and filters in SQL (docs/spec/01-sicherheit.md
  * section 4) - a template never sees a row it must not show.
@@ -101,6 +102,24 @@ final readonly class DocumentRepository
         $stmt->bindValue(1, $blobId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $id, \PDO::PARAM_INT);
         $stmt->bindValue(3, DocumentStatus::Festgeschrieben->value);
+        $stmt->execute();
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Stores the content index of the original files (issue #40/M6-6, the
+     * `detect_duplicate` job), once: a document that has one keeps it. A
+     * locked document takes it too - the index is derived from files that
+     * never change, it is not part of the receipt (docs/spec/01-sicherheit.md
+     * section 7), and only so does a receipt submitted again long after it
+     * was locked get noticed. Returns whether this call wrote it.
+     */
+    public function setzeContentBi(int $id, string $contentBi): bool
+    {
+        $stmt = $this->pdo->prepare('UPDATE document SET content_bi = ? WHERE id = ? AND content_bi IS NULL');
+        $stmt->bindValue(1, $contentBi, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
         $stmt->execute();
 
         return $stmt->rowCount() === 1;
@@ -243,6 +262,28 @@ final readonly class DocumentRepository
         $stmt->execute([$id, $status->value]);
 
         return $stmt->fetch() !== false;
+    }
+
+    /**
+     * Inside a transaction: locks several documents, smallest id first - two
+     * transactions locking overlapping sets this way wait for each other
+     * instead of deadlocking (issue #40/M6-6: a document and every other
+     * side of its duplicate pairs).
+     *
+     * @param list<int> $ids
+     */
+    public function sperreAlle(array $ids): void
+    {
+        if ($ids === []) {
+            return;
+        }
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+        $stmt = $this->pdo->prepare(
+            'SELECT id FROM document WHERE id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') ORDER BY id FOR UPDATE',
+        );
+        $stmt->execute($ids);
+        $stmt->fetchAll();
     }
 
     /**

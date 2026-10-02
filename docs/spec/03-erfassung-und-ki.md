@@ -566,7 +566,11 @@ aktivem Worker-Modul.
 5. `resolve_supplier` (Abschnitt 7) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
 7. `detect_recurring` (Abschnitt 9) – `session`
-8. `detect_duplicate` – `session`
+8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
+   Originaldateien, ein Schritt je Datei, `App\Service\Document\Duplikatindex`;
+   eingereiht gleich beim Eingang neben `pdf_erzeugen`, nicht erst nach den
+   Schritten davor – den Verdacht selbst leitet SQL bei jedem Lesen ab, Details
+   02 „Statusmodell“, Stand M6-6) – `session`
 9. `match_transactions` (siehe 04, falls Buchungen vorhanden) – `session`
 
 Die Logik von `pdf_erzeugen`, `ocr` und `ai_extract` liegt in
@@ -838,4 +842,14 @@ Timeout, HTTP-Fehler, kein JSON); Betrags-Parsing („1.234,56", „1234.56",
 negativ) und Summenprüfung; Lieferanten-Auflösung über alle 6 Stufen inkl.
 Rechtsform-Normalisierung; Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);
-Duplikaterkennung.
+Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der
+Stückelung, Seitenreihenfolge zählt, kein reiner SHA-256, anderer Tresor anders,
+gesperrter Tresor wirft; `DuplikatindexJobTest`: beide Speicher-Backends, ein
+Schritt je Original, `job.state` ohne Klartext/Hash, einmal gesetzt bleibt,
+festgeschriebener Beleg bekommt den Index, Migration reiht ältere Belege ein;
+`DuplikatFlowTest`: Marke in Posteingang und Prüf-Warteschlange, Hinweis auf
+beiden Detailseiten, Lieferant + Nummer inkl. Leerraum und zusammengeführtem
+Lieferanten, abgelehntes Gegenstück zählt nicht, Verwerfen aus jedem offenen
+Status inkl. `geprueft`, ohne Verdacht abgelehnt, Behalten löst beide und eine
+dritte Kopie markiert wieder, festgeschriebener Beleg unverändert, CSRF/Recht/
+Scope/Tresor).

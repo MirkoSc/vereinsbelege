@@ -413,6 +413,11 @@ return static function (
     $post('/app/posteingang/{id:\d+}/ablehnen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->ablehnen($r, $params));
     $post('/app/posteingang/{id:\d+}/wiedervorlage', $documentEdit, static fn(Request $r, array $params) => $posteingang()->wiedervorlage($r, $params));
     $post('/app/posteingang/{id:\d+}/kostenstelle', $documentEdit, static fn(Request $r, array $params) => $posteingang()->kostenstelle($r, $params));
+    // Duplicate detection (M6-6, issue #40): resolving a suspected duplicate
+    // - discard it (rejected) or keep it deliberately. `document.edit`, the
+    // inbox scope, CSRF, the unlocked vault (App\App\InboxController).
+    $post('/app/posteingang/{id:\d+}/duplikat-verwerfen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->duplikatVerwerfen($r, $params));
+    $post('/app/posteingang/{id:\d+}/duplikat-behalten', $documentEdit, static fn(Request $r, array $params) => $posteingang()->duplikatBehalten($r, $params));
 
     // Internal capture (M4-6, issue #28, docs/spec/03-erfassung-und-ki.md
     // section 1): several receipts in one pass, straight into the inbox.
@@ -462,6 +467,11 @@ return static function (
     // vault required like for everything on the review page.
     $post('/app/belege/pruefen/{id:\d+}/festschreiben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreiben($r, $params));
     $post('/app/belege/pruefen/{id:\d+}/festschreibung-aufheben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreibungAufheben($r, $params));
+
+    // Duplicate detection (M6-6, issue #40) from the review page: the same
+    // two decisions as in the inbox, with the review page's scope.
+    $post('/app/belege/pruefen/{id:\d+}/duplikat-verwerfen', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatVerwerfen($r, $params));
+    $post('/app/belege/pruefen/{id:\d+}/duplikat-behalten', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatBehalten($r, $params));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,

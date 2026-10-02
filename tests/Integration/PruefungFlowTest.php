@@ -36,6 +36,7 @@ use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentArtifactRepository;
+use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\RoleRepository;
@@ -51,6 +52,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
 use App\Service\Invoice\Festschreibung;
@@ -1318,6 +1320,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             $this->festschreibung(),
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
+            new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

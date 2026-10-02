@@ -371,7 +371,8 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     `App\Service\Job\JobHandler::recht()`. Ein neuer Job-Typ braucht also
     keine Routen-Änderung, nur einen Eintrag in der Handler-Liste
     (`app/src/bootstrap.php`, `$jobHandlerFor`). `pdf_erzeugen`
-    (`App\Service\Document\PdfErzeugung`) verlangt `document.edit`. Ohne
+    (`App\Service\Document\PdfErzeugung`) und `detect_duplicate`
+    (`App\Service\Document\Duplikatindex`, M6-6) verlangen `document.edit`. Ohne
     entsperrten Tresor (CLAUDE.md Abschnitt 4) antwortet die Route
     `{status: "gesperrt", offen: N}`, ohne einen Job zu beanspruchen.
   - *Ein Aufruf = ein Schritt:* `JobRunner::schritt()` beansprucht (`claim()`,

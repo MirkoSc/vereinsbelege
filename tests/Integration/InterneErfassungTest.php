@@ -23,7 +23,9 @@ use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\RoleRepository;
@@ -41,6 +43,7 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Inbox\Posteingang;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -227,6 +230,9 @@ final class InterneErfassungTest extends DatabaseTestCase
 
         // One PDF job per receipt, the pages claimed, every receipt audited.
         $jobs = $this->pdo()->query("SELECT ref_id FROM job WHERE typ = 'pdf_erzeugen' ORDER BY ref_id")->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertSame(array_map(intval(...), array_column($dokumente, 'id')), array_map(intval(...), $jobs));
+        // ... and one content index job for duplicate detection (issue #40).
+        $jobs = $this->pdo()->query("SELECT ref_id FROM job WHERE typ = 'detect_duplicate' ORDER BY ref_id")->fetchAll(\PDO::FETCH_COLUMN);
         self::assertSame(array_map(intval(...), array_column($dokumente, 'id')), array_map(intval(...), $jobs));
         self::assertSame(0, $this->zaehle('submission_upload'));
         self::assertSame(
@@ -658,6 +664,7 @@ final class InterneErfassungTest extends DatabaseTestCase
             new SessionVault(),
             new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit),
             new CostCenterRepository($pdo),
+            new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
         );
         $erfassung = fn(): ErfassungController => new ErfassungController(
             $view,

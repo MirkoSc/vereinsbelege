@@ -18,14 +18,16 @@ final class DocumentStatusTest extends TestCase
 {
     /** The diagram of the spec, written out once more by hand. */
     private const array ERLAUBT = [
+        // `abgelehnt` from bereit_zur_auswertung, ausgewertet, ki_fehler and
+        // geprueft only through "Als Duplikat verwerfen" (issue #40/M6-6).
         'eingegangen' => ['bereit_zur_auswertung', 'wiedervorlage', 'abgelehnt'],
-        'bereit_zur_auswertung' => ['ausgewertet', 'ki_fehler', 'in_pruefung'],
-        'ausgewertet' => ['in_pruefung', 'ki_fehler', 'wiedervorlage'],
+        'bereit_zur_auswertung' => ['ausgewertet', 'ki_fehler', 'in_pruefung', 'abgelehnt'],
+        'ausgewertet' => ['in_pruefung', 'ki_fehler', 'wiedervorlage', 'abgelehnt'],
         'in_pruefung' => ['geprueft', 'abgelehnt'],
-        'geprueft' => ['festgeschrieben'],
+        'geprueft' => ['festgeschrieben', 'abgelehnt'],
         // Only by lifting the lock with a reason (issue #38/M6-4).
         'festgeschrieben' => ['in_pruefung'],
-        'ki_fehler' => ['bereit_zur_auswertung', 'wiedervorlage', 'in_pruefung'],
+        'ki_fehler' => ['bereit_zur_auswertung', 'wiedervorlage', 'in_pruefung', 'abgelehnt'],
         'wiedervorlage' => ['bereit_zur_auswertung', 'abgelehnt'],
         'abgelehnt' => [],
     ];
