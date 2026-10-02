@@ -20,6 +20,7 @@ use App\Api\UploadController;
 use App\App\AccountController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\CsvFormatController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
@@ -131,6 +132,9 @@ use App\View\View;
  *        (issue #37/M6-3).
  * @param \Closure(): AccountController $konten built lazily, same reason
  *        as $mail: only the account pages need the database (issue #59/M9-1).
+ * @param \Closure(): CsvFormatController $csvFormate built lazily, same
+ *        reason as $mail: only the CSV format pages need the database
+ *        (issue #61/M9-3).
  */
 return static function (
     Router $router,
@@ -163,6 +167,7 @@ return static function (
     \Closure $lieferanten,
     \Closure $pruefung,
     \Closure $konten,
+    \Closure $csvFormate,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -469,6 +474,22 @@ return static function (
     $post('/app/konten/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $konten()->loeschen($r, $params));
     $get('/app/konten/{id:\d+}/kassensturz', $kontenPflege, static fn(Request $r, array $params) => $konten()->kassensturz($r, $params));
     $post('/app/konten/{id:\d+}/kassensturz', $kontenPflege, static fn(Request $r, array $params) => $konten()->kassensturzErfassen($r, $params));
+
+    // CSV formats for the statement import (M9-3, issue #61, docs/spec/
+    // 04-bank-und-abgleich.md section 3). Permission: `bank.import` (Admin,
+    // Finanzen) on every route - whoever imports statements teaches the
+    // formats. The preview takes the sample file with every change of the
+    // assistant and stores nothing; CSRF on every POST, the preview
+    // included. Shipped formats are read-only (App\App\CsvFormatController).
+    $csvImport = Zugriff::recht(Permission::BankImport);
+    $get('/app/konten/csv-formate', $csvImport, static fn(Request $r) => $csvFormate()->liste($r));
+    $get('/app/konten/csv-formate/neu', $csvImport, static fn(Request $r) => $csvFormate()->neu($r));
+    $post('/app/konten/csv-formate', $csvImport, static fn(Request $r) => $csvFormate()->anlegen($r));
+    $post('/app/konten/csv-formate/vorschau', $csvImport, static fn(Request $r) => $csvFormate()->vorschau($r));
+    $get('/app/konten/csv-formate/{id:\d+}', $csvImport, static fn(Request $r, array $params) => $csvFormate()->ansicht($r, $params));
+    $get('/app/konten/csv-formate/{id:\d+}/bearbeiten', $csvImport, static fn(Request $r, array $params) => $csvFormate()->bearbeiten($r, $params));
+    $post('/app/konten/csv-formate/{id:\d+}', $csvImport, static fn(Request $r, array $params) => $csvFormate()->speichern($r, $params));
+    $post('/app/konten/csv-formate/{id:\d+}/loeschen', $csvImport, static fn(Request $r, array $params) => $csvFormate()->loeschen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

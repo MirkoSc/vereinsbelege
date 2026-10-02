@@ -83,6 +83,49 @@ reine Werteobjekte, nichts wird gespeichert oder geloggt; die Fehlermeldung
   zuletzt bekannten Kontostand, falls die Datei Salden-Spalten hat. Weitere per Assistent: Datei hochladen → Spalten
   zuordnen mit Live-Vorschau der ersten 10 Zeilen → als Profil speichern.
 
+Umsetzung (M9-3): `Service/Bank/Csv/` – `CsvParser::parse()` liefert ein
+`CsvErgebnis` mit `CsvBuchung`en (je ein `Umsatz` wie beim MT940-Parser, dazu
+Währung und ggf. Saldo nach Buchung), `CsvZeilenfehler`n und der Zahl
+übersprungener vorgemerkter Zeilen. Reine Werteobjekte, nichts wird
+gespeichert oder geloggt. Festgelegte Regeln:
+
+- Spalten werden über ihren **Namen** zugeordnet, nie über die Position;
+  ein Feld darf mehrere Namen haben (Aliasse für Kopfzeilen-Varianten,
+  bei Textfeldern wie Verwendungszweck werden alle vorhandenen verbunden).
+  Namen werden normalisiert verglichen (Groß/klein, Umlaute ↔ ae/oe/ue,
+  Leerraum).
+- Pflicht: Buchungstag und entweder eine Betragsspalte mit Vorzeichen oder
+  Soll **und** Haben. Soll zählt negativ, Haben positiv – egal welches
+  Vorzeichen die Bank schreibt; genau eine der beiden muss gefüllt sein.
+- Kopfzeile = erste Zeile (in den ersten 30), die alle Pflichtspalten des
+  Profils trägt; ein Vorspann davor wird übersprungen.
+- Datum `TT.MM.JJJJ`/`TT/MM/JJJJ` auch mit zweistelligem Jahr, sonst ISO;
+  Beträge als Integer-Cent mit dem gewählten Dezimaltrenner (der andere ist
+  Tausendertrenner), höchstens zwei Nachkommastellen. Leere Valuta =
+  Buchungstag, leere Währung = EUR.
+- Zeichensatz „Automatisch“: gültiges UTF-8 (oder BOM) ist UTF-8, sonst
+  Windows-1252 – so nutzen es die mitgelieferten Profile.
+- Status-Spalte mit „vorgemerkt“ → Zeile wird übersprungen und gezählt
+  (noch nicht gebucht, kommt mit dem nächsten Export wieder).
+- Nichts wird geraten: eine Zelle, die nicht zum Profil passt, macht die
+  Zeile zum Zeilenfehler. Meldungen nennen Zeile und Spaltenname, nie den
+  Inhalt (`CsvException` für nicht lesbare Dateien ebenso).
+- Profil-Erkennung (`CsvProfilErkennung`): exakte Kopfzeilen-Signatur
+  (SHA-256 der normalisierten Spaltennamen) zuerst, sonst das Profil mit
+  allen Pflichtspalten und den meisten gefundenen Feldern; bei Gleichstand
+  das mitgelieferte.
+- Formaterkennung für unbekannte Dateien (`CsvFormatErkennung`):
+  Zeichensatz, Trennzeichen (`;` `,` Tab `|` – die häufigste gleiche
+  Spaltenzahl), Kopfzeile, Datums- und Zahlenformat sowie ein
+  Zuordnungsvorschlag aus den Spaltennamen.
+- Mitgeliefert (`CsvStandardprofile`, Seed in Migration 022): „Sparkasse
+  CSV-CAMT“ (Kopfzeile V2, V8 über die Namenszuordnung) und „VR Bank
+  CSV-CAMT“ (mit „Saldo nach Buchung“). Sie sind schreibgeschützt.
+- Assistent unter `/app/konten/csv-formate` (Recht `bank.import`): Jede
+  Änderung schickt das Formular samt Datei per htmx an die Vorschau; die
+  Datei wird nur im Speicher gelesen – kein Blob, keine eigene Temp-Datei,
+  nichts in der Session. Gespeichert wird nur das Profil.
+
 ## 4. Import-Ablauf
 
 1. Datei hochladen (Upload-Komponente, als Blob verschlüsselt gespeichert –

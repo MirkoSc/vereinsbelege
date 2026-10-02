@@ -64,6 +64,9 @@ enum AuditAction: string
     case KontoGeaendert = 'konto.geaendert';
     case KontoGeloescht = 'konto.geloescht';
     case KassensturzErfasst = 'kassensturz.erfasst';
+    case CsvFormatAngelegt = 'csv_format.angelegt';
+    case CsvFormatGeaendert = 'csv_format.geaendert';
+    case CsvFormatGeloescht = 'csv_format.geloescht';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -131,6 +134,9 @@ enum AuditAction: string
             self::KontoGeaendert => 'Konto geändert',
             self::KontoGeloescht => 'Konto gelöscht',
             self::KassensturzErfasst => 'Kassensturz erfasst',
+            self::CsvFormatAngelegt => 'CSV-Format angelegt',
+            self::CsvFormatGeaendert => 'CSV-Format geändert',
+            self::CsvFormatGeloescht => 'CSV-Format gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -172,6 +178,7 @@ enum AuditAction: string
             self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
             self::KontoAngelegt, self::KontoGeaendert, self::KontoGeloescht => 'bank_account',
             self::KassensturzErfasst => 'cash_count',
+            self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -197,6 +204,7 @@ enum AuditAction: string
             'supplier' => 'Lieferant',
             'bank_account' => 'Konto',
             'cash_count' => 'Kassensturz',
+            'csv_profile' => 'CSV-Format',
             'document' => 'Beleg',
             default => $entity,
         };

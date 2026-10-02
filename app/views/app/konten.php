@@ -13,6 +13,7 @@
  * @var array<string, list<\App\Domain\BankAccount>> $gruppen kind value => accounts
  * @var list<int> $saldoVerborgen accounts whose opening date lies outside the reader's period
  * @var bool $darfPflegen holds `bank.book`
+ * @var bool $darfImportieren holds `bank.import` - the CSV formats of the import (M9-3)
  */
 
 use App\Domain\BankAccountKind;
@@ -27,6 +28,10 @@ use App\Service\Processing\Betrag;
         Bankkonten und Barkassen des Vereins, jeweils mit dem Anfangssaldo zu einem Stichtag.
         Für eine Kasse wird hier auch der Kassensturz erfasst.
     </p>
+
+    <?php if ($darfImportieren): ?>
+        <p><a href="/app/konten/csv-formate">CSV-Formate für den Kontoauszug-Import</a></p>
+    <?php endif; ?>
 
     <?php if (!$entsperrt): ?>
         <p class="hinweis hinweis-info">

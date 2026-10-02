@@ -2,3 +2,6 @@
 
 # MT940 fixtures keep the banks' bytes: Windows-1252 and CRLF (issue #60).
 tests/fixtures/mt940/*.sta -text -whitespace
+
+# CSV export fixtures keep the banks' bytes too: encoding, BOM and CRLF (issue #61).
+tests/fixtures/bank/*.csv -text -whitespace
