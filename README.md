@@ -50,9 +50,11 @@ Die Update-Seite liegt unter <http://localhost:8080/admin/update>. Den
 Installer sieht man, indem man `docker/shared/config.php` kurz beiseite
 schiebt – ohne Konfiguration läuft die Anwendung im Installationsmodus.
 
-Die Umgebung bildet den Zielhoster nach: `disable_functions` ohne `exec` und
-Verwandte, `max_execution_time = 30`, und `wait_timeout = 120` auf der
-Datenbank – eine untätige Verbindung stirbt lokal genauso schnell wie dort.
+Die Umgebung bildet den Zielhoster nach: `max_execution_time = 30`
+und `wait_timeout = 120` auf der Datenbank – eine untätige Verbindung stirbt lokal genauso schnell wie dort.
+Zusätzlich sperrt sie `exec` und Verwandte per `disable_functions`, obwohl der
+Hoster das nicht tut: Prozess-Aufrufe sind eine Selbstbeschränkung des Projekts
+(CLAUDE.md §1), und ein Verstoß soll lokal auffallen.
 
 ## Dokumente
 

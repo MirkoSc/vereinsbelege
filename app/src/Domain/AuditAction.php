@@ -59,6 +59,8 @@ enum AuditAction: string
     case LieferantAngelegt = 'lieferant.angelegt';
     case LieferantGeaendert = 'lieferant.geaendert';
     case LieferantGeloescht = 'lieferant.geloescht';
+    /** Issue #39/M6-5: entity is the merged-away supplier, the target is in the details. */
+    case LieferantZusammengefuehrt = 'lieferant.zusammengefuehrt';
 
     case KontoAngelegt = 'konto.angelegt';
     case KontoGeaendert = 'konto.geaendert';
@@ -130,6 +132,7 @@ enum AuditAction: string
             self::LieferantAngelegt => 'Lieferant angelegt',
             self::LieferantGeaendert => 'Lieferant geändert',
             self::LieferantGeloescht => 'Lieferant gelöscht',
+            self::LieferantZusammengefuehrt => 'Lieferanten zusammengeführt',
             self::KontoAngelegt => 'Konto angelegt',
             self::KontoGeaendert => 'Konto geändert',
             self::KontoGeloescht => 'Konto gelöscht',
@@ -175,7 +178,8 @@ enum AuditAction: string
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
-            self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht => 'supplier',
+            self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht,
+            self::LieferantZusammengefuehrt => 'supplier',
             self::KontoAngelegt, self::KontoGeaendert, self::KontoGeloescht => 'bank_account',
             self::KassensturzErfasst => 'cash_count',
             self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',

@@ -209,6 +209,11 @@ final class RoutePermissionMatrixTest extends TestCase
         $router = $this->router();
         $faelle = [
             [SystemRole::Admin, HttpMethod::Get, '/admin/update', true],
+            // Systemcheck (M3-10): admin.system, like Update - and read only.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/systemcheck', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/systemcheck', false],
+            [SystemRole::Finanzen, HttpMethod::Get, '/admin/systemcheck', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -236,6 +241,11 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/lieferanten/7', false],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/lieferanten', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/lieferanten/7', false],
+            // Zusammenführen (M6-5): the same permission.
+            [SystemRole::Admin, HttpMethod::Get, '/app/lieferanten/7/zusammenfuehren', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/lieferanten/7/zusammenfuehren', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/lieferanten/7/zusammenfuehren', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/lieferanten/7/zusammenfuehren', false],
             // Prüfansicht (M6-3): document.edit - Admin and Finanzen capture
             // receipts; the reading roles and the Vereinsverantwortlicher
             // (inbox.view only) do not.
@@ -479,6 +489,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

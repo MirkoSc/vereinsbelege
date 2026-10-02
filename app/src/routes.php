@@ -11,6 +11,7 @@ use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
 use App\Admin\SubmissionSettingsController;
+use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
@@ -132,6 +133,9 @@ use App\View\View;
  *        (issue #37/M6-3).
  * @param \Closure(): AccountController $konten built lazily, same reason
  *        as $mail: only the account pages need the database (issue #59/M9-1).
+ * @param \Closure(): SystemCheckController $systemcheck built lazily, same
+ *        reason as $mail: the check reads wait_timeout from the database
+ *        (issue #107/M3-10).
  * @param \Closure(): CsvFormatController $csvFormate built lazily, same
  *        reason as $mail: only the CSV format pages need the database
  *        (issue #61/M9-3).
@@ -167,6 +171,7 @@ return static function (
     \Closure $lieferanten,
     \Closure $pruefung,
     \Closure $konten,
+    \Closure $systemcheck,
     \Closure $csvFormate,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
@@ -432,6 +437,9 @@ return static function (
     $get('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->bearbeiten($r, $params));
     $post('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->speichern($r, $params));
     $post('/app/lieferanten/{id:\d+}/loeschen', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->loeschen($r, $params));
+    // Merging a duplicate (M6-5, issue #39): preview, then the merge.
+    $get('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehrenVorschau($r, $params));
+    $post('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehren($r, $params));
 
     // The review page (M6-3, issue #37, docs/spec/03-erfassung-und-ki.md
     // section 6 "Prüfansicht"): the queue and one document captured by hand
@@ -628,4 +636,10 @@ return static function (
         static fn(Request $r, array $params) => $updates()->step($r, $params),
     );
     $post('/admin/wartung/aufheben', $system, static fn(Request $r) => $updates()->releaseMaintenance($r));
+
+    // System check (06 section 5, issue #107/M3-10): do the M0 hosting
+    // assumptions still hold? Read only, so no CSRF and no write route.
+    // Permission: `admin.system`, the same right as Update - the findings are
+    // what an update or a maintenance run depends on.
+    $get('/admin/systemcheck', $system, static fn(Request $r) => $systemcheck()->page($r));
 };

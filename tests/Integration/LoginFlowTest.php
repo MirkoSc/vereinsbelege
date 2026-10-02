@@ -383,6 +383,7 @@ final class LoginFlowTest extends DatabaseTestCase
         yield '/admin/mail' => ['/admin/mail'];
         yield '/admin/speicher' => ['/admin/speicher'];
         yield '/admin/update' => ['/admin/update'];
+        yield '/admin/systemcheck' => ['/admin/systemcheck'];
         yield '/admin/designsystem' => ['/admin/designsystem'];
     }
 
@@ -573,6 +574,7 @@ final class LoginFlowTest extends DatabaseTestCase
             $view,
             $auth,
             $guard,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

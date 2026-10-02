@@ -365,10 +365,24 @@ Recht `supplier.manage` – Admin, Finanzen; auch zum Lesen).
   heute: zusammengeführte Lieferanten und `invoice` (M6-3);
   `recurring_series`, `assignment_rule` zählen dort mit, sobald es sie
   gibt). Die Schlüssel gehen per `CASCADE` mit.
-- **Audit** (`lieferant.angelegt/geaendert/geloescht`, Entität `supplier`):
-  Details nur die **Namen** der geänderten Felder bzw. die Rolle – nie
-  Name, IBAN o. Ä. (ein Zahler kann eine Person sein, 01 §6). Speichern
-  ohne Änderung schreibt keine Zeile. Flash-Meldungen nennen keinen Namen.
+- **Zusammenführen** (M6-5, issue #39, Regeln 03 §7 „Stand M6-5“): die
+  Quelle bekommt `merged_into` = Ziel und bleibt als Zeile erhalten
+  (festgeschriebene Belege verweisen weiter auf sie), verliert aber ihre
+  `supplier_key`-Zeilen – das Ziel trägt sie. `merged_into` zeigt immer
+  direkt auf einen nicht zusammengeführten Lieferanten (Ketten werden beim
+  Zusammenführen flach gezogen). Ein zusammengeführter Lieferant wird
+  weder geändert noch gelöscht. Wer einen Beleg anzeigt oder nach
+  Lieferant auswertet, löst über `SupplierRepository::aufgeloest()` auf.
+  Spätere Tabellen mit `supplier_id` (`recurring_series`,
+  `assignment_rule`) werden beim Zusammenführen mit umgehängt.
+- **Audit** (`lieferant.angelegt/geaendert/geloescht/zusammengefuehrt`,
+  Entität `supplier`): Details nur die **Namen** der geänderten Felder bzw.
+  die Rolle – nie Name, IBAN o. Ä. (ein Zahler kann eine Person sein,
+  01 §6). Speichern ohne Änderung schreibt keine Zeile. Flash-Meldungen
+  nennen keinen Namen. `lieferant.zusammengefuehrt` hat als Entität die
+  Quelle, Details `{ziel, belege, festgeschrieben, felder}` (IDs, Anzahl
+  umgehängter und verbliebener festgeschriebener Belege, geänderte Felder
+  des Ziels).
 - `created_via` ist hier immer `manuell`, `needs_review` 0; `ki` mit
   `needs_review` legt erst M7-6 an (die Seite zeigt dann „prüfen“).
   `default_sphere` bleibt NULL und unsichtbar (E-15).
@@ -383,7 +397,16 @@ doppelte IBAN/USt-ID mit Link abgelehnt, eigene IBAN kein Konflikt;
 gleicher Name mit Hinweis; Kategorie passend zur Rolle, aktiv, dann in
 Verwendung; Liste sortiert, Filter Rolle, Suche Name/IBAN; ohne Tresor
 nichts sichtbar und nichts geschrieben; CSRF; 404; Spaltenliste);
-`RoutePermissionMatrixTest` (nur Admin/Finanzen).
+`RoutePermissionMatrixTest` (nur Admin/Finanzen, auch fürs
+Zusammenführen). M6-5: `SupplierMergeTest` (Vereinigung von Namen/IBANs/
+Mandaten, Kennungen übernommen bzw. Widerspruch abgelehnt, Konflikte in
+die Notiz, Rolle/Kategorie, Grenzen); `SupplierFlowTest` (Vorschau und
+Zusammenführen, Schlüssel umgezogen, offene Belege umgehängt,
+festgeschriebene unverändert und aufgelöst, Ketten flach, Audit nur mit
+IDs/Feldnamen, Widerspruch ohne Änderung, nicht mit sich selbst/in einen
+zusammengeführten, zusammengeführter nicht änderbar/löschbar, Tresor,
+CSRF); `PruefungFlowTest` (festgeschriebener Beleg zeigt das Ziel und
+nimmt es nach dem Aufheben).
 
 ## Konten
 

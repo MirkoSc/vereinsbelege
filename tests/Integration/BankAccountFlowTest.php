@@ -729,8 +729,8 @@ final class BankAccountFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the account pages second to last.
-        $controller = array_fill(0, 29, $unerreichbar);
+        // guard second, the account pages third from last.
+        $controller = array_fill(0, 30, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
 

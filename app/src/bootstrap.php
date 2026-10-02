@@ -8,6 +8,7 @@ use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\SubmissionSettingsController;
+use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -117,6 +118,7 @@ use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
@@ -130,6 +132,7 @@ use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
+use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
@@ -455,14 +458,18 @@ $kategorien = static function () use ($connections, $view, $auditFor): CategoryC
 $lieferanten = static function () use ($connections, $view, $auditFor): SupplierController {
     $pdo = $connections->pdo();
     $kategorien = new CategoryRepository($pdo);
+    $repository = new SupplierRepository($pdo);
+    $service = new SupplierService($pdo, $repository, $kategorien);
+    $audit = $auditFor($pdo);
 
     return new SupplierController(
         $view,
         new Session(),
         new SessionVault(),
-        new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+        $service,
         $kategorien,
-        $auditFor($pdo),
+        $audit,
+        new SupplierZusammenfuehrung($pdo, $repository, new InvoiceRepository($pdo), $service, $audit),
     );
 };
 
@@ -522,6 +529,14 @@ $konten = static function () use ($connections, $view, $auditFor): AccountContro
     );
 };
 
+// System check (issue #107/M3-10): the M0 hosting assumptions on the running
+// system. Built lazily like $mail - it reads wait_timeout from the database.
+// Reads settings only, never business data, so it needs no vault.
+$systemcheck = static fn(): SystemCheckController => new SystemCheckController(
+    $view,
+    new Session(),
+    new SystemCheck($connections->pdo(), $paths->varDir()),
+);
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the
 // connection.
@@ -1002,6 +1017,7 @@ $router = new Router();
     $lieferanten,
     $pruefungSeite,
     $konten,
+    $systemcheck,
     $csvFormate,
 );
 

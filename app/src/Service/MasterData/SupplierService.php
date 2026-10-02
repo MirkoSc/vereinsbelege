@@ -38,6 +38,9 @@ use App\Service\Crypto\Vault;
  *   already stored) and fit the role: expenses for a supplier, income for a
  *   payer.
  * - Deleting only while unused (SupplierRepository::usageCount()).
+ * - A supplier merged into another (App\Service\MasterData\
+ *   SupplierZusammenfuehrung, issue #39/M6-5) is neither changed nor
+ *   deleted.
  */
 final readonly class SupplierService
 {
@@ -115,7 +118,7 @@ final readonly class SupplierService
     {
         [$rolle, $kategorie, $daten] = $this->pruefe($felder, null);
         $keys = $this->keys($vault, $daten);
-        $this->pruefeEindeutig($vault, $keys, null);
+        $this->pruefeEindeutig($vault, $keys, []);
 
         $key = DataKey::generate();
         $this->pdo->beginTransaction();
@@ -149,11 +152,12 @@ final readonly class SupplierService
     public function aendern(Vault $vault, int $id, array $felder, \DateTimeImmutable $now): SupplierSaved
     {
         $record = $this->lieferanten->find($id) ?? throw new SupplierRuleViolation('Diesen Lieferanten gibt es nicht.');
+        self::nichtZusammengefuehrt($record);
         $vorher = $this->entschluesseln($vault, $record);
 
         [$rolle, $kategorie, $daten] = $this->pruefe($felder, $record->defaultCategoryId);
         $keys = $this->keys($vault, $daten);
-        $this->pruefeEindeutig($vault, $keys, $id);
+        $this->pruefeEindeutig($vault, $keys, [$id]);
 
         // The row keeps its data key: re-sealing would gain nothing, and the
         // audit and later tables never see it anyway.
@@ -194,6 +198,8 @@ final readonly class SupplierService
     public function loeschen(int $id): SupplierRecord
     {
         $record = $this->lieferanten->find($id) ?? throw new SupplierRuleViolation('Diesen Lieferanten gibt es nicht.');
+        // A merged supplier stays: locked receipts and the audit log refer to it.
+        self::nichtZusammengefuehrt($record);
         if ($this->lieferanten->usageCount($id) > 0) {
             throw new SupplierRuleViolation('Der Lieferant wird verwendet und lässt sich nicht löschen.');
         }
@@ -208,7 +214,17 @@ final readonly class SupplierService
         return $this->lieferanten->usageCount($id);
     }
 
-    private function entschluesseln(Vault $vault, SupplierRecord $record): Supplier
+    /**
+     * @throws SupplierRuleViolation
+     */
+    public static function nichtZusammengefuehrt(SupplierRecord $record): void
+    {
+        if ($record->mergedInto !== null) {
+            throw new SupplierRuleViolation('Dieser Lieferant wurde bereits mit einem anderen zusammengeführt.', $record->mergedInto);
+        }
+    }
+
+    public function entschluesseln(Vault $vault, SupplierRecord $record): Supplier
     {
         $json = FieldCipher::decrypt(
             $vault->openDataKey($record->dekSealed),
@@ -226,10 +242,11 @@ final readonly class SupplierService
             needsReview: $record->needsReview,
             createdAt: $record->createdAt,
             updatedAt: $record->updatedAt,
+            mergedInto: $record->mergedInto,
         );
     }
 
-    private static function verschluesseln(DataKey $key, int $id, SupplierData $daten): string
+    public static function verschluesseln(DataKey $key, int $id, SupplierData $daten): string
     {
         return FieldCipher::encrypt(
             $key,
@@ -241,7 +258,7 @@ final readonly class SupplierService
     /**
      * @return list<array{SupplierKeyKind, string}> kind and blind index
      */
-    private function keys(Vault $vault, SupplierData $daten): array
+    public function keys(Vault $vault, SupplierData $daten): array
     {
         $index = $vault->blindIndex();
 
@@ -253,16 +270,17 @@ final readonly class SupplierService
 
     /**
      * @param list<array{SupplierKeyKind, string}> $keys
+     * @param list<int> $ausser the supplier(s) the keys are meant for
      *
      * @throws SupplierRuleViolation
      */
-    private function pruefeEindeutig(Vault $vault, array $keys, ?int $id): void
+    public function pruefeEindeutig(Vault $vault, array $keys, array $ausser): void
     {
         foreach ($keys as [$kind, $bi]) {
             if (!$kind->eindeutig()) {
                 continue;
             }
-            $andere = $this->lieferanten->idsWithKey($kind, $bi, $id);
+            $andere = array_values(array_diff($this->lieferanten->idsWithKey($kind, $bi), $ausser));
             if ($andere === []) {
                 continue;
             }

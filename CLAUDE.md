@@ -21,9 +21,17 @@ aktuelle Issue verlinkt**, nicht alle.
 
 ## 1. Harte Umgebungs-Constraints (niemals verletzen)
 
-- Shared Hosting (all-inkl): **kein SSH, kein Git, kein Composer, kein
-  `exec()`/`shell_exec()`/`proc_open()`** auf dem Server. Keine
-  Kommandozeilen-Tools (kein Tesseract, kein Ghostscript, kein ImageMagick-CLI).
+- Shared Hosting (all-inkl): **kein SSH, kein Git, kein Composer** auf dem
+  Server.
+- **Keine Prozess-Aufrufe aus PHP** (`exec()`, `shell_exec()`, `proc_open()`,
+  `passthru()`, `system()`, `popen()`, Backticks) und damit keine
+  Kommandozeilen-Tools (kein Tesseract, Ghostscript, ImageMagick-CLI). Das ist
+  eine **bewusste Selbstbeschränkung**, keine Sperre des Hosters:
+  `disable_functions` ist beim Hoster leer (M0-Befund, #102). Gründe: keine
+  Abhängigkeit von Binaries des Hosters, Portabilität zwischen Hostern, kleinere
+  Angriffsfläche. Weil der Hoster einen Verstoß nicht verhindert, setzt die
+  lokale Docker-Umgebung `disable_functions` und `NoShellExecutionTest` prüft
+  den Quellcode – ein Verstoß fällt in den Tests auf, nicht erst im Betrieb.
 - Deployment ausschließlich über Release-ZIPs (GitHub Releases) +
   `setup.php`/Self-Updater – **übernommen aus `MirkoSc/vereinskalender`**.
 - **PHP 8.5**, fehler- und deprecation-frei; Enums, readonly, Promotion,
@@ -85,7 +93,7 @@ Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
   Kassenprüfer, die kein `admin.*`-Recht haben) – je nach Rolle.
 - **Adminseite** (`/admin/...`): Benutzer, Rollen, Tresor-Freigaben,
   KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
-  Update.
+  Update, Systemcheck.
 
 Jede Seite wählt ihren Bereich über `App\View\Area`; daran hängen
 Navigation, Inhaltsbreite und ob die Seite eine Session haben darf. Es gibt
@@ -205,7 +213,8 @@ Nicht übernommen: Event-Store, Kalender-Domäne, Push, PWA-Offline, ICS.
 ## 8. Entwicklungs-Konventionen
 
 - Lokal: `docker compose up` (PHP 8.5 + MariaDB, produktionsnah:
-  `disable_functions=exec,…`, `max_execution_time=30`). Befehle wie im
+  `disable_functions=exec,…` als Absicherung der Selbstbeschränkung aus §1 –
+  der Hoster sperrt sie nicht –, `max_execution_time=30`). Befehle wie im
   Vereinskalender-README.
 - Tests: PHPUnit (`failOnDeprecation`, `failOnWarning`), JS-Logik mit
   `node --test tests/js`. Pflicht-Tests je Bereich stehen in der jeweiligen
