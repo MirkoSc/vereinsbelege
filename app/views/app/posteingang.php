@@ -14,6 +14,7 @@
  * @var array<int, string> $kostenstellen active ones, for the filter
  * @var array<int, string> $alleKostenstellen every one, for the rows
  * @var list<\App\Service\Inbox\InboxEintrag> $eintraege
+ * @var array<int, true> $duplikate document ids under duplicate suspicion (issue #40/M6-6)
  * @var bool $abgeschnitten
  * @var bool $entsperrt
  * @var \DateTimeImmutable $heute
@@ -118,7 +119,7 @@ $kurz = static fn(string $text, int $max = 60): string => mb_strlen($text) > $ma
                                 <a href="/app/posteingang/<?= e((string) $document->id) ?>"><?= e($eintrag->item->referenz ?? '#' . $document->id) ?></a>
                             </td>
                             <td><?= e($eintrag->item->eingegangenAm?->format('d.m.Y H:i') ?? '–') ?></td>
-                            <td><?php require __DIR__ . '/posteingang-status.php'; ?></td>
+                            <td><?php require __DIR__ . '/posteingang-status.php'; ?><?php if (isset($duplikate[$document->id])): ?> <span class="marke marke-warnung" title="Möglicherweise doppelt eingereicht">Duplikat?</span><?php endif; ?></td>
                             <?php if ($daten === null): ?>
                                 <td colspan="3"><span class="gedaempft">verschlüsselt</span></td>
                             <?php else: ?>

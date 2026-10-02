@@ -19,10 +19,16 @@
  * An accepted document links to the review page (issue #37/M6-3), where it
  * is captured as a receipt.
  *
+ * A suspected duplicate (issue #40/M6-6) is explained below the details,
+ * with its two resolutions (duplikat-hinweis.php).
+ *
  * @var \App\Service\Inbox\InboxEintrag $eintrag
  * @var list<array{blobId: int, mime: string, seite: int, pdf: bool, originalId: ?int}> $seiten
  * @var list<\App\Domain\InboxAction> $aktionen
  * @var bool $darfEntscheiden
+ * @var \App\Service\Document\DuplikatVerdacht $duplikat
+ * @var string $duplikatBasis
+ * @var bool $duplikatAufloesbar
  * @var array<int, string> $kostenstellen active ones, plus the document's own
  * @var array<int, string> $alleKostenstellen
  * @var bool $entsperrt
@@ -101,6 +107,8 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
             <?php endif; ?>
         </dl>
     </div>
+
+    <?php require __DIR__ . '/duplikat-hinweis.php'; ?>
 
     <?php if ($entsperrt): ?>
         <h3>Seiten</h3>

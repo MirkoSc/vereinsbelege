@@ -14,6 +14,9 @@ namespace App\Domain;
  *   bereit_zur_auswertung/ausgewertet -> ki_fehler -> (neuer Versuch)
  *   eingegangen/wiedervorlage/in_pruefung -> abgelehnt (mit Grund, bleibt
  *   erhalten)
+ *   bereit_zur_auswertung/ausgewertet/ki_fehler/geprueft -> abgelehnt (only
+ *   "Als Duplikat verwerfen", issue #40/M6-6, App\Service\Document\
+ *   Duplikatpruefung - it checks the suspicion under the row lock first)
  *   bereit_zur_auswertung/ki_fehler -> in_pruefung (manual capture in the
  *   review page, issue #37/M6-3 - without or instead of the AI)
  *
@@ -50,11 +53,11 @@ enum DocumentStatus: string
     {
         return match ($this) {
             self::Eingegangen => [self::BereitZurAuswertung, self::Wiedervorlage, self::Abgelehnt],
-            self::BereitZurAuswertung => [self::Ausgewertet, self::KiFehler, self::InPruefung],
-            self::Ausgewertet => [self::InPruefung, self::KiFehler, self::Wiedervorlage],
+            self::BereitZurAuswertung => [self::Ausgewertet, self::KiFehler, self::InPruefung, self::Abgelehnt],
+            self::Ausgewertet => [self::InPruefung, self::KiFehler, self::Wiedervorlage, self::Abgelehnt],
             self::InPruefung => [self::Geprueft, self::Abgelehnt],
-            self::Geprueft => [self::Festgeschrieben],
-            self::KiFehler => [self::BereitZurAuswertung, self::Wiedervorlage, self::InPruefung],
+            self::Geprueft => [self::Festgeschrieben, self::Abgelehnt],
+            self::KiFehler => [self::BereitZurAuswertung, self::Wiedervorlage, self::InPruefung, self::Abgelehnt],
             self::Wiedervorlage => [self::BereitZurAuswertung, self::Abgelehnt],
             self::Festgeschrieben => [self::InPruefung],
             self::Abgelehnt => [],

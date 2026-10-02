@@ -267,6 +267,11 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/belege/pruefen/7/festschreibung-aufheben', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7/festschreibung-aufheben', false],
+            // Duplicate detection (issue #40/M6-6): resolving is `document.edit`.
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-verwerfen', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-behalten', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-verwerfen', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-behalten', false],
             // Konten (M9-1): bank.view reads - Vorstand, Kassenprüfer and
             // Steuerberater too; bank.book writes and records cash counts -
             // Admin and Finanzen only. The Vereinsverantwortlicher sees no
@@ -317,6 +322,10 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Admin, HttpMethod::Post, '/app/posteingang/7/wiedervorlage', true],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/posteingang/7/annehmen', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/posteingang/7/kostenstelle', false],
+            [SystemRole::Admin, HttpMethod::Post, '/app/posteingang/7/duplikat-verwerfen', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/posteingang/7/duplikat-behalten', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/posteingang/7/duplikat-verwerfen', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/posteingang/7/duplikat-behalten', false],
             // The job step (M4-7): the route itself only needs a login -
             // per-type rights are JobRunner's job, not the guard's.
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/api/jobs/step', true],

@@ -109,7 +109,7 @@ abstract class DatabaseTestCase extends TestCase
         return self::$sharedPdo = $pdo;
     }
 
-    private function dropAllTables(\PDO $pdo): void
+    protected function dropAllTables(\PDO $pdo): void
     {
         $tables = $pdo
             ->query('SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()')

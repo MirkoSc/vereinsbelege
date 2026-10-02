@@ -148,6 +148,18 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * Takes back "checked" from a receipt that is not locked - a checked
+     * receipt discarded as a duplicate (issue #40/M6-6) is `abgelehnt`, and
+     * `checked_at` stays set only for `geprueft`/`festgeschrieben`.
+     */
+    public function setzeUngeprueft(int $id): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE invoice SET checked_by = NULL, checked_at = NULL WHERE id = ? AND locked_at IS NULL');
+        $stmt->bindValue(1, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * Who locked the receipt, and when (issue #38/M6-4). Only a receipt that
      * is not locked yet takes it.
      */

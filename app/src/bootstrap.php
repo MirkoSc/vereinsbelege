@@ -53,6 +53,7 @@ use App\Repository\CostCenterRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
+use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
@@ -103,6 +104,8 @@ use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Document\Duplikatindex;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
@@ -510,6 +513,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
         $kostenstellen,
+        new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), $rechnungen, $audit),
     );
 };
 
@@ -843,18 +847,21 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kostenstellen = new CostCenterRepository($pdo);
+    $documents = new DocumentRepository($pdo);
+    $audit = $auditFor($pdo);
 
     return new InboxController(
         $view,
         new Session(),
         new SessionVault(),
         new Posteingang(
-            new DocumentRepository($pdo),
+            $documents,
             $kostenstellen,
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-            $auditFor($pdo),
+            $audit,
         ),
         $kostenstellen,
+        new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $audit),
     );
 };
 
@@ -898,6 +905,7 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
 
     return [
         new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo)),
+        new Duplikatindex(new DocumentRepository($pdo), $blobService),
     ];
 };
 
