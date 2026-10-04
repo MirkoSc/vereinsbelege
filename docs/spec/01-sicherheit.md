@@ -625,7 +625,13 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   (M6-5) hängt nur nicht festgeschriebene Belege um
   (`InvoiceRepository::haengeLieferantUm()` mit `locked_at IS NULL`); ein
   festgeschriebener behält den zusammengeführten Lieferanten und wird über
-  dessen `merged_into` aufgelöst (03 §7 „Stand M6-5“).
+  dessen `merged_into` aufgelöst (03 §7 „Stand M6-5“). Die Duplikaterkennung
+  (M6-6) setzt `document.content_bi` einmalig auch bei festgeschriebenen
+  Belegen (`DocumentRepository::setzeContentBi()` mit `content_bi IS NULL`) –
+  ein aus den unveränderlichen Originalen abgeleiteter Index, keine Angabe des
+  Belegs; nur so fällt eine erneute Einreichung eines längst festgeschriebenen
+  Belegs auf. „Als Duplikat verwerfen“ und „Bewusst behalten“ lehnen einen
+  festgeschriebenen Beleg laut ab (02 „Statusmodell“, Stand M6-6).
 - **Korrekturweg:** „Festschreibung aufheben" mit **Pflicht-Begründung**
   (höchstens 2000 Zeichen). Der Beleg ist danach wieder `in_pruefung`, steht
   in der Warteschlange, wird in der Prüfansicht korrigiert, erneut „Geprüft"

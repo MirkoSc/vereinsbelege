@@ -86,6 +86,10 @@ enum AuditAction: string
     // Festschreibung (issue #38/M6-4): lifting it records the reason.
     case BelegFestgeschrieben = 'beleg.festgeschrieben';
     case BelegFestschreibungAufgehoben = 'beleg.festschreibung_aufgehoben';
+    // Duplicate detection (issue #40/M6-6): details name the other
+    // documents (ids) and the reasons, never a value.
+    case BelegDuplikatVerworfen = 'beleg.duplikat_verworfen';
+    case BelegDuplikatBehalten = 'beleg.duplikat_behalten';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -150,6 +154,8 @@ enum AuditAction: string
             self::BelegGeprueft => 'Beleg geprüft',
             self::BelegFestgeschrieben => 'Beleg festgeschrieben',
             self::BelegFestschreibungAufgehoben => 'Festschreibung aufgehoben',
+            self::BelegDuplikatVerworfen => 'Beleg als Duplikat verworfen',
+            self::BelegDuplikatBehalten => 'Duplikat-Verdacht: bewusst behalten',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -186,7 +192,8 @@ enum AuditAction: string
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
-            self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben => 'document',
+            self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben,
+            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung,

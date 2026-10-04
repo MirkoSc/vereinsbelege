@@ -18,7 +18,10 @@ use App\Repository\CostCenterRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Document\DuplikatRuleViolation;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Inbox\InboxAnsicht;
+use App\Service\Inbox\InboxEintrag;
 use App\Service\Inbox\InboxFilter;
 use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
@@ -36,6 +39,10 @@ use App\View\View;
  * (App\Domain\Zugriffsbereich) - filtered in SQL by the repository, so an id
  * outside it answers 404 exactly like one that does not exist.
  *
+ * A suspected duplicate (issue #40/M6-6, App\Service\Document\
+ * Duplikatpruefung) is marked in the list and explained on the detail page,
+ * where `document.edit` can discard the document as a duplicate or keep it.
+ *
  * Everything a submitter entered and every page is vault ciphertext: it
  * shows only in a session whose vault is unlocked. Without it the list
  * still shows reference, date, status and cost center (plaintext), and the
@@ -52,6 +59,7 @@ final readonly class InboxController
         private SessionVault $sessionVault,
         private Posteingang $posteingang,
         private CostCenterRepository $kostenstellen,
+        private Duplikatpruefung $duplikate,
     ) {
     }
 
@@ -71,6 +79,7 @@ final readonly class InboxController
             'kostenstellen' => $this->kostenstellen->active(),
             'alleKostenstellen' => $this->kostenstellenNamen(),
             'eintraege' => $eintraege,
+            'duplikate' => $this->duplikate->verdaechtige(array_map(static fn(InboxEintrag $e): int => $e->item->document->id, $eintraege)),
             'abgeschnitten' => $abgeschnitten,
             'entsperrt' => $tresor !== null,
             'heute' => self::heute(),
@@ -107,6 +116,9 @@ final readonly class InboxController
             'seiten' => $tresor === null ? [] : $this->posteingang->seiten($document, $tresor),
             'aktionen' => $darfEntscheiden && $tresor !== null ? InboxAction::fuer($document->status) : [],
             'darfEntscheiden' => $darfEntscheiden,
+            'duplikat' => $this->duplikate->verdacht($document, $this->bereich()),
+            'duplikatBasis' => '/app/posteingang/' . $document->id,
+            'duplikatAufloesbar' => $darfEntscheiden && $tresor !== null,
             'kostenstellen' => $kostenstellen,
             'alleKostenstellen' => $alle,
             'entsperrt' => $tresor !== null,
@@ -161,6 +173,29 @@ final readonly class InboxController
     public function wiedervorlage(Request $request, array $params): ResponseInterface
     {
         return $this->entscheiden($request, $params, InboxAction::Wiedervorlage);
+    }
+
+    /**
+     * "Als Duplikat verwerfen" (issue #40/M6-6): rejected with the reason the
+     * application writes. Back to the list, like every other decision.
+     *
+     * @param array<string, string> $params
+     */
+    public function duplikatVerwerfen(Request $request, array $params): ResponseInterface
+    {
+        return $this->duplikatAktion($request, $params, true);
+    }
+
+    /**
+     * "Bewusst behalten" (issue #40/M6-6): the suspicion is resolved, the
+     * document stays where it is - back to it, the inbox decision is still
+     * open.
+     *
+     * @param array<string, string> $params
+     */
+    public function duplikatBehalten(Request $request, array $params): ResponseInterface
+    {
+        return $this->duplikatAktion($request, $params, false);
     }
 
     /**
@@ -250,6 +285,59 @@ final readonly class InboxController
 
         // Back to the list: the decision is made, the next one is waiting.
         return Response::redirect('/app/posteingang');
+    }
+
+    /**
+     * What both duplicate actions share with entscheiden(): CSRF, the
+     * unlocked vault, the scope (404 outside it).
+     *
+     * @param array<string, string> $params
+     */
+    private function duplikatAktion(Request $request, array $params, bool $verwerfen): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = '/app/posteingang/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure($ziel);
+        }
+
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            $this->session->flash(self::TRESOR_GESPERRT, FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $eintrag = $this->posteingang->eintrag($id, $this->bereich(), null);
+        if ($eintrag === null) {
+            return $this->nichtGefunden();
+        }
+
+        $document = $eintrag->item->document;
+        $now = new \DateTimeImmutable();
+        try {
+            if ($verwerfen) {
+                $this->duplikate->verwerfen($document, $tresor, $this->bereich(), $this->session->userId(), $request->ip, $now);
+            } else {
+                $this->duplikate->behalten($document, $this->session->userId(), $request->ip, $now);
+            }
+        } catch (DuplikatRuleViolation $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $referenz = $eintrag->item->referenz ?? '#' . $id;
+        if ($verwerfen) {
+            $this->session->flash(sprintf('Einreichung %s als Duplikat verworfen.', $referenz));
+
+            return Response::redirect('/app/posteingang');
+        }
+
+        $this->session->flash(sprintf('Einreichung %s bleibt – der Duplikat-Verdacht ist aufgelöst.', $referenz));
+
+        return Response::redirect($ziel);
     }
 
     /**

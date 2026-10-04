@@ -8,6 +8,7 @@
  *
  * @var list<\App\Domain\InboxItem> $eintraege
  * @var list<\App\Domain\InboxItem> $geprueft checked, waiting to be locked (issue #38/M6-4)
+ * @var array<int, true> $duplikate document ids under duplicate suspicion (issue #40/M6-6)
  * @var bool $abgeschnitten
  * @var array<int, string> $kostenstellen every cost center by id
  * @var bool $entsperrt
@@ -59,7 +60,7 @@ $heute = new \DateTimeImmutable('today');
                                 <a href="/app/belege/pruefen/<?= e((string) $document->id) ?>"><?= e($item->referenz ?? '#' . $document->id) ?></a>
                             </td>
                             <td><?= e($item->eingegangenAm?->format('d.m.Y H:i') ?? '–') ?></td>
-                            <td><?php require __DIR__ . '/posteingang-status.php'; ?></td>
+                            <td><?php require __DIR__ . '/posteingang-status.php'; ?><?php if (isset($duplikate[$document->id])): ?> <span class="marke marke-warnung" title="Möglicherweise doppelt eingereicht">Duplikat?</span><?php endif; ?></td>
                             <td><?= e($document->costCenterId === null ? '–' : ($kostenstellen[$document->costCenterId] ?? '?')) ?></td>
                         </tr>
                     <?php endforeach; ?>
@@ -99,7 +100,7 @@ $heute = new \DateTimeImmutable('today');
                                 <a href="/app/belege/pruefen/<?= e((string) $document->id) ?>"><?= e($item->referenz ?? '#' . $document->id) ?></a>
                             </td>
                             <td><?= e($item->eingegangenAm?->format('d.m.Y H:i') ?? '–') ?></td>
-                            <td><?php require __DIR__ . '/posteingang-status.php'; ?></td>
+                            <td><?php require __DIR__ . '/posteingang-status.php'; ?><?php if (isset($duplikate[$document->id])): ?> <span class="marke marke-warnung" title="Möglicherweise doppelt eingereicht">Duplikat?</span><?php endif; ?></td>
                             <td><?= e($document->costCenterId === null ? '–' : ($kostenstellen[$document->costCenterId] ?? '?')) ?></td>
                         </tr>
                     <?php endforeach; ?>

@@ -7,6 +7,7 @@ namespace App\App;
 use App\Domain\Berechtigungen;
 use App\Domain\Document;
 use App\Domain\DocumentStatus;
+use App\Domain\DuplikatGrund;
 use App\Domain\InboxItem;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceType;
@@ -24,6 +25,8 @@ use App\Repository\CostCenterRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Document\DuplikatRuleViolation;
+use App\Service\Document\Duplikatpruefung;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
@@ -49,6 +52,10 @@ use App\View\View;
  * #38/M6-4, App\Service\Invoice\Festschreibung) are two more actions of the
  * page, behind the same right and scope.
  *
+ * A suspected duplicate (issue #40/M6-6, App\Service\Document\
+ * Duplikatpruefung) is marked in the queue and explained on the page, with
+ * "Als Duplikat verwerfen" and "Bewusst behalten" - same right and scope.
+ *
  * Nothing of a receipt goes into a URL or a flash message.
  */
 final readonly class PruefungController
@@ -63,6 +70,7 @@ final readonly class PruefungController
         private Festschreibung $festschreibung,
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
+        private Duplikatpruefung $duplikate,
     ) {
     }
 
@@ -71,12 +79,17 @@ final readonly class PruefungController
         $this->session->start();
 
         $eintraege = $this->pruefung->warteschlange($this->bereich());
+        $geprueft = $this->pruefung->geprueftListe($this->bereich());
 
         return Response::html($this->view->render('app/pruefen-liste', [
             'title' => 'Belege prüfen',
             'flash' => $this->session->pullFlash(),
             'eintraege' => $eintraege,
-            'geprueft' => $this->pruefung->geprueftListe($this->bereich()),
+            'geprueft' => $geprueft,
+            'duplikate' => $this->duplikate->verdaechtige(array_map(
+                static fn(InboxItem $item): int => $item->document->id,
+                [...$eintraege, ...$geprueft],
+            )),
             'abgeschnitten' => count($eintraege) >= Pruefung::WARTESCHLANGE,
             'kostenstellen' => $this->kostenstellenNamen(),
             'entsperrt' => $this->tresor($request) !== null,
@@ -153,8 +166,16 @@ final readonly class PruefungController
         if ($ergebnis->lieferantAngelegt) {
             $meldung .= ' Der neue Partner ist angelegt – weitere Angaben unter „Lieferanten“.';
         }
-        if ($ergebnis->warnungen !== []) {
-            $this->session->flash($meldung . ' Hinweis: ' . implode(' ', $ergebnis->warnungen), FlashArt::Warnung);
+        $warnungen = $ergebnis->warnungen;
+        // After "Geprüft, nächster" the page with the duplicate notice is
+        // gone - the message on the next page has to carry it (issue #40).
+        $duplikat = $this->duplikate->verdacht($eintrag->document, $this->bereich());
+        if ($duplikat->besteht()) {
+            $gruende = implode(' bzw. ', array_map(static fn(DuplikatGrund $g): string => $g->bezeichnung(), $duplikat->gruende()));
+            $warnungen[] = 'Möglicherweise doppelt eingereicht' . ($gruende === '' ? '' : ' (' . $gruende . ')') . ' – siehe Hinweis am Beleg.';
+        }
+        if ($warnungen !== []) {
+            $this->session->flash($meldung . ' Hinweis: ' . implode(' ', $warnungen), FlashArt::Warnung);
         } else {
             $this->session->flash($meldung);
         }
@@ -166,6 +187,29 @@ final readonly class PruefungController
         $naechster = $this->pruefung->naechster($this->bereich(), $id);
 
         return Response::redirect($naechster === null ? '/app/belege/pruefen' : '/app/belege/pruefen/' . $naechster);
+    }
+
+    /**
+     * "Als Duplikat verwerfen" (issue #40/M6-6): the document is rejected
+     * with the reason the application writes - on to the next one in the
+     * queue, it has left it.
+     *
+     * @param array<string, string> $params
+     */
+    public function duplikatVerwerfen(Request $request, array $params): ResponseInterface
+    {
+        return $this->duplikatAktion($request, $params, true);
+    }
+
+    /**
+     * "Bewusst behalten" (issue #40/M6-6): the suspicion is resolved, the
+     * page stays.
+     *
+     * @param array<string, string> $params
+     */
+    public function duplikatBehalten(Request $request, array $params): ResponseInterface
+    {
+        return $this->duplikatAktion($request, $params, false);
     }
 
     /**
@@ -245,6 +289,60 @@ final readonly class PruefungController
     }
 
     /**
+     * CSRF, the scope (404 outside it) and the unlocked vault, like the
+     * lock actions; a refusal comes back as a message on the page.
+     *
+     * @param array<string, string> $params
+     */
+    private function duplikatAktion(Request $request, array $params, bool $verwerfen): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = '/app/belege/pruefen/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $eintrag = $this->pruefung->eintrag($id, $this->bereich());
+        if ($eintrag === null) {
+            return $this->nichtGefunden();
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            $this->session->flash(self::TRESOR_GESPERRT, FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $now = new \DateTimeImmutable();
+        try {
+            if ($verwerfen) {
+                $this->duplikate->verwerfen($eintrag->document, $tresor, $this->bereich(), $this->session->userId(), $request->ip, $now);
+            } else {
+                $this->duplikate->behalten($eintrag->document, $this->session->userId(), $request->ip, $now);
+            }
+        } catch (DuplikatRuleViolation $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $referenz = $eintrag->referenz ?? '#' . $id;
+        if (!$verwerfen) {
+            $this->session->flash(sprintf('Beleg %s bleibt – der Duplikat-Verdacht ist aufgelöst.', $referenz));
+
+            return Response::redirect($ziel);
+        }
+
+        $this->session->flash(sprintf('Beleg %s als Duplikat verworfen.', $referenz));
+        $naechster = $this->pruefung->naechster($this->bereich(), $id);
+
+        return Response::redirect($naechster === null ? '/app/belege/pruefen' : '/app/belege/pruefen/' . $naechster);
+    }
+
+    /**
      * One page, decrypted piece by piece into the response - like the
      * inbox's (App\App\InboxController::datei()), plus the page images of
      * the document's PDFs.
@@ -313,6 +411,9 @@ final readonly class PruefungController
             'anzahl' => count($ids),
             'naechster' => Pruefung::naechsterIn($ids, $document->id),
             'steuernMax' => Pruefung::STEUERN_MAX,
+            'duplikat' => $this->duplikate->verdacht($document, $this->bereich()),
+            'duplikatBasis' => '/app/belege/pruefen/' . $document->id,
+            'duplikatAufloesbar' => $tresor !== null,
             'scripts' => ['/js/pruefansicht.js'],
         ], Area::App), $status);
     }

@@ -21,6 +21,9 @@ final readonly class Document
      *        the scanner's processed version of each page, null where the
      *        page came without one (issue #34/M5-4); empty when no page has
      *        one
+     * @param string|null $contentBi blind index of the original files
+     *        (issue #40/M6-6, App\Service\Document\Duplikatindex); null
+     *        until a session has computed it
      */
     public function __construct(
         public int $id,
@@ -36,6 +39,7 @@ final readonly class Document
         public string $dekSealed = '',
         public ?\DateTimeImmutable $createdAt = null,
         public array $processedBlobIds = [],
+        public ?string $contentBi = null,
     ) {
     }
 
@@ -61,6 +65,7 @@ final readonly class Document
             dekSealed: (string) ($row['dek_sealed'] ?? ''),
             createdAt: ($row['created_at'] ?? null) === null ? null : new \DateTimeImmutable((string) $row['created_at']),
             processedBlobIds: self::processedAus($row['processed_blob_ids'] ?? null, count($originalBlobIds)),
+            contentBi: ($row['content_bi'] ?? null) === null ? null : (string) $row['content_bi'],
         );
     }
 

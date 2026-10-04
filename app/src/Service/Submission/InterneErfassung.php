@@ -17,6 +17,7 @@ use App\Repository\SubmissionUploadRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\Vault;
+use App\Service\Document\Duplikatindex;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
 
@@ -192,9 +193,11 @@ final readonly class InterneErfassung
                     processedBlobIds: $aufbereitet[$index],
                 );
 
-                // The PDF working copy is a session job, the same as for the
-                // public submission (issue #26/M4-4).
+                // The PDF working copy and the content index of duplicate
+                // detection are session jobs, the same as for the public
+                // submission (issue #26/M4-4, issue #40/M6-6).
                 $this->jobs->enqueue(PdfErzeugung::JOB_TYP, JobExecutor::Session, 'document', $documentId, now: $now);
+                $this->jobs->enqueue(Duplikatindex::JOB_TYP, JobExecutor::Session, 'document', $documentId, now: $now);
 
                 $erfasst[] = [$referenz, $documentId];
             }

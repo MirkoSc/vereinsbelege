@@ -37,6 +37,9 @@
  * @var int $anzahl length of the queue
  * @var int|null $naechster the next document of the queue
  * @var int $steuernMax
+ * @var \App\Service\Document\DuplikatVerdacht $duplikat suspected duplicate (issue #40/M6-6)
+ * @var string $duplikatBasis
+ * @var bool $duplikatAufloesbar
  * @var string $csrf
  */
 
@@ -98,6 +101,8 @@ $rollenGruppe = [
                 : 'Dieser Beleg ist geprüft. Die Angaben sind nur noch zu lesen.' ?>
         </p>
     <?php endif; ?>
+
+    <?php require __DIR__ . '/duplikat-hinweis.php'; ?>
 
     <?php if ($fehler !== null): ?>
         <p class="hinweis hinweis-fehler" role="alert" id="pruefen-fehler">

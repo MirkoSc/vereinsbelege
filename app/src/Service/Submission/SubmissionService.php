@@ -18,6 +18,7 @@ use App\Repository\SubmissionUploadRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\Vault;
+use App\Service\Document\Duplikatindex;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -104,9 +105,17 @@ final readonly class SubmissionService
 
             // Building the PDF working copy needs an unlocked vault, so it
             // runs as a session job (issue #26/M4-4), never here where the
-            // vault is locked (CLAUDE.md section 4).
+            // vault is locked (CLAUDE.md section 4). So does the content
+            // index of duplicate detection (issue #40/M6-6).
             $this->jobs->enqueue(
                 PdfErzeugung::JOB_TYP,
+                JobExecutor::Session,
+                'document',
+                $documentId,
+                now: $now,
+            );
+            $this->jobs->enqueue(
+                Duplikatindex::JOB_TYP,
                 JobExecutor::Session,
                 'document',
                 $documentId,
