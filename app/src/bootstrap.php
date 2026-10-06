@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
+use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
@@ -44,6 +45,7 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Http\Zugriff;
 use App\Installer\InstallController;
+use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\BankAccountRepository;
@@ -112,6 +114,9 @@ use App\Service\Inbox\Posteingang;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobRunner;
+use App\Service\Ki\CurlChatHttp;
+use App\Service\Ki\KiAnbieterService;
+use App\Service\Ki\Verbindungstest;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\FreigabeBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -548,6 +553,22 @@ $csvFormate = static function () use ($connections, $view, $auditFor): CsvFormat
     $pdo = $connections->pdo();
 
     return new CsvFormatController($view, new Session(), new CsvProfileRepository($pdo), $auditFor($pdo));
+};
+
+// AI provider profiles (M7-1, issue #41): operating data under the server
+// key, no vault - only the AI provider pages open the connection.
+$kiAnbieter = static function () use ($connections, $view, $serverCrypto, $auditFor): KiAnbieterController {
+    $pdo = $connections->pdo();
+    $repository = new AiProviderRepository($pdo, $serverCrypto);
+
+    return new KiAnbieterController(
+        $view,
+        new Session(),
+        $repository,
+        new KiAnbieterService($repository),
+        new Verbindungstest(new CurlChatHttp()),
+        $auditFor($pdo),
+    );
 };
 
 // The public submission page itself (issue #24/M4-2): renders the form,
@@ -1027,6 +1048,7 @@ $router = new Router();
     $konten,
     $systemcheck,
     $csvFormate,
+    $kiAnbieter,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

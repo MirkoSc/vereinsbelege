@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
+use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
@@ -139,6 +140,9 @@ use App\View\View;
  * @param \Closure(): CsvFormatController $csvFormate built lazily, same
  *        reason as $mail: only the CSV format pages need the database
  *        (issue #61/M9-3).
+ * @param \Closure(): KiAnbieterController $kiAnbieter built lazily, same
+ *        reason as $mail: only the AI provider pages need the database
+ *        (issue #41/M7-1).
  */
 return static function (
     Router $router,
@@ -173,6 +177,7 @@ return static function (
     \Closure $konten,
     \Closure $systemcheck,
     \Closure $csvFormate,
+    \Closure $kiAnbieter,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -625,6 +630,20 @@ return static function (
     $post('/admin/kategorien/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kategorien()->loeschen($r, $params));
     $post('/admin/kategorien/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachOben($r, $params));
     $post('/admin/kategorien/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachUnten($r, $params));
+
+    // AI provider profiles (03 section 6 "Client", issue #41/M7-1): CRUD,
+    // the default profile and the connection test. Permission:
+    // `admin.settings` ("KI", 01 section 4). CSRF on all writes; the rules
+    // live in App\Service\Ki\KiAnbieterService. The API key is server-key
+    // ciphertext, no vault needed.
+    $get('/admin/ki-anbieter', $einstellungen, static fn(Request $r) => $kiAnbieter()->liste($r));
+    $get('/admin/ki-anbieter/neu', $einstellungen, static fn(Request $r) => $kiAnbieter()->neu($r));
+    $post('/admin/ki-anbieter', $einstellungen, static fn(Request $r) => $kiAnbieter()->anlegen($r));
+    $get('/admin/ki-anbieter/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->bearbeiten($r, $params));
+    $post('/admin/ki-anbieter/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->speichern($r, $params));
+    $post('/admin/ki-anbieter/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->loeschen($r, $params));
+    $post('/admin/ki-anbieter/{id:\d+}/standard', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->standard($r, $params));
+    $post('/admin/ki-anbieter/{id:\d+}/testen', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->testen($r, $params));
 
     // Public submission's spam defence (01 §5, issue #25/M4-3): rate/size/
     // page limits and the pause switch. Permission: `admin.settings`, same

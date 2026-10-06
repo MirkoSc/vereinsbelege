@@ -619,6 +619,32 @@ sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
 - Das Standardprofil ist nach der Installation „OpenAI" (ohne Key =
   KI-Funktionen deaktiviert, Belege werden dann nur manuell erfasst).
 
+**Umsetzung (M7-1, issue #41, Migration 024):** `/admin/ki-anbieter`
+(`admin.settings`) verwaltet die Profile (`App\Admin\KiAnbieterController`,
+Regeln in `App\Service\Ki\KiAnbieterService`, SQL in
+`App\Repository\AiProviderRepository`). Vorlagen sind
+`App\Service\Ki\KiVorlage` (bisher nur `OpenAi`, Modell `gpt-6-luna`;
+Anthropic/llama.cpp folgen in M7-1b/c). Regeln: Basis-URL nur `https://`,
+ohne Zugangsdaten, Parameter und `/chat/completions`; API-Key nur sichtbares
+ASCII (er landet in einem HTTP-Header); das Standardprofil ist nicht
+löschbar, nur ein aktives Profil kann Standard werden. Der Key wird nie
+zurück ins Formular geschrieben (leer = unverändert, Ankreuzfeld entfernt
+ihn) und nur über `AiProviderRepository::apiKey()` gelesen; ein mit anderem
+Server-Schlüssel verschlüsselter Key gilt als fehlend. Das
+**Fallback-Profil** kommt mit dem Client, der es nutzt (M7-2).
+
+Der **Verbindungstest** (`App\Service\Ki\Verbindungstest`) ist *ein*
+Aufruf mit festem Mini-Prompt, Zeitlimit `min(timeout_s, 20 s)`: bei
+`vision` mit einem erzeugten roten Testbild (das Modell muss „rot"
+antworten), bei `json_schema` mit `response_format` und Mini-Schema
+`{ok, farbe}`. Ohne `max_tokens`/`temperature`, weil neuere OpenAI-Modelle
+beide unter diesem Namen ablehnen. Ergebnis als Meldung (HTTP-Status
+übersetzt, Text des Anbieters gekürzt und um den Key bereinigt), nichts
+wird geloggt. Transport ist `App\Service\Ki\ChatHttp`
+(`CurlChatHttp`: nur HTTPS, folgt **keinen** Weiterleitungen, damit der
+Bearer-Key nicht an ein Umleitungsziel geht) – darauf baut M7-2 den
+`LlmClient` auf.
+
 ### Auslese-Schema (Prompt-Version `extract-v1`)
 
 ```json
@@ -838,7 +864,15 @@ mehrere Quellen, Idempotenz eines wiederholten Uploads, Sperre und
 Gift-Job-Schutz über viele Requests hinweg – Details: 06-betrieb.md §4);
 Textlayer-Heuristik; ZUGFeRD-/XRechnung-Fixtures;
 KI-Client mit aufgezeichneten Antworten (gültig, ungültig + Reparatur,
-Timeout, HTTP-Fehler, kein JSON); Betrags-Parsing („1.234,56", „1234.56",
+Timeout, HTTP-Fehler, kein JSON); KI-Anbieter (`VerbindungstestTest` mit
+`tests/fixtures/llm/verbindungstest/`: Bild + Schema in einem Aufruf,
+Klartext-Anfrage ohne Fähigkeiten, 401 ohne Key im Ergebnis, HTTP-Fehler,
+Timeout, kein JSON, Testbild nicht erkannt; `KiAnbieterRegelnTest`:
+Basis-URL; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard ohne
+Key, Key nur als Server-Chiffrat und nie auf einer Seite, leer =
+unverändert, Entfernen, fremder Server-Schlüssel, Validierung, genau ein
+Standard und nicht löschbar, Verbindungstest mit gespeichertem Key, kein
+Key im Log, CSRF); Betrags-Parsing („1.234,56", „1234.56",
 negativ) und Summenprüfung; Lieferanten-Auflösung über alle 6 Stufen inkl.
 Rechtsform-Normalisierung; Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);
