@@ -68,6 +68,38 @@ leer → Ebene entfällt).
   `{kategorie}`, `{nr}`, `{betrag}`.
 - Dateinamen: Umlaute bleiben, für Windows/ZIP verbotene Zeichen
   (`\/:*?"<>|`) → `-`, Länge begrenzt, Kollisionen per Suffix.
+- **Umsetzung Muster (M12-1, issue #75):** `App\Service\Export\PfadMuster`
+  (Parsen/Prüfen/Auflösen, rein – ohne DB, Session, Tresor; die Werte kommen
+  entschlüsselt als `BelegPfadDaten`), `Dateiname` (Bereinigung),
+  `PfadVergabe` (Kollisionen), `ExportEinstellungen` (Setting
+  `export_pfad_muster`, Admin-Seite `/admin/export`, Recht
+  `admin.settings`, Audit `einstellung.export`; Vorschau nur mit erfundenen
+  Belegen). Regeln:
+  - `/` trennt Ebenen, die letzte ist der Dateiname; ein `.pdf` am Ende ist
+    optional – die Endung kommt aus der exportierten Datei (Originale können
+    JPEG/PNG sein).
+  - Abgelehnt werden: leeres Muster, > 300 Zeichen, `\`, `/` am Anfang/Ende,
+    leere Ebenen, Ebenen nur aus `.`/`..`, unbekannte Platzhalter, `{`/`}`
+    außerhalb von Platzhaltern, verbotene Zeichen im festen Text.
+  - Jeder Platzhalterwert wird **einzeln** bereinigt (verbotene Zeichen und
+    Steuerzeichen → `-`, Tab/Zeilenumbruch → Leerzeichen), bevor er
+    eingesetzt wird – ein Wert öffnet nie eine eigene Ebene. Danach je Ebene:
+    Leerraum zusammengefasst, kein Leerzeichen/Punkt am Ende (Windows; `..`
+    wird so leer), höchstens 80 Zeichen, Windows-Gerätenamen (`CON`, `NUL`,
+    `COM1` …) bekommen ein `_`. Eine leer gewordene Ordnerebene entfällt
+    (nicht nur bei `{kasse}`), ein leerer Dateiname wird zu „Beleg“.
+  - Fehlende Werte: `{lieferant}` → „_Ohne Lieferant“ (auch im Dateinamen),
+    `{kategorie}` → „_Ohne Kategorie“, `{nr}` → leer. `{betrag}` = Brutto
+    „1.234,56“, bei anderer Währung als EUR mit Kürzel („12,00 USD“) –
+    Integer-Rechnung, nie `float`.
+  - Kollisionen: Suffix ` (2)`, ` (3)` … vor der Endung; Vergleich ohne
+    Groß-/Kleinschreibung (Windows/macOS), ein Ordner behält die zuerst
+    vergebene Schreibweise; der Name wird gekürzt, nie das Suffix. Die
+    Nummerierung folgt der Aufrufreihenfolge – der Export sortiert fest
+    (Belegdatum, ID), damit wiederholte Läufe dieselben Namen ergeben.
+  - Wurzelordner/ZIP-Name (`ExportEinstellungen::wurzelordner()`) nennen nur
+    den Zeitraum („Belege_2026“, sonst „Belege_2026-01-01_bis_2026-03-31“) –
+    keine fachlichen Daten in Download-Name, URL oder Header.
 - **Kein Klartext auf dem Server**: ZIP wird **gestreamt** erzeugt
   (reine PHP-Zip-Streaming-Bibliothek, z. B. maennchen/zipstream-php –
   prüfen), Dateien werden chunkweise entschlüsselt direkt in den
