@@ -126,6 +126,20 @@ final readonly class DocumentRepository
     }
 
     /**
+     * The text recognition status (docs/spec/02-datenmodell.md, issue
+     * #45/M7-3: set by the `extract_text` job, App\Service\Document\
+     * Texterkennung). Derived from files that never change, like
+     * `content_bi` - so a locked document takes it as well.
+     */
+    public function setzeOcrStatus(int $id, OcrStatus $status): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE document SET ocr_status = ? WHERE id = ?');
+        $stmt->bindValue(1, $status->value);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * The inbox list, newest first: the status group, period and cost center
      * of the filter, always narrowed to what $bereich allows (cost center
      * scope on `cost_center_id`, period scope on `created_at`).
