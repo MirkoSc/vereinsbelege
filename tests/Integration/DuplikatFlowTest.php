@@ -805,7 +805,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the guard
         // second, the inbox 21st, the review page 27th.
-        $controller = array_fill(0, 32, $unerreichbar);
+        $controller = array_fill(0, 33, $unerreichbar);
         $controller[1] = $guard;
         $controller[20] = $posteingang;
         $controller[26] = $pruefung;

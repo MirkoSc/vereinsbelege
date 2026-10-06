@@ -27,6 +27,7 @@ use App\App\AuthController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
+use App\App\KontoauszugController;
 use App\App\LoginCompleter;
 use App\App\MfaController;
 use App\App\MfaToolbox;
@@ -50,6 +51,8 @@ use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\BankAccountRepository;
+use App\Repository\BankImportRepository;
+use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -97,6 +100,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\Kassensturz;
+use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\AuthTokenCleanupTask;
@@ -106,6 +110,7 @@ use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
+use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\Duplikatpruefung;
@@ -333,6 +338,11 @@ $cron = static fn(): CronController => new CronController($config, static functi
             // ever claimed.
             new SubmissionUploadCleanupTask(
                 new SubmissionUploadRepository($pdo),
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            ),
+            // M9-4: statement imports that stayed a preview for a week.
+            new BankImportCleanupTask(
+                new BankImportRepository($pdo),
                 new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             ),
             new MailCleanupTask($mailQueueFor($pdo)),
@@ -569,6 +579,36 @@ $kiAnbieter = static function () use ($connections, $view, $serverCrypto, $audit
         new KiAnbieterService($repository),
         new Verbindungstest(new CurlChatHttp()),
         $auditFor($pdo),
+    );
+};
+
+// Statement import (M9-4, issue #62): reads the encrypted file and writes
+// bookings with the session's unlocked vault - only these pages open the
+// connection.
+$kontoauszuege = static function () use ($connections, $view, $auditFor, $paths): KontoauszugController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $kontoRecords = new BankAccountRepository($pdo);
+    $konten = new BankAccountService($pdo, $kontoRecords);
+    $profile = new CsvProfileRepository($pdo);
+
+    return new KontoauszugController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new KontoauszugImport(
+            $pdo,
+            new BankImportRepository($pdo),
+            new BankTransactionRepository($pdo),
+            $kontoRecords,
+            $konten,
+            $profile,
+            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            new SettingRepository($pdo),
+            $auditFor($pdo),
+        ),
+        $konten,
+        $profile,
     );
 };
 
@@ -1060,6 +1100,7 @@ $router = new Router();
     $csvFormate,
     $exportAdmin,
     $kiAnbieter,
+    $kontoauszuege,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

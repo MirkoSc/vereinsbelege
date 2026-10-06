@@ -62,4 +62,22 @@ final class IbanTest extends TestCase
     {
         self::assertSame('DE89 3704 0044 0532 0130 00', Iban::formatieren('de89370400440532013000'));
     }
+    public function testAGermanIbanIsBuiltFromBankCodeAndAccountNumber(): void
+    {
+        self::assertSame('DE89370400440532013000', Iban::ausBlzUndKonto('37040044', '532013000'));
+        self::assertSame('DE89370400440532013000', Iban::ausBlzUndKonto('37040044', '0532013000'));
+        $sparkasse = Iban::ausBlzUndKonto('12345678', '0001234567');
+        self::assertNotNull($sparkasse);
+        self::assertTrue(Iban::istGueltig($sparkasse));
+        self::assertStringEndsWith('123456780001234567', $sparkasse);
+    }
+
+    public function testNoIbanIsGuessedFromSomethingElse(): void
+    {
+        self::assertNull(Iban::ausBlzUndKonto('GENODEF1XXX', '1234567'), 'A BIC is no bank code.');
+        self::assertNull(Iban::ausBlzUndKonto('1234567', '1234567'));
+        self::assertNull(Iban::ausBlzUndKonto('12345678', '12345678901'));
+        self::assertNull(Iban::ausBlzUndKonto('12345678', ''));
+        self::assertNull(Iban::ausBlzUndKonto('12345678', '12-34'));
+    }
 }

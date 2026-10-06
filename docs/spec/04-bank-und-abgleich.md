@@ -140,6 +140,100 @@ Buchungsdatum, Betrag, normalisierter Zweck, Gegenseite-IBAN,
 laufender Index innerhalb identischer Schlüssel am selben Tag)`. Derselbe
 Export zweimal importiert → 0 neue Buchungen.
 
+**Umsetzung (M9-4, issue #62):** `/app/konten/import`, Recht `bank.import`
+auf jeder Route (CSRF auf jedem POST), Tabellen `bank_import` und
+`bank_transaction` (Migration 025, Spalten in 02 „Fachdaten“). Fachlogik in
+`App\Service\Bank\Import\` (`KontoauszugLeser`, `Dedupschluessel`,
+`Saldenpruefung` rein und ohne Repository; `KontoauszugImport` als Service).
+Alles braucht den entsperrten Tresor, nur „Verwerfen“ nicht. Festgelegte
+Regeln:
+
+- **Upload** über ein normales Formular (höchstens 2 MB, wie der
+  CSV-Assistent), nicht über die Chunk-Komponente: Kontoauszüge sind klein,
+  und die Komponente nimmt nur Bilder/PDF unter `document.submit_internal`
+  an. Die Datei wird einmal probegelesen und dann unverändert als
+  verschlüsselter Blob gespeichert (Originalname nur in `meta_enc`). Was
+  sich nicht importieren lässt, wird abgelehnt, **ohne** etwas zu speichern:
+  unlesbar, leer, keine Buchung, CSV ohne passendes Format (mit Link auf
+  „CSV-Formate“), MT940 mit Auszügen **mehrerer Konten** (ein Import gehört
+  zu einem Konto). Meldungen nennen höchstens Zeile und Feld.
+- **Format:** „Automatisch“ erkennt MT940 an `:20:`/`{1:` in den ersten
+  Zeilen, sonst CSV über die Profil-Erkennung (§3); wählbar sind auch MT940
+  oder ein bestimmtes CSV-Format. Gespeichert als `mt940` bzw.
+  `csv:<profil-id>` – jeder Schritt liest die Datei genau so wie die
+  Vorschau.
+- **Konto:** (1) die IBAN aus `:25:` bzw. BLZ/Kontonummer als deutsche IBAN
+  (`App\Domain\Iban::ausBlzUndKonto()`) über `iban_bi`; (2) sonst das Konto
+  des letzten fertigen Imports mit derselben Kontozeile (`source_bi`,
+  „Merken“); (3) sonst die Auswahl im Formular; (4) sonst fragt die Vorschau
+  „Welches Konto?“. CSV-Dateien nennen kein Konto. Eine Auswahl, die der
+  Datei widerspricht, wird abgelehnt (mit Name des richtigen Kontos). Nur
+  aktive Bankkonten nehmen Importe an – keine Kasse, kein deaktiviertes.
+- **Vorschau** (nichts geschrieben außer `bank_import` + Blob, bei jedem
+  Aufruf neu aus der Datei berechnet): Datei, Konto, Zeitraum, Anzahl, davon
+  neu / schon vorhanden (Dedup-Schlüssel gegen das Konto), vor dem Stichtag,
+  fehlerhafte CSV-Zeilen (Zeile + Meldung, nicht übernommen), vorgemerkte
+  Umsätze (übersprungen), Saldenprüfung und alle Buchungen (aufklappbar).
+- **Stichtag:** Buchungen vor dem Stichtag des Anfangssaldos werden
+  **mitübernommen** und in der Vorschau gezählt; zum Kontostand ab Stichtag
+  gehören sie nicht.
+- **Warnungen statt Abbruch:** Saldenabweichung und Zeilenfehler halten den
+  Import nicht auf; der Knopf heißt dann „Trotz Warnungen übernehmen“. Eine
+  korrigierte Datei bringt später genau die fehlenden Buchungen nach.
+- **Dedup-Schlüssel** (`App\Service\Bank\Import\Dedupschluessel`, Zweck
+  `bank_transaction.dedup`): Wert `[Konto-ID, Buchungsdatum, Cent, Zweck,
+  Gegen-IBAN]` + laufende Nummer unter gleichen Werten in Dateireihenfolge.
+  Der Zweck (`verwendungszweck`, bei MT940 der `SVWZ+`-Teil) zählt klein
+  geschrieben und nur mit Buchstaben/Ziffern – 27-Zeichen-Fügungen und
+  Leerraum spielen keine Rolle. Ein Wechsel zwischen MT940 und CSV für
+  denselben Zeitraum wird nur erkannt, wenn die Bank in beiden Formaten
+  denselben Zweck liefert – nicht garantiert.
+- **Saldenprüfung** (`Saldenpruefung`, Ergebnis `ok`/`abweichung`/`n.v.` in
+  `balance_check`, Differenzen nur in der Vorschau): MT940 je Auszug
+  Anfang + Umsätze = Schluss und lückenlos von Auszug zu Auszug; CSV mit
+  „Saldo nach Buchung“ als Kette Zeile für Zeile; CSV ohne Salden `n.v.`.
+  Dazu der **Anschluss** („zuletzt bekannter Kontostand“, §3): Anfangsstand
+  der Datei vor ihrem ersten Buchungstag gegen Anfangssaldo + gespeicherte
+  Buchungen ab Stichtag bis zum Vortag – nicht prüfbar, wenn die Datei vor
+  dem Stichtag beginnt.
+- **Reihenfolge:** Eine CSV-Datei, die neueste zuerst schreibt, wird
+  umgedreht (an den Daten erkannt, bei einem einzigen Tag an der
+  Saldenkette); geschrieben wird älteste zuerst.
+- **Schrittkette** (seitengesteuert, nicht über `/api/jobs/step`, 06 §4):
+  „Übernehmen“ setzt `laeuft`, `public/js/kontoauszug.js` ruft
+  `POST /app/konten/import/{id}/schritt` bis `fertig`. Ein Schritt schreibt
+  höchstens 100 Buchungen in **einer** kurzen Transaktion und rückt den
+  Cursor nur von genau dem Wert weiter, den er gelesen hat (zweiter Tab oder
+  wiederholter Request schreibt nichts doppelt); `UNIQUE(account_id,
+  dedup_bi)` ist das Netz darunter. Ein Schritt ohne Fortschritt beendet die
+  Kette mit „Fortsetzen“. Am Ende zählt `neu` die Zeilen des Imports,
+  `duplikat` den Rest.
+- **Neue Buchungen:** `direction` aus dem Vorzeichen (0 gilt als Einnahme),
+  Ausgabe `doc_required = 1`/`fehlt`, Einnahme `0`/`nicht_noetig` (E-17; das
+  Setting und Regeln kommen mit M9-6), `source = import`, `counterparty_bi`
+  aus der IBAN der Gegenseite.
+- **Verwerfen** löscht eine Vorschau samt Datei; ein bestätigter Import
+  bleibt. Liegen gebliebene Vorschauen räumt der Cron nach 7 Tagen ab
+  (`BankImportCleanupTask`, 06 §4).
+- **Audit:** `kontoauszug.importiert` (Entität `bank_import`) beim
+  Abschluss, Details nur Format, Zähler und Saldenprüfung – nie Beträge,
+  IBANs, Namen oder der Dateiname.
+- Was danach automatisch laufen soll (Punkt 4 oben: Regeln, `doc_required`,
+  Abgleich), hängen M9-6 und M10 an den Abschluss eines Imports.
+
+**Pflicht-Tests M9-4:** `KontoauszugLeserTest`, `DedupschluesselTest`
+(gleiche Datei, laufende Nummer, Normalisierung, Teil-/Gesamtexport MT940
+und CSV), `SaldenpruefungTest` (MT940 ok/abweichend/Lücke/Währung,
+CSV-Kette auf-/absteigend, n.v., Anschluss), `IbanTest` (BLZ → IBAN),
+`KontoauszugImportFlowTest` (Sparkasse- und VR-Bank-Fixtures für MT940 und
+CSV-CAMT; verschlüsselt, Blind Indexes nachgerechnet; doppelter und
+überlappender Import; Anschluss und Lücke; Warnungen; Stichtag; vorgemerkt;
+Zeilenfehler und Nachimport; Konto gemerkt, Konflikt, Kasse/inaktiv;
+Ablehnung ohne Speichern; Verwerfen; wiederholter/paralleler Schritt; ohne
+Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
+`BankImportCleanupTaskTest`, `RoutePermissionMatrixTest` (nur
+`bank.import`), `tests/js/kontoauszug.test.js`.
+
 ## 5. Abgleich Beleg ↔ Buchung
 
 ### Modell

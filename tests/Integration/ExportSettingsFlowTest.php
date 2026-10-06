@@ -200,8 +200,8 @@ final class ExportSettingsFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the export pattern page last.
-        $controller = array_fill(0, 32, $unerreichbar);
+        // guard second, the export pattern page 31st.
+        $controller = array_fill(0, 33, $unerreichbar);
         $controller[1] = $guard;
         $controller[30] = $exportAdmin;
 

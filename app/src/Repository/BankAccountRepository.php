@@ -106,7 +106,7 @@ final readonly class BankAccountRepository
 
     /**
      * The account that carries this IBAN blind index, other than $ausser -
-     * what the uniqueness check and later the statement import (M9-4) ask.
+     * what the uniqueness check and the statement import (M9-4) ask.
      */
     public function idWithIban(string $ibanBi, ?int $ausser = null): ?int
     {
@@ -121,14 +121,19 @@ final readonly class BankAccountRepository
 
     /**
      * How often the account is referred to - an account in use is
-     * deactivated, not deleted: its cash counts (`cash_count`). Every later
-     * table with an account_id (`bank_import`, `bank_transaction`, M9-4)
-     * adds its foreign key with ON DELETE RESTRICT and is counted here.
+     * deactivated, not deleted: its cash counts (`cash_count`), statement
+     * imports (`bank_import`, a preview included) and bookings
+     * (`bank_transaction`, M9-4). Every later table with an account_id adds
+     * its foreign key with ON DELETE RESTRICT and is counted here.
      */
     public function usageCount(int $id): int
     {
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM cash_count WHERE account_id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->pdo->prepare(
+            'SELECT (SELECT COUNT(*) FROM cash_count WHERE account_id = ?)
+                  + (SELECT COUNT(*) FROM bank_import WHERE account_id = ?)
+                  + (SELECT COUNT(*) FROM bank_transaction WHERE account_id = ?)',
+        );
+        $stmt->execute([$id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

@@ -73,6 +73,7 @@ enum AuditAction: string
     case KiAnbieterGeaendert = 'ki_anbieter.geaendert';
     case KiAnbieterGeloescht = 'ki_anbieter.geloescht';
     case KiAnbieterStandard = 'ki_anbieter.standard';
+    case KontoauszugImportiert = 'kontoauszug.importiert';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -153,6 +154,7 @@ enum AuditAction: string
             self::KiAnbieterGeaendert => 'KI-Anbieter geändert',
             self::KiAnbieterGeloescht => 'KI-Anbieter gelöscht',
             self::KiAnbieterStandard => 'KI-Standardprofil gewählt',
+            self::KontoauszugImportiert => 'Kontoauszug importiert',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -201,6 +203,7 @@ enum AuditAction: string
             self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',
             self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
             self::KiAnbieterStandard => 'ai_provider',
+            self::KontoauszugImportiert => 'bank_import',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -229,6 +232,7 @@ enum AuditAction: string
             'cash_count' => 'Kassensturz',
             'csv_profile' => 'CSV-Format',
             'ai_provider' => 'KI-Anbieter',
+            'bank_import' => 'Kontoauszug-Import',
             'document' => 'Beleg',
             default => $entity,
         };

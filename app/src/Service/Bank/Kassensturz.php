@@ -46,9 +46,10 @@ final readonly class Kassensturz
 
     /**
      * What the cash box should hold at the end of $stichtag: the opening
-     * balance plus the cash bookings up to that day. There are no bookings
-     * yet (`bank_transaction` comes with M9-4/M9-5), so for now this is the
-     * opening balance; M9-5 adds the sum of the bookings here.
+     * balance plus the cash bookings up to that day. A cash box has no
+     * bookings yet - the statement import (M9-4) writes `bank_transaction`
+     * for bank accounts only - so for now this is the opening balance; M9-5
+     * adds the manual cash bookings here.
      */
     public function sollBestand(BankAccount $kasse, \DateTimeImmutable $stichtag): int
     {
