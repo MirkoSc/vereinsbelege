@@ -1,0 +1,1 @@
+{"id":"chatcmpl-test0005","object":"chat.completion","created":1790000000,"model":"gpt-6-luna-2026-08-01","choices":[{"index":0,"message":{"role":"assistant","content":"Hallo! Wie kann ich helfen?"},"finish_reason":"stop"}]}

@@ -142,7 +142,7 @@ Export zweimal importiert → 0 neue Buchungen.
 
 **Umsetzung (M9-4, issue #62):** `/app/konten/import`, Recht `bank.import`
 auf jeder Route (CSRF auf jedem POST), Tabellen `bank_import` und
-`bank_transaction` (Migration 024, Spalten in 02 „Fachdaten“). Fachlogik in
+`bank_transaction` (Migration 025, Spalten in 02 „Fachdaten“). Fachlogik in
 `App\Service\Bank\Import\` (`KontoauszugLeser`, `Dedupschluessel`,
 `Saldenpruefung` rein und ohne Repository; `KontoauszugImport` als Service).
 Alles braucht den entsperrten Tresor, nur „Verwerfen“ nicht. Festgelegte

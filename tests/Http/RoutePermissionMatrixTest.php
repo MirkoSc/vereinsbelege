@@ -225,11 +225,25 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/einreichung', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/einreichung', false],
+            // Export pattern (M12-1): admin.settings, like Einreichung -
+            // export.zip alone (Vorstand, Finanzen) does not configure it.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/export', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/export/vorschau', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/export', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/export', false],
             // Kategorien (M6-1): admin.settings, like Kostenstellen.
             [SystemRole::Admin, HttpMethod::Get, '/admin/kategorien', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/kategorien/3/nach-oben', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/kategorien', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/admin/kategorien', false],
+            // KI-Anbieter (M7-1): admin.settings ("KI", 01 section 4) - also
+            // the connection test, which spends the club's provider credit.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/ki-anbieter', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/ki-anbieter/3/testen', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/admin/ki-anbieter', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/ki-anbieter/3/testen', false],
+            [SystemRole::Vorstand, HttpMethod::Post, '/admin/ki-anbieter/3/standard', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/ki-anbieter/3', false],
             // Lieferanten (M6-2): supplier.manage - Admin and Finanzen only,
             // reading included; Vorstand, Kassenprüfer and Steuerberater do not
             // maintain suppliers.
@@ -513,6 +527,8 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

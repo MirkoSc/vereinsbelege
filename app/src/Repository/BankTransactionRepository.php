@@ -10,7 +10,7 @@ use App\Domain\BankTransactionRecord;
 use App\Domain\BankTransactionSource;
 
 /**
- * The `bank_transaction` table (migrations/024_bank_import.sql, M9-4,
+ * The `bank_transaction` table (migrations/025_bank_import.sql, M9-4,
  * issue #62, docs/spec/02-datenmodell.md "Fachdaten"). SQL only - the
  * encryption lives in App\Service\Bank\KontoauszugImport.
  */

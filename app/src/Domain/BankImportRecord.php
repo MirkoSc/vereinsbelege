@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain;
 
 /**
- * One `bank_import` row (migrations/024_bank_import.sql, M9-4, issue #62).
+ * One `bank_import` row (migrations/025_bank_import.sql, M9-4, issue #62).
  * Plaintext only: ids, the format, dates, counts and states.
  */
 final readonly class BankImportRecord

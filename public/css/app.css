@@ -451,6 +451,11 @@ main.inhalt {
     margin-bottom: 0;
 }
 
+/* Karten untereinander (z. B. eine je KI-Anbieter-Profil) brauchen Luft. */
+.karte + .karte {
+    margin-top: var(--abstand-4);
+}
+
 .leer {
     padding: var(--abstand-6) var(--abstand-4);
     color: var(--farbe-gedaempft);

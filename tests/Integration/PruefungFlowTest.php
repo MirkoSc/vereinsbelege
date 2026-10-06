@@ -1325,8 +1325,8 @@ final class PruefungFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the review page fifth from last.
-        $controller = array_fill(0, 31, $unerreichbar);
+        // guard second, the review page 27th.
+        $controller = array_fill(0, 33, $unerreichbar);
         $controller[1] = $guard;
         $controller[26] = $pruefung;
 

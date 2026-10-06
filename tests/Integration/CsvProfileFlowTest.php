@@ -538,9 +538,10 @@ final class CsvProfileFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the account pages fourth from last, the CSV formats
-        // second from last.
-        $controller = array_fill(0, 31, $unerreichbar);
+        // guard second, the account pages 28th, the CSV formats 30th, the
+        // export pattern page 31st, the AI provider pages 32nd, the
+        // statement import 33rd.
+        $controller = array_fill(0, 33, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
         $controller[29] = $csvFormate;

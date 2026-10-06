@@ -10,7 +10,7 @@ use App\Domain\BankImportStats;
 use App\Domain\BankImportStatus;
 
 /**
- * The `bank_import` table (migrations/024_bank_import.sql, M9-4, issue #62,
+ * The `bank_import` table (migrations/025_bank_import.sql, M9-4, issue #62,
  * docs/spec/04-bank-und-abgleich.md section 4). SQL only - reading the file
  * and the rules live in App\Service\Bank\KontoauszugImport.
  *

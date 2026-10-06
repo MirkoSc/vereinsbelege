@@ -69,6 +69,10 @@ enum AuditAction: string
     case CsvFormatAngelegt = 'csv_format.angelegt';
     case CsvFormatGeaendert = 'csv_format.geaendert';
     case CsvFormatGeloescht = 'csv_format.geloescht';
+    case KiAnbieterAngelegt = 'ki_anbieter.angelegt';
+    case KiAnbieterGeaendert = 'ki_anbieter.geaendert';
+    case KiAnbieterGeloescht = 'ki_anbieter.geloescht';
+    case KiAnbieterStandard = 'ki_anbieter.standard';
     case KontoauszugImportiert = 'kontoauszug.importiert';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
@@ -96,6 +100,7 @@ enum AuditAction: string
     case EinstellungSpeicher = 'einstellung.speicher';
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
     case EinstellungEinreichung = 'einstellung.einreichung';
+    case EinstellungExport = 'einstellung.export';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -145,6 +150,10 @@ enum AuditAction: string
             self::CsvFormatAngelegt => 'CSV-Format angelegt',
             self::CsvFormatGeaendert => 'CSV-Format geändert',
             self::CsvFormatGeloescht => 'CSV-Format gelöscht',
+            self::KiAnbieterAngelegt => 'KI-Anbieter angelegt',
+            self::KiAnbieterGeaendert => 'KI-Anbieter geändert',
+            self::KiAnbieterGeloescht => 'KI-Anbieter gelöscht',
+            self::KiAnbieterStandard => 'KI-Standardprofil gewählt',
             self::KontoauszugImportiert => 'Kontoauszug importiert',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
@@ -162,6 +171,7 @@ enum AuditAction: string
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
+            self::EinstellungExport => 'Export-Muster geändert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -191,6 +201,8 @@ enum AuditAction: string
             self::KontoAngelegt, self::KontoGeaendert, self::KontoGeloescht => 'bank_account',
             self::KassensturzErfasst => 'cash_count',
             self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',
+            self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
+            self::KiAnbieterStandard => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
@@ -199,7 +211,7 @@ enum AuditAction: string
             self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
-            self::EinstellungEinreichung,
+            self::EinstellungEinreichung, self::EinstellungExport,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
         };
     }
@@ -219,6 +231,7 @@ enum AuditAction: string
             'bank_account' => 'Konto',
             'cash_count' => 'Kassensturz',
             'csv_profile' => 'CSV-Format',
+            'ai_provider' => 'KI-Anbieter',
             'bank_import' => 'Kontoauszug-Import',
             'document' => 'Beleg',
             default => $entity,
