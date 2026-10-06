@@ -225,6 +225,12 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/einreichung', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/einreichung', false],
+            // Export pattern (M12-1): admin.settings, like Einreichung -
+            // export.zip alone (Vorstand, Finanzen) does not configure it.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/export', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/export/vorschau', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/export', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/export', false],
             // Kategorien (M6-1): admin.settings, like Kostenstellen.
             [SystemRole::Admin, HttpMethod::Get, '/admin/kategorien', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/kategorien/3/nach-oben', true],
@@ -506,6 +512,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

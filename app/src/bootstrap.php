@@ -8,6 +8,7 @@ use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
+use App\Admin\ExportSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
@@ -633,6 +634,15 @@ $einreichungAdmin = static function () use ($connections, $view, $auditFor): Sub
     return new SubmissionSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
 };
 
+// The ZIP export's path pattern (issue #75/M12-1, docs/spec/
+// 05-auswertung-und-export.md section 2). Permission: `admin.settings`.
+// Built lazily like $mail - only this page needs the database.
+$exportAdmin = static function () use ($connections, $view, $auditFor): ExportSettingsController {
+    $pdo = $connections->pdo();
+
+    return new ExportSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+};
+
 // User management and vault grants (M3-7, issue #20). One small factory
 // for the collaborators the admin pages, the invitation page and the reset
 // share: the notice to the admins who can grant goes out from all three.
@@ -1048,6 +1058,7 @@ $router = new Router();
     $konten,
     $systemcheck,
     $csvFormate,
+    $exportAdmin,
     $kiAnbieter,
 );
 

@@ -730,7 +730,7 @@ final class BankAccountFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the account pages 28th.
-        $controller = array_fill(0, 31, $unerreichbar);
+        $controller = array_fill(0, 32, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
 

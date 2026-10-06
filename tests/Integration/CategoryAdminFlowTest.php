@@ -456,6 +456,7 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,
+            $unerreichbar,
         );
 
         return new Kernel(
