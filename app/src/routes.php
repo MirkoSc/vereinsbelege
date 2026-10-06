@@ -10,6 +10,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
 use App\Admin\StorageController;
+use App\Admin\ExportSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
@@ -139,6 +140,9 @@ use App\View\View;
  * @param \Closure(): CsvFormatController $csvFormate built lazily, same
  *        reason as $mail: only the CSV format pages need the database
  *        (issue #61/M9-3).
+ * @param \Closure(): ExportSettingsController $exportAdmin built lazily,
+ *        same reason as $mail: only the export pattern page needs the
+ *        database (issue #75/M12-1).
  */
 return static function (
     Router $router,
@@ -173,6 +177,7 @@ return static function (
     \Closure $konten,
     \Closure $systemcheck,
     \Closure $csvFormate,
+    \Closure $exportAdmin,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -633,6 +638,14 @@ return static function (
     $post('/admin/einreichung', $einstellungen, static fn(Request $r) => $einreichungAdmin()->save($r));
     $post('/admin/einreichung/pausieren', $einstellungen, static fn(Request $r) => $einreichungAdmin()->pausieren($r));
     $post('/admin/einreichung/fortsetzen', $einstellungen, static fn(Request $r) => $einreichungAdmin()->fortsetzen($r));
+
+    // ZIP export path pattern (05 §2, issue #75/M12-1): folders and file
+    // names of the export. Permission: `admin.settings`, same right as
+    // Einreichung. The preview uses made-up receipts, so no vault; CSRF on
+    // both writes (the preview is a POST because it carries the input).
+    $get('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->page($r));
+    $post('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->save($r));
+    $post('/admin/export/vorschau', $einstellungen, static fn(Request $r) => $exportAdmin()->vorschau($r));
 
     // Update and maintenance. Permission: `admin.system` ("Backup, Update,
     // Wartung", 01 section 4); CSRF on all writes.
