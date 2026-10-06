@@ -23,9 +23,80 @@
 (`kind`), IBAN/Name/Anfangssaldo im Tresor, IBAN eindeutig über
 `iban_bi`; Lesen `bank.view`, Pflegen und Kassensturz `bank.book`. Der
 Kassensturz zeigt Soll/Ist/Differenz vor dem Speichern und hält beides
-append-only fest. **Den Buchungsvorschlag „Kassendifferenz“ übernimmt M9-5**
-(issue #63) zusammen mit den manuellen Kassenbuchungen – bis dahin ist der
-Soll-Bestand der Anfangsbestand.
+append-only fest.
+
+**Umsetzung (M9-5, issue #63):** `/app/buchungen` (`App\App\
+BuchungController`, Regeln und Verschlüsselung in `App\Service\Bank\
+Buchungen`, Filter `App\Service\Bank\BuchungFilter`), keine Migration –
+`bank_transaction` (M9-4) nimmt manuelle Buchungen schon auf. Rechte wie
+bei den Konten: **Liste und Einzelansicht `bank.view`**, **Erfassen,
+Ändern, Löschen `bank.book`**; CSRF auf jedem POST; alles braucht den
+entsperrten Tresor (ohne: nur ein Hinweis). Festgelegte Regeln:
+
+- **Buchungsliste:** alle Buchungen (Import und manuell), neueste zuerst,
+  als Karten unter 48 rem. Filter Konto, Von/Bis, Richtung, Beleg-Status,
+  Herkunft, Kategorie (auch „ohne Kategorie“) in SQL, die Suche in Zweck,
+  Gegenseite und Buchungstext nach dem Entschlüsseln in PHP. **Ohne
+  Datumsangabe gilt das laufende Jahr** (Geschäftsjahr, E-16) – jede
+  angezeigte Zeile wird entschlüsselt; beide Datumsfelder leeren zeigt
+  alle Jahre. Darüber die Summen Einnahmen/Ausgaben/Saldo der angezeigten
+  Zeilen. Der Zeitraum-Scope externer Rollen filtert `booking_date` per
+  `Zugriffsbereich::sqlBedingung()`; eine Buchung außerhalb ist auch
+  einzeln nicht abrufbar (404). Eine Buchung hat keine Kostenstelle – ein
+  Kostenstellen-Scope sieht keine.
+- **Kennzeichnung:** Marke je Beleg-Status („Beleg fehlt“ warnend, „kein
+  Beleg nötig“ neutral, „Beleg zugeordnet“ ok) und „manuell“ für von Hand
+  erfasste Buchungen. Eine Einnahme ohne Beleg ist damit sichtbar, aber
+  kein Mangel.
+- **Manuelle Buchung** (auf jedem aktiven Konto, Bank wie Kasse):
+  Pflicht Konto, Datum, Betrag, Richtung, Kategorie, Zweck (≤ 300
+  Zeichen); optional „Von wem / an wen“ (≤ 100 Zeichen, landet in
+  `counterparty_name`). Der Betrag wird **positiv** eingegeben, die
+  Richtung gibt das Vorzeichen (`amount` in Cent mit Vorzeichen wie beim
+  Import). Datum nicht in der Zukunft und **nicht vor dem Stichtag** des
+  Kontos – der Bestand zählt Buchungen ab dem Stichtag. Die Kategorie muss
+  zur Richtung passen (oder `beide`); deaktivierte Kategorien und Konten
+  werden nicht angeboten, eine bestehende Buchung behält ihre.
+- **Beleg nötig?** Auswahl „nach Richtung“ (Default, E-17: Ausgabe ja,
+  Einnahme nein), „Beleg nötig“ oder „kein Beleg nötig“ → `doc_required`/
+  `doc_status`. Das Setting und Regeln dafür kommen mit M9-6.
+- **Ändern/Löschen** nur für `source = manuell` (das Repository schränkt
+  `UPDATE`/`DELETE` zusätzlich auf `manuell` ein); eine importierte Buchung
+  ist schreibgeschützt und zeigt alle Bankfelder. Ein zugeordneter Beleg
+  (M10) bleibt beim Ändern zugeordnet und verhindert das Löschen.
+  Bestehende Kassenstürze bleiben unverändert (sie halten Soll und Ist
+  ihres Zeitpunkts fest).
+- **Kassenbuchungen im Soll-Bestand:** `Kassensturz::sollBestand()` =
+  Anfangsbestand + Summe der Buchungen vom Stichtag bis einschließlich
+  Datum.
+- **Kassendifferenz:** Weicht ein gespeicherter Kassensturz von den
+  Buchungen ab, führt „Kassensturz speichern“ zu
+  `/app/buchungen/neu?kassensturz=<id>`: vorausgefüllt mit dem Datum des
+  Kassensturzes, der **offenen** Differenz (gezählt − Soll laut aktueller
+  Buchungen) als Betrag, Fehlbetrag = Ausgabe / Überschuss = Einnahme,
+  Zweck „Kassendifferenz“, „kein Beleg nötig“ (der Kassensturz ist der
+  Nachweis) und – falls vorhanden und aktiv – Kategorie „Sonstiges“ bzw.
+  „Sonstige Einnahmen“. Nichts wird ohne Bestätigung gebucht. Solange der
+  letzte Kassensturz abweicht, zeigt die Kassenseite den Hinweis „Als
+  Kassendifferenz buchen“; die Differenz wird jedes Mal neu berechnet, eine
+  Verknüpfung Kassensturz ↔ Buchung wird nicht gespeichert.
+- **Audit** (Entität `bank_transaction`): `buchung.angelegt` (Konto-ID,
+  Richtung, Beleg-Status), `buchung.geaendert` (nur Namen der geänderten
+  Felder; ohne Änderung weder Zeile noch Schreibzugriff),
+  `buchung.geloescht` (Konto-ID). Nie Betrag, Zweck oder Gegenseite.
+- Ein **Beleg direkt verknüpfen** (Barbeleg sofort „zugeordnet“) kommt mit
+  dem Allocation-Modell (M10-1).
+
+**Pflicht-Tests M9-5:** `BuchungFlowTest` (Einnahme ohne Beleg:
+verschlüsselt, Cent mit Vorzeichen, `nicht_noetig`, markiert; Ausgabe-
+Default `fehlt` und Auswahl in beide Richtungen; Validierung mit markiertem
+Feld inkl. Stichtag/Zukunft/Richtung der Kategorie/deaktiviert; Ändern mit
+Feldnamen im Audit, Löschen; Import schreibgeschützt; alle Filter und
+Jahres-Default; Zeitraum-Scope Liste und Einzelansicht; Soll-Bestand mit
+Kassenbuchungen; Kassendifferenz als Fehlbetrag und Überschuss, nach dem
+Buchen verschwunden; Verwendung von Konto und Kategorie; Rechte, ohne
+Tresor, CSRF, 404), `BuchungFilterTest`, `RoutePermissionMatrixTest`
+(Lesen `bank.view`, Schreiben `bank.book`).
 
 ## 2. MT940-Import
 

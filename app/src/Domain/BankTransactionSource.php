@@ -13,4 +13,12 @@ enum BankTransactionSource: string
 {
     case Import = 'import';
     case Manuell = 'manuell';
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::Import => 'Kontoauszug',
+            self::Manuell => 'manuell',
+        };
+    }
 }

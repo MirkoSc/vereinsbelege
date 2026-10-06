@@ -27,8 +27,10 @@ use App\Service\Processing\Betrag;
  * - Expected, counted amount and note are vault data (`cash_count.data_enc`,
  *   own DEK, AAD "cash_count|<id>|data_enc"); the date is plaintext so the
  *   period scope of external roles can filter on it in SQL.
- * - Booking the difference as "Kassendifferenz" comes with the manual
- *   bookings (M9-5, issue #63) - until then the count only records it.
+ * - The difference is not booked by the count itself: the page suggests
+ *   a manual booking "Kassendifferenz" (M9-5, issue #63, App\Service\Bank\
+ *   Buchungen), and offeneDifferenz() says whether the books still differ
+ *   from the latest count.
  */
 final readonly class Kassensturz
 {
@@ -41,19 +43,42 @@ final readonly class Kassensturz
     public function __construct(
         private \PDO $pdo,
         private CashCountRepository $kassenstuerze,
+        private Buchungen $buchungen,
     ) {
     }
 
     /**
      * What the cash box should hold at the end of $stichtag: the opening
-     * balance plus the cash bookings up to that day. A cash box has no
-     * bookings yet - the statement import (M9-4) writes `bank_transaction`
-     * for bank accounts only - so for now this is the opening balance; M9-5
-     * adds the manual cash bookings here.
+     * balance plus the cash bookings from the opening date up to and
+     * including that day (M9-5) - decrypted, so it needs the vault.
      */
-    public function sollBestand(BankAccount $kasse, \DateTimeImmutable $stichtag): int
+    public function sollBestand(Vault $vault, BankAccount $kasse, \DateTimeImmutable $stichtag): int
     {
-        return $kasse->openingBalance;
+        return $kasse->openingBalance + $this->buchungen->summe($vault, $kasse->id, $kasse->openingDate, $stichtag);
+    }
+
+    /**
+     * Counted minus what the books say today for the day of that count: what
+     * is still unexplained. Zero once the difference has been booked (or the
+     * missing bookings entered); a stored count keeps its own figures.
+     */
+    public function offeneDifferenz(Vault $vault, BankAccount $kasse, CashCount $zaehlung): int
+    {
+        return $zaehlung->counted - $this->sollBestand($vault, $kasse, $zaehlung->countedOn);
+    }
+
+    /** The cash box a count belongs to, or null when there is no such count. */
+    public function kasseVon(int $id): ?int
+    {
+        return $this->kassenstuerze->find($id)?->accountId;
+    }
+
+    /** One count of this cash box, or null. */
+    public function finde(Vault $vault, BankAccount $kasse, int $id): ?CashCount
+    {
+        $record = $this->kassenstuerze->find($id);
+
+        return $record === null || $record->accountId !== $kasse->id ? null : self::entschluesseln($vault, $record);
     }
 
     /**
@@ -63,7 +88,7 @@ final readonly class Kassensturz
      *
      * @throws BankRuleViolation
      */
-    public function pruefen(BankAccount $kasse, array $felder, \DateTimeImmutable $heute): KassensturzVorschau
+    public function pruefen(Vault $vault, BankAccount $kasse, array $felder, \DateTimeImmutable $heute): KassensturzVorschau
     {
         if ($kasse->kind !== BankAccountKind::Kasse) {
             throw new BankRuleViolation('Einen Kassensturz gibt es nur für eine Kasse.');
@@ -100,7 +125,7 @@ final readonly class Kassensturz
             throw new BankRuleViolation(sprintf('Die Notiz darf höchstens %d Zeichen lang sein.', self::NOTE_MAX), 'notiz');
         }
 
-        return new KassensturzVorschau($datum, $this->sollBestand($kasse, $datum), $ist, $notiz);
+        return new KassensturzVorschau($datum, $this->sollBestand($vault, $kasse, $datum), $ist, $notiz);
     }
 
     /**
@@ -114,7 +139,7 @@ final readonly class Kassensturz
      */
     public function erfassen(Vault $vault, BankAccount $kasse, array $felder, ?int $userId, \DateTimeImmutable $now): int
     {
-        $vorschau = $this->pruefen($kasse, $felder, $now);
+        $vorschau = $this->pruefen($vault, $kasse, $felder, $now);
 
         $key = DataKey::generate();
         $this->pdo->beginTransaction();

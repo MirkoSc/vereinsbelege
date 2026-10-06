@@ -243,12 +243,14 @@ final readonly class AccountController
 
         $heute = new \DateTimeImmutable();
 
-        return $this->kassensturzSeite($kasse, ['datum' => $heute->format('Y-m-d'), 'ist' => '', 'notiz' => ''], null, null);
+        return $this->kassensturzSeite($tresor, $kasse, ['datum' => $heute->format('Y-m-d'), 'ist' => '', 'notiz' => ''], null, null);
     }
 
     /**
      * "Differenz berechnen" checks and shows the difference without
-     * storing anything; "Kassensturz speichern" records the count.
+     * storing anything; "Kassensturz speichern" records the count and, when
+     * the cash box does not match, goes on to the suggested booking
+     * "Kassendifferenz" (M9-5) - which the user may still cancel.
      *
      * @param array<string, string> $params
      */
@@ -275,17 +277,20 @@ final readonly class AccountController
         $jetzt = new \DateTimeImmutable();
         try {
             if (self::text($request, 'aktion') !== 'speichern') {
-                return $this->kassensturzSeite($kasse, $felder, $this->kassensturz->pruefen($kasse, $felder, $jetzt), null);
+                return $this->kassensturzSeite($tresor, $kasse, $felder, $this->kassensturz->pruefen($tresor, $kasse, $felder, $jetzt), null);
             }
             $zaehlung = $this->kassensturz->erfassen($tresor, $kasse, $felder, $this->session->userId(), $jetzt);
         } catch (BankRuleViolation $e) {
-            return $this->kassensturzSeite($kasse, $felder, null, $e, 422);
+            return $this->kassensturzSeite($tresor, $kasse, $felder, null, $e, 422);
         }
 
         $this->audit->record(AuditAction::KassensturzErfasst, $this->session->userId(), $request->ip, $zaehlung);
         $this->session->flash('Kassensturz gespeichert.');
+        $gespeichert = $this->kassensturz->finde($tresor, $kasse, $zaehlung);
 
-        return Response::redirect('/app/konten/' . $kasse->id);
+        return Response::redirect($gespeichert !== null && $this->kassensturz->offeneDifferenz($tresor, $kasse, $gespeichert) !== 0
+            ? '/app/buchungen/neu?kassensturz=' . $zaehlung
+            : '/app/konten/' . $kasse->id);
     }
 
     /**
@@ -307,6 +312,11 @@ final readonly class AccountController
         $kassenstuerze = $konto !== null && $tresor !== null && $konto->kind === BankAccountKind::Kasse
             ? $this->kassensturz->liste($tresor, $konto, $this->berechtigungen()->zugriffsbereich(Permission::BankView))
             : [];
+        // The latest count still differs from the books: offer to book the
+        // difference (M9-5). Computed afresh, so it disappears once booked.
+        $offeneDifferenz = $darfPflegen && $konto !== null && $konto->active && $tresor !== null && $kassenstuerze !== []
+            ? $this->kassensturz->offeneDifferenz($tresor, $konto, $kassenstuerze[0])
+            : 0;
 
         return Response::html($this->view->render('app/konto', [
             'title' => $konto === null ? ($art === BankAccountKind::Kasse ? 'Neue Kasse' : 'Neues Konto') : $art->label(),
@@ -321,6 +331,7 @@ final readonly class AccountController
             'saldoVerborgen' => $saldoVerborgen,
             'verwendungen' => $konto === null ? 0 : $this->service->verwendungen($konto->id),
             'kassenstuerze' => $kassenstuerze,
+            'offeneDifferenz' => $offeneDifferenz,
         ], Area::App), $status);
     }
 
@@ -328,6 +339,7 @@ final readonly class AccountController
      * @param array<string, string> $felder
      */
     private function kassensturzSeite(
+        Vault $tresor,
         BankAccount $kasse,
         array $felder,
         ?KassensturzVorschau $vorschau,
@@ -340,7 +352,7 @@ final readonly class AccountController
             'title' => 'Kassensturz',
             'kasse' => $kasse,
             'felder' => $felder,
-            'sollHeute' => $this->kassensturz->sollBestand($kasse, $heute),
+            'sollHeute' => $this->kassensturz->sollBestand($tresor, $kasse, $heute),
             'heute' => $heute,
             'vorschau' => $vorschau,
             'fehler' => $fehler?->getMessage(),

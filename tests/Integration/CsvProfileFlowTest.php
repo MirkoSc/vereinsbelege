@@ -20,7 +20,9 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
+use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
+use App\Repository\CategoryRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\RoleRepository;
 use App\Repository\UserAccessRepository;
@@ -32,6 +34,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
+use App\Service\Bank\Buchungen;
 use App\Service\Bank\Csv\CsvDatumsformat;
 use App\Service\Bank\Csv\CsvDezimaltrenner;
 use App\Service\Bank\Csv\CsvProfil;
@@ -525,7 +528,12 @@ final class CsvProfileFlowTest extends DatabaseTestCase
             new Session(),
             new SessionVault(),
             new BankAccountService($pdo, new BankAccountRepository($pdo)),
-            new Kassensturz($pdo, new CashCountRepository($pdo)),
+            new Kassensturz($pdo, new CashCountRepository($pdo), new Buchungen(
+                $pdo,
+                new BankTransactionRepository($pdo),
+                new BankAccountService($pdo, new BankAccountRepository($pdo)),
+                new CategoryRepository($pdo),
+            )),
             $this->audit,
         );
         $csvFormate = fn(): CsvFormatController => new CsvFormatController(
@@ -541,7 +549,7 @@ final class CsvProfileFlowTest extends DatabaseTestCase
         // guard second, the account pages 28th, the CSV formats 30th, the
         // export pattern page 31st, the AI provider pages 32nd, the
         // statement import 33rd.
-        $controller = array_fill(0, 33, $unerreichbar);
+        $controller = array_fill(0, 34, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
         $controller[29] = $csvFormate;
