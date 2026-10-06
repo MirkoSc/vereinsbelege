@@ -193,8 +193,8 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `recurring_series` | supplier_id, interval (`monat`/`quartal`/`halbjahr`/`jahr`/`unregelmaessig`), dek_sealed, data_enc {expected_gross, contract_ref, label}, next_expected, tolerance_days, active, confirmed | T |
 | `bank_account` | kind (`bank`/`kasse`, `App\Domain\BankAccountKind`, nach dem Anlegen fest), dek_sealed, data_enc {name, iban, bic, bank} (Kasse: nur name), iban_bi NULL **UNIQUE** (Zweck `bank_account.iban`), opening_balance_enc {amount (Cent), currency} (Saldo zu Beginn des Stichtags), opening_date (Stichtag, Klartext), active, created_at, updated_at. **Stand M9-1** (issue #59, Migration 021, s. u. „Konten“) | T |
 | `cash_count` (Kassensturz) | account_id (FK `RESTRICT`), counted_on DATE (Klartext – Zeitraum-Scope), dek_sealed, data_enc {expected, counted (Cent), currency, note}, created_by NULL (FK `SET NULL`), created_at – append-only; Differenz = counted − expected wird abgeleitet, nicht gespeichert (Migration 021, M9-1) | T |
-| `bank_import` | account_id, format (`mt940`/`csv:<profil>`), file_blob_id, imported_by, imported_at, stats JSON (neu/duplikat/fehler), balance_check (`ok`/`abweichung`/`n.v.`) | – |
-| `bank_transaction` | account_id, import_id, booking_date, value_date, direction, dek_sealed, data_enc {amount, currency, counterparty_name, counterparty_iban, purpose, eref, mref, cred, gvc, booking_text}, dedup_bi UNIQUE (je Konto), counterparty_bi, category_id NULL, doc_required (Default: Ausgabe 1, Einnahme 0 – Setting), doc_status (`fehlt`/`zugeordnet`/`nicht_noetig`), source (`import`/`manuell`) | T |
+| `bank_import` | account_id NULL (FK `RESTRICT`; NULL, solange die Vorschau „Welches Konto?“ fragt), format (`mt940`/`csv:<csv_profile.id>`, `App\Service\Bank\Import\ImportFormat`), file_blob_id (FK `RESTRICT` – das Original bleibt), source_bi NULL (Blind Index der MT940-Kontozeile `:25:`, Zweck `bank_import.source` – „Merken“ der Kontowahl), status (`vorschau`/`laeuft`/`fertig`, `App\Domain\BankImportStatus`), next_index (Cursor der Schrittkette), stats JSON {gesamt, neu, duplikat, fehler, vorgemerkt, vor_stichtag} (nur Zähler), balance_check NULL (`ok`/`abweichung`/`n.v.`, `App\Domain\BalanceCheck` – nie eine Differenz in Cent), period_from/to DATE NULL, created_by/at, imported_by/at (beim Bestätigen, FK `user` `SET NULL`), updated_at. **Stand M9-4** (issue #62, Migration 024; Details 04 §4) | – |
+| `bank_transaction` | account_id (FK `RESTRICT`), import_id NULL (FK `RESTRICT`), booking_date, value_date NULL, direction (`einnahme`/`ausgabe` aus dem Vorzeichen, `App\Domain\BankTransactionDirection`), dek_sealed, data_enc {amount (Cent mit Vorzeichen), currency, counterparty_name, counterparty_iban, purpose, eref, mref, cred, gvc, booking_text} (AAD Tabelle, ID, Spalte wie bei `bank_account`, zweistufig geschrieben), dedup_bi NULL `UNIQUE(account_id, dedup_bi)` (Zweck `bank_transaction.dedup`, `App\Service\Bank\Import\Dedupschluessel`; NULL für manuelle Buchungen), counterparty_bi NULL (IBAN der Gegenseite, Zweck `bank_transaction.counterparty`), category_id NULL (FK `RESTRICT`), doc_required (Default: Ausgabe 1, Einnahme 0 – Setting, kommt mit M9-6), doc_status (`fehlt`/`zugeordnet`/`nicht_noetig`, `App\Domain\BankTransactionDocStatus`), source (`import`/`manuell`), created_at, updated_at. **Stand M9-4** (issue #62, Migration 024): nur der Import schreibt; Liste und manuelle Buchungen kommen mit M9-5 | T |
 | `csv_profile` | name UNIQUE, builtin (1 = mitgeliefert, schreibgeschützt – auch in SQL), header_signature NULL (SHA-256 hex der normalisierten Kopfzeile, `CsvProfil::signatur()`), mapping JSON {Feld (`App\Service\Bank\Csv\CsvFeld`) → [Spaltennamen]}, delimiter (`semikolon`/`komma`/`tab`/`pipe`), encoding (`auto`/`UTF-8`/`Windows-1252`), date_format (`d.m.Y`/`Y-m-d`/`d/m/Y`), decimal_sep (`,`/`.`), created_at, updated_at. **Stand M9-3** (issue #61, Migration 022, Seed „Sparkasse CSV-CAMT“ und „VR Bank CSV-CAMT“; Details 04 §3) | – |
 | `allocation` (Abgleich) | invoice_id, transaction_id, dek_sealed, amount_enc (Teilbetrag), method (`auto`/`vorschlag_bestaetigt`/`manuell`), score, rule_trace JSON, created_by, created_at | T (Betrag) |
 | `assignment_rule` | Lern-/Regeltabelle: bedingung (z. B. counterparty_bi, Stichwort-BI) → category_id / doc_required=0 / supplier_id | – |
@@ -348,9 +348,9 @@ Kostenstellen):
   CSP erlaubt keine Inline-Styles (CLAUDE.md §4).
 - **Löschen nur ohne Verwendung, sonst deaktivieren.** Was als Verwendung
   zählt, entscheidet allein `CategoryRepository::usageCount()` – heute
-  Unterkategorien (`parent_id`), `supplier.default_category_id` (M6-2) und
-  `invoice.category_id` (M6-3). Jede spätere Tabelle mit `category_id`
-  (`bank_transaction`, `assignment_rule`) legt ihren Fremdschlüssel mit
+  Unterkategorien (`parent_id`), `supplier.default_category_id` (M6-2),
+  `invoice.category_id` (M6-3) und `bank_transaction.category_id` (M9-4).
+  Jede spätere Tabelle mit `category_id` (`assignment_rule`) legt ihren Fremdschlüssel mit
   `ON DELETE RESTRICT` an **und** zählt dort mit. Deaktivierte Kategorien werden nicht mehr
   angeboten, bestehende Zuordnungen bleiben.
 - `parent_id` ist vorbereitet, Unterkategorien sind aber noch nicht pflegbar
@@ -485,9 +485,9 @@ nur die gespeicherten Werte), **Anlegen/Ändern/Löschen und Kassensturz
   Kassensturz bleibt so auf seinen Anfangsbestand bezogen.
 - **Löschen nur ohne Verwendung, sonst deaktivieren** (`active`). Was als
   Verwendung zählt, entscheidet allein `BankAccountRepository::usageCount()`
-  – heute `cash_count`. Jede spätere Tabelle mit `account_id`
-  (`bank_import`, `bank_transaction`) legt ihren Fremdschlüssel mit
-  `ON DELETE RESTRICT` an **und** zählt dort mit. Deaktivierte Konten
+  – `cash_count`, seit M9-4 auch `bank_import` (schon eine Vorschau) und
+  `bank_transaction`. Jede spätere Tabelle mit `account_id` legt ihren
+  Fremdschlüssel mit `ON DELETE RESTRICT` an **und** zählt dort mit. Deaktivierte Konten
   bleiben lesbar, nehmen aber keinen Kassensturz mehr an.
 - **Kassensturz** (`App\Service\Bank\Kassensturz`, Tabelle `cash_count`,
   nur für eine aktive Kasse): Datum (≥ Stichtag, ≤ heute), gezählter

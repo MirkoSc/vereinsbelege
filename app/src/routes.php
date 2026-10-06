@@ -25,6 +25,7 @@ use App\App\CsvFormatController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
+use App\App\KontoauszugController;
 use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\PruefungController;
@@ -139,6 +140,9 @@ use App\View\View;
  * @param \Closure(): CsvFormatController $csvFormate built lazily, same
  *        reason as $mail: only the CSV format pages need the database
  *        (issue #61/M9-3).
+ * @param \Closure(): KontoauszugController $kontoauszuege built lazily, same
+ *        reason as $mail: only the statement import pages need the database
+ *        (issue #62/M9-4).
  */
 return static function (
     Router $router,
@@ -173,6 +177,7 @@ return static function (
     \Closure $konten,
     \Closure $systemcheck,
     \Closure $csvFormate,
+    \Closure $kontoauszuege,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -508,6 +513,21 @@ return static function (
     $get('/app/konten/csv-formate/{id:\d+}/bearbeiten', $csvImport, static fn(Request $r, array $params) => $csvFormate()->bearbeiten($r, $params));
     $post('/app/konten/csv-formate/{id:\d+}', $csvImport, static fn(Request $r, array $params) => $csvFormate()->speichern($r, $params));
     $post('/app/konten/csv-formate/{id:\d+}/loeschen', $csvImport, static fn(Request $r, array $params) => $csvFormate()->loeschen($r, $params));
+
+    // Statement import (M9-4, issue #62, docs/spec/04-bank-und-abgleich.md
+    // section 4). Permission: `bank.import` (Admin, Finanzen) on every route,
+    // the same as the CSV formats. Upload → preview (nothing written) →
+    // confirm → the page drives the step chain one POST at a time
+    // (`…/schritt`, JSON, hence alsApi()). CSRF on every POST. The bookings
+    // are vault data: without the unlocked vault nothing is read or written
+    // (App\App\KontoauszugController).
+    $get('/app/konten/import', $csvImport, static fn(Request $r) => $kontoauszuege()->start($r));
+    $post('/app/konten/import', $csvImport, static fn(Request $r) => $kontoauszuege()->hochladen($r));
+    $get('/app/konten/import/{id:\d+}', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->ansicht($r, $params));
+    $post('/app/konten/import/{id:\d+}/konto', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->konto($r, $params));
+    $post('/app/konten/import/{id:\d+}/uebernehmen', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->uebernehmen($r, $params));
+    $post('/app/konten/import/{id:\d+}/schritt', Zugriff::recht(Permission::BankImport)->alsApi(), static fn(Request $r, array $params) => $kontoauszuege()->schritt($r, $params));
+    $post('/app/konten/import/{id:\d+}/verwerfen', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->verwerfen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

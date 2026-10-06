@@ -294,7 +294,7 @@ echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
 Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
 
 - **Server-Jobs mit Tresor-Bedarf** (KI-Auslesen, Lieferant auflösen,
-  Abgleich, Import-Schritte, Export) werden vom **Browser eines angemeldeten
+  Abgleich, Export) werden vom **Browser eines angemeldeten
   Nutzers** angestoßen: Solange ein Nutzer mit passenden Rechten die App
   offen hat, ruft ein kleiner JS-Worker `POST /api/jobs/step` auf (je Aufruf
   **ein** Jobschritt, Zeitbudget ~20 s), zeigt Fortschritt in der Kopfzeile
@@ -302,6 +302,16 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   (Page Visibility API, dann langsameres Intervall).
 - Sperre per `locked_until` verhindert Doppelverarbeitung bei mehreren
   offenen Tabs/Nutzern.
+- **Ausnahme Kontoauszug-Import** (M9-4, 04 §4): Seine Schritte sind kein
+  Job, sondern eine **seitengesteuerte Schrittkette** wie die
+  Speicher-Umstellung – die Import-Seite ruft `POST
+  /app/konten/import/{id}/schritt` auf, bis der Import `fertig` ist. Der
+  Nutzer hat ihn gerade bestätigt und wartet auf das Ergebnis; hinter
+  anderen Jobs anzustehen oder in der Kopfzeile als „Beleg in Verarbeitung“
+  zu erscheinen, passt dazu nicht. Stand und Cursor stehen in `bank_import`
+  (`status`, `next_index`); ein geschlossener Tab macht beim nächsten Öffnen
+  der Seite mit „Fortsetzen“ weiter. Was nach dem Import automatisch laufen
+  soll (Regeln M9-6, Abgleich M10), legen diese Issues als Jobs an.
 - **Browser-Jobs** (PDF rendern mit pdf.js): Worker holt Aufgabe, rendert,
   lädt Seitenbilder hoch.
 - **Worker-Jobs** (optionales Modul, 07-worker.md): werden nur angelegt,
@@ -340,6 +350,12 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     den Klassennamen, das Log (`FileLogger`) Klasse und Meldung.
   - *Erster Task:* `JobCleanupTask` löscht `fertig`/`uebersprungen`-Jobs, die
     älter als 7 Tage sind; `fehler` bleibt stehen.
+  - *Kontoauszug-Vorschauen* (M9-4): `BankImportCleanupTask`
+    (`kontoauszug_vorschauen_aufraeumen`, in `aufraeumen`) löscht Importe,
+    die 7 Tage im Status `vorschau` liegen geblieben sind, samt ihrer
+    verschlüsselten Datei – wie „Verwerfen“ auf der Import-Seite. Bestätigte
+    Importe bleiben: ihre Datei ist das Original der Buchungen. Braucht keinen
+    Tresor.
   - *Wartungsmodus:* der Shim lässt `/cron` nicht durch (nur `/admin`, `/css/`,
     `/js/`); der Aufruf bekommt 503 und der nächste Minutenlauf holt nach.
   - *Antwort:* JSON `status` (`ok`/`fehler`/`laeuft_bereits`), `aufgaben`,

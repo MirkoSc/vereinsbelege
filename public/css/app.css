@@ -785,6 +785,12 @@ textarea[aria-invalid="true"] {
     content: attr(data-label);
 }
 
+/* Als Karte steht ein Betrag unter seiner Beschriftung, nicht rechtsbündig
+   daneben; in der Tabellenansicht gilt wieder .tabelle .zahl. */
+.tabelle-karten .zahl {
+    text-align: left;
+}
+
 @media (min-width: 48rem) {
     .tabelle-karten thead {
         position: static;
@@ -829,6 +835,10 @@ textarea[aria-invalid="true"] {
 
     .tabelle-karten td::before {
         display: none;
+    }
+
+    .tabelle-karten .zahl {
+        text-align: right;
     }
 
     /* Kurze Werte (Erwartung, Ist-Wert, Statusmarke) bleiben in einer Zeile;

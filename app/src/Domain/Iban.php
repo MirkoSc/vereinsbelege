@@ -54,6 +54,29 @@ final class Iban
         return self::mod97($iban) === 1;
     }
 
+    /**
+     * The German IBAN of a bank code and an account number - how an MT940
+     * account line `:25:BLZ/Kontonummer` finds its account (M9-4, docs/spec/
+     * 04-bank-und-abgleich.md section 2): "DE", check digits, the 8-digit
+     * bank code, the account number padded to 10 digits. Null when either
+     * part is not plain digits of that size (a BIC instead of a bank code,
+     * say). The few banks with their own conversion rules are not covered -
+     * such a file falls back to "Welches Konto?".
+     */
+    public static function ausBlzUndKonto(string $blz, string $konto): ?string
+    {
+        $blz = trim($blz);
+        $konto = ltrim(trim($konto), '0');
+        if (preg_match('/^[0-9]{8}$/', $blz) !== 1 || preg_match('/^[0-9]{1,10}$/', $konto) !== 1) {
+            return null;
+        }
+
+        $bban = $blz . str_pad($konto, 10, '0', STR_PAD_LEFT);
+        $pruefziffer = 98 - self::mod97('DE00' . $bban);
+
+        return sprintf('DE%02d%s', $pruefziffer, $bban);
+    }
+
     /** Grouped in fours for display: "DE89 3704 0044 0532 0130 00". */
     public static function formatieren(string $wert): string
     {

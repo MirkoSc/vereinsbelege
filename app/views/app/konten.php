@@ -13,7 +13,7 @@
  * @var array<string, list<\App\Domain\BankAccount>> $gruppen kind value => accounts
  * @var list<int> $saldoVerborgen accounts whose opening date lies outside the reader's period
  * @var bool $darfPflegen holds `bank.book`
- * @var bool $darfImportieren holds `bank.import` - the CSV formats of the import (M9-3)
+ * @var bool $darfImportieren holds `bank.import` - the statement import (M9-4) and its CSV formats (M9-3)
  */
 
 use App\Domain\BankAccountKind;
@@ -30,7 +30,10 @@ use App\Service\Processing\Betrag;
     </p>
 
     <?php if ($darfImportieren): ?>
-        <p><a href="/app/konten/csv-formate">CSV-Formate für den Kontoauszug-Import</a></p>
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/konten/import">Kontoauszug importieren</a>
+            <a class="knopf knopf-still" href="/app/konten/csv-formate">CSV-Formate</a>
+        </p>
     <?php endif; ?>
 
     <?php if (!$entsperrt): ?>
