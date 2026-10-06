@@ -9,6 +9,7 @@ use App\Domain\DocumentSource;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
 use App\Domain\JobExecutor;
+use App\Domain\OcrStatus;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\JobRepository;
@@ -18,6 +19,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatindex;
+use App\Service\Document\Texterkennung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
 
@@ -191,13 +193,16 @@ final readonly class InterneErfassung
                     costCenterId: $beleg->kostenstelleId,
                     createdBy: $userId,
                     processedBlobIds: $aufbereitet[$index],
+                    ocrStatus: OcrStatus::Ausstehend,
                 );
 
-                // The PDF working copy and the content index of duplicate
-                // detection are session jobs, the same as for the public
-                // submission (issue #26/M4-4, issue #40/M6-6).
+                // The PDF working copy, the content index of duplicate
+                // detection and the text layer are session jobs, the same as
+                // for the public submission (issue #26/M4-4, issue #40/M6-6,
+                // issue #45/M7-3).
                 $this->jobs->enqueue(PdfErzeugung::JOB_TYP, JobExecutor::Session, 'document', $documentId, now: $now);
                 $this->jobs->enqueue(Duplikatindex::JOB_TYP, JobExecutor::Session, 'document', $documentId, now: $now);
+                $this->jobs->enqueue(Texterkennung::JOB_TYP, JobExecutor::Session, 'document', $documentId, now: $now);
 
                 $erfasst[] = [$referenz, $documentId];
             }

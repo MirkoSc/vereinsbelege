@@ -168,11 +168,11 @@ final class PublicSubmissionTest extends DatabaseTestCase
     }
 
     /**
-     * The PDF working copy (issue #26/M4-4) and the content index of
-     * duplicate detection (issue #40/M6-6) - both need the unlocked vault,
-     * so both wait for a session.
+     * The PDF working copy (issue #26/M4-4), the content index of duplicate
+     * detection (issue #40/M6-6) and the text layer (issue #45/M7-3) - all
+     * need the unlocked vault, so all wait for a session.
      */
-    public function testSubmittingQueuesThePdfAndTheDuplicateIndexJob(): void
+    public function testSubmittingQueuesThePdfTheDuplicateIndexAndTheTextLayerJob(): void
     {
         $token = $this->issuedToken();
         $seite = $this->hochladen($token, "\xFF\xD8\xFF\xE0 Seite");
@@ -182,13 +182,14 @@ final class PublicSubmissionTest extends DatabaseTestCase
         self::assertNotFalse($dokument);
 
         $jobs = $this->pdo()->query('SELECT * FROM job ORDER BY id')->fetchAll();
-        self::assertSame(['pdf_erzeugen', 'detect_duplicate'], array_column($jobs, 'typ'));
+        self::assertSame(['pdf_erzeugen', 'detect_duplicate', 'extract_text'], array_column($jobs, 'typ'));
         foreach ($jobs as $job) {
             self::assertSame('session', $job['executor']);
             self::assertSame('document', $job['ref_type']);
             self::assertSame((int) $dokument['id'], (int) $job['ref_id']);
             self::assertSame('offen', $job['status']);
         }
+        self::assertSame('ausstehend', $this->pdo()->query('SELECT ocr_status FROM document')->fetchColumn());
     }
 
     public function testNoPlaintextOfTheFormLeaksIntoAnyColumn(): void

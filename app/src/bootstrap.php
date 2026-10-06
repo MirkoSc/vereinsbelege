@@ -113,6 +113,7 @@ use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\Duplikatindex;
+use App\Service\Document\Texterkennung;
 use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
@@ -977,6 +978,7 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
     return [
         new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo)),
         new Duplikatindex(new DocumentRepository($pdo), $blobService),
+        new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService),
     ];
 };
 
