@@ -23,7 +23,9 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
+use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
+use App\Repository\CategoryRepository;
 use App\Repository\RoleRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
@@ -34,6 +36,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
+use App\Service\Bank\Buchungen;
 use App\Service\Bank\Kassensturz;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
@@ -460,7 +463,8 @@ final class BankAccountFlowTest extends DatabaseTestCase
         ]);
 
         self::assertSame(302, $antwort->status);
-        self::assertSame('/app/konten/' . $kasse, $antwort->headers['Location'] ?? null);
+        $zaehlungId = (int) $this->pdo()->query('SELECT MAX(id) FROM cash_count')->fetchColumn();
+        self::assertSame('/app/buchungen/neu?kassensturz=' . $zaehlungId, $antwort->headers['Location'] ?? null, 'a difference goes on to the suggested booking (M9-5)');
         self::assertSame('Kassensturz gespeichert.', $_SESSION['flash']['text'] ?? null);
 
         $bereich = new UserAccessRepository($this->pdo())->berechtigungen($this->userId)->zugriffsbereich(Permission::BankView);
@@ -637,7 +641,9 @@ final class BankAccountFlowTest extends DatabaseTestCase
 
     private function kassensturz(): Kassensturz
     {
-        return new Kassensturz($this->pdo(), new CashCountRepository($this->pdo()));
+        $buchungen = new Buchungen($this->pdo(), new BankTransactionRepository($this->pdo()), $this->service(), new CategoryRepository($this->pdo()));
+
+        return new Kassensturz($this->pdo(), new CashCountRepository($this->pdo()), $buchungen);
     }
 
     /**
@@ -730,7 +736,7 @@ final class BankAccountFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the account pages 28th.
-        $controller = array_fill(0, 33, $unerreichbar);
+        $controller = array_fill(0, 34, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
 

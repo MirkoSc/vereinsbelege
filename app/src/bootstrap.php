@@ -24,6 +24,7 @@ use App\App\AccountController;
 use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\BuchungController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
@@ -99,6 +100,7 @@ use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
+use App\Service\Bank\Buchungen;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Crypto\ServerCrypto;
@@ -538,13 +540,35 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
 // open the connection.
 $konten = static function () use ($connections, $view, $auditFor): AccountController {
     $pdo = $connections->pdo();
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+    $buchungen = new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, new CategoryRepository($pdo));
 
     return new AccountController(
         $view,
         new Session(),
         new SessionVault(),
-        new BankAccountService($pdo, new BankAccountRepository($pdo)),
-        new Kassensturz($pdo, new CashCountRepository($pdo)),
+        $konten,
+        new Kassensturz($pdo, new CashCountRepository($pdo), $buchungen),
+        $auditFor($pdo),
+    );
+};
+
+// Bookings and manual bookings (M9-5, issue #63): read and written with the
+// session's unlocked vault - only these pages open the connection.
+$buchungen = static function () use ($connections, $view, $auditFor): BuchungController {
+    $pdo = $connections->pdo();
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+    $kategorien = new CategoryRepository($pdo);
+    $buchungen = new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien);
+
+    return new BuchungController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        $buchungen,
+        $konten,
+        $kategorien,
+        new Kassensturz($pdo, new CashCountRepository($pdo), $buchungen),
         $auditFor($pdo),
     );
 };
@@ -1101,6 +1125,7 @@ $router = new Router();
     $exportAdmin,
     $kiAnbieter,
     $kontoauszuege,
+    $buchungen,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

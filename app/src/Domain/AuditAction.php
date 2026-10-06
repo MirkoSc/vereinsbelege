@@ -74,6 +74,9 @@ enum AuditAction: string
     case KiAnbieterGeloescht = 'ki_anbieter.geloescht';
     case KiAnbieterStandard = 'ki_anbieter.standard';
     case KontoauszugImportiert = 'kontoauszug.importiert';
+    case BuchungAngelegt = 'buchung.angelegt';
+    case BuchungGeaendert = 'buchung.geaendert';
+    case BuchungGeloescht = 'buchung.geloescht';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -155,6 +158,9 @@ enum AuditAction: string
             self::KiAnbieterGeloescht => 'KI-Anbieter gelöscht',
             self::KiAnbieterStandard => 'KI-Standardprofil gewählt',
             self::KontoauszugImportiert => 'Kontoauszug importiert',
+            self::BuchungAngelegt => 'Buchung erfasst',
+            self::BuchungGeaendert => 'Buchung geändert',
+            self::BuchungGeloescht => 'Buchung gelöscht',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -204,6 +210,7 @@ enum AuditAction: string
             self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
             self::KiAnbieterStandard => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
+            self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht => 'bank_transaction',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -233,6 +240,7 @@ enum AuditAction: string
             'csv_profile' => 'CSV-Format',
             'ai_provider' => 'KI-Anbieter',
             'bank_import' => 'Kontoauszug-Import',
+            'bank_transaction' => 'Buchung',
             'document' => 'Beleg',
             default => $entity,
         };

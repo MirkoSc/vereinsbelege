@@ -22,6 +22,7 @@
  * @var bool $saldoVerborgen the opening date lies outside the reader's period: no amount shown
  * @var int $verwendungen
  * @var list<\App\Domain\CashCount> $kassenstuerze within the reader's scope, newest first
+ * @var int $offeneDifferenz counted minus the books for the latest count, in cents (0 = nothing to book)
  */
 
 use App\Domain\BankAccountKind;
@@ -149,9 +150,28 @@ $betrag = static fn(int $cent): string => e(Betrag::format($cent)) . ' €';
     <?php endif; ?>
 </section>
 
+<?php if (!$neu): ?>
+    <section class="schmal">
+        <h3>Buchungen</h3>
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/buchungen?konto=<?= e((string) $konto->id) ?>">Buchungen <?= $kasse ? 'der Kasse' : 'des Kontos' ?></a>
+            <?php if ($darfPflegen && $konto->active): ?>
+                <a class="knopf knopf-primaer" href="/app/buchungen/neu?konto=<?= e((string) $konto->id) ?>"><?= $kasse ? 'Kassenbuchung erfassen' : 'Buchung erfassen' ?></a>
+            <?php endif; ?>
+        </p>
+    </section>
+<?php endif; ?>
+
 <?php if (!$neu && $kasse): ?>
     <section>
         <h3>Kassenstürze</h3>
+        <?php if ($offeneDifferenz !== 0): ?>
+            <p class="hinweis hinweis-warnung">
+                Beim letzten Kassensturz (<?= e($kassenstuerze[0]->countedOn->format('d.m.Y')) ?>) weicht der gezählte Bestand
+                um <?= $betrag(abs($offeneDifferenz)) ?> von den Buchungen ab (<?= $offeneDifferenz < 0 ? 'Fehlbetrag' : 'Überschuss' ?>).
+                <a href="/app/buchungen/neu?kassensturz=<?= e((string) $kassenstuerze[0]->id) ?>">Als Kassendifferenz buchen</a>
+            </p>
+        <?php endif; ?>
         <?php if ($darfPflegen && $konto->active): ?>
             <p class="knopfreihe">
                 <a class="knopf knopf-primaer" href="/app/konten/<?= e((string) $konto->id) ?>/kassensturz">Kassensturz erfassen</a>

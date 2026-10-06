@@ -23,6 +23,7 @@ use App\Api\UploadController;
 use App\App\AccountController;
 use App\App\AuditController;
 use App\App\AuthController;
+use App\App\BuchungController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
 use App\App\InboxController;
@@ -151,6 +152,8 @@ use App\View\View;
  * @param \Closure(): KontoauszugController $kontoauszuege built lazily, same
  *        reason as $mail: only the statement import pages need the database
  *        (issue #62/M9-4).
+ * @param \Closure(): BuchungController $buchungen built lazily, same reason
+ *        as $mail: only the booking pages need the database (issue #63/M9-5).
  */
 return static function (
     Router $router,
@@ -188,6 +191,7 @@ return static function (
     \Closure $exportAdmin,
     \Closure $kiAnbieter,
     \Closure $kontoauszuege,
+    \Closure $buchungen,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -538,6 +542,19 @@ return static function (
     $post('/app/konten/import/{id:\d+}/uebernehmen', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->uebernehmen($r, $params));
     $post('/app/konten/import/{id:\d+}/schritt', Zugriff::recht(Permission::BankImport)->alsApi(), static fn(Request $r, array $params) => $kontoauszuege()->schritt($r, $params));
     $post('/app/konten/import/{id:\d+}/verwerfen', $csvImport, static fn(Request $r, array $params) => $kontoauszuege()->verwerfen($r, $params));
+
+    // Bookings (M9-5, issue #63, docs/spec/04-bank-und-abgleich.md
+    // section 1). Permission: reading `bank.view` (the list is narrowed to
+    // the reader's period in SQL), entering, changing and deleting a manual
+    // booking `bank.book` - the same split as the accounts. CSRF on every
+    // POST; without the unlocked vault nothing is read or written
+    // (App\App\BuchungController).
+    $get('/app/buchungen', $kontenLesen, static fn(Request $r) => $buchungen()->liste($r));
+    $get('/app/buchungen/neu', $kontenPflege, static fn(Request $r) => $buchungen()->neu($r));
+    $post('/app/buchungen', $kontenPflege, static fn(Request $r) => $buchungen()->anlegen($r));
+    $get('/app/buchungen/{id:\d+}', $kontenLesen, static fn(Request $r, array $params) => $buchungen()->ansicht($r, $params));
+    $post('/app/buchungen/{id:\d+}', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->speichern($r, $params));
+    $post('/app/buchungen/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->loeschen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

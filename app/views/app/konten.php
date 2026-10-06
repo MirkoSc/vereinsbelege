@@ -42,12 +42,13 @@ use App\Service\Processing\Betrag;
             Melden Sie sich neu an, um die Konten zu sehen.
         </p>
     <?php else: ?>
-        <?php if ($darfPflegen): ?>
-            <p class="knopfreihe">
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/buchungen">Alle Buchungen</a>
+            <?php if ($darfPflegen): ?>
                 <a class="knopf knopf-primaer" href="/app/konten/neu?art=bank">Neues Bankkonto</a>
                 <a class="knopf" href="/app/konten/neu?art=kasse">Neue Kasse</a>
-            </p>
-        <?php endif; ?>
+            <?php endif; ?>
+        </p>
 
         <?php foreach (BankAccountKind::cases() as $art): ?>
             <?php $konten = $gruppen[$art->value] ?? []; ?>

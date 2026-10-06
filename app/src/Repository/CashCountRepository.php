@@ -69,6 +69,15 @@ final readonly class CashCountRepository
         $stmt->execute();
     }
 
+    public function find(int $id): ?CashCountRecord
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM cash_count WHERE id = ?');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : self::hydrate($row);
+    }
+
     /**
      * @param array<string, mixed> $row
      */
