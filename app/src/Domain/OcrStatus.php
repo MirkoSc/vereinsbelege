@@ -6,9 +6,14 @@ namespace App\Domain;
 
 /**
  * Text recognition status of a `document` row (docs/spec/02-datenmodell.md
- * "Fachdaten"). A freshly received document starts `Keine` - it is turned
- * into `Ausstehend` once something actually queues the text layer or OCR
- * step (docs/spec/03-erfassung-und-ki.md section 3, from M7 on).
+ * "Fachdaten"). Since issue #45/M7-3 every new document is received
+ * `Ausstehend`, with the `extract_text` job queued
+ * (App\Service\Document\Texterkennung); `Keine` remains for rows from
+ * before that nobody queued it for (migrations/026). The job ends in
+ * `Fertig` - the text layer is enough for the AI, the page images need not
+ * be evaluated - or `Uebersprungen`: no PDF, or a text layer that is not
+ * usable, so the page images are needed (docs/spec/03-erfassung-und-ki.md
+ * section 3).
  */
 enum OcrStatus: string
 {

@@ -450,6 +450,67 @@ in einem Lauf ab, nicht eines je Datei.
   nimmt die `document_artifact`-Zeile über `ON DELETE CASCADE` mit
   (02, Migration 015).
 
+**Stand M7-3** (issue #45): Textlayer digitaler PDFs als Session-Job
+`extract_text` (`App\Service\Document\Texterkennung`, Abschnitt 5).
+
+- *Eigener Parser statt smalot/pdfparser:* geprüft wurde smalot/pdfparser
+  2.12.5 (LGPL-3.0, reines PHP) gegen dessen eigene 58 Beispiel-PDFs unter
+  PHP 8.5: PHP-8.5-Warnungen („float … is not representable as an int“ in
+  `Font.php`, würde `failOnWarning` reißen) und für ein 6-MB-PDF 12,8 s bei
+  264 MB Speicher – zu viel für 30 s/256 MB je Request (§1 CLAUDE.md).
+  Stattdessen `App\Service\Processing\Pdf\*` (handgeschrieben wie
+  `PdfAusBildern`, framework-frei): Objekte per Durchlauf der Datei statt
+  über die Xref-Tabelle (robust gegen kaputte Tabellen, inkrementelle
+  Updates: die spätere Definition gilt; Streams werden über `/Length`
+  übersprungen), Object Streams, Filter FlateDecode (inkl. PNG-/TIFF-
+  Prädiktor), ASCIIHex, ASCII85; Schriften mit ToUnicode-CMap
+  (`bfchar`/`bfrange`), einfache Schriften über WinAnsi/MacRoman/Standard +
+  `/Differences` mit Glyphnamen, Type0/Identity-H (2 Byte je Code – die
+  Code-Länge kommt nie aus dem Codespace der ToUnicode-Map, den Adobe auch
+  für einfache Schriften auf `<0000> <FFFF>` setzt); Content-Streams mit
+  Text-, Positions- und Grafikzustands-Operatoren, Form-XObjects (bis Tiefe
+  8), Bilder und Inline-Bilder werden nie dekodiert. Zeilenumbruch, wenn
+  die Grundlinie um mehr als ½ em springt; Leerzeichen bei einer Lücke von
+  mehr als 0,15 em (Kerning bleibt darunter). Gegenprobe mit denselben
+  58 Dateien: keine Warnung, höchstens 36 MB, die meisten < 0,1 s.
+- *Grenzen:* höchstens 200 Seiten (wie die Rasterung), 32 MiB dekodierte
+  Stream-Daten je PDF (Schutz gegen Dekompressionsbomben – Flate wird
+  stückweise mit Budget entpackt), 512 KiB Text je PDF, 2 Mio. Operatoren
+  je Seite. Verschlüsselte PDFs (`/Encrypt`) haben keinen lesbaren Text.
+  Eine kaputte, verschlüsselte oder zu große Datei ist **kein Jobfehler**:
+  `App\Service\Processing\TextlayerBefund` (`gelesen`/`verschluesselt`/
+  `defekt`/`zu_gross`) sagt warum, der Beleg geht den Weg über die
+  Seitenbilder.
+- *Heuristik* (`App\Service\Processing\Textlayer::brauchbar()`): mehr als
+  200 Zeichen ohne Leerraum **und** mindestens 50 % davon Buchstaben
+  (`\p{L}`; Ziffern zählen nicht – echte Rechnungen liegen bei 55–75 %, eine
+  Schrift ohne brauchbare Kodierung liefert U+FFFD bzw. Symbole).
+- *Ablauf:* der Job wird bei jedem neuen Beleg neben `pdf_erzeugen` und
+  `detect_duplicate` eingereiht (öffentliche Einreichung und interne
+  Erfassung), der Beleg entsteht mit `ocr_status = ausstehend`. Schritt
+  `''` sucht die PDF-Originale (MIME-Typ aus den Blob-Metadaten); keine →
+  `ocr_status = uebersprungen`, Job `uebersprungen`. Danach ein PDF je
+  Aufruf (Schritt `quelle`); `job.state` hält nur Blob-IDs und je PDF
+  brauchbar ja/nein. Ergebnis je PDF: `document_artifact` `kind = text`,
+  `seq` = Position unter den PDF-Originalen, `producer = session`,
+  `data_enc` = JSON `{befund, brauchbar, seiten[]}` unter dem eigenen DEK
+  des Artefakts (AAD `document_artifact|<id>|data_enc`, zweistufig
+  geschrieben). Der letzte Schritt löscht `text`-Artefakte älterer Läufe
+  und setzt `ocr_status`: **`fertig`**, wenn alle Originale PDFs sind und
+  jedes einen brauchbaren Textlayer hat – dann **entfällt die
+  Bildauswertung**, die KI bekommt den Text
+  (`Texterkennung::textFuerKi()`, Seiten getrennt durch `\f`, Andockpunkt
+  für `ai_extract`/M7-5); sonst **`uebersprungen`** – die KI braucht die
+  Seitenbilder (auch bei Bild + PDF gemischt). Ein Beleg mit entschiedenem
+  `ocr_status` wird nicht erneut gelesen. Die Rasterung (`render_pages`)
+  läuft unabhängig davon weiter – die Seitenbilder dienen auch als
+  Vorschau.
+- *Migration 026:* `document_artifact.data_enc` wird `MEDIUMBLOB`
+  (`VARBINARY(4096)` reicht für Text nicht); offene Belege (`eingegangen`,
+  `bereit_zur_auswertung`, `wiedervorlage`, `ki_fehler`) mit
+  `ocr_status = keine` bekommen den Job und `ausstehend`.
+- `ext-zlib` steht jetzt in `composer.json` (beim Hoster vorhanden, M0).
+
 ## 4. Upload
 
 - Generische Upload-Komponente: Dateien in Chunks à 2 MiB
@@ -557,7 +618,9 @@ aktivem Worker-Modul.
 
 0. `pdf_erzeugen` (Abschnitt 3, issue #26/M4-4: PDF-Arbeitsfassung aus
    Bildseiten) – `session`/`session`
-1. `extract_text` (Webhoster: PDF-Textlayer / E-Rechnungs-XML) –
+1. `extract_text` (Webhoster: PDF-Textlayer / E-Rechnungs-XML; seit
+   issue #45/M7-3 der Textlayer, `App\Service\Document\Texterkennung`,
+   Abschnitt 3; eingereiht beim Eingang neben `pdf_erzeugen`) –
    `session`/`session`
 2. `render_pages` (nur PDFs ohne Seitenbilder; Abschnitt 3, issue #30/M4-8) –
    `browser`/`worker`
@@ -573,8 +636,8 @@ aktivem Worker-Modul.
    02 „Statusmodell“, Stand M6-6) – `session`
 9. `match_transactions` (siehe 04, falls Buchungen vorhanden) – `session`
 
-Die Logik von `pdf_erzeugen`, `ocr` und `ai_extract` liegt in
-`app/src/Service/Processing/` und ist framework-frei (siehe CLAUDE.md §6a);
+Die Logik von `pdf_erzeugen`, `extract_text` (`Processing\Pdf\*`), `ocr`
+und `ai_extract` liegt in `app/src/Service/Processing/` und ist framework-frei (siehe CLAUDE.md §6a);
 jeder dieser Jobtypen implementiert `App\Service\Job\JobHandler` (`typ()`,
 `recht()`, `schritt()`) – das ist der Andockpunkt, den der Runner aus M4-7
 (`POST /api/jobs/step`) aufruft. `render_pages` läuft anders: sein Schritt
@@ -862,7 +925,18 @@ Magic-Byte-Ablehnung, Größenlimit); IBAN-Validierung; PDF-Erzeugung (Seitenzah
 Bildzahl, gültiges PDF); PDF-Rasterung (vollständiger Lauf über eine und
 mehrere Quellen, Idempotenz eines wiederholten Uploads, Sperre und
 Gift-Job-Schutz über viele Requests hinweg – Details: 06-betrieb.md §4);
-Textlayer-Heuristik; ZUGFeRD-/XRechnung-Fixtures;
+Textlayer-Heuristik (`TextlayerTest`: > 200 Zeichen ohne Leerraum, ≥ 50 %
+Buchstaben, nur bei Befund `gelesen`; `PdfTextlayerTest`: WinAnsi/
+MacRoman/`/Differences`, Type0 mit ToUnicode, 1-Byte-Codes trotz
+2-Byte-Codespace, Zeilen/Leerzeichen aus Positionen, Filterketten, Object
+Streams, indirekte `/Length`, Form-XObjects, Bilder nie dekodiert,
+inkrementelles Update, Seitenbaum, verschlüsselt, kaputt ohne Warnung,
+Dekompressionsbombe, Scan ohne Text, zwei Fixtures unter
+`tests/fixtures/pdf/`; `TexterkennungJobTest`: beide Speicher-Backends, ein
+PDF je Schritt, kein Klartext außerhalb des Artefakts, Scan/Bilder/
+gemischt → `uebersprungen`, kaputt/verschlüsselt kein Jobfehler,
+wiederholter Schritt speichert nichts doppelt, neuer Lauf ersetzt den
+alten, langer Text, Migration 026); ZUGFeRD-/XRechnung-Fixtures;
 KI-Client mit aufgezeichneten Antworten (gültig, ungültig + Reparatur,
 Timeout, HTTP-Fehler, kein JSON); KI-Anbieter (`VerbindungstestTest` mit
 `tests/fixtures/llm/verbindungstest/`: Bild + Schema in einem Aufruf,

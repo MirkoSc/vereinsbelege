@@ -9,6 +9,7 @@ use App\Domain\DocumentSource;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
 use App\Domain\JobExecutor;
+use App\Domain\OcrStatus;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
@@ -19,6 +20,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatindex;
+use App\Service\Document\Texterkennung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\Mailer;
@@ -101,6 +103,7 @@ final readonly class SubmissionService
                 $now,
                 costCenterId: $angaben->kostenstelleId,
                 processedBlobIds: $aufbereitet,
+                ocrStatus: OcrStatus::Ausstehend,
             );
 
             // Building the PDF working copy needs an unlocked vault, so it
@@ -116,6 +119,15 @@ final readonly class SubmissionService
             );
             $this->jobs->enqueue(
                 Duplikatindex::JOB_TYP,
+                JobExecutor::Session,
+                'document',
+                $documentId,
+                now: $now,
+            );
+            // And the text layer of digital PDFs (issue #45/M7-3) - the
+            // document is inserted `ocr_status` `ausstehend` for it.
+            $this->jobs->enqueue(
+                Texterkennung::JOB_TYP,
                 JobExecutor::Session,
                 'document',
                 $documentId,

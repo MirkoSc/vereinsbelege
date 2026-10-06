@@ -234,6 +234,10 @@ final class InterneErfassungTest extends DatabaseTestCase
         // ... and one content index job for duplicate detection (issue #40).
         $jobs = $this->pdo()->query("SELECT ref_id FROM job WHERE typ = 'detect_duplicate' ORDER BY ref_id")->fetchAll(\PDO::FETCH_COLUMN);
         self::assertSame(array_map(intval(...), array_column($dokumente, 'id')), array_map(intval(...), $jobs));
+        // ... and one text layer job (issue #45/M7-3), the receipt waiting for it.
+        $jobs = $this->pdo()->query("SELECT ref_id FROM job WHERE typ = 'extract_text' ORDER BY ref_id")->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertSame(array_map(intval(...), array_column($dokumente, 'id')), array_map(intval(...), $jobs));
+        self::assertSame(['ausstehend'], array_values(array_unique(array_column($dokumente, 'ocr_status'))));
         self::assertSame(0, $this->zaehle('submission_upload'));
         self::assertSame(
             ['beleg.erfasst', 'beleg.erfasst', 'beleg.erfasst'],

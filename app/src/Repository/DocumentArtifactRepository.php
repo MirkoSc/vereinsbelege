@@ -74,6 +74,51 @@ final readonly class DocumentArtifactRepository
     }
 
     /**
+     * One artifact of one run, if it was stored - for a step that has to
+     * pick up where a cut-off attempt of itself left off
+     * (App\Service\Document\Texterkennung).
+     */
+    public function finde(int $documentId, ArtifactKind $kind, int $jobId, int $seq): ?DocumentArtifact
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM document_artifact WHERE document_id = ? AND kind = ? AND job_id = ? AND seq = ?',
+        );
+        $stmt->execute([$documentId, $kind->value, $jobId, $seq]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : DocumentArtifact::fromRow($row);
+    }
+
+    /**
+     * The encrypted payload of an artifact that keeps it inline (`text`,
+     * `extraction`). A separate write after insert(): the AAD binds the
+     * ciphertext to the row id (docs/spec/01-sicherheit.md section 2), which
+     * only exists once the row does.
+     */
+    public function setzeDaten(int $id, string $dataEnc): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE document_artifact SET data_enc = ? WHERE id = ?');
+        $stmt->bindValue(1, $dataEnc, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
+     * Drops what other runs of this kind left for the document - for a kind
+     * without blobs (`text`); the blob-backed `page_image` goes through
+     * fremdeBlobIds() instead, so the blob is deleted with the row. "The
+     * newest per kind counts" (docs/spec/02-datenmodell.md) then holds
+     * without readers having to sort runs out.
+     */
+    public function loescheAndereLaeufe(int $documentId, ArtifactKind $kind, int $jobId): void
+    {
+        $stmt = $this->pdo->prepare(
+            'DELETE FROM document_artifact WHERE document_id = ? AND kind = ? AND (job_id IS NULL OR job_id != ?) AND blob_id IS NULL',
+        );
+        $stmt->execute([$documentId, $kind->value, $jobId]);
+    }
+
+    /**
      * @return list<DocumentArtifact> every artifact of this kind, in page order
      */
     public function fuerDokument(int $documentId, ArtifactKind $kind): array
