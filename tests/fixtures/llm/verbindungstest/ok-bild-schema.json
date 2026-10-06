@@ -1,0 +1,1 @@
+{"id":"chatcmpl-test0001","object":"chat.completion","created":1790000000,"model":"gpt-6-luna-2026-08-01","choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true,\"farbe\":\"Rot\"}","refusal":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":118,"completion_tokens":9,"total_tokens":127}}

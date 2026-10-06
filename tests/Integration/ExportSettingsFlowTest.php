@@ -201,7 +201,7 @@ final class ExportSettingsFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the export pattern page last.
-        $controller = array_fill(0, 31, $unerreichbar);
+        $controller = array_fill(0, 32, $unerreichbar);
         $controller[1] = $guard;
         $controller[30] = $exportAdmin;
 
