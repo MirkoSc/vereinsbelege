@@ -790,7 +790,8 @@ final readonly class Pruefung
         return $ids;
     }
 
-    private static function entschluesseln(Vault $vault, InvoiceRecord $record): InvoiceData
+    /** Opens `data_enc` of one receipt - also for the ZIP export (issue #76/M12-2). */
+    public static function entschluesseln(Vault $vault, InvoiceRecord $record): InvoiceData
     {
         $json = FieldCipher::decrypt(
             $vault->openDataKey($record->dekSealed),

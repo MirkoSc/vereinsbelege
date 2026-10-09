@@ -115,6 +115,9 @@ enum AuditAction: string
     /** Issue #64/M9-6: whether income needs a receipt by default (E-17). */
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
 
+    // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
+    case ExportErstellt = 'export.erstellt';
+
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
     case WartungAufgehoben = 'wartung.aufgehoben';
@@ -196,6 +199,7 @@ enum AuditAction: string
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::EinstellungExport => 'Export-Muster geändert',
+            self::ExportErstellt => 'ZIP-Export erstellt',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -240,6 +244,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
+            self::ExportErstellt,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
         };
     }

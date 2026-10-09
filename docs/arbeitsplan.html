@@ -191,7 +191,7 @@ const PLAN = [
   { n: 50, t: 'M7-8 KI-Protokoll', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [47], mig: true },
   { n: 57, t: 'M8-1 Serienerkennung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [48, 49], mig: true },
   { n: 58, t: 'M8-2 Übersicht wiederkehrende Kosten', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [57] },
-  { n: 65, t: 'M10-1 Allocation-Modell', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [48, 49, 50, 64], mig: true, x: 'Braucht M7 und Strang B (M9).' },
+  { n: 65, t: 'M10-1 Allocation-Modell', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [48, 49, 50, 64], mig: true, x: 'Braucht M7 und Strang B (M9). Füllt im ZIP-Export (#76) „bezahlt am/Konto/Referenz“ und {kasse}.' },
   { n: 66, t: 'M10-2 Scoring + Auto-Zuordnung', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [65] },
   { n: 67, t: 'M10-3 Erstattungen', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [65] },
   { n: 70, t: 'M10-6 Umbuchungen eigene Konten', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [65] },
@@ -218,6 +218,7 @@ const PLAN = [
   { n: 75, t: 'M12-1 Pfad-/Dateinamen-Muster', s: 'C', m: 'opus', e: 'high', mo: 'auto', d: [38, 39, 40] },
   { n: 76, t: 'M12-2 Gestreamter ZIP-Export', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75] },
   { n: 77, t: 'M12-3 Archiv-Import', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75], x: 'Probelauf mit einem echten Jahresarchiv.' },
+  { n: 179, t: 'M12-4 Export: nur nicht exportierte', s: 'C', m: 'opus', e: 'high', mo: 'plan', d: [76], mig: true, x: 'Zuerst entscheiden, wann ein abgebrochener Download als exportiert gilt.' },
 
   { n: 154, t: 'Restore ohne config.php sperrt Konten aus', s: 'G', m: 'fable', e: 'xhigh', mo: 'entscheid', d: [], st: 'wartet', x: 'Erst deine Entscheidung (3 Wege im Issue). Backup-Punkte aus #155 mitnehmen.' },
   { n: 112, t: 'M3-11 Admin-Seite Backups', s: 'G', m: 'opus', e: 'high', mo: 'plan', d: [154] },

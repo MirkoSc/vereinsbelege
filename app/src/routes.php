@@ -27,6 +27,7 @@ use App\App\BuchungController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
+use App\App\ExportController;
 use App\App\InboxController;
 use App\App\InvitationController;
 use App\App\KontoauszugController;
@@ -158,6 +159,8 @@ use App\View\View;
  * @param \Closure(): BuchungsregelController $buchungsregeln built lazily,
  *        same reason as $mail: only the rule pages need the database
  *        (issue #64/M9-6).
+ * @param \Closure(): ExportController $export built lazily, same reason as
+ *        $mail: only the ZIP export needs the database (issue #76/M12-2).
  */
 return static function (
     Router $router,
@@ -197,6 +200,7 @@ return static function (
     \Closure $kontoauszuege,
     \Closure $buchungen,
     \Closure $buchungsregeln,
+    \Closure $export,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -576,6 +580,16 @@ return static function (
     $post('/app/buchungen/regeln/{id:\d+}/anwenden', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->anwenden($r, $params));
     $post('/app/buchungen/regeln/{id:\d+}/aktiv', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->aktiv($r, $params));
     $post('/app/buchungen/regeln/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->loeschen($r, $params));
+
+    // ZIP export (issue #76/M12-2, docs/spec/05-auswertung-und-export.md
+    // section 2). Permission: `export.zip` - on the user side, because the
+    // board, the auditors and the tax advisor hold it without the admin
+    // area; the period scope narrows it in SQL. The download is a POST with
+    // CSRF (it writes the audit log) and needs the unlocked vault
+    // (App\App\ExportController).
+    $exportZip = Zugriff::recht(Permission::ExportZip);
+    $get('/app/export', $exportZip, static fn(Request $r) => $export()->seite($r));
+    $post('/app/export/zip', $exportZip, static fn(Request $r) => $export()->zip($r));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).

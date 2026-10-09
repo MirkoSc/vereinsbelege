@@ -177,8 +177,12 @@ final readonly class PfadMuster
         ];
     }
 
-    /** "1.234,56" - integer arithmetic only, never float (CLAUDE.md section 5). */
-    private static function betrag(int $cent, string $waehrung): string
+    /**
+     * "1.234,56", another currency than EUR with its code ("12,00 USD") -
+     * integer arithmetic only, never float (CLAUDE.md section 5). Also the
+     * "Brutto" column of the export's index.csv (issue #76/M12-2).
+     */
+    public static function betrag(int $cent, string $waehrung): string
     {
         $betrag = abs($cent);
         $text = ($cent < 0 ? '-' : '')

@@ -549,7 +549,7 @@ final class CsvProfileFlowTest extends DatabaseTestCase
         // guard second, the account pages 28th, the CSV formats 30th, the
         // export pattern page 31st, the AI provider pages 32nd, the
         // statement import 33rd.
-        $controller = array_fill(0, 35, $unerreichbar);
+        $controller = array_fill(0, 36, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $konten;
         $controller[29] = $csvFormate;

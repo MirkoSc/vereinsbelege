@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Domain\DocumentStatus;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
+use App\Domain\Zugriffsbereich;
+use App\Service\Export\ExportBeleg;
+use App\Service\Export\ExportFilter;
 
 /**
  * The `invoice` table (migrations/019_invoice.sql, issue #37/M6-3, lock columns
@@ -181,6 +185,73 @@ final readonly class InvoiceRepository
         $stmt = $this->pdo->prepare('UPDATE invoice SET locked_by = NULL, locked_at = NULL, checked_by = NULL, checked_at = NULL WHERE id = ?');
         $stmt->bindValue(1, $id, \PDO::PARAM_INT);
         $stmt->execute();
+    }
+
+    /**
+     * The receipts of the ZIP export (issue #76/M12-2): period on the receipt
+     * date, the document's status, category, cost center and supplier
+     * (0 = none assigned), always narrowed to what $bereich allows. In a
+     * fixed order - receipt date, then id - so the same filter gives the
+     * same file names on every run (App\Service\Export\PfadVergabe).
+     *
+     * @return list<ExportBeleg>
+     */
+    public function exportListe(ExportFilter $filter, Zugriffsbereich $bereich): array
+    {
+        $status = $filter->status->statusse();
+        $bedingungen = [
+            'i.invoice_date >= ?',
+            'i.invoice_date <= ?',
+            'd.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ')',
+        ];
+        $parameter = [
+            $filter->von->format('Y-m-d'),
+            $filter->bis->format('Y-m-d'),
+            ...array_map(static fn(DocumentStatus $s): string => $s->value, $status),
+        ];
+
+        foreach (['i.category_id' => $filter->kategorieId, 'i.cost_center_id' => $filter->kostenstelleId, 'i.supplier_id' => $filter->lieferantId] as $spalte => $id) {
+            if ($id === 0) {
+                $bedingungen[] = $spalte . ' IS NULL';
+            } elseif ($id !== null) {
+                $bedingungen[] = $spalte . ' = ?';
+                $parameter[] = $id;
+            }
+        }
+
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $bedingungen[] = $scope;
+        array_push($parameter, ...$scopeParameter);
+
+        $stmt = $this->pdo->prepare(
+            'SELECT i.*, d.status AS document_status, d.pdf_blob_id AS document_pdf_blob_id,
+                    d.original_blob_ids AS document_original_blob_ids
+             FROM invoice i JOIN document d ON d.id = i.document_id
+             WHERE ' . implode(' AND ', $bedingungen) . '
+             ORDER BY i.invoice_date, i.id',
+        );
+        $stmt->execute($parameter);
+
+        return array_map(ExportBeleg::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The suppliers the export page may offer as a filter (issue #76/M12-2):
+     * those of receipts within $bereich that are not rejected - a scoped
+     * role must not learn the names of suppliers it never sees a receipt of.
+     *
+     * @return list<int>
+     */
+    public function lieferantenImBereich(Zugriffsbereich $bereich): array
+    {
+        [$scope, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT DISTINCT i.supplier_id FROM invoice i JOIN document d ON d.id = i.document_id
+             WHERE i.supplier_id IS NOT NULL AND d.status <> ? AND ' . $scope,
+        );
+        $stmt->execute([DocumentStatus::Abgelehnt->value, ...$parameter]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
     }
 
     /**
