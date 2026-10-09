@@ -27,6 +27,7 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Document\DuplikatRuleViolation;
 use App\Service\Document\Duplikatpruefung;
+use App\Service\Document\ERechnungAuszug;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
@@ -113,8 +114,18 @@ final readonly class PruefungController
         }
 
         $document = $eintrag->document;
+        $beleg = $this->pruefung->beleg($document, $tresor);
+        $felder = $this->pruefung->felder($document, $beleg);
 
-        return $this->seite($eintrag, $tresor, $this->pruefung->felder($document, $this->pruefung->beleg($document, $tresor)), null);
+        // No receipt captured yet: an e-invoice fills the form (issue
+        // #46/M7-4) - the person still confirms it by saving.
+        $eRechnung = $beleg === null && $document->status->pruefbar() ? $this->pruefung->eRechnung($document, $tresor) : null;
+        $hinweise = [];
+        if ($eRechnung !== null && $eRechnung->extraktion !== null && $eRechnung->gelesen()) {
+            ['felder' => $felder, 'hinweise' => $hinweise] = $this->pruefung->vorbelegen($felder, $eRechnung->extraktion, $tresor);
+        }
+
+        return $this->seite($eintrag, $tresor, $felder, null, eRechnung: $eRechnung, eRechnungHinweise: $hinweise);
     }
 
     /**
@@ -374,6 +385,7 @@ final readonly class PruefungController
 
     /**
      * @param array<string, string> $felder
+     * @param list<string> $eRechnungHinweise
      */
     private function seite(
         InboxItem $eintrag,
@@ -381,6 +393,8 @@ final readonly class PruefungController
         array $felder,
         ?InvoiceRuleViolation $fehler,
         int $status = 200,
+        ?ERechnungAuszug $eRechnung = null,
+        array $eRechnungHinweise = [],
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
@@ -414,6 +428,8 @@ final readonly class PruefungController
             'duplikat' => $this->duplikate->verdacht($document, $this->bereich()),
             'duplikatBasis' => '/app/belege/pruefen/' . $document->id,
             'duplikatAufloesbar' => $tresor !== null,
+            'eRechnung' => $eRechnung,
+            'eRechnungHinweise' => $eRechnungHinweise,
             'scripts' => ['/js/pruefansicht.js'],
         ], Area::App), $status);
     }

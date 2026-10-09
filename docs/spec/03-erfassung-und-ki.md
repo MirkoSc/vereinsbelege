@@ -10,7 +10,8 @@ Mobile-first, eine Seite, kein Login. Ablauf:
      capture="environment">` (iOS/ältere Browser).
    - „Bild wählen" (JPEG/PNG; HEIC wird im Browser, wenn möglich, konvertiert,
      sonst verständliche Fehlermeldung).
-   - „PDF wählen".
+   - „PDF oder E-Rechnung wählen" (PDF, ZUGFeRD/Factur-X-PDF oder
+     XRechnung als XML-Datei, seit M7-4 – Abschnitt 3).
    - Mehrere Seiten pro Beleg: „Weitere Seite hinzufügen", Reihenfolge per
      Drag & Drop, Seite löschen.
 2. **Zuschneiden & Aufbereiten** (je Bild, siehe Abschnitt 2) – automatisch
@@ -450,6 +451,75 @@ in einem Lauf ab, nicht eines je Datei.
   nimmt die `document_artifact`-Zeile über `ON DELETE CASCADE` mit
   (02, Migration 015).
 
+**Stand M7-4** (issue #46): E-Rechnungen werden im selben Session-Job
+`extract_text` gelesen (`App\Service\Document\Texterkennung`), ohne KI.
+
+- *Eigener Parser statt horstoeko/zugferd:* die Bibliothek zieht
+  jms/serializer, symfony/\*, setasign/fpdi und für das Auslesen des
+  PDF-Anhangs smalot/pdfparser nach – Letzteres ist in M7-3 an PHP-8.5-
+  Warnungen und Laufzeit gescheitert. Gebraucht werden nur gut ein Dutzend
+  Felder an festen EN-16931-Pfaden, deshalb `App\Service\Processing\
+  ERechnung\*` (framework-frei wie `Processing\Pdf\*`): `ERechnungLeser`
+  liest **CII** (`rsm:CrossIndustryInvoice` – ZUGFeRD 2.x, Factur-X,
+  XRechnung-CII) und **UBL 2.1** (`Invoice`/`CreditNote` – XRechnung-UBL)
+  per ext-dom/XPath; `ERechnungPdf` findet die eingebettete XML eines
+  ZUGFeRD-/Factur-X-PDFs über `PdfDokument::eingebetteteDateien()`
+  (`/AF` des Katalogs und Name-Tree `/Names /EmbeddedFiles`, inkl.
+  `/Kids`), nur Dateien mit Endung `.xml`, die Standardnamen
+  (`factur-x.xml`, `zugferd-invoice.xml`, `xrechnung.xml`) zuerst, innerhalb
+  des Dekodier-Budgets des Textlayers. ZUGFeRD 1.0 (eigener Namensraum, vor
+  EN 16931) wird erkannt und bewusst **nicht** gelesen.
+- *Felder:* Belegart (Typcode 381/396/532 bzw. `CreditNote` → Gutschrift,
+  sonst Rechnung), Nummer, Datum, Fälligkeit, Leistungszeitraum (sonst
+  Lieferdatum), Währung, Brutto/Netto, Steuerzeilen (Satz, Betrag),
+  Lieferant (Name, Anschrift, USt-ID, Steuernummer, E-Mail), IBAN/BIC,
+  Gläubiger-ID, Mandatsreferenz, Kunden- und Vertragsnummer, Zahlart
+  (UNTDID 4461), „bereits bezahlt" (offener Betrag 0). Beträge als
+  XML-Dezimalzahl streng in Cent (Punkt, kein Komma; mehr als zwei
+  Nachkommastellen → gerundet mit Hinweis). Summenprüfung wie in der
+  Prüfansicht, als Hinweis. Ohne Nummer, Datum (Format 102 bzw. ISO),
+  Währung oder Brutto gilt die E-Rechnung als `defekt` – **nie raten**.
+- *Sicherheit:* ein Dokument mit `<!DOCTYPE` wird abgewiesen, bevor libxml
+  es sieht (keine Entitäten, kein XXE), `LIBXML_NONET`, höchstens 32 MiB,
+  libxml-Fehler nur intern (keine Warnung). Befund
+  (`App\Service\Processing\ERechnung\ERechnungBefund`: `gelesen`/`keine`/
+  `defekt`/`nicht_unterstuetzt`/`zu_gross`) – nie ein Jobfehler.
+- *Ablauf:* Schritt `''` nimmt PDF- **und** XML-Originale als Quellen. Je
+  Quelle ein Schritt: XML → `ERechnungLeser`; PDF → erst die eingebettete
+  E-Rechnung, dann der Textlayer (so bedeutet ein gespeicherter Text, dass
+  beides erledigt ist – Idempotenz bei Abbruch). Ergebnis als
+  `document_artifact` **`kind = e_rechnung`** (eigenes Kind statt
+  `extraction`, damit die KI-Ergebnisse aus M7-5 eigene Läufe behalten;
+  `seq` = Quellposition, eigener DEK, JSON `{befund, syntax, profil,
+  extraktion}`, `extraktion` im Format `extract-v1` aus Abschnitt 6 – die
+  Felder, die eine E-Rechnung nicht kennt (Kategorie, Zweck, Sphäre,
+  Kostenstelle, Serie), bleiben leer). `ocr_status = fertig`, wenn jedes
+  Original ein PDF mit brauchbarem Textlayer oder eine gelesene
+  E-Rechnungs-XML ist. `Texterkennung::eRechnung()` liefert die erste
+  gelesene E-Rechnung des neuesten Laufs (Andockpunkt für `ai_extract`/M7-5:
+  KI nur noch für Kategorie/Zweck).
+- *Upload:* `MagicBytes::XML` (`application/xml`): optionale BOM, dann
+  Markup – und die **Wurzel** muss CII oder UBL-Invoice/-CreditNote sein
+  (`ERechnungLeser::wurzel()` per XMLReader auf den ersten 64 KiB,
+  `MagicBytes::HEAD_BYTES`); HTML, SVG und beliebiges XML bleiben 415.
+  Öffentliche Einreichung und interne Erfassung nehmen `.xml` an.
+- *Anzeige:* XML ist keine Seite – im Posteingang und in der Prüfansicht nur
+  als Link „E-Rechnung (XML)", ausgeliefert mit `Content-Disposition:
+  attachment` und `nosniff`, nie inline. `pdf_erzeugen` überspringt reine
+  XML-Belege; neben genau einem PDF (der Sichtfassung) wird dieses PDF die
+  Arbeitsfassung, neben Bildern bleibt es beim gemischten Fall.
+- *Prüfansicht:* ohne gespeicherten Beleg füllt
+  `App\Service\Invoice\Pruefung::vorbelegen()` das Formular aus der
+  `extraktion` (nimmt nur, was ins Feld passt; dieselbe Methode nutzt M7-5
+  für die KI-Antwort). Lieferant: exakter Blind-Index-Treffer in der
+  Reihenfolge USt-ID, Steuernummer, IBAN, Gläubiger-ID (Abschnitt 7, Stufen
+  1–3), genau ein Treffer mit zur Richtung passender Rolle; sonst Name und
+  (gültige) IBAN in „Neu anlegen" vorbelegt. Hinweis „ohne KI übernommen"
+  samt Warnungen; eine nicht lesbare E-Rechnung nennt ihren Befund.
+  Gespeichert wird erst durch die Person (CLAUDE.md §6).
+- `ext-dom` und `ext-xmlreader` stehen jetzt in `composer.json` und im
+  Hosting-Check (06 §5).
+
 **Stand M7-3** (issue #45): Textlayer digitaler PDFs als Session-Job
 `extract_text` (`App\Service\Document\Texterkennung`, Abschnitt 5).
 
@@ -566,7 +636,8 @@ in einem Lauf ab, nicht eines je Datei.
   (Konstanten, keine Settings). Die angekündigte Größe wird geprüft, **bevor**
   ein Byte fließt.
 - *Abschluss:* vollständig? → Magic Bytes des ersten Chunks (nur JPEG, PNG,
-  PDF; der Client-MIME wird nie verwendet) → `BlobService::store()` bekommt
+  PDF und seit M7-4 E-Rechnungs-XML mit CII-/UBL-Wurzel, Abschnitt 3; der
+  Client-MIME wird nie verwendet) → `BlobService::store()` bekommt
   die Chunks als Generator, der Klartext wird also nie zu einer zweiten Datei
   → Temp-Verzeichnis gelöscht. Versiegelt wird an `vault.public_key`
   (Tabelle `vault`, Migration 004); solange keine Zeile existiert, antwortet
@@ -595,9 +666,10 @@ in einem Lauf ab, nicht eines je Datei.
   lädt jede Bildseite dort Original und aufbereitete Fassung als zwei
   Uploads hoch (Abschnitt 1).
 
-**Pflicht-Tests (Upload):** `MagicBytesTest` (die drei erlaubten Typen, ZIP/
-ELF/HTML/Text/GIF/HEIC/leer/zu kurz abgelehnt, PDF-Kopf mit Versatz
-abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
+**Pflicht-Tests (Upload):** `MagicBytesTest` (die erlaubten Typen inkl.
+XRechnung CII/UBL mit BOM und ohne Prolog, ZIP/ELF/HTML/Text/GIF/HEIC/leer/
+zu kurz abgelehnt, PDF-Kopf mit Versatz abgelehnt, HTML/SVG/beliebiges XML/
+XML mit DOCTYPE/ZUGFeRD 1.0 abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
 Übertragung abgelehnt, Limit selbst erlaubt, zu langer Chunk abgelehnt und
 ohne Rest, letzter Chunk kürzer, verkehrte Reihenfolge ergibt die richtige
 Datei, Wiederholung überschreibt, Index außerhalb, fehlender und zu kurzer
@@ -619,8 +691,9 @@ aktivem Worker-Modul.
 0. `pdf_erzeugen` (Abschnitt 3, issue #26/M4-4: PDF-Arbeitsfassung aus
    Bildseiten) – `session`/`session`
 1. `extract_text` (Webhoster: PDF-Textlayer / E-Rechnungs-XML; seit
-   issue #45/M7-3 der Textlayer, `App\Service\Document\Texterkennung`,
-   Abschnitt 3; eingereiht beim Eingang neben `pdf_erzeugen`) –
+   issue #45/M7-3 der Textlayer, seit issue #46/M7-4 die E-Rechnung,
+   `App\Service\Document\Texterkennung`, Abschnitt 3; eingereiht beim
+   Eingang neben `pdf_erzeugen`) –
    `session`/`session`
 2. `render_pages` (nur PDFs ohne Seitenbilder; Abschnitt 3, issue #30/M4-8) –
    `browser`/`worker`
@@ -936,7 +1009,22 @@ Dekompressionsbombe, Scan ohne Text, zwei Fixtures unter
 PDF je Schritt, kein Klartext außerhalb des Artefakts, Scan/Bilder/
 gemischt → `uebersprungen`, kaputt/verschlüsselt kein Jobfehler,
 wiederholter Schritt speichert nichts doppelt, neuer Lauf ersetzt den
-alten, langer Text, Migration 026); ZUGFeRD-/XRechnung-Fixtures;
+alten, langer Text, Migration 026); E-Rechnungen (`tests/fixtures/erechnung/`,
+synthetisch: XRechnung CII und UBL, UBL-Gutschrift, ZUGFeRD 1.0,
+ZUGFeRD-/Factur-X-PDF; `ERechnungLeserTest`: alle Felder beider Syntaxen,
+Gutschrift, `extract-v1`-Form, Summen-Hinweis, Cent-Parsing und Rundung,
+unvollständige Steuerzeile, fehlendes Pflichtfeld → `defekt`, ZUGFeRD 1.0,
+kein Rechnungs-XML, kaputt ohne Warnung, DOCTYPE/XXE/Entitäten abgewiesen,
+zu groß, Wurzelerkennung; `ERechnungPdfTest`: Fixture, Name-Tree mit
+`/Kids` und UTF-16-Namen, nur `/AF`, Standardname zuerst, andere Anhänge,
+ohne Anhang, kaputt/verschlüsselt, Dekompressionsbombe;
+`TexterkennungJobTest`: beide Speicher-Backends, ZUGFeRD neben Text, kein
+Klartext außerhalb des Artefakts, defekt kein Jobfehler, Wiederholung und
+Abbruch zwischen den Artefakten, neuer Lauf ersetzt, kein KI-Zugriff;
+`PruefungFlowTest`: Vorbelegung ohne Speichern, Lieferant über IBAN/USt-ID
+nur mit passender Rolle, nicht lesbare E-Rechnung, Hinweise, nur passende
+Werte; `PdfErzeugungTest`, `ChunkUploadTest`, `InboxFlowTest`: XML ist keine
+Seite, Upload ok bzw. 415, Download als `attachment`);
 KI-Client mit aufgezeichneten Antworten (gültig, ungültig + Reparatur,
 Timeout, HTTP-Fehler, kein JSON); KI-Anbieter (`VerbindungstestTest` mit
 `tests/fixtures/llm/verbindungstest/`: Bild + Schema in einem Aufruf,

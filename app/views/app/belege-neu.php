@@ -58,8 +58,8 @@
                 <input type="file" id="erfassen-bild" class="visuell-versteckt" accept="image/*" multiple>
             </label>
             <label class="knopf">
-                PDFs wählen
-                <input type="file" id="erfassen-pdf" class="visuell-versteckt" accept="application/pdf" multiple>
+                PDFs oder E-Rechnungen wählen
+                <input type="file" id="erfassen-pdf" class="visuell-versteckt" accept="application/pdf,.pdf,application/xml,text/xml,.xml" multiple>
             </label>
         </p>
 
@@ -108,7 +108,7 @@
                     <button type="button" class="knopf knopf-still" data-rolle="seite-kamera" hidden>Seite fotografieren</button>
                     <label class="knopf knopf-still">
                         Seite hinzufügen
-                        <input type="file" class="visuell-versteckt" accept="image/*,application/pdf" multiple data-rolle="seite-hinzufuegen">
+                        <input type="file" class="visuell-versteckt" accept="image/*,application/pdf,.pdf,application/xml,text/xml,.xml" multiple data-rolle="seite-hinzufuegen">
                     </label>
                 </p>
                 <p class="feld-fehler" data-fehler-fuer="seiten" hidden></p>

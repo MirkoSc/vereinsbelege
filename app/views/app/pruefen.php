@@ -40,6 +40,8 @@
  * @var \App\Service\Document\DuplikatVerdacht $duplikat suspected duplicate (issue #40/M6-6)
  * @var string $duplikatBasis
  * @var bool $duplikatAufloesbar
+ * @var \App\Service\Document\ERechnungAuszug|null $eRechnung the e-invoice, only before a receipt is saved (issue #46/M7-4)
+ * @var list<string> $eRechnungHinweise
  * @var string $csrf
  */
 
@@ -103,6 +105,29 @@ $rollenGruppe = [
     <?php endif; ?>
 
     <?php require __DIR__ . '/duplikat-hinweis.php'; ?>
+
+    <?php if ($eRechnung !== null && $bearbeitbar): ?>
+        <?php if ($eRechnung->gelesen()): ?>
+            <div class="hinweis hinweis-info">
+                <p>
+                    Die Angaben stammen aus der E-Rechnung<?= $eRechnung->syntax === null ? '' : ' (' . e($eRechnung->syntax->label()) . ')' ?>
+                    und wurden ohne KI übernommen. Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts.
+                </p>
+                <?php if ($eRechnungHinweise !== []): ?>
+                    <ul>
+                        <?php foreach ($eRechnungHinweise as $hinweis): ?>
+                            <li><?= e($hinweis) ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+        <?php else: ?>
+            <p class="hinweis hinweis-warnung">
+                Der Beleg enthält eine E-Rechnung, die nicht übernommen werden konnte (<?= e($eRechnung->befund->label()) ?>).
+                Bitte die Angaben von Hand erfassen.
+            </p>
+        <?php endif; ?>
+    <?php endif; ?>
 
     <?php if ($fehler !== null): ?>
         <p class="hinweis hinweis-fehler" role="alert" id="pruefen-fehler">

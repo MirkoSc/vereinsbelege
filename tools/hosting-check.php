@@ -370,6 +370,8 @@ function hc_group_extensions(): array
         'fileinfo' => 'Upload-Typerkennung',
         'pdo_mysql' => 'Datenbank',
         'iconv' => 'Zeichensatz-Konvertierung (MT940)',
+        'dom' => 'E-Rechnungen lesen (XRechnung, ZUGFeRD)',
+        'xmlreader' => 'Upload-Prüfung von E-Rechnungen',
         'json' => 'KI-Antworten, Job-Daten',
     ];
     $optional = [

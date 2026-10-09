@@ -280,7 +280,7 @@ final class HostingCheckTest extends TestCase
                 'php_version', 'memory_limit', 'max_execution_time', 'upload_max_filesize',
                 'post_max_size', 'max_input_time', 'disable_functions',
                 'ext_sodium', 'ext_gd', 'ext_imagick', 'ext_zip', 'ext_curl', 'ext_openssl',
-                'ext_mbstring', 'ext_intl', 'ext_fileinfo', 'ext_pdo_mysql', 'ext_iconv',
+                'ext_mbstring', 'ext_intl', 'ext_fileinfo', 'ext_pdo_mysql', 'ext_iconv', 'ext_dom', 'ext_xmlreader',
                 'gd_formats', 'pwhash_interactive', 'pwhash_moderate', 'password_argon2id',
                 'fs_rename_dir', 'fs_writable', 'fs_above_document_root',
                 'cron_interval', 'longrun_limit', 'stream_limit', 'smtp', 'shared_reachable',
