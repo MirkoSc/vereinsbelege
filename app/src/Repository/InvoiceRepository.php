@@ -236,6 +236,25 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * The suppliers the export page may offer as a filter (issue #76/M12-2):
+     * those of receipts within $bereich that are not rejected - a scoped
+     * role must not learn the names of suppliers it never sees a receipt of.
+     *
+     * @return list<int>
+     */
+    public function lieferantenImBereich(Zugriffsbereich $bereich): array
+    {
+        [$scope, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT DISTINCT i.supplier_id FROM invoice i JOIN document d ON d.id = i.document_id
+             WHERE i.supplier_id IS NOT NULL AND d.status <> ? AND ' . $scope,
+        );
+        $stmt->execute([DocumentStatus::Abgelehnt->value, ...$parameter]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
      * @return int the next free parameter position
      */
     private static function bindStruktur(\PDOStatement $stmt, int $n, InvoiceStructure $s): int

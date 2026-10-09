@@ -22,7 +22,6 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Export\ExportFilter;
 use App\Service\Export\ZipExport;
-use App\Service\MasterData\SupplierService;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -51,7 +50,6 @@ final readonly class ExportController
         private Session $session,
         private SessionVault $sessionVault,
         private ZipExport $export,
-        private SupplierService $lieferanten,
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
         private AuditLog $audit,
@@ -72,7 +70,7 @@ final readonly class ExportController
             'filter' => $filter,
             'fehler' => $fehler,
             'plan' => $tresor === null || $fehler !== null ? null : $this->export->vorbereiten($filter, $this->bereich(), $tresor),
-            'lieferanten' => $tresor === null ? [] : $this->lieferanten->liste($tresor),
+            'lieferanten' => $tresor === null ? [] : $this->export->lieferantenAuswahl($this->bereich(), $tresor),
             'kategorien' => $this->kategorien->all(),
             'kostenstellen' => $this->kostenstellen->all(),
             'csrf' => $this->session->csrfToken(),

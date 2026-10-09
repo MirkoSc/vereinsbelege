@@ -601,7 +601,6 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
             $logger,
             sekundenJeDatei: 30,
         ),
-        $lieferanten,
         $kategorien,
         $kostenstellen,
         $auditFor($pdo),

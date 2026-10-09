@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service\Export;
 
+use App\Domain\Blob;
+use App\Domain\Supplier;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -12,6 +14,7 @@ use App\Repository\SettingRepository;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
+use App\Service\Storage\BlobException;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
 use App\Support\FileLogger;
@@ -31,10 +34,13 @@ use App\Support\FileLogger;
  *   No temp file, no plaintext anywhere but in the response.
  *
  * Per receipt the working PDF (`document.pdf_blob_id`) goes into the main
- * tree; a receipt without one (mixed uploads, several PDFs) contributes its
- * originals there instead. With the option "Originale zusätzlich" every
- * original also goes below `_Originale/`, same structure. Receipts not
- * checked yet go below `_Wiedervorlage/` (App\Service\Export\ExportStatus).
+ * tree; a receipt without a usable one (mixed uploads, several PDFs, a PDF
+ * that was never finished) contributes its originals there instead. With
+ * the option "Originale zusätzlich" every original also goes below
+ * `_Originale/`, same structure. Receipts not checked yet go below
+ * `_Wiedervorlage/` (App\Service\Export\ExportStatus). A file missing from
+ * the store is left out before the first byte - in index.csv it reads
+ * "(Datei fehlt)" - so one lost file never breaks the whole ZIP.
  *
  * "bezahlt am", "Konto", "Referenz" and `{kasse}` stay empty until receipts
  * are matched to payments (M10-1, issue #65).
@@ -60,7 +66,7 @@ final readonly class ZipExport
         'Status', 'bezahlt am', 'Konto', 'Referenz', 'Datei',
     ];
 
-    /** "Datei" of a receipt whose file could not be exported. */
+    /** "Datei" entry of a main-tree file that could not be exported. */
     public const string DATEI_FEHLT = '(Datei fehlt)';
 
     /** Deflate level of the receipts: PDFs and JPEGs are compressed already. */
@@ -141,12 +147,14 @@ final readonly class ZipExport
             ));
             $vorne = ExportStatus::ungeprueft($beleg->status) ? [self::ORDNER_WIEDERVORLAGE] : [];
 
-            $hauptdateien = $beleg->pdfBlobId !== null ? [$beleg->pdfBlobId] : $beleg->originalBlobIds;
+            // The working PDF, or - without a usable one - the originals.
+            $pdf = $beleg->pdfBlobId === null ? null : $this->datei($beleg->pdfBlobId, null);
+            $hauptdateien = $pdf !== null ? [$beleg->pdfBlobId => $pdf] : $this->dateien($beleg->originalBlobIds, $vault);
             $imIndex = [];
-            foreach ($hauptdateien as $blobId) {
-                $datei = $this->datei($blobId, $blobId === $beleg->pdfBlobId ? null : $vault);
+            foreach ($hauptdateien as $blobId => $datei) {
                 if ($datei === null) {
                     $fehlend++;
+                    $imIndex[] = self::DATEI_FEHLT;
                     continue;
                 }
                 $pfad = $vergabe->vergeben([$wurzel, ...$vorne, ...$segmente], $datei['endung']);
@@ -156,8 +164,7 @@ final readonly class ZipExport
             }
 
             if ($filter->originale) {
-                foreach ($beleg->originalBlobIds as $blobId) {
-                    $datei = $this->datei($blobId, $vault);
+                foreach ($this->dateien($beleg->originalBlobIds, $vault) as $blobId => $datei) {
                     if ($datei === null) {
                         $fehlend++;
                         continue;
@@ -181,11 +188,31 @@ final readonly class ZipExport
                 '',
                 '',
                 // "|" cannot occur in a name (App\Service\Export\Dateiname).
+                // The formula guard holds here too: a path that begins with
+                // "-" or "+" (a pattern starting with {betrag}) gets the
+                // apostrophe as well - safety before an exact match.
                 Csv::text($imIndex === [] ? self::DATEI_FEHLT : implode(' | ', $imIndex)),
             ]);
         }
 
         return new ExportPlan($wurzel, $indexPfad, $csv, $eintraege, $anzahl, $groesse, $fehlend);
+    }
+
+    /**
+     * The suppliers the filter offers, decrypted and sorted by name: only
+     * those of receipts within $bereich (InvoiceRepository::
+     * lieferantenImBereich()).
+     *
+     * @return list<Supplier>
+     */
+    public function lieferantenAuswahl(Zugriffsbereich $bereich, Vault $vault): array
+    {
+        $ids = array_flip($this->belege->lieferantenImBereich($bereich));
+
+        return array_values(array_filter(
+            $this->lieferanten->liste($vault),
+            static fn(Supplier $lieferant): bool => isset($ids[$lieferant->id]),
+        ));
     }
 
     /**
@@ -233,7 +260,10 @@ final readonly class ZipExport
     private function datei(int $blobId, ?Vault $vault): ?array
     {
         $blob = $this->blobs->find($blobId);
-        if ($blob === null || !$blob->isComplete()) {
+        // The row alone is not enough: a file lost from shared/var/blobs/
+        // would otherwise only show halfway through the stream and break
+        // the whole ZIP.
+        if ($blob === null || !$blob->isComplete() || !$this->vorhanden($blob)) {
             return null;
         }
         $mime = $vault === null ? MagicBytes::PDF : $this->blobs->meta($blob, $vault)?->mimeType;
@@ -247,6 +277,30 @@ final readonly class ZipExport
             },
             'groesse' => $blob->size,
         ];
+    }
+
+    /**
+     * @param list<int> $blobIds
+     *
+     * @return array<int, array{endung: string, groesse: int}|null> by blob id, in order
+     */
+    private function dateien(array $blobIds, Vault $vault): array
+    {
+        $dateien = [];
+        foreach ($blobIds as $blobId) {
+            $dateien[$blobId] = $this->datei($blobId, $vault);
+        }
+
+        return $dateien;
+    }
+
+    private function vorhanden(Blob $blob): bool
+    {
+        try {
+            return $this->blobs->exists($blob);
+        } catch (BlobException) {
+            return false;
+        }
     }
 
     private function zeitlimit(): void

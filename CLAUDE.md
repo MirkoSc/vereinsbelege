@@ -40,6 +40,9 @@ aktuelle Issue verlinkt**, nicht alle.
 - **Kein einzelner Request darf lange laufen.** Lange Vorgänge (KI-Auslesen,
   Import, Export, Umschlüsseln, Update) sind idempotente Schrittketten aus
   kurzen Requests mit persistentem Status (Job-Tabelle bzw. Statusdatei).
+  Einzige Ausnahme: der **gestreamte ZIP-Download** (05 §2) – ein
+  I/O-gebundener Request ohne Zwischenstand auf dem Server, Zeitlimit je
+  Datei neu gesetzt; bricht er ab, wird in Teilen (je Quartal) exportiert.
 - Kein Build-Step auf dem Server; `vendor/` und gebaute Assets liegen im
   Release-ZIP. Nur reine PHP-Bibliotheken ohne native Abhängigkeiten.
 - Rechenintensive Bildarbeit (Kantenerkennung, Entzerrung, Schwarzweiß,

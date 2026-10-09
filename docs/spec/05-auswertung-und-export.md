@@ -118,6 +118,9 @@ leer → Ebene entfällt).
       Dateien – nie Namen). Der Filter steht als Hidden Fields im Formular.
     - Der Zeitraum-Scope externer Rollen greift auf das Belegdatum in SQL
       (`InvoiceRepository::exportListe()`, sortiert nach Belegdatum, ID).
+      Die Lieferanten-Auswahl zeigt nur Lieferanten von Belegen im Scope
+      (`lieferantenImBereich()`), damit eine eingeschränkte Rolle keine
+      fremden Namen sieht.
   - **Filter:** Zeitraum auf das Belegdatum (Default: laufendes
     Kalenderjahr), Status, Kategorie, Kostenstelle, Lieferant (je „ohne“ =
     nicht zugeordnet) und „Originale zusätzlich“. Statusauswahl
@@ -132,13 +135,16 @@ leer → Ebene entfällt).
     (noch nicht erfasst) haben weder Datum noch Lieferant und fehlen.
   - **Dateien je Beleg:**
     - Im Hauptbaum liegt die PDF-Arbeitskopie (`document.pdf_blob_id`).
-      Ohne Arbeitskopie (gemischte Uploads, mehrere PDFs) stehen dort die
-      Originale in Seitenreihenfolge, die Endung kommt aus dem Blob-Typ
-      (pdf/jpg/png).
+      Ohne nutzbare Arbeitskopie (gemischte Uploads, mehrere PDFs, eine nie
+      fertige Arbeitskopie) stehen dort die Originale in Seitenreihenfolge,
+      die Endung kommt aus dem Blob-Typ (pdf/jpg/png).
     - Mit der Option liegen zusätzlich alle Originale unter
       `_Originale/<gleicher Pfad>`.
-    - Fehlt ein Blob oder ist er unvollständig, steht in `index.csv`
-      „(Datei fehlt)“ und die Vorschau warnt.
+    - Vor dem ersten Byte wird geprüft, ob jede Datei vollständig im
+      Speicher liegt (Zeile **und** Chiffrat im Backend). Fehlt eine, steht
+      für jede fehlende Hauptdatei „(Datei fehlt)“ in `index.csv`, und die
+      Vorschau warnt. Eine einzelne verlorene Datei bricht so nicht das
+      ganze ZIP.
   - **`index.csv`** liegt im Wurzelordner und ist die erste Datei im ZIP.
     - Format: UTF-8 mit BOM, `;`, CRLF; `App\Service\Export\Csv`, für die
       CSV-Exporte von M11 wiederverwendbar.
@@ -147,7 +153,8 @@ leer → Ebene entfällt).
       vorangestellt (Formel-Schutz – Namen können aus der öffentlichen
       Einreichung stammen).
     - „Datei“ ist relativ zum Wurzelordner, mehrere Dateien sind mit ` | `
-      getrennt.
+      getrennt. Der Formel-Schutz gilt auch hier: Ein Pfad, der mit `-` oder
+      `+` beginnt (Muster mit `{betrag}` vorn), bekommt ebenfalls das `'`.
     - **„bezahlt am“, „Konto“, „Referenz“ bleiben leer, `{kasse}` ist immer
       leer**, bis Belege Zahlungen zugeordnet werden (M10-1, #65).
   - **ZIP-Writer:** Eigener Writer `App\Service\Export\ZipStrom` (reines
@@ -177,7 +184,7 @@ leer → Ebene entfällt).
       unvollständig. Das Log enthält nur Klasse und Meldung.
   - **Offen:** Die Option „nur noch nicht exportierte“ braucht eine
     Export-Markierung (Migration) und muss klären, wann ein abgebrochener
-    Download als exportiert gilt. Sie ist als eigenes Issue vorgeschlagen.
+    Download als exportiert gilt. Dafür gibt es Issue #179 (M12-4).
 
 ## 3. Archiv-Import (Bestandsdaten)
 

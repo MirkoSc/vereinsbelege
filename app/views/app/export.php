@@ -131,7 +131,8 @@ $mb = static fn(int $bytes): string => number_format(max(0.1, $bytes / 1_048_576
                 <?php if ($plan->fehlend > 0): ?>
                     <p class="hinweis hinweis-warnung">
                         <?= e((string) $plan->fehlend) ?> Datei(en) fehlen im Speicher und können nicht exportiert werden.
-                        In der <code>index.csv</code> steht bei diesen Belegen „<?= e(ZipExport::DATEI_FEHLT) ?>“.
+                        In der <code>index.csv</code> steht an ihrer Stelle „<?= e(ZipExport::DATEI_FEHLT) ?>“;
+                        fehlende Originale fehlen nur im Ordner <code><?= e(ZipExport::ORDNER_ORIGINALE) ?></code>.
                     </p>
                 <?php endif; ?>
 

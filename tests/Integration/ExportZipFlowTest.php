@@ -293,37 +293,69 @@ final class ExportZipFlowTest extends DatabaseTestCase
 
     // ---------------------------------------------- broken files
 
-    public function testAFileMissingFromTheStoreIsNamedInTheIndex(): void
+    /**
+     * A working PDF that was never finished is no reason to leave a
+     * receipt out: its originals stand in, nothing is reported missing.
+     */
+    public function testALostWorkingPdfIsReplacedByTheOriginals(): void
     {
         $a = $this->beleg('2025-02-03', lieferant: $this->stamm['bauhaus']);
-        $this->beleg('2025-03-01', lieferant: $this->stamm['stadtwerke']);
         $this->pdo()->prepare('UPDATE file_blob SET cipher_sha256 = NULL WHERE id = ?')->execute([$this->pdfBlob($a)]);
 
-        $seite = $this->get('/app/export', self::ZEITRAUM);
-        self::assertStringContainsString('1 Datei(en) fehlen im Speicher', $seite->body);
+        self::assertStringNotContainsString('fehlen im Speicher', $this->get('/app/export', self::ZEITRAUM)->body);
 
         $inhalte = ZipLeser::inhalte(self::bytes($this->download(self::ZEITRAUM)));
-        self::assertSame(['Belege_2025/index.csv', 'Belege_2025/Stadtwerke Musterstadt/2025/03. März/Stadtwerke Musterstadt 01.03.2025.pdf'], array_keys($inhalte));
-        self::assertStringContainsString(";Geprüft;;;;(Datei fehlt)\r\n", $inhalte['Belege_2025/index.csv']);
+        self::assertSame(['Belege_2025/index.csv', 'Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.jpg'], array_keys($inhalte));
+        self::assertSame($this->originalInhalt($a, 1), $inhalte['Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.jpg']);
+        self::assertStringEndsWith(";Geprüft;;;;Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.jpg\r\n", $inhalte['Belege_2025/index.csv']);
     }
 
     /**
-     * A file that cannot be read halfway through ends the stream without
-     * the central directory: recognisably broken rather than quietly
-     * incomplete. The log names the error class, never a path or a name.
+     * A file missing from the store - its row unfinished, or its ciphertext
+     * gone from shared/var/blobs/ - is found before the first byte: the
+     * rest of the ZIP is intact, and index.csv names each gap.
+     */
+    public function testAFileMissingFromTheStoreIsNamedInTheIndex(): void
+    {
+        $a = $this->beleg('2025-02-03', lieferant: $this->stamm['bauhaus'], mitPdf: false, seiten: 3);
+        $this->beleg('2025-03-01', lieferant: $this->stamm['stadtwerke']);
+        [, $zwei, $drei] = $this->originalBlobs($a);
+        unlink($this->fsPfad($zwei));
+        $this->pdo()->prepare('UPDATE file_blob SET cipher_sha256 = NULL WHERE id = ?')->execute([$drei]);
+
+        self::assertStringContainsString('2 Datei(en) fehlen im Speicher', $this->get('/app/export', self::ZEITRAUM)->body);
+
+        $inhalte = ZipLeser::inhalte(self::bytes($this->download(self::ZEITRAUM)));
+        self::assertSame([
+            'Belege_2025/index.csv',
+            'Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.jpg',
+            'Belege_2025/Stadtwerke Musterstadt/2025/03. März/Stadtwerke Musterstadt 01.03.2025.pdf',
+        ], array_keys($inhalte), 'one lost file does not break the ZIP');
+        self::assertStringContainsString(
+            ";Geprüft;;;;Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.jpg | (Datei fehlt) | (Datei fehlt)\r\n",
+            $inhalte['Belege_2025/index.csv'],
+        );
+    }
+
+    /**
+     * A file that cannot be decrypted halfway through ends the stream
+     * without the central directory: recognisably broken rather than
+     * quietly incomplete. The log names the error class, never a path or a
+     * name.
      */
     public function testAFileUnreadableDuringTheStreamBreaksTheZip(): void
     {
         $this->beleg('2025-02-03', lieferant: $this->stamm['bauhaus']);
         $b = $this->beleg('2025-03-01', lieferant: $this->stamm['stadtwerke']);
-        unlink($this->fsPfad($this->pdfBlob($b)));
+        $datei = $this->fsPfad($this->pdfBlob($b));
+        file_put_contents($datei, random_bytes((int) filesize($datei)));
 
         $zip = self::bytes($this->download(self::ZEITRAUM));
 
         self::assertStringContainsString('Bauhaus 03.02.2025.pdf', $zip, 'what came before went out');
         self::assertNotSame("PK\x05\x06", substr($zip, -22, 4), 'no end record');
         $log = (string) file_get_contents($this->logDatei());
-        self::assertStringContainsString('ZIP export aborted: App\Service\Storage\BlobException', $log);
+        self::assertStringContainsString('ZIP export aborted: App\Service\Crypto\CryptoException', $log);
         self::assertStringNotContainsString('Stadtwerke', $log);
         self::assertStringNotContainsString(self::MARKER, $log);
     }
@@ -437,6 +469,29 @@ final class ExportZipFlowTest extends DatabaseTestCase
         new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-05-01'), null);
 
         self::assertSame(['B', 'C'], $this->exportiert([]));
+    }
+
+    /**
+     * The supplier filter offers only suppliers of receipts within the
+     * scope - a tax advisor released for 2025 does not learn the names of
+     * suppliers the club only had in other years.
+     */
+    public function testTheSupplierChoiceStaysWithinTheScope(): void
+    {
+        $alt = new SupplierService($this->pdo(), new SupplierRepository($this->pdo()), new CategoryRepository($this->pdo()))
+            ->anlegen($this->tresor, ['name' => 'Altlieferant Beispiel', 'rolle' => SupplierRole::Lieferant->value], new \DateTimeImmutable())->id;
+        $this->beleg('2025-02-03', lieferant: $this->stamm['bauhaus']);
+        $this->beleg('2023-06-01', lieferant: $alt);
+
+        self::assertStringContainsString('>Altlieferant Beispiel</option>', $this->get('/app/export', self::ZEITRAUM)->body);
+        self::assertStringNotContainsString('>Stadtwerke Musterstadt</option>', $this->get('/app/export', self::ZEITRAUM)->body, 'no receipt, no entry');
+
+        $this->rolle(SystemRole::Steuerberater);
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-01-01'), new \DateTimeImmutable('2025-12-31'));
+        $seite = $this->get('/app/export', self::ZEITRAUM)->body;
+
+        self::assertStringContainsString('>Bauhaus</option>', $seite);
+        self::assertStringNotContainsString('Altlieferant', $seite);
     }
 
     public function testTheBoardMayExportAClubOfficerMayNot(): void
@@ -558,6 +613,17 @@ final class ExportZipFlowTest extends DatabaseTestCase
         $stmt->execute([$documentId]);
 
         return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function originalBlobs(int $documentId): array
+    {
+        $stmt = $this->pdo()->prepare('SELECT original_blob_ids FROM document WHERE id = ?');
+        $stmt->execute([$documentId]);
+
+        return array_map(intval(...), json_decode((string) $stmt->fetchColumn(), true, flags: JSON_THROW_ON_ERROR));
     }
 
     private function fsPfad(int $blobId): string
@@ -730,7 +796,6 @@ final class ExportZipFlowTest extends DatabaseTestCase
                 new Session(),
                 new SessionVault(),
                 new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), new FileLogger($this->logDatei())),
-                $lieferanten,
                 $kategorien,
                 $kostenstellen,
                 $this->audit,
