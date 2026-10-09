@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Service\Processing\Pdf;
 
 /**
- * The object structure of one PDF file, as far as reading its text needs it:
- * every indirect object, the catalog, the pages in order.
+ * The object structure of one PDF file, as far as reading its text and its
+ * embedded e-invoice need it: every indirect object, the catalog, the pages
+ * in order, the embedded files.
  *
  * Objects are found by scanning the file front to back rather than through
  * the cross-reference table: that table is exactly what broken or
@@ -92,6 +93,48 @@ final class PdfDokument
         }
 
         return $seiten;
+    }
+
+    /**
+     * The files embedded in the document (ISO 32000-1 sections 7.11.4 and
+     * 7.7.4, ISO 32000-2 section 14.13) - where ZUGFeRD and Factur-X keep
+     * the invoice XML (issue #46/M7-4): the catalog's associated files
+     * (`/AF`, PDF/A-3) and the `/EmbeddedFiles` name tree, each stream once,
+     * at most $maximal. Nothing is decoded here; daten() does that for the
+     * one a caller picks.
+     *
+     * @return list<array{string, PdfStream}> [file name (UTF-8, '' when it has none), stream]
+     */
+    public function eingebetteteDateien(int $maximal): array
+    {
+        $katalog = $this->katalog();
+        if ($katalog === null) {
+            return [];
+        }
+
+        $specs = [];
+        $af = $this->aufloesen($katalog['AF'] ?? null);
+        foreach (is_array($af) && array_is_list($af) ? $af : [] as $spec) {
+            $specs[] = $spec;
+        }
+        $namen = $this->aufloesen($katalog['Names'] ?? null);
+        if (is_array($namen) && !array_is_list($namen)) {
+            $besucht = [];
+            $this->namensbaum($namen['EmbeddedFiles'] ?? null, $specs, $besucht, $maximal, 0);
+        }
+
+        $dateien = [];
+        foreach ($specs as $spec) {
+            $datei = $this->dateiAusSpec($spec);
+            if ($datei !== null && !isset($dateien[$datei[1]->start])) {
+                $dateien[$datei[1]->start] = $datei;
+            }
+            if (count($dateien) >= $maximal) {
+                break;
+            }
+        }
+
+        return array_values($dateien);
     }
 
     /** The value behind a reference (following chains of them), anything else as it is. */
@@ -346,6 +389,74 @@ final class PdfDokument
         }
 
         return null;
+    }
+
+    /**
+     * Collects the values of a name tree (ISO 32000-1 section 7.9.6): leaves
+     * carry `/Names [key value key value ...]`, inner nodes `/Kids`.
+     *
+     * @param list<mixed> $werte
+     * @param array<int, true> $besucht object numbers of nodes seen, against cycles
+     */
+    private function namensbaum(mixed $knoten, array &$werte, array &$besucht, int $maximal, int $tiefe): void
+    {
+        if ($knoten instanceof PdfRef) {
+            if (isset($besucht[$knoten->nummer])) {
+                return;
+            }
+            $besucht[$knoten->nummer] = true;
+        }
+        $knoten = $this->aufloesen($knoten);
+        if (!is_array($knoten) || array_is_list($knoten) || $tiefe > 32 || count($werte) >= $maximal) {
+            return;
+        }
+
+        $namen = $this->aufloesen($knoten['Names'] ?? null);
+        if (is_array($namen) && array_is_list($namen)) {
+            for ($i = 1; $i < count($namen) && count($werte) < $maximal; $i += 2) {
+                $werte[] = $namen[$i];
+            }
+        }
+        $kinder = $this->aufloesen($knoten['Kids'] ?? null);
+        foreach (is_array($kinder) ? $kinder : [] as $kind) {
+            $this->namensbaum($kind, $werte, $besucht, $maximal, $tiefe + 1);
+        }
+    }
+
+    /**
+     * File name and stream of a file specification (`/EF /F`), null when it
+     * embeds nothing.
+     *
+     * @return array{string, PdfStream}|null
+     */
+    private function dateiAusSpec(mixed $spec): ?array
+    {
+        $spec = $this->aufloesen($spec);
+        if (!is_array($spec) || array_is_list($spec)) {
+            return null;
+        }
+        $ef = $this->aufloesen($spec['EF'] ?? null);
+        if (!is_array($ef) || array_is_list($ef)) {
+            return null;
+        }
+        $stream = $this->aufloesen($ef['F'] ?? $ef['UF'] ?? null);
+        if (!$stream instanceof PdfStream) {
+            return null;
+        }
+
+        $name = $this->aufloesen($spec['UF'] ?? $spec['F'] ?? null);
+
+        return [is_string($name) ? self::textString($name) : '', $stream];
+    }
+
+    /** A PDF text string as UTF-8: UTF-16BE with its byte order mark, otherwise (close enough for file names) Latin-1. */
+    private static function textString(string $roh): string
+    {
+        $text = str_starts_with($roh, "\xFE\xFF")
+            ? mb_convert_encoding(substr($roh, 2), 'UTF-8', 'UTF-16BE')
+            : mb_convert_encoding($roh, 'UTF-8', 'ISO-8859-1');
+
+        return mb_scrub($text, 'UTF-8');
     }
 
     /**

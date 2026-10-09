@@ -39,8 +39,9 @@ use App\Service\Upload\MagicBytes;
  *      go on to `seite`. Any PDF among the originals -> queues the
  *      `render_pages` browser job (issue #30/M4-8, App\Service\Document\
  *      PdfRasterung) once, since none of them has page images yet; exactly
- *      one PDF and nothing else -> that upload already IS the working copy
- *      too, done immediately. Anything mixed or more than one PDF ->
+ *      one PDF and nothing else (an e-invoice's XML aside) -> that upload
+ *      already IS the working copy too, done immediately. Only XML, anything
+ *      mixed or more than one PDF ->
  *      App\Service\Job\JobSchrittErgebnis::uebersprungen(), the originals
  *      stay the only thing there is (docs/spec/03-erfassung-und-ki.md
  *      section 3: "Hochgeladene PDFs werden nicht umgebaut").
@@ -117,18 +118,29 @@ final readonly class PdfErzeugung implements JobHandler
             $typen[$blobId] = $this->mimeType($blobId, $vault);
         }
 
+        // The XML of an e-invoice (issue #46/M7-4) is no page: it is read by
+        // `extract_text`, not shown. Without anything else there is no
+        // working copy to build; next to a single PDF (its visual
+        // rendering), that PDF is the working copy; next to images it makes
+        // a mix like any other - the `seite` step only knows images.
+        $xml = array_filter($typen, static fn (string $typ): bool => $typ === MagicBytes::XML);
+        $typen = array_diff_key($typen, $xml);
+        if ($typen === []) {
+            return JobSchrittErgebnis::uebersprungen();
+        }
+
         $bilder = array_filter(
             $typen,
             static fn (string $typ): bool => $typ === MagicBytes::JPEG || $typ === MagicBytes::PNG,
         );
-        if (count($bilder) === count($typen)) {
+        if ($xml === [] && count($bilder) === count($typen)) {
             return JobSchrittErgebnis::weiter('seite', ['arbeit' => [], 'zwischen' => []]);
         }
 
         $pdfs = array_filter($typen, static fn (string $typ): bool => $typ === MagicBytes::PDF);
         if ($pdfs === []) {
-            // Neither all-image nor any PDF: an unexpected mix mimeType()
-            // would already have rejected, so this cannot be reached.
+            // Images next to an e-invoice's XML - the originals stay the
+            // working copy.
             return JobSchrittErgebnis::uebersprungen();
         }
 

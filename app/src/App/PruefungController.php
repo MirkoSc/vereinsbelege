@@ -366,7 +366,7 @@ final readonly class PruefungController
 
         return new StreamResponse($datei['chunks'], [
             'Content-Type' => $datei['mime'],
-            'Content-Disposition' => 'inline; filename="' . $datei['dateiname'] . '"',
+            'Content-Disposition' => ($datei['anhang'] ? 'attachment' : 'inline') . '; filename="' . $datei['dateiname'] . '"',
             'Cache-Control' => 'no-store, private',
             'X-Content-Type-Options' => 'nosniff',
         ]);

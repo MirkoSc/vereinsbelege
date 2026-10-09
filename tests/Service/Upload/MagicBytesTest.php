@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Service\Upload;
 
 use App\Service\Upload\MagicBytes;
+use App\Tests\Service\Processing\ERechnung\ERechnungLeserTest;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -24,11 +25,14 @@ final class MagicBytesTest extends TestCase
             'JPEG (Exif, aus einer Handykamera)' => ["\xFF\xD8\xFF\xE1\x12\x34Exif", MagicBytes::JPEG],
             'PNG' => ["\x89PNG\r\n\x1A\n\x00\x00\x00\x0DIHDR", MagicBytes::PNG],
             'PDF' => ['%PDF-1.7' . "\n%\xE2\xE3\xCF\xD3", MagicBytes::PDF],
+            'XRechnung CII' => [ERechnungLeserTest::fixture('xrechnung-cii.xml'), MagicBytes::XML],
+            'XRechnung UBL mit BOM' => ["\xEF\xBB\xBF" . ERechnungLeserTest::fixture('xrechnung-ubl.xml'), MagicBytes::XML],
+            'UBL-Gutschrift ohne Prolog' => [(string) preg_replace('/^<\?xml[^>]*>\s*<!--.*?-->\s*/s', '', ERechnungLeserTest::fixture('gutschrift-ubl.xml')), MagicBytes::XML],
         ];
     }
 
     #[DataProvider('erlaubteTypen')]
-    public function testTheThreeAcceptedTypesAreRecognised(string $head, string $erwartet): void
+    public function testTheAcceptedTypesAreRecognised(string $head, string $erwartet): void
     {
         self::assertSame($erwartet, MagicBytes::detect($head));
     }
@@ -48,6 +52,12 @@ final class MagicBytesTest extends TestCase
             'leer' => [''],
             'zu kurz für eine Signatur' => ["\xFF\xD8"],
             'PDF-Kopf an falscher Stelle' => ["\n%PDF-1.4"],
+            'HTML ohne Doctype' => ['<html><body><script>alert(1)</script></body></html>'],
+            'SVG' => ['<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],
+            'beliebiges XML' => ['<?xml version="1.0"?><rechnung><nr>4711</nr></rechnung>'],
+            'XML mit Doctype' => ['<?xml version="1.0"?><!DOCTYPE Invoice><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"/>'],
+            'ZUGFeRD 1.0 als XML' => [ERechnungLeserTest::fixture('zugferd-1.xml')],
+            'nur ein Prolog' => ['<?xml version="1.0" encoding="UTF-8"?>'],
         ];
     }
 

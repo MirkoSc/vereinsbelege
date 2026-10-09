@@ -169,7 +169,8 @@ final readonly class Pruefung
      * The pages to look at while capturing: the images the document came as
      * (the scanner's processed version where there is one), then the page
      * images pdf.js rendered from its PDFs (issue #30/M4-8, the newest run);
-     * the PDFs themselves as links - the CSP rules out embedding them.
+     * the PDFs themselves as links - the CSP rules out embedding them - and
+     * so is the XML of an e-invoice (issue #46/M7-4, a download).
      *
      * @return array{bilder: list<array{blobId: int, titel: string, originalId: ?int}>, pdfs: list<array{blobId: int, titel: string}>}
      */
@@ -180,6 +181,8 @@ final readonly class Pruefung
         foreach ($this->posteingang->seiten($document, $vault) as $seite) {
             if ($seite['mime'] === MagicBytes::PDF) {
                 $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => $seite['pdf'] ? 'Aufbereitetes PDF' : 'PDF (Seite ' . $seite['seite'] . ')'];
+            } elseif ($seite['mime'] === MagicBytes::XML) {
+                $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => 'E-Rechnung (XML, Seite ' . $seite['seite'] . ')'];
             } else {
                 $bilder[] = ['blobId' => $seite['blobId'], 'titel' => 'Seite ' . $seite['seite'] . ($seite['originalId'] !== null ? ' (aufbereitet)' : ''), 'originalId' => $seite['originalId']];
             }
