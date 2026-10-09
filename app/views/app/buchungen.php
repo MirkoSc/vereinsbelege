@@ -9,7 +9,8 @@
  * year; emptying both date fields lifts that. The table becomes cards below
  * 48 rem (.tabelle-karten), so nothing scrolls sideways at 360 px. Income
  * without a receipt carries the mark "kein Beleg nötig", a booking entered
- * by hand the mark "manuell".
+ * by hand the mark "manuell", one a rule placed the mark "Regel" (M9-6);
+ * `regel` in the query narrows the list to the bookings of one rule.
  *
  * @var bool $entsperrt
  * @var \App\Service\Bank\BuchungFilter $filter
@@ -20,6 +21,7 @@
  * @var int $einnahmen sum of the income shown, in cents
  * @var int $ausgaben sum of the expenses shown, in cents (negative)
  * @var bool $darfBuchen holds `bank.book`
+ * @var \App\Service\Bank\BelegStandard $belegStandard
  */
 
 use App\Domain\BankTransactionDirection;
@@ -41,7 +43,8 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
 
     <p class="gedaempft">
         Alle Buchungen der Bankkonten und Kassen – aus Kontoauszügen und von Hand erfasst.
-        Einnahmen brauchen standardmäßig keinen Beleg.
+        <?= $belegStandard->einnahmeBelegNoetig ? 'Einnahmen und Ausgaben brauchen standardmäßig einen Beleg.' : 'Einnahmen brauchen standardmäßig keinen Beleg.' ?>
+        Buchungen, die nie einen Beleg haben werden (Zinsen, Kontoführung), ordnen <a href="/app/buchungen/regeln">Buchungsregeln</a> automatisch ein.
     </p>
 
     <?php if (!$entsperrt): ?>
@@ -57,7 +60,16 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
             </p>
         <?php endif; ?>
 
+        <?php if ($filter->regelId !== null): ?>
+            <p class="hinweis hinweis-info">
+                Es werden nur die Buchungen gezeigt, die <a href="/app/buchungen/regeln/<?= e((string) $filter->regelId) ?>">diese Regel</a> eingeordnet hat.
+            </p>
+        <?php endif; ?>
+
         <form method="get" action="/app/buchungen" class="formular">
+            <?php if ($filter->regelId !== null): ?>
+                <input type="hidden" name="regel" value="<?= e((string) $filter->regelId) ?>">
+            <?php endif; ?>
             <label for="buchungen-konto">Konto
                 <select id="buchungen-konto" name="konto">
                     <option value="">Alle</option>
@@ -167,6 +179,9 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
                                     <?php endif; ?>
                                     <?php if ($buchung->istManuell()): ?>
                                         <span class="marke">manuell</span>
+                                    <?php endif; ?>
+                                    <?php if ($buchung->ruleId !== null): ?>
+                                        <span class="marke">Regel</span>
                                     <?php endif; ?>
                                 </td>
                                 <td data-label="Kategorie">

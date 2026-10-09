@@ -25,6 +25,7 @@ use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\BuchungsregelController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
@@ -49,6 +50,7 @@ use App\Http\StaticFileHandler;
 use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AiProviderRepository;
+use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
 use App\Repository\BankAccountRepository;
@@ -100,7 +102,9 @@ use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
+use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungen;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Crypto\ServerCrypto;
@@ -542,7 +546,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
 $konten = static function () use ($connections, $view, $auditFor): AccountController {
     $pdo = $connections->pdo();
     $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
-    $buchungen = new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, new CategoryRepository($pdo));
+    $buchungen = new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, new CategoryRepository($pdo), BelegStandard::fromSettings(new SettingRepository($pdo)));
 
     return new AccountController(
         $view,
@@ -560,7 +564,9 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
     $pdo = $connections->pdo();
     $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
     $kategorien = new CategoryRepository($pdo);
-    $buchungen = new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien);
+    $settings = new SettingRepository($pdo);
+    $transaktionen = new BankTransactionRepository($pdo);
+    $buchungen = new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings));
 
     return new BuchungController(
         $view,
@@ -570,6 +576,27 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
         $konten,
         $kategorien,
         new Kassensturz($pdo, new CashCountRepository($pdo), $buchungen),
+        $auditFor($pdo),
+        new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), $transaktionen, $kategorien, $settings),
+    );
+};
+
+// Rules for bookings (M9-6, issue #64): label and pattern are vault data -
+// only the rule pages open the connection.
+$buchungsregeln = static function () use ($connections, $view, $auditFor): BuchungsregelController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+    $settings = new SettingRepository($pdo);
+    $transaktionen = new BankTransactionRepository($pdo);
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+
+    return new BuchungsregelController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), $transaktionen, $kategorien, $settings),
+        new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings)),
+        $kategorien,
         $auditFor($pdo),
     );
 };
@@ -631,6 +658,7 @@ $kontoauszuege = static function () use ($connections, $view, $auditFor, $paths)
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             new SettingRepository($pdo),
             $auditFor($pdo),
+            new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
         ),
         $konten,
         $profile,
@@ -1128,6 +1156,7 @@ $router = new Router();
     $kiAnbieter,
     $kontoauszuege,
     $buchungen,
+    $buchungsregeln,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

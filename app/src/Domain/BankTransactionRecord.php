@@ -7,8 +7,8 @@ namespace App\Domain;
 /**
  * One `bank_transaction` row as stored, for the places that decrypt it
  * (M9-4: the balance a statement import compares its opening balance with;
- * M9-5: the booking list, manual bookings, the expected cash). Plaintext
- * structure plus the sealed data key and the ciphertext.
+ * M9-5: the booking list, manual bookings, the expected cash; M9-6: the
+ * rules). Plaintext structure plus the sealed data key and the ciphertext.
  */
 final readonly class BankTransactionRecord
 {
@@ -27,6 +27,9 @@ final readonly class BankTransactionRecord
         public BankTransactionSource $source = BankTransactionSource::Import,
         public ?\DateTimeImmutable $createdAt = null,
         public ?\DateTimeImmutable $updatedAt = null,
+        public ?int $ruleId = null,
+        public BankTransactionSetBy $docSource = BankTransactionSetBy::Standard,
+        public ?BankTransactionSetBy $categorySource = null,
     ) {
     }
 }

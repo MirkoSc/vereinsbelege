@@ -7,7 +7,8 @@ namespace App\Domain;
 /**
  * One booking, decrypted (M9-5, issue #63, docs/spec/04-bank-und-abgleich.md
  * section 1): the plaintext structure of `bank_transaction` plus what its
- * `data_enc` holds. Built by App\Service\Bank\Buchungen in a session with
+ * `data_enc` holds, and since M9-6 where receipt status and category come
+ * from (`doc_source`, `category_source`, `rule_id`). Built by App\Service\Bank\Buchungen in a session with
  * an unlocked vault - never logged, never put into a URL.
  */
 final readonly class BankTransaction
@@ -34,7 +35,16 @@ final readonly class BankTransaction
         public string $bookingText,
         public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
+        public ?int $ruleId = null,
+        public BankTransactionSetBy $docSource = BankTransactionSetBy::Standard,
+        public ?BankTransactionSetBy $categorySource = null,
     ) {
+    }
+
+    /** What rules match against (M9-6). */
+    public function merkmale(): Buchungsmerkmale
+    {
+        return new Buchungsmerkmale($this->direction, $this->purpose, $this->bookingText, $this->counterpartyName, $this->counterpartyIban);
     }
 
     /** Entered by hand - only those may be changed or deleted; an imported booking is what the bank says. */

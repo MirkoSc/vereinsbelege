@@ -310,8 +310,9 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   anderen Jobs anzustehen oder in der Kopfzeile als „Beleg in Verarbeitung“
   zu erscheinen, passt dazu nicht. Stand und Cursor stehen in `bank_import`
   (`status`, `next_index`); ein geschlossener Tab macht beim nächsten Öffnen
-  der Seite mit „Fortsetzen“ weiter. Was nach dem Import automatisch laufen
-  soll (Regeln M9-6, Abgleich M10), legen diese Issues als Jobs an.
+  der Seite mit „Fortsetzen“ weiter. Regeln (M9-6) wendet der
+  Import-Schritt selbst an; was danach noch automatisch laufen soll
+  (Abgleich M10), legt dieses Issue als Job an.
 - **Browser-Jobs** (PDF rendern mit pdf.js): Worker holt Aufgabe, rendert,
   lädt Seitenbilder hoch.
 - **Worker-Jobs** (optionales Modul, 07-worker.md): werden nur angelegt,

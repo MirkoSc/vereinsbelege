@@ -28,15 +28,4 @@ enum BankTransactionDirection: string
             self::Einnahme => 'Einnahme',
         };
     }
-
-    /**
-     * Whether a new booking of this direction needs a receipt (E-17,
-     * docs/spec/04-bank-und-abgleich.md section 1): an expense does, income
-     * does not by default. Rules that change this per booking come with
-     * M9-6 (issue #64).
-     */
-    public function belegNoetigStandard(): bool
-    {
-        return $this === self::Ausgabe;
-    }
 }

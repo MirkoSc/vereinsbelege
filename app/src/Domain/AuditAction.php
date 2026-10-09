@@ -77,6 +77,14 @@ enum AuditAction: string
     case BuchungAngelegt = 'buchung.angelegt';
     case BuchungGeaendert = 'buchung.geaendert';
     case BuchungGeloescht = 'buchung.geloescht';
+    /** Issue #64/M9-6: category or receipt status of an imported booking set by hand. */
+    case BuchungEingeordnet = 'buchung.eingeordnet';
+    case RegelAngelegt = 'regel.angelegt';
+    case RegelGeaendert = 'regel.geaendert';
+    case RegelGeloescht = 'regel.geloescht';
+    case RegelAktiviert = 'regel.aktiviert';
+    case RegelDeaktiviert = 'regel.deaktiviert';
+    case RegelAngewendet = 'regel.angewendet';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -104,6 +112,8 @@ enum AuditAction: string
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
     case EinstellungEinreichung = 'einstellung.einreichung';
     case EinstellungExport = 'einstellung.export';
+    /** Issue #64/M9-6: whether income needs a receipt by default (E-17). */
+    case EinstellungBelegStandard = 'einstellung.beleg_standard';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -161,6 +171,14 @@ enum AuditAction: string
             self::BuchungAngelegt => 'Buchung erfasst',
             self::BuchungGeaendert => 'Buchung geändert',
             self::BuchungGeloescht => 'Buchung gelöscht',
+            self::BuchungEingeordnet => 'Buchung eingeordnet',
+            self::RegelAngelegt => 'Buchungsregel angelegt',
+            self::RegelGeaendert => 'Buchungsregel geändert',
+            self::RegelGeloescht => 'Buchungsregel gelöscht',
+            self::RegelAktiviert => 'Buchungsregel aktiviert',
+            self::RegelDeaktiviert => 'Buchungsregel deaktiviert',
+            self::RegelAngewendet => 'Buchungsregel angewendet',
+            self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -210,7 +228,10 @@ enum AuditAction: string
             self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
             self::KiAnbieterStandard => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
-            self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht => 'bank_transaction',
+            self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,
+            self::BuchungEingeordnet => 'bank_transaction',
+            self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
+            self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -218,7 +239,7 @@ enum AuditAction: string
             self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
-            self::EinstellungEinreichung, self::EinstellungExport,
+            self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
         };
     }
@@ -241,6 +262,7 @@ enum AuditAction: string
             'ai_provider' => 'KI-Anbieter',
             'bank_import' => 'Kontoauszug-Import',
             'bank_transaction' => 'Buchung',
+            'assignment_rule' => 'Buchungsregel',
             'document' => 'Beleg',
             default => $entity,
         };

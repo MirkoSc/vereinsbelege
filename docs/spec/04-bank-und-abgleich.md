@@ -59,7 +59,9 @@ entsperrten Tresor (ohne: nur ein Hinweis). Festgelegte Regeln:
   werden nicht angeboten, eine bestehende Buchung behält ihre.
 - **Beleg nötig?** Auswahl „nach Richtung“ (Default, E-17: Ausgabe ja,
   Einnahme nein), „Beleg nötig“ oder „kein Beleg nötig“ → `doc_required`/
-  `doc_status`. Das Setting und Regeln dafür kommen mit M9-6.
+  `doc_status`. Ob Einnahmen standardmäßig einen Beleg brauchen, stellt
+  das Setting `buchung_einnahme_beleg_noetig` ein (M9-6, §5 „Stand M9-6“);
+  „nach Richtung“ nennt den aktuellen Wert.
 - **Ändern/Löschen** nur für `source = manuell` (das Repository schränkt
   `UPDATE`/`DELETE` zusätzlich auf `manuell` ein); eine importierte Buchung
   ist schreibgeschützt und zeigt alle Bankfelder. Ein zugeordneter Beleg
@@ -280,17 +282,20 @@ Regeln:
   Kette mit „Fortsetzen“. Am Ende zählt `neu` die Zeilen des Imports,
   `duplikat` den Rest.
 - **Neue Buchungen:** `direction` aus dem Vorzeichen (0 gilt als Einnahme),
-  Ausgabe `doc_required = 1`/`fehlt`, Einnahme `0`/`nicht_noetig` (E-17; das
-  Setting und Regeln kommen mit M9-6), `source = import`, `counterparty_bi`
-  aus der IBAN der Gegenseite.
+  Ausgabe `doc_required = 1`/`fehlt`, Einnahme `0`/`nicht_noetig` (E-17; Einnahme
+  `1`/`fehlt`, wenn das Setting `buchung_einnahme_beleg_noetig` es verlangt),
+  darüber die älteste passende aktive Regel (M9-6, §5 „Stand M9-6“),
+  `source = import`, `counterparty_bi` aus der IBAN der Gegenseite.
 - **Verwerfen** löscht eine Vorschau samt Datei; ein bestätigter Import
   bleibt. Liegen gebliebene Vorschauen räumt der Cron nach 7 Tagen ab
   (`BankImportCleanupTask`, 06 §4).
 - **Audit:** `kontoauszug.importiert` (Entität `bank_import`) beim
   Abschluss, Details nur Format, Zähler und Saldenprüfung – nie Beträge,
   IBANs, Namen oder der Dateiname.
-- Was danach automatisch laufen soll (Punkt 4 oben: Regeln, `doc_required`,
-  Abgleich), hängen M9-6 und M10 an den Abschluss eines Imports.
+- Was danach automatisch laufen soll (Punkt 4 oben): Regeln und
+  `doc_required` wendet der Import-Schritt selbst an (M9-6) – der Klartext
+  liegt dort ohnehin entschlüsselt vor, ein eigener Job müsste ihn nur noch
+  einmal lesen. Den Abgleich hängt M10 an den Abschluss eines Imports.
 
 **Pflicht-Tests M9-4:** `KontoauszugLeserTest`, `DedupschluesselTest`
 (gleiche Datei, laufende Nummer, Normalisierung, Teil-/Gesamtexport MT940
@@ -348,6 +353,75 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
   machen" (Gegenseite/Stichwort → immer „kein Beleg nötig" + Kategorie).
 - Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto)
   werden automatisch erkannt und paarweise verknüpft.
+
+### Stand M9-6: Regeln „kein Beleg nötig“ / Kategorie (issue #64)
+
+- **Regel** (`assignment_rule`, `/app/buchungen/regeln`): Name, Bedingung,
+  Wirkung. Bedingung: *Stichwort* (enthalten in Verwendungszweck **oder**
+  Buchungstext) und/oder *Gegenseite* (gültige IBAN → genau gleich der
+  Gegenseiten-IBAN, sonst enthalten im Gegenseiten-Namen); beides angegeben →
+  beides muss passen; Groß-/Kleinschreibung und Leerraum egal; je ≥ 3, ≤ 100
+  Zeichen; optional nur Einnahmen/nur Ausgaben. Wirkung: „kein Beleg nötig“
+  und/oder Kategorie (mindestens eins); die Kategorie muss zur Richtung
+  passen, ohne Richtung nur `beide`. Name und Muster liegen im Tresor; der
+  Vergleich läuft in PHP (`App\Service\Bank\Regelabgleich`).
+- **Nur importierte Buchungen**, und je Feld nur, was noch Standard ist:
+  Beleg-Bedarf mit `doc_source = standard`, Kategorie, solange keine
+  gesetzt ist. Ein zugeordneter Beleg (M10) bleibt `zugeordnet`. Je Buchung
+  höchstens eine Regel (`rule_id`); treffen mehrere zu, gilt die **älteste**
+  (kleinste ID) – die Liste zeigt sie in dieser Reihenfolge.
+- **Wann:** bei jedem Import im Schritt (§4). Auf bestehende Buchungen nur
+  auf Wunsch: Die Regelseite nennt „passt auf N Buchungen“ und wendet sie per
+  Klick an – auf importierte Buchungen ohne Regel, im Zeitraum-Scope dessen,
+  der klickt. Eine neue Regel ändert von selbst keine bestehende Buchung.
+- **Ändern** nimmt die bisherige Wirkung zurück und wendet die geänderte
+  Regel auf dieselben Buchungen wieder an, soweit sie noch passt.
+  **Deaktivieren/Löschen** nimmt die Wirkung zurück (ohne Tresor, reines
+  SQL): Beleg-Bedarf zurück auf den Standard der Richtung laut Setting
+  (`zugeordnet` bleibt), von der Regel gesetzte Kategorie entfällt,
+  `rule_id` NULL. Andere Regeln werden dabei nicht nachgezogen. Aktivieren
+  wendet nicht von selbst an.
+- **An der Buchung** (importiert, `bank.book`): Formular „Einordnung“ mit
+  Kategorie (passend zur Richtung, „keine“ möglich) und Beleg („nach
+  Richtung“ / „Beleg nötig“ / „kein Beleg nötig“). Nur ein **geänderter**
+  Wert gilt als von Hand gesetzt (`manuell`); keine Regel fasst ihn danach
+  an. „Nach Richtung“ setzt `doc_source` zurück auf `standard`. `rule_id`
+  bleibt, solange die Regel noch eines der beiden Felder verantwortet.
+  „Regel daraus machen“ öffnet `/app/buchungen/regeln/neu?buchung=<id>`,
+  vorbelegt mit IBAN (sonst Name) der Gegenseite, Richtung, Kategorie und
+  „kein Beleg nötig“ – in der URL steht nur die ID. Manuelle Buchungen
+  ändert weiterhin nur ihr Formular (§1).
+- **Nachvollziehbar:** Die Buchung zeigt je Feld „(durch Regel „Name“)“ mit
+  Link, „(von Hand gesetzt)“ oder „(Standard für Ausgaben/Einnahmen)“; die
+  Liste markiert „Regel“; die Regelliste nennt je Regel die Zahl der
+  Buchungen, verlinkt auf `/app/buchungen?regel=<id>`.
+- **Setting** `buchung_einnahme_beleg_noetig` (Schalter auf der Regelseite,
+  `bank.book`): gilt für neue Buchungen (Import, manuell „nach Richtung“) und
+  als Ziel beim Zurücknehmen; bestehende Buchungen bleiben.
+- **Rechte:** Regeln lesen `bank.view` (Vorstand, Kassenprüfer und
+  Steuerberater sehen, was Regeln tun), alles Schreibende – Regeln, Setting,
+  Einordnung – `bank.book`. CSRF auf allen POST; ohne entsperrten Tresor
+  zeigen die Seiten nichts und schreiben nichts.
+- **Audit:** `regel.angelegt` (Richtung, kein Beleg, Kategorie-ID),
+  `regel.geaendert` (Feldnamen, Zahl zurückgenommen/erneut),
+  `regel.angewendet` (Zahl), `regel.aktiviert`, `regel.deaktiviert` und
+  `regel.geloescht` (Zahl zurückgenommen) – Entität `assignment_rule`;
+  `buchung.eingeordnet` (Feldnamen); `einstellung.beleg_standard`. Nie
+  Name, Stichwort oder Gegenseite.
+
+**Pflicht-Tests M9-6:** `RegelabgleichTest` (Stichwort in Zweck/
+Buchungstext, Groß-/Kleinschreibung und Leerraum, Name vs. IBAN, beides,
+Richtung, ohne Bedingung nichts, älteste gewinnt, Wirkung auf neue Buchung,
+Setting), `BuchungsregelFlowTest` (verschlüsselt, Audit ohne Muster;
+Validierung mit markiertem Feld; Anwenden schont Manuelles, manuelle
+Buchungen und `zugeordnet`, zweimal ändert nichts; Filter `regel`, Marke,
+Herkunft an der Buchung; Deaktivieren/Aktivieren/Löschen nehmen zurück;
+Zurücknehmen folgt dem Setting; Ändern = zurücknehmen + erneut; Vorbelegung
+aus einer Buchung; Einordnung von Hand, unverändert bleibt Regel, „nach
+Richtung“, falsche Richtung; manuelle Buchung nicht; Setting; Verwendung der
+Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
+`KontoauszugImportFlowTest::testTheImportAppliesTheOldestMatchingRule`,
+`RoutePermissionMatrixTest` (Lesen `bank.view`, Schreiben `bank.book`).
 
 ### Übersichten
 - **Unbezahlte Rechnungen** (offen, teilbezahlt, fällig/überfällig)

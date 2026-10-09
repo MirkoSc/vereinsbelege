@@ -24,6 +24,7 @@ use App\App\AccountController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
 use App\App\InboxController;
@@ -154,6 +155,9 @@ use App\View\View;
  *        (issue #62/M9-4).
  * @param \Closure(): BuchungController $buchungen built lazily, same reason
  *        as $mail: only the booking pages need the database (issue #63/M9-5).
+ * @param \Closure(): BuchungsregelController $buchungsregeln built lazily,
+ *        same reason as $mail: only the rule pages need the database
+ *        (issue #64/M9-6).
  */
 return static function (
     Router $router,
@@ -192,6 +196,7 @@ return static function (
     \Closure $kiAnbieter,
     \Closure $kontoauszuege,
     \Closure $buchungen,
+    \Closure $buchungsregeln,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -555,6 +560,22 @@ return static function (
     $get('/app/buchungen/{id:\d+}', $kontenLesen, static fn(Request $r, array $params) => $buchungen()->ansicht($r, $params));
     $post('/app/buchungen/{id:\d+}', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->speichern($r, $params));
     $post('/app/buchungen/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->loeschen($r, $params));
+    $post('/app/buchungen/{id:\d+}/einordnung', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->einordnen($r, $params));
+
+    // Rules "kein Beleg nötig" / category (M9-6, issue #64, docs/spec/
+    // 04-bank-und-abgleich.md section 5). Permission: reading `bank.view` -
+    // auditors see what the rules do -, everything that writes `bank.book`,
+    // the same split as the bookings. CSRF on every POST; label and pattern
+    // are vault data (App\App\BuchungsregelController).
+    $get('/app/buchungen/regeln', $kontenLesen, static fn(Request $r) => $buchungsregeln()->liste($r));
+    $get('/app/buchungen/regeln/neu', $kontenPflege, static fn(Request $r) => $buchungsregeln()->neu($r));
+    $post('/app/buchungen/regeln', $kontenPflege, static fn(Request $r) => $buchungsregeln()->anlegen($r));
+    $post('/app/buchungen/regeln/standard', $kontenPflege, static fn(Request $r) => $buchungsregeln()->standard($r));
+    $get('/app/buchungen/regeln/{id:\d+}', $kontenLesen, static fn(Request $r, array $params) => $buchungsregeln()->ansicht($r, $params));
+    $post('/app/buchungen/regeln/{id:\d+}', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->speichern($r, $params));
+    $post('/app/buchungen/regeln/{id:\d+}/anwenden', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->anwenden($r, $params));
+    $post('/app/buchungen/regeln/{id:\d+}/aktiv', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->aktiv($r, $params));
+    $post('/app/buchungen/regeln/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $buchungsregeln()->loeschen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).
