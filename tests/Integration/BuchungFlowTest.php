@@ -781,7 +781,7 @@ final class BuchungFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the account pages 28th, the bookings last.
-        $controller = array_fill(0, 34, $unerreichbar);
+        $controller = array_fill(0, 35, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $kontoSeiten;
         $controller[33] = $buchungSeiten;

@@ -851,7 +851,7 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the statement import 33rd.
-        $controller = array_fill(0, 34, $unerreichbar);
+        $controller = array_fill(0, 35, $unerreichbar);
         $controller[1] = $guard;
         $controller[32] = $kontoauszuege;
 

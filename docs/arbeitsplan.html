@@ -172,7 +172,7 @@ code { font-size: .85em; background: var(--fl2); padding: 0 4px; border-radius: 
 // e = effort, mo = mode (auto/plan/entscheid), d = predecessors,
 // st = status fallback when GitHub is unreachable (offen/wartet/erledigt),
 // mig = probably adds a migration, x = note.
-const PLAN_STAND = '2026-10-06';
+const PLAN_STAND = '2026-10-08';
 const REPO = 'MirkoSc/vereinsbelege';
 const PLAN = [
   { n: 152, t: 'PDF-Rasterung: fetch binden', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'Kritisch: KI-Auslese (#47) braucht die Seitenbilder.' },
@@ -191,7 +191,7 @@ const PLAN = [
   { n: 50, t: 'M7-8 KI-Protokoll', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [47], mig: true },
   { n: 57, t: 'M8-1 Serienerkennung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [48, 49], mig: true },
   { n: 58, t: 'M8-2 Übersicht wiederkehrende Kosten', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [57] },
-  { n: 65, t: 'M10-1 Allocation-Modell', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [48, 49, 50, 64], mig: true, x: 'Braucht M7 und Strang B (M9).' },
+  { n: 65, t: 'M10-1 Allocation-Modell', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [48, 49, 50, 64], mig: true, x: 'Braucht M7 und Strang B (M9). Füllt im ZIP-Export (#76) „bezahlt am/Konto/Referenz“ und {kasse}.' },
   { n: 66, t: 'M10-2 Scoring + Auto-Zuordnung', s: 'A', m: 'fable', e: 'xhigh', mo: 'plan', d: [65] },
   { n: 67, t: 'M10-3 Erstattungen', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [65] },
   { n: 70, t: 'M10-6 Umbuchungen eigene Konten', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [65] },

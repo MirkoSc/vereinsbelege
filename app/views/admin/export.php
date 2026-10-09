@@ -16,6 +16,7 @@
  * @var bool $istVorschau
  * @var ?string $fehler
  * @var list<string> $pfade
+ * @var bool $darfExportieren holds `export.zip` - the link to /app/export
  */
 
 use App\Service\Export\PfadMuster;
@@ -31,6 +32,9 @@ use App\Service\Export\PfadMuster;
         die Windows in Dateinamen verbietet, werden zu „-“. Die Endung
         (meist <code>.pdf</code>) ergibt sich aus der Datei.
     </p>
+    <?php if ($darfExportieren): ?>
+        <p><a href="/app/export">Zum ZIP-Export</a></p>
+    <?php endif; ?>
 
     <?php if ($fehler !== null): ?>
         <p class="hinweis hinweis-fehler" role="alert"><?= e($fehler) ?></p>

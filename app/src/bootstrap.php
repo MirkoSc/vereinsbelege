@@ -25,6 +25,7 @@ use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\ExportController;
 use App\App\ErfassungController;
 use App\App\InboxController;
 use App\App\InvitationController;
@@ -120,6 +121,7 @@ use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Export\ZipExport;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobRunner;
@@ -570,6 +572,38 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
         $konten,
         $kategorien,
         new Kassensturz($pdo, new CashCountRepository($pdo), $buchungen),
+        $auditFor($pdo),
+    );
+};
+
+// The ZIP export (issue #76/M12-2, docs/spec/05-auswertung-und-export.md
+// section 2): reads and decrypts with the session's unlocked vault - only
+// these pages open the connection. The time limit restarts before every
+// file, so a long download never hits it.
+$export = static function () use ($connections, $view, $auditFor, $paths, $logger): ExportController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $kategorien = new CategoryRepository($pdo);
+    $kostenstellen = new CostCenterRepository($pdo);
+    $lieferanten = new SupplierService($pdo, new SupplierRepository($pdo), $kategorien);
+
+    return new ExportController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new ZipExport(
+            new InvoiceRepository($pdo),
+            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+            $lieferanten,
+            $kategorien,
+            $kostenstellen,
+            new SettingRepository($pdo),
+            $logger,
+            sekundenJeDatei: 30,
+        ),
+        $lieferanten,
+        $kategorien,
+        $kostenstellen,
         $auditFor($pdo),
     );
 };
@@ -1128,6 +1162,7 @@ $router = new Router();
     $kiAnbieter,
     $kontoauszuege,
     $buchungen,
+    $export,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

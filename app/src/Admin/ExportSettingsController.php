@@ -6,6 +6,7 @@ namespace App\Admin;
 
 use App\Domain\AuditAction;
 use App\Domain\InvoiceDirection;
+use App\Domain\Permission;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
@@ -144,6 +145,7 @@ final readonly class ExportSettingsController
             'istVorschau' => $istVorschau && $muster !== $gespeichert->muster,
             'fehler' => $fehler,
             'pfade' => $pfade,
+            'darfExportieren' => $this->view->berechtigungen()?->darf(Permission::ExportZip) ?? false,
         ], Area::Admin), $status);
     }
 

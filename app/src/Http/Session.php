@@ -49,6 +49,18 @@ final class Session
         }
     }
 
+    /**
+     * Writes the session and releases its lock - before a response that
+     * takes long to send (the ZIP export, issue #76/M12-2), so the user's
+     * other tabs need not wait for it. Changes after this are not saved.
+     */
+    public function schliessen(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+
     public function destroy(): void
     {
         $_SESSION = [];

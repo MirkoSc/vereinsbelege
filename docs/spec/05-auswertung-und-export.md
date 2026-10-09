@@ -30,7 +30,7 @@ Ansichten:
 Diagramme: CSS/SVG serverseitig gerendert wie im Vereinskalender, keine
 Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
 
-## 2. ZIP-Export (Admin / `export.zip`)
+## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
   geprüften), Kategorie, Kostenstelle, Lieferant; Option „Originale
@@ -107,6 +107,77 @@ leer → Ebene entfällt).
   zeigt, dass lange Streams abbrechen: Export in Teilen (je Quartal/Monat)
   anbieten.
 - Export wird im Audit-Log protokolliert (Filter, Anzahl, Nutzer).
+- **Umsetzung Export (M12-2, issue #76):**
+  - **Seite und Rechte:** Seite `/app/export` auf der Anwenderseite, nicht
+    unter `/admin`. Grund: Vorstand, Kassenprüfer und Steuerberater haben
+    `export.zip`, aber keinen Admin-Bereich.
+    - `GET /app/export` zeigt das Filterformular und eine Vorschau (Anzahl
+      Belege und Dateien, Größe, ZIP-Name).
+    - `POST /app/export/zip` lädt herunter: CSRF, entsperrter Tresor, Audit
+      `export.erstellt` (Details: Filter-IDs/Daten, Anzahl Belege und
+      Dateien – nie Namen). Der Filter steht als Hidden Fields im Formular.
+    - Der Zeitraum-Scope externer Rollen greift auf das Belegdatum in SQL
+      (`InvoiceRepository::exportListe()`, sortiert nach Belegdatum, ID).
+  - **Filter:** Zeitraum auf das Belegdatum (Default: laufendes
+    Kalenderjahr), Status, Kategorie, Kostenstelle, Lieferant (je „ohne“ =
+    nicht zugeordnet) und „Originale zusätzlich“. Statusauswahl
+    (`ExportStatus`):
+    - „geprüft + festgeschrieben“ (Default);
+    - „nur festgeschrieben“;
+    - „alle außer abgelehnte“. Dabei landen alle nicht geprüften Belege
+      unter `_Wiedervorlage/<Muster>`; der Archiv-Import (M12-3) liest den
+      Ordner als Wiedervorlage zurück.
+
+    Abgelehnte Belege werden nie exportiert. Belege ohne `invoice`-Zeile
+    (noch nicht erfasst) haben weder Datum noch Lieferant und fehlen.
+  - **Dateien je Beleg:**
+    - Im Hauptbaum liegt die PDF-Arbeitskopie (`document.pdf_blob_id`).
+      Ohne Arbeitskopie (gemischte Uploads, mehrere PDFs) stehen dort die
+      Originale in Seitenreihenfolge, die Endung kommt aus dem Blob-Typ
+      (pdf/jpg/png).
+    - Mit der Option liegen zusätzlich alle Originale unter
+      `_Originale/<gleicher Pfad>`.
+    - Fehlt ein Blob oder ist er unvollständig, steht in `index.csv`
+      „(Datei fehlt)“ und die Vorschau warnt.
+  - **`index.csv`** liegt im Wurzelordner und ist die erste Datei im ZIP.
+    - Format: UTF-8 mit BOM, `;`, CRLF; `App\Service\Export\Csv`, für die
+      CSV-Exporte von M11 wiederverwendbar.
+    - Brutto wie `{betrag}` („1.234,56“, Fremdwährung mit Kürzel).
+    - Textzellen, die mit `=` `+` `-` `@` beginnen, bekommen ein `'`
+      vorangestellt (Formel-Schutz – Namen können aus der öffentlichen
+      Einreichung stammen).
+    - „Datei“ ist relativ zum Wurzelordner, mehrere Dateien sind mit ` | `
+      getrennt.
+    - **„bezahlt am“, „Konto“, „Referenz“ bleiben leer, `{kasse}` ist immer
+      leer**, bis Belege Zahlungen zugeordnet werden (M10-1, #65).
+  - **ZIP-Writer:** Eigener Writer `App\Service\Export\ZipStrom` (reines
+    PHP auf ext-zlib), keine Bibliothek. maennchen/zipstream-php wurde
+    geprüft und verworfen: Das wäre die erste Laufzeit-Abhängigkeit, und
+    sie schreibt in einen Ausgabestrom statt in den Generator der
+    `StreamResponse`. Der eigene Writer ist klein genug, um ganz geprüft zu
+    werden, und schreibt nachweislich nichts auf Platte.
+    - Jede Datei: Local Header ohne Größen (Flag-Bit 3), roher
+      Deflate-Strom (Stufe 1 für Belege, 6 für `index.csv`), Data
+      Descriptor mit CRC-32. Namen in UTF-8 (Bit 11).
+    - Deflate statt Store, weil nur ein Deflate-Strom selbst endet; Store
+      mit Data Descriptor können streamende Entpacker nicht zuverlässig
+      lesen.
+    - **Kein ZIP64.** Grenzen je Export: 3 GiB Klartext und 65 000
+      Dateien, vorab geprüft. Darüber bittet die Seite, den Zeitraum zu
+      verkleinern (z. B. je Quartal). Der Writer wirft `ZipZuGross`,
+      statt ein falsches ZIP zu schreiben.
+  - **Ablauf des Streams:**
+    - Der Generator geht über `StreamResponse`. Vorher gibt
+      `Session::schliessen()` die Session-Sperre frei, damit andere Tabs
+      nicht warten. Header `X-Accel-Buffering: no`,
+      `zlib.output_compression` aus.
+    - Vor jeder Datei startet `set_time_limit(30)` das Zeitlimit neu.
+    - Wird eine Datei mitten im Strom unlesbar, endet der Strom ohne
+      Central Directory: Das ZIP ist erkennbar defekt, nie still
+      unvollständig. Das Log enthält nur Klasse und Meldung.
+  - **Offen:** Die Option „nur noch nicht exportierte“ braucht eine
+    Export-Markierung (Migration) und muss klären, wann ein abgebrochener
+    Download als exportiert gilt. Sie ist als eigenes Issue vorgeschlagen.
 
 ## 3. Archiv-Import (Bestandsdaten)
 

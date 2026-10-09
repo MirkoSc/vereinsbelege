@@ -89,8 +89,9 @@ Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
   Code – Kamera, Bild- oder PDF-Upload, Erstattungsziel, Freitext. Schreibt
   nur in den Posteingang, kann nichts lesen. Spamschutz unsichtbar (E-14).
 - **Anwenderseite** (`/app/...`): Posteingang, Belege, Lieferanten, Konten,
-  Abgleich, Auswertungen, Audit-Log (`audit.view` – auch Vorstand und
-  Kassenprüfer, die kein `admin.*`-Recht haben) – je nach Rolle.
+  Abgleich, Auswertungen, ZIP-Export (`export.zip`), Audit-Log
+  (`audit.view`) – beide auch für Vorstand und Kassenprüfer, die kein
+  `admin.*`-Recht haben – je nach Rolle.
 - **Adminseite** (`/admin/...`): Benutzer, Rollen, Tresor-Freigaben,
   KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
   Update, Systemcheck.
