@@ -132,11 +132,10 @@ final readonly class CategoryRepository
      * How often this category is in use - the one place that decides
      * whether it may still be deleted. Today sub-categories, the default
      * category of suppliers (M6-2), the receipts of the review page
-     * (`invoice`, M6-3) and bookings (`bank_transaction`, M9-4) point here;
-     * every later table with a `category_id` (assignment_rule) adds its
-     * count here and
-     * its foreign key with ON DELETE RESTRICT (docs/spec/02-datenmodell.md
-     * "Kategorien").
+     * (`invoice`, M6-3), bookings (`bank_transaction`, M9-4) and rules for
+     * bookings (`assignment_rule`, M9-6) point here; every later table with
+     * a `category_id` adds its count here and its foreign key with ON
+     * DELETE RESTRICT (docs/spec/02-datenmodell.md "Kategorien").
      */
     public function usageCount(int $id): int
     {
@@ -144,9 +143,10 @@ final readonly class CategoryRepository
             'SELECT (SELECT COUNT(*) FROM category WHERE parent_id = ?)
                   + (SELECT COUNT(*) FROM supplier WHERE default_category_id = ?)
                   + (SELECT COUNT(*) FROM invoice WHERE category_id = ?)
-                  + (SELECT COUNT(*) FROM bank_transaction WHERE category_id = ?)',
+                  + (SELECT COUNT(*) FROM bank_transaction WHERE category_id = ?)
+                  + (SELECT COUNT(*) FROM assignment_rule WHERE category_id = ?)',
         );
-        $stmt->execute([$id, $id, $id, $id]);
+        $stmt->execute([$id, $id, $id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

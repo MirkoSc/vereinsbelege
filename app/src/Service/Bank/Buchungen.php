@@ -9,6 +9,7 @@ use App\Domain\BankTransaction;
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionRecord;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\BankTransactionSource;
 use App\Domain\CategoryDirection;
 use App\Domain\Zugriffsbereich;
@@ -35,10 +36,12 @@ use App\Service\Processing\Betrag;
  * - The category fits the direction (or is one for both). A deactivated
  *   category is not offered any more, but a booking keeps the one it has.
  * - Whether a receipt is needed: as chosen, otherwise the default of the
- *   direction (E-17: an expense needs one, income does not). Income
+ *   direction (E-17: an expense needs one, income does not unless the
+ *   setting says so - App\Service\Bank\BelegStandard, M9-6). Income
  *   without a receipt is a normal, fully valid booking.
  * - Only manual bookings are changed or deleted; an imported booking is
- *   what the bank says.
+ *   what the bank says - only its category and receipt status can be set
+ *   by hand (einordnen(), M9-6), which no rule overrides afterwards.
  * - Like the statement import: `data_enc` under the row's own DEK, AAD
  *   "bank_transaction|<id>|data_enc", written in two steps inside one
  *   transaction; `dedup_bi` and `counterparty_bi` stay NULL - a manual
@@ -69,6 +72,7 @@ final readonly class Buchungen
         private BankTransactionRepository $buchungen,
         private BankAccountService $konten,
         private CategoryRepository $kategorien,
+        private BelegStandard $belegStandard = new BelegStandard(),
     ) {
     }
 
@@ -144,6 +148,8 @@ final readonly class Buchungen
                 BankTransactionSource::Manuell,
                 $now,
                 $eingabe->kategorieId,
+                docSource: $eingabe->belegGewaehlt ? BankTransactionSetBy::Manuell : BankTransactionSetBy::Standard,
+                categorySource: BankTransactionSetBy::Manuell,
             ) ?? throw new \LogicException('A manual booking has no dedup key and cannot collide.');
             $this->buchungen->setCiphertext($id, self::verschluesseln($key, $id, $eingabe->daten($eingabe->konto->currency)));
             $this->pdo->commit();
@@ -198,7 +204,17 @@ final readonly class Buchungen
         $record = $this->buchungen->find($alt->id) ?? throw new BankRuleViolation('Diese Buchung gibt es nicht mehr.');
         $this->pdo->beginTransaction();
         try {
-            $this->buchungen->updateManual($alt->id, $neu->konto->id, $neu->datum, $neu->richtung, $neu->kategorieId, $neu->belegNoetig, $status, $now);
+            $this->buchungen->updateManual(
+                $alt->id,
+                $neu->konto->id,
+                $neu->datum,
+                $neu->richtung,
+                $neu->kategorieId,
+                $neu->belegNoetig,
+                $status,
+                $neu->belegGewaehlt ? BankTransactionSetBy::Manuell : BankTransactionSetBy::Standard,
+                $now,
+            );
             $this->buchungen->setCiphertext($alt->id, self::verschluesseln($vault->openDataKey($record->dekSealed), $alt->id, $neu->daten($alt->currency)));
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -224,6 +240,70 @@ final readonly class Buchungen
             throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – erst die Zuordnung lösen.');
         }
         $this->buchungen->deleteManual($buchung->id);
+    }
+
+    /**
+     * Sets category and receipt status of an imported booking by hand
+     * (M9-6). A field whose value does not change keeps where it came from
+     * - saving the form unchanged does not turn a rule's work into a
+     * person's. A changed field counts as set by hand, and no rule touches
+     * it again; "nach Standard" hands the receipt status back to the
+     * default of the direction. An allocated receipt (M10) stays allocated.
+     * Returns the names of the changed fields - empty when nothing changed,
+     * and then nothing is written.
+     *
+     * @param array<string, string> $felder kategorie ('' = none), beleg ('' = default, BELEG_NOETIG, BELEG_NICHT_NOETIG)
+     *
+     * @return list<string>
+     *
+     * @throws BankRuleViolation
+     */
+    public function einordnen(BankTransaction $buchung, array $felder, \DateTimeImmutable $now): array
+    {
+        if ($buchung->istManuell()) {
+            throw new BankRuleViolation('Eine manuelle Buchung wird über ihr Formular geändert.');
+        }
+        $wert = static fn(string $name): string => trim($felder[$name] ?? '');
+
+        $kategorieId = $wert('kategorie') === '' ? null : $this->kategorie($wert('kategorie'), $buchung->direction, $buchung);
+        $kategorieGeaendert = $kategorieId !== $buchung->categoryId;
+        $kategorieQuelle = match (true) {
+            !$kategorieGeaendert => $buchung->categorySource,
+            $kategorieId === null => null,
+            default => BankTransactionSetBy::Manuell,
+        };
+
+        [$belegNoetig, $belegQuelle] = match ($wert('beleg')) {
+            self::BELEG_NOETIG => [true, BankTransactionSetBy::Manuell],
+            self::BELEG_NICHT_NOETIG => [false, BankTransactionSetBy::Manuell],
+            '' => [$this->belegStandard->noetig($buchung->direction), BankTransactionSetBy::Standard],
+            default => throw new BankRuleViolation('Bitte wählen, ob ein Beleg nötig ist.', 'beleg'),
+        };
+        $belegGeaendert = $belegNoetig !== $buchung->docRequired
+            || ($belegQuelle === BankTransactionSetBy::Standard) !== ($buchung->docSource === BankTransactionSetBy::Standard);
+        if (!$belegGeaendert) {
+            $belegQuelle = $buchung->docSource;
+        }
+
+        $geaendert = array_keys(array_filter(['category_id' => $kategorieGeaendert, 'doc_required' => $belegGeaendert]));
+        if ($geaendert === []) {
+            return [];
+        }
+
+        // The rule stays named as long as it still accounts for one of the two.
+        $regelId = $kategorieQuelle === BankTransactionSetBy::Regel || $belegQuelle === BankTransactionSetBy::Regel ? $buchung->ruleId : null;
+        $status = $buchung->docStatus === BankTransactionDocStatus::Zugeordnet
+            ? BankTransactionDocStatus::Zugeordnet
+            : BankTransactionDocStatus::fuerNeueBuchung($belegNoetig);
+        $this->buchungen->einordnen($buchung->id, $kategorieId, $kategorieQuelle, $belegNoetig, $status, $belegQuelle, $regelId, $now);
+
+        return array_values($geaendert);
+    }
+
+    /** Whether income needs a receipt by default - for the labels of the forms. */
+    public function belegStandard(): BelegStandard
+    {
+        return $this->belegStandard;
     }
 
     /**
@@ -287,10 +367,11 @@ final readonly class Buchungen
         $belegNoetig = match ($feld('beleg')) {
             self::BELEG_NOETIG => true,
             self::BELEG_NICHT_NOETIG => false,
-            default => $richtung->belegNoetigStandard(),
+            default => $this->belegStandard->noetig($richtung),
         };
+        $belegGewaehlt = in_array($feld('beleg'), [self::BELEG_NOETIG, self::BELEG_NICHT_NOETIG], true);
 
-        return new BuchungEingabe($konto, $datum, $cent, $richtung, $kategorieId, $zweck, $gegenseite, $belegNoetig);
+        return new BuchungEingabe($konto, $datum, $cent, $richtung, $kategorieId, $zweck, $gegenseite, $belegNoetig, $belegGewaehlt);
     }
 
     /**
@@ -357,7 +438,7 @@ final readonly class Buchungen
         );
     }
 
-    private static function entschluesseln(Vault $vault, BankTransactionRecord $record): BankTransaction
+    public static function entschluesseln(Vault $vault, BankTransactionRecord $record): BankTransaction
     {
         $json = FieldCipher::decrypt($vault->openDataKey($record->dekSealed), $record->dataEnc, new FieldContext(self::TABLE, $record->id, self::COLUMN));
         $daten = json_decode($json, true, 4, JSON_THROW_ON_ERROR);
@@ -383,6 +464,9 @@ final readonly class Buchungen
             bookingText: $text('booking_text'),
             createdAt: $record->createdAt ?? $record->bookingDate,
             updatedAt: $record->updatedAt ?? $record->bookingDate,
+            ruleId: $record->ruleId,
+            docSource: $record->docSource,
+            categorySource: $record->categorySource,
         );
     }
 }

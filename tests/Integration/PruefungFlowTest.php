@@ -1326,7 +1326,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the review page 27th.
-        $controller = array_fill(0, 34, $unerreichbar);
+        $controller = array_fill(0, 35, $unerreichbar);
         $controller[1] = $guard;
         $controller[26] = $pruefung;
 

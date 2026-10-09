@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Bank\Import;
 
+use App\Domain\AssignmentRule;
 use App\Domain\AuditAction;
 use App\Domain\BankAccount;
 use App\Domain\BankAccountKind;
@@ -15,6 +16,7 @@ use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionRecord;
 use App\Domain\BankTransactionSource;
 use App\Domain\BlobMeta;
+use App\Domain\Buchungsmerkmale;
 use App\Domain\Iban;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
@@ -24,6 +26,8 @@ use App\Repository\SettingRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
+use App\Service\Bank\BelegStandard;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kontoangabe;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -87,6 +91,7 @@ final readonly class KontoauszugImport
         private BlobService $blobs,
         private SettingRepository $settings,
         private AuditLog $audit,
+        private Buchungsregeln $regeln,
         private KontoauszugLeser $leser = new KontoauszugLeser(),
         private int $schrittPosten = self::SCHRITT_POSTEN,
     ) {
@@ -344,6 +349,8 @@ final readonly class KontoauszugImport
         $kontoId = (int) $import->accountId;
         $index = $vault->blindIndex();
         $schluessel = array_slice(Dedupschluessel::fuer($index, $kontoId, $datei->posten), $von, $bis - $von, true);
+        $regeln = $this->regeln->fuerImport($vault);
+        $standard = $this->regeln->belegStandard();
 
         $this->pdo->beginTransaction();
         try {
@@ -357,7 +364,7 @@ final readonly class KontoauszugImport
             $vorhanden = $this->buchungen->existingDedup($kontoId, array_values($schluessel));
             foreach ($schluessel as $i => $dedup) {
                 if (!isset($vorhanden[$dedup])) {
-                    $this->buchung($vault, $kontoId, $import->id, $datei->posten[$i], $dedup, $now);
+                    $this->buchung($vault, $kontoId, $import->id, $datei->posten[$i], $dedup, $regeln, $standard, $now);
                 }
             }
 
@@ -373,13 +380,35 @@ final readonly class KontoauszugImport
         return true;
     }
 
-    private function buchung(Vault $vault, int $kontoId, int $importId, ImportPosten $p, string $dedup, \DateTimeImmutable $now): void
-    {
+    /**
+     * Writes one new booking: receipt status by the default of the
+     * direction, then the oldest matching active rule on top (M9-6) - the
+     * plaintext is at hand here anyway, so no job has to read it again.
+     *
+     * @param list<AssignmentRule> $regeln
+     */
+    private function buchung(
+        Vault $vault,
+        int $kontoId,
+        int $importId,
+        ImportPosten $p,
+        string $dedup,
+        array $regeln,
+        BelegStandard $standard,
+        \DateTimeImmutable $now,
+    ): void {
         $umsatz = $p->umsatz;
         $details = $umsatz->details;
         $richtung = BankTransactionDirection::ausDemBetrag($umsatz->cent);
-        $belegNoetig = $richtung->belegNoetigStandard();
         $gegenIban = Iban::normalisieren($details->iban ?? '');
+        $einordnung = Buchungsregeln::fuerNeueBuchung($regeln, $standard, new Buchungsmerkmale(
+            $richtung,
+            $details->verwendungszweck ?? '',
+            $details->buchungstext ?? '',
+            $details->name ?? '',
+            $gegenIban,
+        ));
+        $belegNoetig = $einordnung['docRequired'];
 
         $key = DataKey::generate();
         $id = $this->buchungen->insert(
@@ -395,6 +424,10 @@ final readonly class KontoauszugImport
             $belegNoetig,
             BankTransactionSource::Import,
             $now,
+            categoryId: $einordnung['categoryId'],
+            ruleId: $einordnung['ruleId'],
+            docSource: $einordnung['docSource'],
+            categorySource: $einordnung['categorySource'],
         );
         if ($id === null) {
             return;

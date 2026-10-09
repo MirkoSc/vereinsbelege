@@ -25,12 +25,14 @@ use App\Http\Response;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\RoleRepository;
+use App\Repository\SettingRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
@@ -42,6 +44,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BuchungFilter;
 use App\Service\Bank\Buchungen;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -635,8 +638,8 @@ final class BuchungFlowTest extends DatabaseTestCase
             $this->tresor->sealDataKey($key),
             random_bytes(32),
             null,
-            BankTransactionDocStatus::fuerNeueBuchung($richtung->belegNoetigStandard()),
-            $richtung->belegNoetigStandard(),
+            BankTransactionDocStatus::fuerNeueBuchung($richtung === BankTransactionDirection::Ausgabe),
+            $richtung === BankTransactionDirection::Ausgabe,
             BankTransactionSource::Import,
             new \DateTimeImmutable(),
         ) ?? self::fail();
@@ -776,12 +779,13 @@ final class BuchungFlowTest extends DatabaseTestCase
             new CategoryRepository($pdo),
             $kassensturz,
             $this->audit,
+            new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the account pages 28th, the bookings last.
-        $controller = array_fill(0, 34, $unerreichbar);
+        $controller = array_fill(0, 35, $unerreichbar);
         $controller[1] = $guard;
         $controller[27] = $kontoSeiten;
         $controller[33] = $buchungSeiten;

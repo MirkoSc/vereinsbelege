@@ -889,6 +889,8 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
 Priorität: manuelle Regel (`assignment_rule`) > Lieferanten-Default > KI-
 Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 0.82").
+`assignment_rule` gibt es seit M9-6 für Buchungen (04 §5 „Stand M9-6“,
+Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
 
 ## 9. Wiederkehrende Rechnungen
 

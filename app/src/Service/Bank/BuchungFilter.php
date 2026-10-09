@@ -16,6 +16,9 @@ use App\Domain\BankTransactionSource;
  * looks into purpose and counterparty, which only PHP can read after
  * decrypting.
  *
+ * `regel` narrows the list to the bookings one rule has acted on (M9-6) -
+ * linked from the rule, so its effect can be looked at.
+ *
  * Without dates in the query the list shows the current financial year
  * (= calendar year, E-16) - a club has a few thousand bookings a year, and
  * every one shown is decrypted. Sending the form with empty dates lifts
@@ -40,6 +43,7 @@ final readonly class BuchungFilter
         public ?BankTransactionSource $quelle = null,
         public ?int $kategorieId = null,
         public string $suche = '',
+        public ?int $regelId = null,
     ) {
     }
 
@@ -74,6 +78,7 @@ final readonly class BuchungFilter
             quelle: BankTransactionSource::tryFrom($text('quelle')),
             kategorieId: $text('kategorie') === self::OHNE_KATEGORIE ? 0 : $id('kategorie'),
             suche: mb_substr($text('suche'), 0, self::SUCHE_MAX),
+            regelId: $id('regel'),
         );
     }
 
@@ -83,7 +88,7 @@ final readonly class BuchungFilter
         $standard = self::ausAbfrage([], $heute);
 
         return $this->kontoId !== null || $this->richtung !== null || $this->belegStatus !== null
-            || $this->quelle !== null || $this->kategorieId !== null || $this->suche !== ''
+            || $this->quelle !== null || $this->kategorieId !== null || $this->suche !== '' || $this->regelId !== null
             || $this->von?->format('Y-m-d') !== $standard->von?->format('Y-m-d')
             || $this->bis?->format('Y-m-d') !== $standard->bis?->format('Y-m-d');
     }
