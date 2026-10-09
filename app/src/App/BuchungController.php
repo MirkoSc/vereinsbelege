@@ -9,6 +9,7 @@ use App\Domain\BankAccount;
 use App\Domain\BankAccountKind;
 use App\Domain\BankTransaction;
 use App\Domain\BankTransactionDirection;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\Berechtigungen;
 use App\Domain\CashCount;
 use App\Domain\Category;
@@ -26,6 +27,7 @@ use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Bank\BuchungFilter;
 use App\Service\Bank\Buchungen;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
@@ -40,6 +42,10 @@ use App\View\View;
  * booking, and the bookings entered by hand on an account or a cash box -
  * above all income without a receipt, and the suggested "Kassendifferenz"
  * after a cash count.
+ *
+ * Since M9-6 (issue #64) category and receipt status of an imported
+ * booking can be set by hand ("Einordnung"), and every booking says where
+ * they come from - default, rule (with a link to it) or by hand.
  *
  * Reading needs `bank.view`, entering, changing and deleting `bank.book` -
  * app/src/routes.php declares it per route. The period scope of external
@@ -64,6 +70,7 @@ final readonly class BuchungController
         private CategoryRepository $kategorien,
         private Kassensturz $kassensturz,
         private AuditLog $audit,
+        private Buchungsregeln $regeln,
     ) {
     }
 
@@ -98,6 +105,7 @@ final readonly class BuchungController
             'einnahmen' => $einnahmen,
             'ausgaben' => $ausgaben,
             'darfBuchen' => $this->berechtigungen()->darf(Permission::BankBook),
+            'belegStandard' => $this->buchungen->belegStandard(),
         ], Area::App));
     }
 
@@ -220,6 +228,43 @@ final readonly class BuchungController
     }
 
     /**
+     * Category and receipt status of an imported booking, set by hand
+     * (M9-6). A manual booking is changed through its form.
+     *
+     * @param array<string, string> $params
+     */
+    public function einordnen(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/app/buchungen/' . $id);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt(true);
+        }
+        $buchung = $this->buchungen->finde($tresor, $id, $this->bereich(Permission::BankBook));
+        if ($buchung === null) {
+            return $this->nichtGefunden();
+        }
+
+        $felder = ['kategorie' => self::text($request, 'kategorie'), 'beleg' => self::text($request, 'beleg')];
+        try {
+            $geaendert = $this->buchungen->einordnen($buchung, $felder, new \DateTimeImmutable());
+        } catch (BankRuleViolation $e) {
+            return $this->formular($tresor, $buchung, self::felderAus($buchung), $e, 422, einordnung: $felder);
+        }
+
+        if ($geaendert !== []) {
+            $this->audit->record(AuditAction::BuchungEingeordnet, $this->session->userId(), $request->ip, $id, ['felder' => $geaendert]);
+        }
+        $this->session->flash($geaendert === [] ? 'Nichts geändert.' : 'Einordnung gespeichert. Regeln ändern sie nicht mehr.');
+
+        return Response::redirect('/app/buchungen/' . $id);
+    }
+
+    /**
      * @param array<string, string> $params
      */
     public function loeschen(Request $request, array $params): ResponseInterface
@@ -323,7 +368,8 @@ final readonly class BuchungController
     }
 
     /**
-     * @param array<string, string> $felder
+     * @param array<string, string>      $felder
+     * @param array<string, string>|null $einordnung kategorie, beleg of the "Einordnung" form of an imported booking
      */
     private function formular(
         Vault $tresor,
@@ -332,10 +378,18 @@ final readonly class BuchungController
         ?BankRuleViolation $fehler,
         int $status = 200,
         ?CashCount $kassensturz = null,
+        ?array $einordnung = null,
     ): ResponseInterface {
         $darfBuchen = $this->berechtigungen()->darf(Permission::BankBook);
         $konten = $this->konten->liste($tresor);
         $kategorien = $this->kategorien->all();
+        $einordnung ??= $buchung === null ? [] : [
+            'kategorie' => $buchung->categoryId === null ? '' : (string) $buchung->categoryId,
+            'beleg' => match ($buchung->docSource) {
+                BankTransactionSetBy::Standard => '',
+                default => $buchung->docRequired ? Buchungen::BELEG_NOETIG : Buchungen::BELEG_NICHT_NOETIG,
+            },
+        ];
 
         return Response::html($this->view->render('app/buchung', [
             'title' => $buchung === null ? 'Neue Buchung' : 'Buchung',
@@ -358,6 +412,9 @@ final readonly class BuchungController
                 static fn(Category $k): bool => $k->active || (string) $k->id === ($felder['kategorie'] ?? ''),
             )),
             'kategorien' => self::kategorienNachId($kategorien),
+            'einordnung' => $einordnung,
+            'regel' => $buchung?->ruleId === null ? null : $this->regeln->finde($tresor, $buchung->ruleId),
+            'belegStandard' => $this->buchungen->belegStandard(),
             'kassensturz' => $kassensturz,
             'heute' => new \DateTimeImmutable(),
         ], Area::App), $status);

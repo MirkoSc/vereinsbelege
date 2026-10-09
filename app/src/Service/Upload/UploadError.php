@@ -49,7 +49,7 @@ enum UploadError: string
             self::ChunkOutOfRange => 'Ungültiger Abschnitt.',
             self::ChunkTooLarge => 'Der Abschnitt ist zu groß.',
             self::Incomplete => 'Der Upload ist unvollständig – bitte erneut versuchen.',
-            self::UnsupportedType => 'Nur JPEG, PNG und PDF sind möglich.',
+            self::UnsupportedType => 'Nur JPEG, PNG, PDF und E-Rechnungen (XRechnung-XML) sind möglich.',
             self::VaultMissing => 'Der Tresor ist noch nicht eingerichtet.',
         };
     }

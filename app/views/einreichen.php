@@ -46,7 +46,7 @@
         </noscript>
 
         <p>
-            Foto aufnehmen, ein Bild oder eine PDF-Datei wählen – mehrere Seiten sind
+            Foto aufnehmen, ein Bild, eine PDF-Datei oder eine E-Rechnung (XRechnung) wählen – mehrere Seiten sind
             möglich (bis zu <?= e($maxSeiten) ?>, je höchstens <?= e($maxDateiMb) ?> MB).
         </p>
 
@@ -61,8 +61,8 @@
                 <input type="file" id="einreichen-bild" class="visuell-versteckt" accept="image/*" multiple>
             </label>
             <label class="knopf">
-                PDF wählen
-                <input type="file" id="einreichen-pdf" class="visuell-versteckt" accept="application/pdf" multiple>
+                PDF oder E-Rechnung wählen
+                <input type="file" id="einreichen-pdf" class="visuell-versteckt" accept="application/pdf,.pdf,application/xml,text/xml,.xml" multiple>
             </label>
         </p>
 

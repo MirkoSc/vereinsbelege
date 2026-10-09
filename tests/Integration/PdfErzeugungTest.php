@@ -271,6 +271,36 @@ final class PdfErzeugungTest extends DatabaseTestCase
         self::assertSame(2, self::blobAnzahl());
     }
 
+    /**
+     * The XML of an e-invoice is no page (issue #46/M7-4): alone it leaves
+     * nothing to build, next to a single PDF that PDF is the working copy.
+     */
+    #[DataProvider('backends')]
+    public function testAnEInvoiceXmlIsNoPage(BlobStorage $storage): void
+    {
+        $blobs = new BlobRepository($this->pdo());
+        $documents = new DocumentRepository($this->pdo());
+        $blobService = $this->blobService($storage);
+        $handler = new PdfErzeugung($documents, $blobs, $blobService, new SubmissionRepository($this->pdo()), new JobRepository($this->pdo()));
+        $now = new \DateTimeImmutable();
+
+        $xml = $blobService->storeString('<Invoice/>', new BlobMeta(MagicBytes::XML), $this->vault);
+        $nurXml = $documents->insert(DocumentSource::Einreichung, null, [$xml->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+        ['status' => $status] = self::runJob($handler, $nurXml, $this->vault, $now);
+        self::assertSame(JobStatus::Uebersprungen, $status);
+        self::assertNull($documents->find($nurXml)?->pdfBlobId);
+        self::assertNull($this->findRenderPagesJob($nurXml));
+
+        $xml2 = $blobService->storeString('<Invoice/>', new BlobMeta(MagicBytes::XML), $this->vault);
+        $pdf = $blobService->storeString('pdf-inhalt', new BlobMeta(MagicBytes::PDF), $this->vault);
+        $mitPdf = $documents->insert(DocumentSource::Einreichung, null, [$xml2->id, $pdf->id], $this->vault->sealDataKey(DataKey::generate()), $now);
+        ['status' => $status] = self::runJob($handler, $mitPdf, $this->vault, $now);
+        self::assertSame(JobStatus::Fertig, $status);
+        self::assertSame($pdf->id, $documents->find($mitPdf)?->pdfBlobId);
+        self::assertNotNull($this->findRenderPagesJob($mitPdf), 'the PDF still gets its page images');
+        self::assertSame(3, self::blobAnzahl(), 'nothing built, nothing removed');
+    }
+
     #[DataProvider('backends')]
     public function testMoreThanOneUploadedPdfIsSkipped(BlobStorage $storage): void
     {

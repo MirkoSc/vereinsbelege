@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionRecord;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\BankTransactionSource;
 use App\Domain\Zugriffsbereich;
 use App\Service\Bank\BuchungFilter;
@@ -15,8 +16,8 @@ use App\Service\Bank\BuchungFilter;
  * The `bank_transaction` table (migrations/025_bank_import.sql, M9-4,
  * issue #62, docs/spec/02-datenmodell.md "Fachdaten"). SQL only - the
  * encryption lives in App\Service\Bank\Import\KontoauszugImport (imported
- * bookings) and App\Service\Bank\Buchungen (the list, manual bookings,
- * M9-5).
+ * bookings), App\Service\Bank\Buchungen (the list, manual bookings,
+ * M9-5) and App\Service\Bank\Buchungsregeln (rules, M9-6).
  */
 final readonly class BankTransactionRepository
 {
@@ -84,12 +85,15 @@ final readonly class BankTransactionRepository
         BankTransactionSource $source,
         \DateTimeImmutable $now,
         ?int $categoryId = null,
+        ?int $ruleId = null,
+        BankTransactionSetBy $docSource = BankTransactionSetBy::Standard,
+        ?BankTransactionSetBy $categorySource = null,
     ): ?int {
         $stmt = $this->pdo->prepare(
             "INSERT INTO bank_transaction (account_id, import_id, booking_date, value_date, direction, dek_sealed, data_enc,
                                            dedup_bi, counterparty_bi, doc_required, doc_status, source, created_at, updated_at,
-                                           category_id)
-             VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)",
+                                           category_id, rule_id, doc_source, category_source)
+             VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
         $stmt->bindValue(1, $accountId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $importId, $importId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
@@ -105,6 +109,9 @@ final readonly class BankTransactionRepository
         $stmt->bindValue(12, $now->format(self::FORMAT));
         $stmt->bindValue(13, $now->format(self::FORMAT));
         $stmt->bindValue(14, $categoryId, $categoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(15, $ruleId, $ruleId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(16, $docSource->value);
+        $stmt->bindValue(17, $categorySource?->value);
         try {
             $stmt->execute();
         } catch (\PDOException $e) {
@@ -188,6 +195,10 @@ final readonly class BankTransactionRepository
             $teile[] = 't.source = ?';
             $parameter[] = $filter->quelle->value;
         }
+        if ($filter->regelId !== null) {
+            $teile[] = 't.rule_id = ?';
+            $parameter[] = $filter->regelId;
+        }
         if ($filter->kategorieId === 0) {
             $teile[] = 't.category_id IS NULL';
         } elseif ($filter->kategorieId !== null) {
@@ -225,12 +236,13 @@ final readonly class BankTransactionRepository
         ?int $categoryId,
         bool $docRequired,
         BankTransactionDocStatus $docStatus,
+        BankTransactionSetBy $docSource,
         \DateTimeImmutable $now,
     ): void {
         $stmt = $this->pdo->prepare(
-            'UPDATE bank_transaction SET account_id = ?, booking_date = ?, direction = ?, category_id = ?, doc_required = ?,
-                                         doc_status = ?, updated_at = ?
-             WHERE id = ? AND source = ?',
+            "UPDATE bank_transaction SET account_id = ?, booking_date = ?, direction = ?, category_id = ?, doc_required = ?,
+                                         doc_status = ?, doc_source = ?, category_source = 'manuell', updated_at = ?
+             WHERE id = ? AND source = ?",
         );
         $stmt->bindValue(1, $accountId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $bookingDate->format('Y-m-d'));
@@ -238,10 +250,183 @@ final readonly class BankTransactionRepository
         $stmt->bindValue(4, $categoryId, $categoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(5, $docRequired ? 1 : 0, \PDO::PARAM_INT);
         $stmt->bindValue(6, $docStatus->value);
+        $stmt->bindValue(7, $docSource->value);
+        $stmt->bindValue(8, $now->format(self::FORMAT));
+        $stmt->bindValue(9, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(10, BankTransactionSource::Manuell->value);
+        $stmt->execute();
+    }
+
+    /**
+     * Sets category and receipt status of an imported booking by hand
+     * (M9-6) - what the caller decided, sources included. A manual booking
+     * is changed through updateManual().
+     */
+    public function einordnen(
+        int $id,
+        ?int $categoryId,
+        ?BankTransactionSetBy $categorySource,
+        bool $docRequired,
+        BankTransactionDocStatus $docStatus,
+        BankTransactionSetBy $docSource,
+        ?int $ruleId,
+        \DateTimeImmutable $now,
+    ): void {
+        $stmt = $this->pdo->prepare(
+            'UPDATE bank_transaction SET category_id = ?, category_source = ?, doc_required = ?, doc_status = ?, doc_source = ?,
+                                         rule_id = ?, updated_at = ?
+             WHERE id = ? AND source = ?',
+        );
+        $stmt->bindValue(1, $categoryId, $categoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(2, $categorySource?->value);
+        $stmt->bindValue(3, $docRequired ? 1 : 0, \PDO::PARAM_INT);
+        $stmt->bindValue(4, $docStatus->value);
+        $stmt->bindValue(5, $docSource->value);
+        $stmt->bindValue(6, $ruleId, $ruleId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(7, $now->format(self::FORMAT));
         $stmt->bindValue(8, $id, \PDO::PARAM_INT);
-        $stmt->bindValue(9, BankTransactionSource::Manuell->value);
+        $stmt->bindValue(9, BankTransactionSource::Import->value);
         $stmt->execute();
+    }
+
+    /**
+     * The imported bookings a rule may still act on (M9-6): no rule has
+     * touched them yet, and the receipt status is still the default or
+     * there is no category - within the scope of whoever applies the rule.
+     * The period scope applies to `booking_date` as in liste(). With $ids
+     * only those rows.
+     *
+     * @param list<int>|null $ids
+     *
+     * @return list<BankTransactionRecord>
+     */
+    public function regelKandidaten(Zugriffsbereich $bereich, ?array $ids = null): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
+        $sql = "SELECT t.* FROM bank_transaction t
+                WHERE {$bedingung} AND t.source = ? AND t.rule_id IS NULL
+                  AND (t.doc_source = ? OR t.category_id IS NULL)";
+        $parameter[] = BankTransactionSource::Import->value;
+        $parameter[] = BankTransactionSetBy::Standard->value;
+        if ($ids !== null) {
+            $sql .= sprintf(' AND t.id IN (%s)', implode(',', array_fill(0, count($ids), '?')));
+            array_push($parameter, ...$ids);
+        }
+        $stmt = $this->pdo->prepare($sql . ' ORDER BY t.booking_date, t.id');
+        $stmt->execute($parameter);
+
+        return array_map(self::hydrate(...), $stmt->fetchAll());
+    }
+
+    /**
+     * Lets a rule act on one booking: the receipt status when $docRequired
+     * is given, the category when $categoryId is given. Only while no rule
+     * has touched the row - returns whether it was written.
+     */
+    public function regelSetzen(
+        int $id,
+        int $ruleId,
+        ?bool $docRequired,
+        ?BankTransactionDocStatus $docStatus,
+        ?int $categoryId,
+        \DateTimeImmutable $now,
+    ): bool {
+        $teile = ['rule_id = ?', 'updated_at = ?'];
+        $parameter = [$ruleId, $now->format(self::FORMAT)];
+        if ($docRequired !== null && $docStatus !== null) {
+            array_push($teile, 'doc_required = ?', 'doc_status = ?', 'doc_source = ?');
+            array_push($parameter, $docRequired ? 1 : 0, $docStatus->value, BankTransactionSetBy::Regel->value);
+        }
+        if ($categoryId !== null) {
+            array_push($teile, 'category_id = ?', 'category_source = ?');
+            array_push($parameter, $categoryId, BankTransactionSetBy::Regel->value);
+        }
+        $parameter[] = $id;
+        $parameter[] = BankTransactionSource::Import->value;
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE bank_transaction SET ' . implode(', ', $teile) . ' WHERE id = ? AND source = ? AND rule_id IS NULL',
+        );
+        $stmt->execute($parameter);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Takes a rule's effect back (M9-6): a receipt status it set returns to
+     * the default of the direction - an allocated receipt (M10) stays
+     * allocated -, a category it set goes, and the rows forget the rule.
+     * What a person set on such a row stays. No vault needed: everything
+     * involved is plaintext structure. Returns the number of bookings.
+     */
+    public function regelZuruecknehmen(int $ruleId, bool $einnahmeBelegNoetig, \DateTimeImmutable $now): int
+    {
+        $jetzt = $now->format(self::FORMAT);
+        $einnahmeStatus = BankTransactionDocStatus::fuerNeueBuchung($einnahmeBelegNoetig)->value;
+
+        $stmt = $this->pdo->prepare(
+            "UPDATE bank_transaction
+                SET doc_required = CASE direction WHEN 'ausgabe' THEN 1 ELSE ? END,
+                    doc_status = CASE WHEN doc_status = ? THEN doc_status WHEN direction = 'ausgabe' THEN ? ELSE ? END,
+                    doc_source = ?, updated_at = ?
+              WHERE rule_id = ? AND doc_source = ?",
+        );
+        $stmt->execute([
+            $einnahmeBelegNoetig ? 1 : 0,
+            BankTransactionDocStatus::Zugeordnet->value,
+            BankTransactionDocStatus::Fehlt->value,
+            $einnahmeStatus,
+            BankTransactionSetBy::Standard->value,
+            $jetzt,
+            $ruleId,
+            BankTransactionSetBy::Regel->value,
+        ]);
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE bank_transaction SET category_id = NULL, category_source = NULL, updated_at = ? WHERE rule_id = ? AND category_source = ?',
+        );
+        $stmt->execute([$jetzt, $ruleId, BankTransactionSetBy::Regel->value]);
+
+        $stmt = $this->pdo->prepare('UPDATE bank_transaction SET rule_id = NULL WHERE rule_id = ?');
+        $stmt->execute([$ruleId]);
+
+        return $stmt->rowCount();
+    }
+
+    /**
+     * The ids of the bookings a rule has acted on.
+     *
+     * @return list<int>
+     */
+    public function idsForRule(int $ruleId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT id FROM bank_transaction WHERE rule_id = ? ORDER BY id');
+        $stmt->execute([$ruleId]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * How many bookings each rule has acted on, within the reader's scope.
+     *
+     * @return array<int, int> rule id => count, rules without bookings left out
+     */
+    public function countByRule(Zugriffsbereich $bereich): array
+    {
+        [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
+        $stmt = $this->pdo->prepare(
+            "SELECT t.rule_id, COUNT(*) FROM bank_transaction t WHERE {$bedingung} AND t.rule_id IS NOT NULL GROUP BY t.rule_id",
+        );
+        $stmt->execute($parameter);
+        $anzahl = [];
+        foreach ($stmt->fetchAll(\PDO::FETCH_NUM) as [$regel, $zahl]) {
+            $anzahl[(int) $regel] = (int) $zahl;
+        }
+
+        return $anzahl;
     }
 
     /** Deletes a manual booking; an imported one stays. Returns whether a row went. */
@@ -273,6 +458,9 @@ final readonly class BankTransactionRepository
             source: BankTransactionSource::from((string) $row['source']),
             createdAt: new \DateTimeImmutable((string) $row['created_at']),
             updatedAt: new \DateTimeImmutable((string) $row['updated_at']),
+            ruleId: $row['rule_id'] === null ? null : (int) $row['rule_id'],
+            docSource: BankTransactionSetBy::from((string) $row['doc_source']),
+            categorySource: $row['category_source'] === null ? null : BankTransactionSetBy::from((string) $row['category_source']),
         );
     }
 }

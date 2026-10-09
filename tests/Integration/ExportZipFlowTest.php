@@ -804,10 +804,10 @@ final class ExportZipFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the export last (35th).
-        $controller = array_fill(0, 35, $unerreichbar);
+        // guard second, the export last (36th).
+        $controller = array_fill(0, 36, $unerreichbar);
         $controller[1] = $guard;
-        $controller[34] = $export;
+        $controller[35] = $export;
 
         $router = new Router();
         (require dirname(__DIR__, 2) . '/app/src/routes.php')($router, $view, ...$controller);

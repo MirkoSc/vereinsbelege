@@ -52,6 +52,7 @@ use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\Duplikatpruefung;
+use App\Service\Document\Texterkennung;
 use App\Service\Inbox\Posteingang;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
@@ -793,6 +794,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 new SupplierRepository($pdo),
                 $this->supplierService(),
                 new DocumentArtifactRepository($pdo),
+                new Texterkennung($documents, new DocumentArtifactRepository($pdo), $this->blobService()),
                 new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
                 $this->audit,
             ),
@@ -805,7 +807,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the guard
         // second, the inbox 21st, the review page 27th.
-        $controller = array_fill(0, 35, $unerreichbar);
+        $controller = array_fill(0, 36, $unerreichbar);
         $controller[1] = $guard;
         $controller[20] = $posteingang;
         $controller[26] = $pruefung;

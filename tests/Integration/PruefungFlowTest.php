@@ -39,6 +39,7 @@ use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\JobRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserAccessRepository;
@@ -53,11 +54,14 @@ use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatpruefung;
+use App\Service\Document\Texterkennung;
 use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
+use App\Service\Job\JobLaufStatus;
+use App\Service\Job\JobRunner;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
@@ -75,7 +79,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  * 03-erfassung-und-ki.md section 6 "Prüfansicht", docs/spec/
  * 02-datenmodell.md "Fachdaten"): the real route table, guard, controller,
  * service, repositories and schema - plus locking a checked receipt and
- * lifting the lock (issue #38/M6-4, docs/spec/01-sicherheit.md section 7).
+ * lifting the lock (issue #38/M6-4, docs/spec/01-sicherheit.md section 7) -
+ * and the form filled from an e-invoice without AI (issue #46/M7-4).
  */
 final class PruefungFlowTest extends DatabaseTestCase
 {
@@ -936,6 +941,132 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertSame($ziel, (int) $this->rechnung($fest)['supplier_id']);
     }
 
+    // ------------------------------------------ e-invoice (M7-4, #46)
+
+    public function testAnEInvoiceFillsTheFormWithoutSavingAnything(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-cii.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertSame(200, $seite->status);
+        self::assertMatchesRegularExpression('/Die Angaben stammen aus der E-Rechnung \(CII \(ZUGFeRD\/Factur-X\/XRechnung\)\)\s+und wurden ohne KI übernommen\./', $seite->body);
+        foreach ([
+            'datum' => '2026-09-15', 'nummer' => 'RE-2026-0042', 'brutto' => '172,50', 'netto' => '150,00', 'waehrung' => 'EUR',
+            'steuer_satz_1' => '19', 'steuer_betrag_1' => '19,00', 'steuer_satz_2' => '7', 'steuer_betrag_2' => '3,50',
+            'faellig' => '2026-10-15', 'leistung_von' => '2026-09-01', 'leistung_bis' => '2026-09-30',
+            'lieferant_neu_name' => 'Muster Sportartikel GmbH', 'lieferant_neu_iban' => 'DE02120300000000202051',
+        ] as $feld => $wert) {
+            self::assertMatchesRegularExpression('/name="' . $feld . '"[^>]*value="' . preg_quote($wert, '/') . '"/', $seite->body, $feld);
+        }
+        self::assertMatchesRegularExpression('/name="richtung" value="ausgabe" checked/', $seite->body);
+        self::assertSame(0, $this->anzahlBelege(), 'a suggestion until a person saves it');
+        self::assertSame(DocumentStatus::BereitZurAuswertung, $this->belegStatus($id));
+
+        // The XML itself is a download, never an image or shown inline.
+        $blob = $this->originale($id)[0];
+        self::assertStringNotContainsString('<img src="/app/belege/pruefen/' . $id . '/datei/' . $blob . '"', $seite->body);
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $id . '/datei/' . $blob . '"', $seite->body);
+        $datei = $this->roh('/app/belege/pruefen/' . $id . '/datei/' . $blob, entsperrt: true);
+        self::assertInstanceOf(StreamResponse::class, $datei);
+        self::assertStringStartsWith('attachment; filename="', $datei->headers['Content-Disposition']);
+        self::assertSame('application/xml', $datei->headers['Content-Type']);
+        self::assertSame('nosniff', $datei->headers['X-Content-Type-Options']);
+    }
+
+    public function testTheTakenOverFormSavesLikeAnyOther(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-ubl.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+        $lieferant = $this->lieferant('Hallenservice Beispiel', SupplierRole::Lieferant, 'DE02500105170137075030');
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite->body, 'found by its IBAN');
+        self::assertDoesNotMatchRegularExpression('/name="lieferant_neu_name"[^>]*value="[^"]+"/', $seite->body);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->felder([
+            'datum' => '2026-09-20', 'nummer' => '2026/1234', 'brutto' => '297,50', 'netto' => '250,00',
+            'steuer_satz_1' => '19', 'steuer_betrag_1' => '47,50', 'lieferant' => (string) $lieferant,
+            'kategorie' => (string) $this->ausgabeKategorie, 'aktion' => 'geprueft',
+        ]));
+        self::assertSame(302, $antwort->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+
+        // Once saved, the receipt is what the form shows - no more hint.
+        $danach = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+        self::assertStringNotContainsString('aus der E-Rechnung', $danach->body);
+    }
+
+    /** Step 1 of the resolution: the VAT id - but only a supplier of the direction's role. */
+    public function testTheSupplierIsFoundByItsIdsOfTheRightRole(): void
+    {
+        $zahler = $this->supplierService()->anlegen($this->tresor, ['name' => 'Muster als Zahler', 'rolle' => SupplierRole::Zahler->value, 'vat_id' => 'DE 123 456 789'], new \DateTimeImmutable())->id;
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-cii.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+        self::assertDoesNotMatchRegularExpression('/<option value="' . $zahler . '" selected>/', $seite->body);
+        self::assertMatchesRegularExpression('/name="lieferant_neu_name"[^>]*value="Muster Sportartikel GmbH"/', $seite->body);
+
+        new SupplierRepository($this->pdo())->update($zahler, SupplierRole::Beide, null, new SupplierRepository($this->pdo())->find($zahler)?->dataEnc ?? '', new \DateTimeImmutable());
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+        self::assertMatchesRegularExpression('/<option value="' . $zahler . '" selected>/', $seite->body);
+    }
+
+    public function testAnEInvoiceThatCouldNotBeReadAsksForManualCapture(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('zugferd-1.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertMatchesRegularExpression('/Der Beleg enthält eine E-Rechnung, die nicht übernommen werden konnte \(Format nicht unterstützt\)\./', $seite->body);
+        self::assertMatchesRegularExpression('/name="nummer"[^>]*value=""/', $seite->body);
+    }
+
+    public function testTheWarningsOfTheInvoiceAreShown(): void
+    {
+        $xml = str_replace('<ram:GrandTotalAmount>172.50</ram:GrandTotalAmount>', '<ram:GrandTotalAmount>180.00</ram:GrandTotalAmount>', self::eRechnung('xrechnung-cii.xml'));
+        $id = $this->beleg(seiten: [[$xml, MagicBytes::XML]]);
+        $this->eRechnungLesen();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertStringContainsString('<li>Netto und Steuern ergeben laut E-Rechnung nicht den Bruttobetrag.</li>', $seite->body);
+        self::assertMatchesRegularExpression('/name="brutto"[^>]*value="180,00"/', $seite->body);
+    }
+
+    /** vorbelegen() takes only what fits a field - the AI's answer (M7-5) goes the same way. */
+    public function testOnlyValuesThatFitTheirFieldAreTaken(): void
+    {
+        $pruefung = $this->pruefung();
+        $document = new DocumentRepository($this->pdo())->find($this->beleg());
+        self::assertNotNull($document);
+        $standard = $pruefung->felder($document, null);
+
+        $ergebnis = $pruefung->vorbelegen($standard, [
+            'document_type' => 'erfunden', 'direction' => 'einnahme', 'invoice_date' => '2026-02-31', 'invoice_number' => ['kein', 'text'],
+            'total_gross' => '1,234', 'currency' => 'euro', 'due_date' => '15.10.2026',
+            'taxes' => [['rate' => '19', 'amount' => '1.90'], 'kaputt', ['rate' => '7', 'amount' => '0.70'], ['rate' => '5', 'amount' => '1'], ['rate' => '0', 'amount' => '0']],
+            'supplier' => ['name' => 'Neu GmbH', 'iban' => 'DE00 0000'],
+            'warnings' => ['Hinweis', 3],
+        ], $this->tresor);
+
+        $felder = $ergebnis['felder'];
+        self::assertSame('rechnung', $felder['belegart'], 'unknown type: default kept');
+        self::assertSame('einnahme', $felder['richtung']);
+        self::assertSame('', $felder['datum']);
+        self::assertSame('', $felder['nummer']);
+        self::assertSame('', $felder['brutto'], 'ambiguous amount refused');
+        self::assertSame('EUR', $felder['waehrung']);
+        self::assertSame('', $felder['faellig']);
+        self::assertSame(['19', '1,90', '7', '0,70', '5', '1,00'], [$felder['steuer_satz_1'], $felder['steuer_betrag_1'], $felder['steuer_satz_2'], $felder['steuer_betrag_2'], $felder['steuer_satz_3'], $felder['steuer_betrag_3']]);
+        self::assertSame('Neu GmbH', $felder['lieferant_neu_name']);
+        self::assertSame('', $felder['lieferant_neu_iban'], 'an invalid IBAN is not offered');
+        self::assertSame(['Hinweis', 'Der Beleg nennt 4 Steuersätze, das Formular fasst 3 – bitte prüfen.'], $ergebnis['hinweise']);
+    }
+
     // -------------------------------------------------- service, schema
 
     /**
@@ -1059,6 +1190,26 @@ final class PruefungFlowTest extends DatabaseTestCase
         );
     }
 
+    /** Runs `extract_text` for every queued document, as a signed-in session would. */
+    private function eRechnungLesen(): void
+    {
+        $runner = new JobRunner(new JobRepository($this->pdo()), [
+            new Texterkennung(new DocumentRepository($this->pdo()), new DocumentArtifactRepository($this->pdo()), $this->blobService()),
+        ]);
+        $jobs = new JobRepository($this->pdo());
+        foreach ($this->pdo()->query('SELECT id FROM document')->fetchAll(\PDO::FETCH_COLUMN) as $id) {
+            $jobs->enqueue(Texterkennung::JOB_TYP, JobExecutor::Session, 'document', (int) $id);
+        }
+        $berechtigungen = new UserAccessRepository($this->pdo())->berechtigungen($this->userId);
+        for ($i = 0; $i < 50 && $runner->schritt($berechtigungen, $this->tresor, new \DateTimeImmutable())->status === JobLaufStatus::Gearbeitet; $i++) {
+        }
+    }
+
+    private static function eRechnung(string $name): string
+    {
+        return (string) file_get_contents(__DIR__ . '/../fixtures/erechnung/' . $name);
+    }
+
     private function lieferant(string $name, SupplierRole $rolle, string $iban = ''): int
     {
         return $this->supplierService()->anlegen($this->tresor, ['name' => $name, 'rolle' => $rolle->value, 'ibans' => $iban], new \DateTimeImmutable())->id;
@@ -1092,6 +1243,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             new SupplierRepository($pdo),
             $this->supplierService(),
             new DocumentArtifactRepository($pdo),
+            new Texterkennung($documents, new DocumentArtifactRepository($pdo), $this->blobService()),
             new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
             $this->audit,
         );
@@ -1326,7 +1478,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the review page 27th.
-        $controller = array_fill(0, 35, $unerreichbar);
+        $controller = array_fill(0, 36, $unerreichbar);
         $controller[1] = $guard;
         $controller[26] = $pruefung;
 

@@ -9,6 +9,7 @@ use App\Domain\AuditAction;
 use App\Domain\Document;
 use App\Domain\DocumentArtifact;
 use App\Domain\DocumentStatus;
+use App\Domain\Iban;
 use App\Domain\InboxItem;
 use App\Domain\InvoiceData;
 use App\Domain\InvoiceDirection;
@@ -16,6 +17,7 @@ use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
 use App\Domain\Supplier;
+use App\Domain\SupplierKeyKind;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -28,7 +30,10 @@ use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
+use App\Service\Document\ERechnungAuszug;
+use App\Service\Document\Texterkennung;
 use App\Service\Inbox\Posteingang;
+use App\Service\MasterData\SupplierKeys;
 use App\Service\MasterData\SupplierRuleViolation;
 use App\Service\MasterData\SupplierService;
 use App\Service\Processing\Betrag;
@@ -55,6 +60,11 @@ use App\Service\Upload\MagicBytes;
  *   may maintain suppliers, and before the receipt's transaction (the
  *   supplier service runs its own).
  * - The sum check (net + taxes ≈ gross) warns, it does not refuse.
+ * - A document without a receipt yet whose e-invoice was read (issue
+ *   #46/M7-4, App\Service\Document\Texterkennung::eRechnung()) opens with
+ *   the invoice's fields filled in - vorbelegen(), which takes the shape of
+ *   the AI's answer (`extract-v1`) so M7-5 can fill the form the same way.
+ *   Nothing is saved before a person does.
  *
  * Framework-free like the other services: no Http, no Session. Nothing
  * decrypted leaves through an exception message or the audit log - the log
@@ -90,6 +100,7 @@ final readonly class Pruefung
         private SupplierRepository $lieferantenRepository,
         private SupplierService $lieferanten,
         private DocumentArtifactRepository $artefakte,
+        private Texterkennung $texterkennung,
         private Posteingang $posteingang,
         private AuditLog $audit,
     ) {
@@ -169,7 +180,8 @@ final readonly class Pruefung
      * The pages to look at while capturing: the images the document came as
      * (the scanner's processed version where there is one), then the page
      * images pdf.js rendered from its PDFs (issue #30/M4-8, the newest run);
-     * the PDFs themselves as links - the CSP rules out embedding them.
+     * the PDFs themselves as links - the CSP rules out embedding them - and
+     * so is the XML of an e-invoice (issue #46/M7-4, a download).
      *
      * @return array{bilder: list<array{blobId: int, titel: string, originalId: ?int}>, pdfs: list<array{blobId: int, titel: string}>}
      */
@@ -180,6 +192,8 @@ final readonly class Pruefung
         foreach ($this->posteingang->seiten($document, $vault) as $seite) {
             if ($seite['mime'] === MagicBytes::PDF) {
                 $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => $seite['pdf'] ? 'Aufbereitetes PDF' : 'PDF (Seite ' . $seite['seite'] . ')'];
+            } elseif ($seite['mime'] === MagicBytes::XML) {
+                $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => 'E-Rechnung (XML, Seite ' . $seite['seite'] . ')'];
             } else {
                 $bilder[] = ['blobId' => $seite['blobId'], 'titel' => 'Seite ' . $seite['seite'] . ($seite['originalId'] !== null ? ' (aufbereitet)' : ''), 'originalId' => $seite['originalId']];
             }
@@ -262,6 +276,94 @@ final readonly class Pruefung
         }
 
         return $felder;
+    }
+
+    /**
+     * The document's e-invoice as `extract_text` read it, or null when it
+     * has none (issue #46/M7-4).
+     */
+    public function eRechnung(Document $document, Vault $vault): ?ERechnungAuszug
+    {
+        return $this->texterkennung->eRechnung($document, $vault);
+    }
+
+    /**
+     * The form filled from a read receipt in the shape of `extract-v1`
+     * (docs/spec/03-erfassung-und-ki.md section 6) - an e-invoice now, the
+     * AI's answer with M7-5. Only values that fit their field are taken;
+     * anything else keeps the default of felder(). The supplier is looked
+     * up by its ids - VAT id, tax number, IBAN, creditor id, in that order
+     * (section 7, steps 1-3), the first id that names exactly one supplier
+     * of the direction's role wins; otherwise name and IBAN are offered as
+     * a new supplier. The person confirms everything by saving.
+     *
+     * @param array<string, string> $felder the defaults, felder() without a receipt
+     * @param array<string, mixed> $extraktion
+     *
+     * @return array{felder: array<string, string>, hinweise: list<string>}
+     */
+    public function vorbelegen(array $felder, array $extraktion, Vault $vault): array
+    {
+        $text = static fn(mixed $wert): string => is_string($wert) ? trim($wert) : '';
+        $datum = static function (mixed $wert): string {
+            $datum = is_string($wert) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $wert) : false;
+
+            return $datum !== false && $datum->format('Y-m-d') === $wert ? $wert : '';
+        };
+        $betrag = static function (mixed $wert): string {
+            $cent = is_string($wert) ? Betrag::parse($wert) : null;
+
+            return $cent === null ? '' : Betrag::format($cent);
+        };
+        $setze = static function (string $feld, string $wert) use (&$felder): void {
+            if ($wert !== '') {
+                $felder[$feld] = $wert;
+            }
+        };
+        $hinweise = array_values(array_filter(
+            is_array($extraktion['warnings'] ?? null) ? $extraktion['warnings'] : [],
+            static fn(mixed $hinweis): bool => is_string($hinweis) && $hinweis !== '',
+        ));
+
+        $setze('belegart', InvoiceType::tryFrom($text($extraktion['document_type'] ?? null))?->value ?? '');
+        $setze('richtung', InvoiceDirection::tryFrom($text($extraktion['direction'] ?? null))?->value ?? '');
+        $setze('datum', $datum($extraktion['invoice_date'] ?? null));
+        $setze('nummer', mb_substr($text($extraktion['invoice_number'] ?? null), 0, self::NUMMER_MAX));
+        $setze('brutto', $betrag($extraktion['total_gross'] ?? null));
+        $setze('netto', $betrag($extraktion['total_net'] ?? null));
+        $waehrung = $text($extraktion['currency'] ?? null);
+        $setze('waehrung', preg_match('/^[A-Z]{3}$/', $waehrung) === 1 ? $waehrung : '');
+        $setze('faellig', $datum($extraktion['due_date'] ?? null));
+        $zeitraum = is_array($extraktion['service_period'] ?? null) ? $extraktion['service_period'] : [];
+        $setze('leistung_von', $datum($zeitraum['from'] ?? null));
+        $setze('leistung_bis', $datum($zeitraum['to'] ?? null));
+        $setze('zweck', mb_substr($text($extraktion['purpose_short'] ?? null), 0, self::ZWECK_MAX));
+
+        $steuern = array_values(array_filter(
+            is_array($extraktion['taxes'] ?? null) ? $extraktion['taxes'] : [],
+            static fn(mixed $steuer): bool => is_array($steuer),
+        ));
+        foreach (array_slice($steuern, 0, self::STEUERN_MAX) as $i => $steuer) {
+            $satz = Betrag::prozent($text($steuer['rate'] ?? null));
+            $setze('steuer_satz_' . ($i + 1), $satz === null ? '' : str_replace('.', ',', $satz));
+            $setze('steuer_betrag_' . ($i + 1), $betrag($steuer['amount'] ?? null));
+        }
+        if (count($steuern) > self::STEUERN_MAX) {
+            $hinweise[] = sprintf('Der Beleg nennt %d Steuersätze, das Formular fasst %d – bitte prüfen.', count($steuern), self::STEUERN_MAX);
+        }
+
+        $partner = is_array($extraktion['supplier'] ?? null) ? $extraktion['supplier'] : [];
+        $richtung = InvoiceDirection::tryFrom($felder['richtung']) ?? InvoiceDirection::Ausgabe;
+        $lieferant = $this->lieferantZu($partner, $richtung, $vault);
+        if ($lieferant !== null) {
+            $felder['lieferant'] = (string) $lieferant;
+        } else {
+            $setze('lieferant_neu_name', mb_substr($text($partner['name'] ?? null), 0, 200));
+            $iban = Iban::normalisieren($text($partner['iban'] ?? null));
+            $setze('lieferant_neu_iban', Iban::istGueltig($iban) ? $iban : '');
+        }
+
+        return ['felder' => $felder, 'hinweise' => $hinweise];
     }
 
     /**
@@ -486,6 +588,37 @@ final readonly class Pruefung
     /**
      * @throws InvoiceRuleViolation
      */
+    /**
+     * The one supplier of the direction's role these ids name - section 7,
+     * steps 1-3, exact blind index lookups only (the full resolution with
+     * names and suggestions is M7-6).
+     *
+     * @param array<mixed> $partner `extract-v1` `supplier`
+     */
+    private function lieferantZu(array $partner, InvoiceDirection $richtung, Vault $vault): ?int
+    {
+        $wert = static fn(string $schluessel): string => is_string($partner[$schluessel] ?? null) ? $partner[$schluessel] : '';
+        $index = $vault->blindIndex();
+        $kennungen = [
+            [SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))],
+            [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))],
+            [SupplierKeyKind::Iban, Iban::normalisieren($wert('iban'))],
+            [SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))],
+        ];
+        foreach ($kennungen as [$art, $kennung]) {
+            if ($kennung === '') {
+                continue;
+            }
+            $ids = $this->lieferantenRepository->idsWithKey($art, $index->forValue($art->purpose(), $kennung));
+            $record = count($ids) === 1 ? $this->lieferantenRepository->find($ids[0]) : null;
+            if ($record !== null && $richtung->passtZuLieferant($record->role)) {
+                return $record->id;
+            }
+        }
+
+        return null;
+    }
+
     private function lieferant(string $wert, InvoiceDirection $richtung): ?int
     {
         if ($wert === '') {

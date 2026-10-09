@@ -8,6 +8,7 @@
  * Pages stream decrypted from /app/posteingang/{id}/datei/{blob}. Images
  * show inline; a PDF opens in the browser's own viewer in a new tab - the
  * CSP (object-src 'none', frame-ancestors 'none') rules out embedding it.
+ * The XML of an e-invoice (issue #46/M7-4) is only offered as a download.
  * Page images of a PDF original are rendered by `public/js/rasterung.js`
  * with pdf.js (issue #30/M4-8) while this page or the inbox list is open;
  * this view does not show them yet (no gallery here), only mounts the
@@ -122,6 +123,10 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                         <?php if ($seite['mime'] === MagicBytes::PDF): ?>
                             <a class="knopf" href="<?= e($url) ?>" target="_blank" rel="noopener">
                                 <?= $seite['pdf'] ? 'Aufbereitetes PDF öffnen' : e('PDF öffnen (Seite ' . $seite['seite'] . ')') ?>
+                            </a>
+                        <?php elseif ($seite['mime'] === MagicBytes::XML): ?>
+                            <a class="knopf" href="<?= e($url) ?>" download>
+                                <?= e('E-Rechnung (XML) herunterladen (Seite ' . $seite['seite'] . ')') ?>
                             </a>
                         <?php else: ?>
                             <a href="<?= e($url) ?>" target="_blank" rel="noopener">

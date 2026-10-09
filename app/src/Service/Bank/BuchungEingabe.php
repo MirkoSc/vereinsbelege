@@ -10,7 +10,9 @@ use App\Domain\BankTransactionDirection;
 /**
  * A checked manual booking (M9-5, issue #63) before it is written - what
  * App\Service\Bank\Buchungen made of the form. The amount is positive; the
- * direction gives the sign it is stored with.
+ * direction gives the sign it is stored with. `belegGewaehlt`: the receipt
+ * question was answered rather than left to the direction (M9-6,
+ * `doc_source`).
  */
 final readonly class BuchungEingabe
 {
@@ -23,6 +25,7 @@ final readonly class BuchungEingabe
         public string $zweck,
         public string $gegenseite,
         public bool $belegNoetig,
+        public bool $belegGewaehlt = false,
     ) {
     }
 

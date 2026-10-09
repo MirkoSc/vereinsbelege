@@ -530,6 +530,25 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertSame($original, self::inhalt($this->roh('/app/posteingang/' . $id . '/datei/' . $originalBlob, entsperrt: true)));
     }
 
+    /** The XML of an e-invoice (issue #46/M7-4) is offered and sent as a download only. */
+    public function testAnEInvoiceXmlIsADownload(): void
+    {
+        $xml = (string) file_get_contents(__DIR__ . '/../fixtures/erechnung/xrechnung-cii.xml');
+        $id = $this->einreichung(seiten: [[$xml, MagicBytes::XML]]);
+        $blob = $this->originale($id)[0];
+
+        $datei = $this->roh('/app/posteingang/' . $id . '/datei/' . $blob, entsperrt: true);
+        self::assertInstanceOf(StreamResponse::class, $datei);
+        self::assertSame(MagicBytes::XML, $datei->headers['Content-Type']);
+        self::assertSame('attachment; filename="R-2026-0001-1.xml"', $datei->headers['Content-Disposition']);
+        self::assertSame('nosniff', $datei->headers['X-Content-Type-Options']);
+        self::assertSame($xml, self::inhalt($datei));
+
+        $detail = $this->get('/app/posteingang/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('#<a class="knopf" href="/app/posteingang/' . $id . '/datei/' . $blob . '" download>\s*E-Rechnung \(XML\) herunterladen \(Seite 1\)#', $detail);
+        self::assertStringNotContainsString('<img src="/app/posteingang/' . $id . '/datei/' . $blob . '"', $detail);
+    }
+
     public function testOnlyTheDocumentsOwnBlobsAreServed(): void
     {
         $id = $this->einreichung();
@@ -821,6 +840,7 @@ final class InboxFlowTest extends DatabaseTestCase
             $unerreichbar,
             $unerreichbar,
             $posteingang,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,

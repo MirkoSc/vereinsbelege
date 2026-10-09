@@ -22,10 +22,13 @@ use App\Repository\VaultRepository;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Document\ERechnungAuszug;
 use App\Service\Document\Texterkennung;
 use App\Service\Job\JobLaufStatus;
 use App\Service\Job\JobRunner;
 use App\Service\Migration\Migrator;
+use App\Service\Processing\ERechnung\ERechnungBefund;
+use App\Service\Processing\ERechnung\ERechnungSyntax;
 use App\Service\Processing\PdfAusBildern;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -42,11 +45,15 @@ use App\Tests\Support\PdfBaukasten;
  * Texterkennung::textFuerKi()), anything else leaves them needed
  * (`uebersprungen`); one PDF per step, nothing readable outside the
  * encrypted artifact - and the migration that queues it for open documents
- * received before.
+ * received before. Since issue #46/M7-4 the same job reads structured
+ * e-invoices: an XRechnung XML original and the invoice XML a ZUGFeRD PDF
+ * carries, stored as an `e_rechnung` artifact - without any AI.
  */
 final class TexterkennungJobTest extends DatabaseTestCase
 {
     private const string FIXTURES = __DIR__ . '/../fixtures/pdf';
+
+    private const string E_RECHNUNGEN = __DIR__ . '/../fixtures/erechnung';
 
     private Vault $tresor;
     private int $userId;
@@ -270,6 +277,158 @@ final class TexterkennungJobTest extends DatabaseTestCase
         self::assertNotNull($this->textFuerKi($id));
     }
 
+    public function testAnXRechnungIsReadWithoutAiOnEitherBackend(): void
+    {
+        $cii = $this->dokument([[MagicBytes::XML, self::eRechnungFixture('xrechnung-cii.xml')]], BlobStorage::Fs);
+        $ubl = $this->dokument([[MagicBytes::XML, self::eRechnungFixture('xrechnung-ubl.xml')]], BlobStorage::Db);
+
+        $this->allesAbarbeiten();
+
+        foreach ([$cii => ['RE-2026-0042', '172.50', ERechnungSyntax::Cii], $ubl => ['2026/1234', '297.50', ERechnungSyntax::Ubl]] as $id => [$nummer, $brutto, $syntax]) {
+            self::assertSame('fertig', $this->job($id)['status']);
+            self::assertSame('fertig', $this->dokumentZeile($id)['ocr_status'], 'no page images to evaluate');
+            self::assertNull($this->textFuerKi($id), 'no text layer - the fields are already there');
+
+            $artefakte = $this->artefakte($id);
+            self::assertCount(1, $artefakte);
+            self::assertSame('e_rechnung', $artefakte[0]['kind']);
+            self::assertSame('session', $artefakte[0]['producer']);
+            self::assertNull($artefakte[0]['blob_id']);
+
+            $auszug = $this->eRechnung($id);
+            self::assertNotNull($auszug);
+            self::assertTrue($auszug->gelesen());
+            self::assertSame($syntax, $auszug->syntax);
+            self::assertStringContainsString('xrechnung_3.0', $auszug->profil);
+            self::assertNotNull($auszug->extraktion);
+            self::assertSame($nummer, $auszug->extraktion['invoice_number']);
+            self::assertSame($brutto, $auszug->extraktion['total_gross']);
+        }
+    }
+
+    public function testAZugferdPdfCarriesItsInvoiceNextToItsText(): void
+    {
+        $id = $this->dokument([[MagicBytes::PDF, self::eRechnungFixture('zugferd-en16931.pdf')]], BlobStorage::Fs);
+
+        $this->allesAbarbeiten();
+
+        self::assertSame('fertig', $this->dokumentZeile($id)['ocr_status']);
+        self::assertSame(['e_rechnung', 'text'], array_map(static fn (array $a): string => (string) $a['kind'], $this->artefakte($id)));
+        self::assertStringContainsString('Rechnung RE-2026-0043', (string) $this->textFuerKi($id));
+        $auszug = $this->eRechnung($id);
+        self::assertNotNull($auszug);
+        self::assertSame('urn:cen.eu:en16931:2017', $auszug->profil);
+        self::assertSame('RE-2026-0043', $auszug->extraktion['invoice_number'] ?? null);
+        self::assertSame('DE123456789', $auszug->extraktion['supplier']['vat_id'] ?? null);
+    }
+
+    /** The invoice is club data like the text: only in the artifact, under its own key. */
+    public function testTheInvoiceIsNotReadableOutsideItsArtifact(): void
+    {
+        $id = $this->dokument([
+            [MagicBytes::XML, self::eRechnungFixture('xrechnung-cii.xml')],
+            [MagicBytes::PDF, self::eRechnungFixture('zugferd-en16931.pdf')],
+        ], BlobStorage::Fs);
+
+        self::assertSame(JobLaufStatus::Gearbeitet, $this->schritt()); // pruefen
+        self::assertSame(JobLaufStatus::Gearbeitet, $this->schritt()); // the XML
+        $job = $this->job($id);
+        $state = json_decode((string) $job['state'], true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['quellen', 'brauchbar'], array_keys($state));
+        self::assertSame([true], $state['brauchbar']);
+        $this->allesAbarbeiten();
+
+        $job = $this->job($id);
+        foreach ($this->artefakte($id) as $artefakt) {
+            foreach (['Muster', 'RE-2026', '172.50', '17250', 'DE02', 'DE123456789', 'cii', 'gelesen'] as $klartext) {
+                self::assertStringNotContainsString($klartext, (string) $job['state']);
+                self::assertStringNotContainsString($klartext, (string) $artefakt['data_enc']);
+            }
+            self::assertNotSame($this->dokumentZeile($id)['dek_sealed'], $artefakt['dek_sealed']);
+        }
+        self::assertSame('fertig', $this->dokumentZeile($id)['ocr_status']);
+        self::assertSame(['e_rechnung', 'e_rechnung', 'text'], array_map(static fn (array $a): string => (string) $a['kind'], $this->artefakte($id)));
+        self::assertSame('RE-2026-0042', $this->eRechnung($id)?->extraktion['invoice_number'] ?? null, 'the first source wins');
+    }
+
+    /** A damaged or unsupported e-invoice is no error of the job - the person captures it. */
+    public function testADamagedXmlDoesNotFailTheJob(): void
+    {
+        $kaputt = $this->dokument([[MagicBytes::XML, substr(self::eRechnungFixture('xrechnung-cii.xml'), 0, 3000)]], BlobStorage::Fs);
+        $alt = $this->dokument([[MagicBytes::XML, self::eRechnungFixture('zugferd-1.xml')]], BlobStorage::Fs);
+
+        $this->allesAbarbeiten();
+
+        foreach ([$kaputt => ERechnungBefund::Defekt, $alt => ERechnungBefund::NichtUnterstuetzt] as $id => $befund) {
+            self::assertSame('fertig', $this->job($id)['status']);
+            self::assertSame('uebersprungen', $this->dokumentZeile($id)['ocr_status']);
+            $auszug = $this->eRechnung($id);
+            self::assertNotNull($auszug);
+            self::assertSame($befund, $auszug->befund);
+            self::assertFalse($auszug->gelesen());
+            self::assertNull($auszug->extraktion);
+        }
+    }
+
+    public function testAPdfWithoutInvoiceHasNoInvoiceArtifact(): void
+    {
+        $id = $this->dokument([[MagicBytes::PDF, self::fixture('rechnung-standardschrift.pdf')]], BlobStorage::Fs);
+
+        $this->allesAbarbeiten();
+
+        self::assertSame(['text'], array_map(static fn (array $a): string => (string) $a['kind'], $this->artefakte($id)));
+        self::assertNull($this->eRechnung($id));
+    }
+
+    /**
+     * A ZUGFeRD step cut off anywhere runs again with the same state:
+     * after both artifacts, or after the invoice but before the text.
+     */
+    public function testARepeatedZugferdStepStoresNothingTwice(): void
+    {
+        $id = $this->dokument([[MagicBytes::PDF, self::eRechnungFixture('zugferd-en16931.pdf')]], BlobStorage::Fs);
+        self::assertSame(JobLaufStatus::Gearbeitet, $this->schritt()); // pruefen
+
+        $job = new JobRepository($this->pdo())->claim(JobExecutor::Session, 'test', 60, Texterkennung::JOB_TYP);
+        self::assertNotNull($job);
+        $erstes = $this->handler()->schritt($job, $this->tresor, new \DateTimeImmutable());
+        $zweites = $this->handler()->schritt($job, $this->tresor, new \DateTimeImmutable());
+        self::assertEquals($erstes, $zweites);
+        self::assertCount(2, $this->artefakte($id));
+
+        $this->pdo()->prepare("DELETE FROM document_artifact WHERE document_id = ? AND kind = 'text'")->execute([$id]);
+        $drittes = $this->handler()->schritt($job, $this->tresor, new \DateTimeImmutable());
+        self::assertEquals($erstes, $drittes);
+        self::assertSame(['e_rechnung', 'text'], array_map(static fn (array $a): string => (string) $a['kind'], $this->artefakte($id)));
+        self::assertSame('RE-2026-0043', $this->eRechnung($id)?->extraktion['invoice_number'] ?? null);
+    }
+
+    public function testANewRunReplacesTheOldInvoice(): void
+    {
+        $id = $this->dokument([[MagicBytes::XML, self::eRechnungFixture('xrechnung-ubl.xml')]], BlobStorage::Fs);
+        $this->allesAbarbeiten();
+        $alterLauf = (int) $this->job($id)['id'];
+
+        new DocumentRepository($this->pdo())->setzeOcrStatus($id, OcrStatus::Ausstehend);
+        new JobRepository($this->pdo())->enqueue(Texterkennung::JOB_TYP, JobExecutor::Session, 'document', $id);
+        $this->allesAbarbeiten();
+
+        $artefakte = $this->artefakte($id);
+        self::assertCount(1, $artefakte);
+        self::assertNotSame($alterLauf, (int) $artefakte[0]['job_id']);
+        self::assertTrue($this->eRechnung($id)?->gelesen());
+    }
+
+    /** "Felder werden ohne KI-Aufruf übernommen": the job has nothing it could call an AI with. */
+    public function testTheJobHasNoAiAtHand(): void
+    {
+        $konstruktor = new \ReflectionMethod(Texterkennung::class, '__construct');
+        foreach ($konstruktor->getParameters() as $parameter) {
+            self::assertStringNotContainsString('\\Ki\\', (string) $parameter->getType());
+            self::assertStringNotContainsString('Llm', (string) $parameter->getType());
+        }
+    }
+
     /** `data_enc` takes the text of a long invoice (migrations/026: MEDIUMBLOB). */
     public function testALongTextFitsTheArtifact(): void
     {
@@ -395,6 +554,22 @@ final class TexterkennungJobTest extends DatabaseTestCase
         }
         self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE status IN ('offen', 'laeuft')")->fetchColumn());
         self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE status = 'fehler'")->fetchColumn());
+    }
+
+    private function eRechnung(int $id): ?ERechnungAuszug
+    {
+        $document = new DocumentRepository($this->pdo())->find($id);
+        self::assertNotNull($document);
+
+        return $this->handler()->eRechnung($document, $this->tresor);
+    }
+
+    private static function eRechnungFixture(string $name): string
+    {
+        $daten = file_get_contents(self::E_RECHNUNGEN . '/' . $name);
+        self::assertIsString($daten);
+
+        return $daten;
     }
 
     private function textFuerKi(int $id): ?string

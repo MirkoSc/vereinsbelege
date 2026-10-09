@@ -12,6 +12,11 @@
  * suggested "Kassendifferenz" carries the cash count it came from as a
  * hidden field, so saving leads back to the cash box.
  *
+ * M9-6 (issue #64): the table says where receipt status and category come
+ * from - default, a rule (linked) or by hand -, and an imported booking
+ * gets the form "Einordnung" (category, receipt) plus "Regel daraus
+ * machen" for whoever holds `bank.book`.
+ *
  * @var string $csrf
  * @var \App\Domain\BankTransaction|null $buchung null for a new one
  * @var array<string, string> $felder
@@ -23,6 +28,9 @@
  * @var array<int, \App\Domain\BankAccount> $konten every account by id
  * @var list<\App\Domain\Category> $kategorieAuswahl active categories, plus the booking's own
  * @var array<int, \App\Domain\Category> $kategorien every category by id
+ * @var array<string, string> $einordnung kategorie, beleg of the "Einordnung" form
+ * @var \App\Domain\AssignmentRule|null $regel the rule that set receipt status or category
+ * @var \App\Service\Bank\BelegStandard $belegStandard
  * @var \App\Domain\CashCount|null $kassensturz the cash count a suggested difference comes from
  * @var \DateTimeImmutable $heute
  */
@@ -30,6 +38,7 @@
 use App\Domain\BankAccountKind;
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionDocStatus;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\CategoryDirection;
 use App\Domain\Iban;
 use App\Service\Bank\Buchungen;
@@ -48,6 +57,30 @@ foreach ($kategorieAuswahl as $kategorie) {
     $kategorieGruppen[$kategorie->direction->value][] = $kategorie;
 }
 $konto = $neu ? null : ($konten[$buchung->accountId] ?? null);
+$standardText = 'nach Richtung (Ausgabe: Beleg nötig, Einnahme: ' . ($belegStandard->einnahmeBelegNoetig ? 'Beleg nötig' : 'kein Beleg nötig') . ')';
+// Where a value comes from, for the table (M9-6). Empty for a manual booking: all of it is by hand.
+$herkunft = static function (?BankTransactionSetBy $quelle) use ($buchung, $regel): string {
+    if ($buchung === null || $buchung->istManuell()) {
+        return '';
+    }
+
+    return match ($quelle) {
+        BankTransactionSetBy::Regel => $regel === null
+            ? ' <span class="gedaempft">(durch eine Regel)</span>'
+            : ' <span class="gedaempft">(durch Regel <a href="/app/buchungen/regeln/' . e((string) $regel->id) . '">„' . e($regel->label) . '“</a>)</span>',
+        BankTransactionSetBy::Manuell => ' <span class="gedaempft">(von Hand gesetzt)</span>',
+        BankTransactionSetBy::Standard => ' <span class="gedaempft">(Standard für ' . ($buchung->direction === BankTransactionDirection::Ausgabe ? 'Ausgaben' : 'Einnahmen') . ')</span>',
+        null => '',
+    };
+};
+$einordnungKategorien = [];
+if (!$neu) {
+    foreach ($kategorieAuswahl as $kategorie) {
+        if ($kategorie->direction === CategoryDirection::Beide || $kategorie->direction->value === $buchung->direction->value) {
+            $einordnungKategorien[] = $kategorie;
+        }
+    }
+}
 ?>
 <section class="schmal">
     <h2><?= $neu ? 'Neue Buchung' : 'Buchung vom ' . e($buchung->bookingDate->format('d.m.Y')) ?></h2>
@@ -136,7 +169,7 @@ $konto = $neu ? null : ($konten[$buchung->accountId] ?? null);
 
                 <label for="buchung-beleg">Beleg
                     <select id="buchung-beleg" name="beleg"<?= $fehlerAn('beleg') ?>>
-                        <option value=""<?= $gewaehlt('beleg', '') ?>>nach Richtung (Ausgabe: Beleg nötig, Einnahme: kein Beleg nötig)</option>
+                        <option value=""<?= $gewaehlt('beleg', '') ?>><?= e($standardText) ?></option>
                         <option value="<?= e(Buchungen::BELEG_NOETIG) ?>"<?= $gewaehlt('beleg', Buchungen::BELEG_NOETIG) ?>>Beleg nötig</option>
                         <option value="<?= e(Buchungen::BELEG_NICHT_NOETIG) ?>"<?= $gewaehlt('beleg', Buchungen::BELEG_NICHT_NOETIG) ?>>kein Beleg nötig</option>
                     </select>
@@ -174,12 +207,12 @@ $konto = $neu ? null : ($konten[$buchung->accountId] ?? null);
                     <?php endif; ?>
                     <tr>
                         <th scope="row">Kategorie</th>
-                        <td data-label="Kategorie"><?= $buchung->categoryId === null || !isset($kategorien[$buchung->categoryId]) ? $leer : e($kategorien[$buchung->categoryId]->name) ?></td>
+                        <td data-label="Kategorie"><?= $buchung->categoryId === null || !isset($kategorien[$buchung->categoryId]) ? $leer : e($kategorien[$buchung->categoryId]->name) . $herkunft($buchung->categorySource) ?></td>
                     </tr>
                     <tr>
                         <th scope="row">Beleg</th>
                         <td data-label="Beleg">
-                            <span class="marke<?= $buchung->docStatus === BankTransactionDocStatus::Fehlt ? ' marke-warnung' : ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet ? ' marke-ok' : '') ?>"><?= e($buchung->docStatus->label()) ?></span>
+                            <span class="marke<?= $buchung->docStatus === BankTransactionDocStatus::Fehlt ? ' marke-warnung' : ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet ? ' marke-ok' : '') ?>"><?= e($buchung->docStatus->label()) ?></span><?= $herkunft($buchung->docSource) ?>
                         </td>
                     </tr>
                     <tr><th scope="row">Herkunft</th><td data-label="Herkunft"><?= e($buchung->source->label()) ?></td></tr>
@@ -188,6 +221,44 @@ $konto = $neu ? null : ($konten[$buchung->accountId] ?? null);
         </div>
     <?php endif; ?>
 </section>
+
+<?php if (!$neu && $darfBuchen && !$buchung->istManuell()): ?>
+    <section class="schmal">
+        <h3>Einordnung</h3>
+        <p class="gedaempft">
+            Kategorie und Beleg-Bedarf dieser Buchung – was hier von Hand gesetzt wird, ändert keine Regel mehr.
+            Für wiederkehrende Buchungen wie Zinsen oder Kontoführung ist eine Regel bequemer.
+        </p>
+        <form method="post" action="/app/buchungen/<?= e((string) $buchung->id) ?>/einordnung" class="formular">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+            <label for="einordnung-kategorie">Kategorie
+                <select id="einordnung-kategorie" name="kategorie"<?= $fehlerAn('kategorie') ?>>
+                    <option value=""<?= ($einordnung['kategorie'] ?? '') === '' ? ' selected' : '' ?>>– keine –</option>
+                    <?php foreach ($einordnungKategorien as $kategorie): ?>
+                        <option value="<?= e((string) $kategorie->id) ?>"<?= ($einordnung['kategorie'] ?? '') === (string) $kategorie->id ? ' selected' : '' ?>><?= e($kategorie->name) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+
+            <label for="einordnung-beleg">Beleg
+                <select id="einordnung-beleg" name="beleg"<?= $fehlerAn('beleg') ?>>
+                    <option value=""<?= ($einordnung['beleg'] ?? '') === '' ? ' selected' : '' ?>><?= e($standardText) ?></option>
+                    <option value="<?= e(Buchungen::BELEG_NOETIG) ?>"<?= ($einordnung['beleg'] ?? '') === Buchungen::BELEG_NOETIG ? ' selected' : '' ?>>Beleg nötig</option>
+                    <option value="<?= e(Buchungen::BELEG_NICHT_NOETIG) ?>"<?= ($einordnung['beleg'] ?? '') === Buchungen::BELEG_NICHT_NOETIG ? ' selected' : '' ?>>kein Beleg nötig</option>
+                </select>
+            </label>
+            <?php if ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet): ?>
+                <p class="feld-hilfe">Ein Beleg ist zugeordnet – das bleibt so, egal was hier steht.</p>
+            <?php endif; ?>
+
+            <p class="knopfreihe">
+                <button type="submit" class="knopf knopf-primaer">Einordnung speichern</button>
+                <a class="knopf" href="/app/buchungen/regeln/neu?buchung=<?= e((string) $buchung->id) ?>">Regel daraus machen</a>
+            </p>
+        </form>
+    </section>
+<?php endif; ?>
 
 <?php if (!$neu): ?>
     <section class="schmal">

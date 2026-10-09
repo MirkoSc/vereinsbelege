@@ -22,6 +22,7 @@ use App\Http\Response;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
@@ -40,6 +41,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Import\Dedupschluessel;
 use App\Service\Bank\Import\ImportFormat;
 use App\Service\Bank\Import\KontoauszugImport;
@@ -208,6 +210,44 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Girokonto Sparkasse', $verlauf->body);
         self::assertStringContainsString('Übernommen', $verlauf->body);
         self::assertStringContainsString('11.03.2024 – 12.03.2024', $verlauf->body);
+    }
+
+    /**
+     * M9-6 (issue #64): every new booking gets the default of its
+     * direction, then the oldest matching active rule on top - here the
+     * account fee by its word, the drinks supplier by its IBAN (expenses
+     * only, so the returned direct debit stays as it is). The setting makes
+     * income need a receipt.
+     */
+    public function testTheImportAppliesTheOldestMatchingRule(): void
+    {
+        $konto = $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban(), '1.523,40', '2024-03-11');
+        $regeln = $this->regeln();
+        $jetzt = new \DateTimeImmutable();
+        $gebuehr = $regeln->anlegen($this->tresor, ['bezeichnung' => 'Kontoführung', 'stichwort' => 'kontoführung', 'gegenseite' => '',
+            'richtung' => 'ausgabe', 'kein_beleg' => '1', 'kategorie' => (string) $this->kategorie('Bankgebühren')], $this->userId, $jetzt);
+        $regeln->anlegen($this->tresor, ['bezeichnung' => 'Später', 'stichwort' => 'Entgelt', 'gegenseite' => '',
+            'richtung' => 'ausgabe', 'kein_beleg' => '', 'kategorie' => (string) $this->kategorie('Sonstiges')], $this->userId, $jetzt);
+        $getraenke = $regeln->anlegen($this->tresor, ['bezeichnung' => 'Getränke', 'stichwort' => '', 'gegenseite' => 'DE40 1205 0555 0001 2345 67',
+            'richtung' => 'ausgabe', 'kein_beleg' => '', 'kategorie' => (string) $this->kategorie('Verpflegung & Bewirtung')], $this->userId, $jetzt);
+        $inaktiv = $regeln->anlegen($this->tresor, ['bezeichnung' => 'Aus', 'stichwort' => 'Spende', 'gegenseite' => '',
+            'richtung' => '', 'kein_beleg' => '1', 'kategorie' => ''], $this->userId, $jetzt);
+        $regeln->aktivieren($regeln->finde($this->tresor, $inaktiv) ?? self::fail(), false, $jetzt);
+        new SettingRepository($this->pdo())->set('buchung_einnahme_beleg_noetig', '1');
+
+        $this->importiere(self::sparkasse());
+
+        self::assertSame([
+            ['ausgabe', 1, 'fehlt', 'standard', $this->kategorie('Verpflegung & Bewirtung'), 'regel', $getraenke],
+            ['einnahme', 1, 'fehlt', 'standard', null, null, null],
+            ['ausgabe', 1, 'fehlt', 'standard', null, null, null],
+            ['einnahme', 1, 'fehlt', 'standard', null, null, null],
+            ['ausgabe', 0, 'nicht_noetig', 'regel', $this->kategorie('Bankgebühren'), 'regel', $gebuehr],
+        ], array_map(static fn(array $z): array => [
+            $z['direction'], (int) $z['doc_required'], $z['doc_status'], $z['doc_source'],
+            $z['category_id'] === null ? null : (int) $z['category_id'], $z['category_source'],
+            $z['rule_id'] === null ? null : (int) $z['rule_id'],
+        ], $this->buchungen($konto)));
     }
 
     public function testTheSameExportTwiceAddsNothing(): void
@@ -588,6 +628,24 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         self::assertSame(5, new CategoryRepository($this->pdo())->usageCount($kategorie));
     }
 
+    private function regeln(): Buchungsregeln
+    {
+        $pdo = $this->pdo();
+
+        return new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo));
+    }
+
+    private function kategorie(string $name): int
+    {
+        foreach (new CategoryRepository($this->pdo())->all() as $kategorie) {
+            if ($kategorie->name === $name) {
+                return $kategorie->id;
+            }
+        }
+
+        self::fail('No category ' . $name);
+    }
+
     private static function sparkasse(): string
     {
         return (string) file_get_contents(self::MT940 . 'sparkasse.sta');
@@ -818,6 +876,7 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend(sys_get_temp_dir())),
             new SettingRepository($pdo),
             $this->audit,
+            $this->regeln(),
             schrittPosten: $this->schrittPosten,
         );
     }
@@ -851,7 +910,7 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the statement import 33rd.
-        $controller = array_fill(0, 35, $unerreichbar);
+        $controller = array_fill(0, 36, $unerreichbar);
         $controller[1] = $guard;
         $controller[32] = $kontoauszuege;
 

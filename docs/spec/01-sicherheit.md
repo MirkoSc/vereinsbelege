@@ -508,7 +508,9 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
     Absenden und Upload antworten mit 503 – für den Fall, dass trotzdem
     Spam auftritt.
 - Dateiprüfung serverseitig über Magic Bytes (JPEG, PNG, HEIC→ablehnen mit
-  Hinweis bzw. clientseitig konvertiert, PDF).
+  Hinweis bzw. clientseitig konvertiert, PDF; seit M7-4 E-Rechnungs-XML nur
+  mit CII-/UBL-Wurzel und ohne DOCTYPE, ausgeliefert nur als Download –
+  03 §3).
 - Einreicher erhält Referenznummer + optional Bestätigungsmail (ohne
   Beleginhalt).
 - IP wird nur als Hash für das Rate-Limit genutzt (`App\Service\RateLimiter`,
