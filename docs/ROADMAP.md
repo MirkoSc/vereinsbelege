@@ -242,6 +242,7 @@ per Admin zuschaltbar. Alles andere funktioniert weiterhin ohne.
 - **M12-2 · Gestreamter ZIP-Export mit Filtern + index.csv** – 05 §2.
 - **M12-3 · Archiv-Import (ZIP, Dateinamen-Parser, Ordner-Semantik)** –
   05 §3 – Probelauf mit einem echten Jahresarchiv.
+- **M12-4 · Export: Option „nur noch nicht exportierte“** – 05 §2 (#179).
 
 ## M13 – Härtung & Go-Live
 

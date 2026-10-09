@@ -172,7 +172,7 @@ code { font-size: .85em; background: var(--fl2); padding: 0 4px; border-radius: 
 // e = effort, mo = mode (auto/plan/entscheid), d = predecessors,
 // st = status fallback when GitHub is unreachable (offen/wartet/erledigt),
 // mig = probably adds a migration, x = note.
-const PLAN_STAND = '2026-10-08';
+const PLAN_STAND = '2026-10-09';
 const REPO = 'MirkoSc/vereinsbelege';
 const PLAN = [
   { n: 152, t: 'PDF-Rasterung: fetch binden', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'Kritisch: KI-Auslese (#47) braucht die Seitenbilder.' },
@@ -218,6 +218,7 @@ const PLAN = [
   { n: 75, t: 'M12-1 Pfad-/Dateinamen-Muster', s: 'C', m: 'opus', e: 'high', mo: 'auto', d: [38, 39, 40] },
   { n: 76, t: 'M12-2 Gestreamter ZIP-Export', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75] },
   { n: 77, t: 'M12-3 Archiv-Import', s: 'C', m: 'opus', e: 'xhigh', mo: 'plan', d: [75], x: 'Probelauf mit einem echten Jahresarchiv.' },
+  { n: 179, t: 'M12-4 Export: nur nicht exportierte', s: 'C', m: 'opus', e: 'high', mo: 'plan', d: [76], mig: true, x: 'Zuerst entscheiden, wann ein abgebrochener Download als exportiert gilt.' },
 
   { n: 154, t: 'Restore ohne config.php sperrt Konten aus', s: 'G', m: 'fable', e: 'xhigh', mo: 'entscheid', d: [], st: 'wartet', x: 'Erst deine Entscheidung (3 Wege im Issue). Backup-Punkte aus #155 mitnehmen.' },
   { n: 112, t: 'M3-11 Admin-Seite Backups', s: 'G', m: 'opus', e: 'high', mo: 'plan', d: [154] },
