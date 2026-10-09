@@ -172,7 +172,7 @@ code { font-size: .85em; background: var(--fl2); padding: 0 4px; border-radius: 
 // e = effort, mo = mode (auto/plan/entscheid), d = predecessors,
 // st = status fallback when GitHub is unreachable (offen/wartet/erledigt),
 // mig = probably adds a migration, x = note.
-const PLAN_STAND = '2026-10-06';
+const PLAN_STAND = '2026-10-09';
 const REPO = 'MirkoSc/vereinsbelege';
 const PLAN = [
   { n: 152, t: 'PDF-Rasterung: fetch binden', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [], x: 'Kritisch: KI-Auslese (#47) braucht die Seitenbilder.' },
@@ -181,7 +181,7 @@ const PLAN = [
   { n: 40, t: 'M6-6 Duplikaterkennung', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [38], mig: true, x: 'Nach #38: beide ändern die Prüfansicht.' },
   { n: 41, t: 'M7-1 KI-Anbieter + Verbindungstest', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [38, 39, 40], mig: true },
   { n: 45, t: 'M7-3 Textlayer digitaler PDFs', s: 'A', m: 'opus', e: 'high', mo: 'auto', d: [38, 39, 40], mig: true, x: 'Eigener reiner PHP-Parser (smalot geprüft, PHP-8.5-Warnungen), keine KI.' },
-  { n: 46, t: 'M7-4 E-Rechnungen (ZUGFeRD/XRechnung)', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [38, 39, 40], x: 'Fremdbibliothek nach CLAUDE.md §8 prüfen.' },
+  { n: 46, t: 'M7-4 E-Rechnungen (ZUGFeRD/XRechnung)', s: 'A', m: 'opus', e: 'high', mo: 'plan', d: [38, 39, 40], x: 'Eigener Parser (horstoeko geprüft: zieht smalot/pdfparser u. a. nach), XML-Upload, Artefakt e_rechnung, Prüfansicht vorbelegt.' },
   { n: 44, t: 'M7-2 LlmClient + Schema + Reparatur', s: 'A', m: 'opus', e: 'xhigh', mo: 'plan', d: [41] },
   { n: 42, t: 'M7-1b Profil Anthropic', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [44] },
   { n: 43, t: 'M7-1c Profil llama.cpp', s: 'A', m: 'sonnet', e: 'high', mo: 'auto', d: [44] },

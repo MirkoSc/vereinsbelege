@@ -58,6 +58,7 @@ final readonly class Posteingang
         MagicBytes::JPEG => 'jpg',
         MagicBytes::PNG => 'png',
         MagicBytes::PDF => 'pdf',
+        MagicBytes::XML => 'xml',
     ];
 
     public function __construct(
@@ -160,13 +161,15 @@ final readonly class Posteingang
      * type and a file name made of the reference number only (no original
      * name - that is club data, CLAUDE.md section 4). Null when the blob is
      * not one of this document's, not finished, or of a type the preview
-     * does not send.
+     * does not send. `anhang` says the browser must download it rather than
+     * show it: an e-invoice's XML (issue #46/M7-4) - never rendered in the
+     * app's origin, whatever a browser would make of it.
      *
      * @param list<int> $weitere blobs the caller has already tied to this
      *        document beyond its own (the page images of its PDFs, issue
      *        #37/M6-3 - App\Service\Invoice\Pruefung::seiten())
      *
-     * @return array{chunks: \Generator<string>, mime: string, dateiname: string}|null
+     * @return array{chunks: \Generator<string>, mime: string, dateiname: string, anhang: bool}|null
      */
     public function datei(InboxItem $item, int $blobId, Vault $vault, array $weitere = []): ?array
     {
@@ -191,6 +194,7 @@ final readonly class Posteingang
             'chunks' => $this->blobs->openRead($blob, $vault),
             'mime' => $meta->mimeType,
             'dateiname' => sprintf('%s-%d.%s', $name, $position + 1, $endung),
+            'anhang' => $meta->mimeType === MagicBytes::XML,
         ];
     }
 

@@ -532,7 +532,8 @@ zeigt als Tabelle (und als JSON zum Kopieren):
   `post_max_size`, `max_input_time`, `disable_functions`
 - Erweiterungen: sodium (+ `sodium_crypto_pwhash` Laufzeit mit
   INTERACTIVE/MODERATE), gd (JPEG/PNG/WebP-Support), imagick (vorhanden?),
-  zip, curl, openssl, mbstring, intl, fileinfo, pdo_mysql, iconv
+  zip, curl, openssl, mbstring, intl, fileinfo, pdo_mysql, iconv, dom und
+  xmlreader (E-Rechnungen, seit M7-4)
 - `password_hash` mit `PASSWORD_ARGON2ID` verfügbar?
 - MySQL/MariaDB-Version, `max_allowed_packet`, Zeichensatz,
   Standard-Speicher-Engine, Tabelle anlegen (Installer), JSON-Spalte mit

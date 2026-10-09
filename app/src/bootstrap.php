@@ -511,6 +511,8 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
     $audit = $auditFor($pdo);
 
     $rechnungen = new InvoiceRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    $artefakte = new DocumentArtifactRepository($pdo);
 
     return new PruefungController(
         $view,
@@ -524,13 +526,9 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
             $kostenstellen,
             $lieferanten,
             new SupplierService($pdo, $lieferanten, $kategorien),
-            new DocumentArtifactRepository($pdo),
-            new Posteingang(
-                $documents,
-                $kostenstellen,
-                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-                $audit,
-            ),
+            $artefakte,
+            new Texterkennung($documents, $artefakte, $blobService),
+            new Posteingang($documents, $kostenstellen, $blobService, $audit),
             $audit,
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),

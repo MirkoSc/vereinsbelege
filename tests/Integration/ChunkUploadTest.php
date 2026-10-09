@@ -160,9 +160,51 @@ final class ChunkUploadTest extends DatabaseTestCase
         }
 
         $antwort = $this->json($this->finish($upload['id'], 'backup.zip'), 415);
-        self::assertSame('Nur JPEG, PNG und PDF sind möglich.', $antwort['fehler']);
+        self::assertSame('Nur JPEG, PNG, PDF und E-Rechnungen (XRechnung-XML) sind möglich.', $antwort['fehler']);
         self::assertSame(0, $this->countBlobs());
         self::assertSame([], self::entries($this->uploadDir), 'a refused upload is not left for the cron');
+    }
+
+    /** An XRechnung is a receipt (issue #46/M7-4) - its root element is the evidence. */
+    public function testAnXRechnungIsAccepted(): void
+    {
+        $xml = (string) file_get_contents(__DIR__ . '/../fixtures/erechnung/xrechnung-ubl.xml');
+
+        $upload = $this->open(strlen($xml));
+        foreach (self::pieces($xml) as $stueck) {
+            $this->chunk($upload['id'], $stueck['index'], $stueck['daten']);
+        }
+        $antwort = $this->json($this->finish($upload['id'], 'rechnung.xml'), 201);
+
+        self::assertSame('application/xml', $antwort['typ']);
+        self::assertSame($xml, $this->read((int) $antwort['blob_id']));
+    }
+
+    /**
+     * Markup that is no e-invoice stays refused - HTML or SVG would be
+     * script in the app's origin the moment anything showed it inline.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function keineERechnung(): array
+    {
+        return [
+            'HTML' => ['<html><body><script>alert(1)</script></body></html>'],
+            'SVG' => ['<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],
+            'beliebiges XML' => ['<?xml version="1.0"?><rechnung><nr>4711</nr></rechnung>'],
+        ];
+    }
+
+    #[DataProvider('keineERechnung')]
+    public function testMarkupThatIsNoEInvoiceIsRefused(string $inhalt): void
+    {
+        $upload = $this->open(strlen($inhalt));
+        foreach (self::pieces($inhalt) as $stueck) {
+            $this->chunk($upload['id'], $stueck['index'], $stueck['daten']);
+        }
+
+        $this->json($this->finish($upload['id'], 'rechnung.xml'), 415);
+        self::assertSame(0, $this->countBlobs());
     }
 
     public function testAnAnnouncedSizeAboveTheLimitNeverOpensAnUpload(): void

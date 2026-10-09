@@ -54,6 +54,7 @@ Folge-Issue · 📋 nur dokumentiert
 | ext-gd (JPEG/PNG) | vorhanden | ✅ GD 2.3.0, JPEG/PNG/WebP (ohne AVIF) | |
 | ext-imagick | nicht vorausgesetzt | 📋 vorhanden; ob es PDFs rastern kann, ist offen | [#103](https://github.com/MirkoSc/vereinsbelege/issues/103) |
 | ext-zip, curl, openssl, mbstring, fileinfo, intl, iconv, pdo_mysql, json | vorhanden | ✅ alle vorhanden (zusätzlich zlib, exif) | |
+| ext-dom, ext-xmlreader | vorhanden (seit M7-4, E-Rechnungen) | 📋 noch nicht gemessen – beim nächsten Lauf von `tools/hosting-check.php` bestätigen (Standard-Erweiterungen von PHP) | |
 | MariaDB-Version | ≥ 10.5 | ✅ 10.6.23 | |
 | `max_allowed_packet` | ≥ 4 MiB | ⬆️ 64 MiB | |
 | Zeichensatz, Standard-Engine | utf8mb4, InnoDB | ✅ utf8mb4, InnoDB | |
