@@ -1,0 +1,1 @@
+{"id": "chatcmpl-extract-0006", "object": "chat.completion", "created": 1790000000, "model": "gpt-6-luna-2026-08-01", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "refusal": "I can't help with that request."}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 1850, "completion_tokens": 240, "total_tokens": 2090}}
