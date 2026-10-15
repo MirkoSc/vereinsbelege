@@ -51,6 +51,15 @@ final readonly class Paths
         return $this->releaseRoot . '/app/data';
     }
 
+    /**
+     * Versioned prompts and JSON schemas of the AI calls
+     * (docs/spec/03-erfassung-und-ki.md section 6), shipped in the release.
+     */
+    public function promptsDir(): string
+    {
+        return $this->releaseRoot . '/app/prompts';
+    }
+
     public function versionFile(): string
     {
         return $this->releaseRoot . '/VERSION';

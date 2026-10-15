@@ -21,8 +21,8 @@ use App\Repository\AiProviderRepository;
  * - The API key is printable ASCII without spaces: it ends up in an HTTP
  *   header, and a line break there would be header injection.
  * - The default profile cannot be deleted, and only an active profile can
- *   become the default. There is no fallback profile yet - it arrives with
- *   the client that uses it (M7-2).
+ *   become the default. There is no fallback profile yet - it follows the
+ *   client in issue #180 (M7-2b).
  */
 final readonly class KiAnbieterService
 {

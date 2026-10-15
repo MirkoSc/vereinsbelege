@@ -11,9 +11,15 @@ namespace App\Service\Ki;
  */
 final class KiVerbindungsfehler extends \RuntimeException
 {
+    /** Whether the provider did not answer in time (as opposed to no connection at all). */
+    public private(set) bool $zeitueberschreitung = false;
+
     public static function zeitueberschreitung(int $timeoutS): self
     {
-        return new self(sprintf('Keine Antwort innerhalb von %d Sekunden (Zeitüberschreitung).', $timeoutS));
+        $fehler = new self(sprintf('Keine Antwort innerhalb von %d Sekunden (Zeitüberschreitung).', $timeoutS));
+        $fehler->zeitueberschreitung = true;
+
+        return $fehler;
     }
 
     public static function verbindung(string $ursache): self

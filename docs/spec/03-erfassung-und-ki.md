@@ -767,7 +767,8 @@ löschbar, nur ein aktives Profil kann Standard werden. Der Key wird nie
 zurück ins Formular geschrieben (leer = unverändert, Ankreuzfeld entfernt
 ihn) und nur über `AiProviderRepository::apiKey()` gelesen; ein mit anderem
 Server-Schlüssel verschlüsselter Key gilt als fehlend. Das
-**Fallback-Profil** kommt mit dem Client, der es nutzt (M7-2).
+**Fallback-Profil** folgt in issue #180 (M7-2b, Migration + Admin-UI) auf
+dem Client aus M7-2.
 
 Der **Verbindungstest** (`App\Service\Ki\Verbindungstest`) ist *ein*
 Aufruf mit festem Mini-Prompt, Zeitlimit `min(timeout_s, 20 s)`: bei
@@ -781,6 +782,52 @@ wird geloggt. Transport ist `App\Service\Ki\ChatHttp`
 Bearer-Key nicht an ein Umleitungsziel geht) – darauf baut M7-2 den
 `LlmClient` auf.
 
+**Umsetzung (M7-2, issue #44):** alles in `App\Service\Ki`, framework-frei
+(kein Http/Session/Repository), damit Job (M7-5) und Worker (M7b) denselben
+Code nutzen; keine Migration, keine Route, nichts wird geloggt.
+- `LlmClient::chat(KiAnbieter, Key, LlmAnfrage): LlmAntwort` – ein Aufruf,
+  keine Deutung des Textes. `OpenAiCompatibleClient` baut den Request über
+  `ChatHttp`: System-Nachricht, eine User-Nachricht (Text + Seitenbilder als
+  `data:image/jpeg;base64,…`, nur bei `vision`, höchstens `max_images`; nur
+  JPEG), danach der Verlauf der Reparatur; `max_completion_tokens` aus dem
+  Profil (aktueller Name bei OpenAI, auch Anthropics kompatibler Endpunkt;
+  llama.cpp prüft M7-1c), **kein** `temperature`; Timeout = Profil. Mit Schema
+  und `json_schema`: `response_format` `{type: json_schema, json_schema:
+  {name, strict: true, schema}}`; ohne: Schema per
+  `app/prompts/schema-im-prompt-v1.md` in die System-Nachricht.
+- Fehler ohne verwertbare Antwort sind `LlmFehler` mit `KiAufrufStatus`
+  (`zeitueberschreitung`, `verbindungsfehler`, `http_fehler`,
+  `unerwartete_antwort` – 2xx ohne Chat-Completion mit Text, auch
+  `refusal`); die Meldung ist deutsch und ohne Anbietertext (der steht
+  gekürzt und ohne Key getrennt in `anbieterText`). HTTP-Hinweise und
+  Key-Bereinigung teilt sich der Client mit dem Verbindungstest
+  (`KiAnbieterText`).
+- `KiAbfrage` macht daraus validierte Daten: `fragen()` (ein Aufruf; das
+  erste JSON-Objekt der Antwort – ganz, in einem Code-Block oder in Prosa,
+  Klammern in Strings zählen nicht, nie ein inneres Objekt einer kaputten
+  oder abgeschnittenen Hülle), `reparieren()` (genau **ein** weiterer Aufruf,
+  nur bei `kein_json`/`schema_verletzt`: derselbe Verlauf inkl. Seiten und
+  `response_format`, dazu die alte Antwort als `assistant` und
+  `app/prompts/reparatur-v1.md` mit der Fehlerliste), `ausfuehren()` = beides
+  nacheinander → `KiErgebnis` (ungültig = „KI fehlgeschlagen“, M7-5 setzt
+  `ki_fehler`). Zwei Methoden, weil jeder Aufruf in der Job-Kette ein eigener
+  kurzer Request ist (CLAUDE.md §1, 06 „DB-Verbindung“); den ersten Versuch
+  hält der Job dazwischen verschlüsselt.
+- `KiSchema` validiert in PHP – eigener Code statt Bibliothek, genau die
+  Teilmenge von JSON Schema, die OpenAI im Strict-Modus durchsetzt: `type`
+  (auch mit `null`), `properties`, `required`, `additionalProperties`
+  (boolesch), `items`, `enum`, `pattern`, `minimum`/`maximum`,
+  `minItems`/`maxItems`, `description`; jedes andere Schlüsselwort wird beim
+  Laden abgewiesen. Fehler nennen Ort und Regel (`/supplier/iban: …`), nie
+  den Wert; höchstens 20.
+- Protokoll je Aufruf als `KiAufruf` (Anbieter, Modell, Prompt-Version,
+  Reparatur ja/nein, Status, Tokens, Dauer, HTTP-Status, Rohantwort) – nur
+  zurückgegeben; speichern tun M7-5 (Rohantwort verschlüsselt am Beleg) und
+  M7-8 (KI-Protokoll).
+- Prompts und Schemas liegen unter `app/prompts/` (`KiPrompts`,
+  `Paths::promptsDir()`); `{{platzhalter}}` müssen alle und genau gefüllt
+  werden.
+
 ### Auslese-Schema (Prompt-Version `extract-v1`)
 
 ```json
@@ -790,10 +837,10 @@ Bearer-Key nicht an ein Umleitungsziel geht) – darauf baut M7-2 den
   "supplier": { "name": "", "address": "", "iban": "", "bic": "", "vat_id": "",
                 "tax_number": "", "email": "", "website": "", "creditor_id": "" },
   "invoice_number": "", "customer_number": "", "contract_number": "",
-  "invoice_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD|null",
+  "invoice_date": "YYYY-MM-DD|null", "due_date": "YYYY-MM-DD|null",
   "service_period": { "from": "YYYY-MM-DD|null", "to": "YYYY-MM-DD|null" },
   "currency": "EUR",
-  "total_gross": "123.45", "total_net": "103.74|null",
+  "total_gross": "123.45|null", "total_net": "103.74|null",
   "taxes": [ { "rate": "19", "amount": "19.71" } ],
   "payment": { "already_paid": true, "method": "bar|karte|lastschrift|ueberweisung|paypal|unbekannt",
                "mandate_reference": "" },
@@ -807,6 +854,15 @@ Bearer-Key nicht an ein Umleitungsziel geht) – darauf baut M7-2 den
 }
 ```
 
+- Formal: `app/prompts/extract-v1.schema.json` (M7-2) – strict-tauglich:
+  jedes Objekt nennt alle Schlüssel in `required` und erlaubt keine weiteren,
+  Optionales ist `null`; Datum `JJJJ-MM-TT`, Beträge
+  `^-?[0-9]+(\.[0-9]{1,2})?$` (Punkt, keine Tausenderpunkte), Steuersatz in
+  Prozent, Konfidenzen 0–1, Enums wie oben. Unbekannte Texte des Lieferanten
+  sind `""`.
+- **Nicht lesbar → `null` (bzw. `""`) + Eintrag unter `warnings`, nie
+  raten** – auch Belegdatum und Bruttobetrag (seit M7-2 nullable); die
+  Prüfansicht lässt das Feld dann leer.
 - Beträge als Dezimal-String → serverseitig in Cent geparst und geprüft
   (Summe Netto + Steuern ≈ Brutto, sonst Warnung).
 - Der Prompt enthält: Kategorienliste mit `ai_hint` (passend zur
@@ -1027,8 +1083,19 @@ Abbruch zwischen den Artefakten, neuer Lauf ersetzt, kein KI-Zugriff;
 nur mit passender Rolle, nicht lesbare E-Rechnung, Hinweise, nur passende
 Werte; `PdfErzeugungTest`, `ChunkUploadTest`, `InboxFlowTest`: XML ist keine
 Seite, Upload ok bzw. 415, Download als `attachment`);
-KI-Client mit aufgezeichneten Antworten (gültig, ungültig + Reparatur,
-Timeout, HTTP-Fehler, kein JSON); KI-Anbieter (`VerbindungstestTest` mit
+KI-Client mit aufgezeichneten Antworten (`tests/fixtures/llm/extract-v1/`,
+`FakeLlmClient`/`FakeChatHttp`; `KiAbfrageTest`: gültig, ungültig +
+Reparatur mit Verlauf und Fehlerliste, nach der Reparatur ungültig →
+fehlgeschlagen ohne dritten Aufruf, kein JSON, JSON in Prosa/Code-Block,
+Klammern in Strings, kaputte und abgeschnittene Antwort, Timeout und
+HTTP-Fehler ohne Reparatur, keine Beleginhalte in Meldungen/Fehlern,
+Protokoll, getrennte Schritte; `OpenAiCompatibleClientTest`: Request je
+Fähigkeit inkl. `max_images`, `response_format` vs. Schema im Prompt,
+`max_completion_tokens`, kein `temperature`, Antwort-Parsing, HTTP-Fehler
+ohne Key, Timeout/Verbindung, keine Chat-Antwort/Verweigerung, nur JPEG;
+`KiSchemaTest`: alle Schlüsselwörter, keine Werte in Fehlern, unbekannte
+Schlüsselwörter abgewiesen, `extract-v1` strict-konform, E-Rechnung hat
+dieselbe Form; `KiPromptsTest`); KI-Anbieter (`VerbindungstestTest` mit
 `tests/fixtures/llm/verbindungstest/`: Bild + Schema in einem Aufruf,
 Klartext-Anfrage ohne Fähigkeiten, 401 ohne Key im Ergebnis, HTTP-Fehler,
 Timeout, kein JSON, Testbild nicht erkannt; `KiAnbieterRegelnTest`:

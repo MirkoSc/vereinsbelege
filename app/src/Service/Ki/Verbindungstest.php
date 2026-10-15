@@ -26,8 +26,6 @@ final readonly class Verbindungstest
 {
     public const int MAX_TIMEOUT_S = 20;
 
-    private const int TEXT_MAX = 200;
-
     private const int BILD_KANTE = 64;
 
     public function __construct(private ChatHttp $http)
@@ -46,7 +44,7 @@ final readonly class Verbindungstest
         try {
             $antwort = $this->http->post($anbieter->endpunkt(), $apiKey, self::anfrage($anbieter), $timeout);
         } catch (KiVerbindungsfehler $e) {
-            return new VerbindungstestErgebnis(false, self::bereinigt($e->getMessage(), $apiKey), [], self::dauerMs($start));
+            return new VerbindungstestErgebnis(false, KiAnbieterText::bereinigt($e->getMessage(), $apiKey), [], self::dauerMs($start));
         }
 
         return self::auswerten($anbieter, $antwort, $apiKey, self::dauerMs($start));
@@ -101,11 +99,11 @@ final readonly class Verbindungstest
     private static function auswerten(KiAnbieter $anbieter, ChatHttpAntwort $antwort, string $apiKey, int $dauerMs): VerbindungstestErgebnis
     {
         if ($antwort->status < 200 || $antwort->status >= 300) {
-            $text = self::fehlertext($antwort->body, $apiKey);
+            $text = KiAnbieterText::fehlertext($antwort->body, $apiKey);
 
             return new VerbindungstestErgebnis(
                 false,
-                self::httpMeldung($antwort->status),
+                KiAnbieterText::httpMeldung($antwort->status),
                 $text === '' ? [] : ['Antwort des Anbieters: „' . $text . '“'],
                 $dauerMs,
             );
@@ -124,7 +122,7 @@ final readonly class Verbindungstest
 
         $details = [];
         $modell = is_string($json['model'] ?? null) ? $json['model'] : $anbieter->model;
-        $details[] = 'Modell: ' . self::bereinigt($modell, $apiKey);
+        $details[] = 'Modell: ' . KiAnbieterText::bereinigt($modell, $apiKey);
         $tokens = $json['usage']['total_tokens'] ?? null;
         if (is_int($tokens)) {
             $details[] = 'Tokens: ' . $tokens;
@@ -154,7 +152,7 @@ final readonly class Verbindungstest
                     false,
                     sprintf(
                         'Verbindung steht, aber das Testbild wurde nicht erkannt (Antwort: „%s“) – Fähigkeit „Bilder“ prüfen.',
-                        self::bereinigt($farbe, $apiKey),
+                        KiAnbieterText::bereinigt($farbe, $apiKey),
                     ),
                     $details,
                     $dauerMs,
@@ -167,39 +165,6 @@ final readonly class Verbindungstest
         }
 
         return new VerbindungstestErgebnis(true, 'Verbindung erfolgreich.', $details, $dauerMs);
-    }
-
-    private static function httpMeldung(int $status): string
-    {
-        return match (true) {
-            $status === 401, $status === 403 => sprintf('Zugriff verweigert (HTTP %d) – API-Key prüfen.', $status),
-            $status === 404 => 'Adresse oder Modell nicht gefunden (HTTP 404) – Basis-URL und Modell prüfen.',
-            $status === 429 => 'Anfragelimit oder Guthaben erschöpft (HTTP 429).',
-            $status === 400 => 'Anfrage abgelehnt (HTTP 400) – Modell und Fähigkeiten (Bilder, JSON-Schema) prüfen.',
-            $status >= 300 && $status < 400 => sprintf('Weiterleitung (HTTP %d) – bitte die Basis-URL direkt angeben.', $status),
-            $status === 0 => 'Der Anbieter hat keinen HTTP-Status geliefert.',
-            default => sprintf('Der Anbieter meldet HTTP %d.', $status),
-        };
-    }
-
-    /**
-     * The provider's own error text: `error.message` of the OpenAI error
-     * shape, a bare `error` string, or - for an HTML page of a proxy in
-     * between - the text of the body.
-     */
-    private static function fehlertext(string $body, string $apiKey): string
-    {
-        $json = json_decode($body, true);
-        $text = match (true) {
-            is_array($json) && is_string($json['error']['message'] ?? null) => $json['error']['message'],
-            is_array($json) && is_string($json['error'] ?? null) => $json['error'],
-            is_array($json) && is_string($json['message'] ?? null) => $json['message'],
-            is_array($json) => '',
-            // A space per tag, or "<h1>502</h1><hr>nginx" becomes "502nginx".
-            default => strip_tags(str_replace('<', ' <', $body)),
-        };
-
-        return self::bereinigt($text, $apiKey);
     }
 
     /**
@@ -225,25 +190,6 @@ final readonly class Verbindungstest
         $daten = json_decode(substr($inhalt, $anfang, $ende - $anfang + 1), true);
 
         return is_array($daten) ? $daten : null;
-    }
-
-    /**
-     * Provider text made safe to show: one line, short, and without the
-     * API key - the full key and anything shaped like an OpenAI-style key
-     * (`sk-…`, also the partially masked echo of a 401) become `***`.
-     */
-    private static function bereinigt(string $text, #[\SensitiveParameter] string $apiKey): string
-    {
-        if ($apiKey !== '') {
-            $text = str_replace($apiKey, '***', $text);
-        }
-        $text = (string) preg_replace('/\bsk-[A-Za-z0-9_*\-.]{4,}/u', '***', $text);
-        $text = trim((string) preg_replace('/\s+/u', ' ', $text));
-        if (mb_strlen($text) > self::TEXT_MAX) {
-            $text = rtrim(mb_substr($text, 0, self::TEXT_MAX)) . '…';
-        }
-
-        return $text;
     }
 
     /**

@@ -165,6 +165,8 @@ aus M13-1 vorziehen und für diesen Stand einmal durchgehen.
 - **M7-1c · Profil-Vorlage llama.cpp** – inkl. Doku Reverse-Proxy.
 - **M7-2 · LlmClient + FakeLlmClient + Schema-Validierung + Reparatur** –
   03 §6.
+- **M7-2b · Fallback-Profil** – 03 §6 – Migration + Admin-UI, Client
+  wechselt bei Ausfall einmal aufs Fallback-Profil (aus M7-2 ausgegliedert).
 - **M7-3 · Textlayer-Extraktion digitaler PDFs** – 03 §3.
 - **M7-4 · E-Rechnungen (ZUGFeRD/XRechnung)** – 03 §3.
 - **M7-5 · Job `ai_extract` mit Prompt `extract-v1`** – 03 §5–6 – Logik in
