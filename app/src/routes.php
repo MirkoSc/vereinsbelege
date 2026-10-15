@@ -734,7 +734,8 @@ return static function (
     $post('/admin/kategorien/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachUnten($r, $params));
 
     // AI provider profiles (03 section 6 "Client", issue #41/M7-1): CRUD,
-    // the default profile and the connection test. Permission:
+    // the default profile, the optional fallback profile (issue #180/M7-2b)
+    // and the connection test. Permission:
     // `admin.settings` ("KI", 01 section 4). CSRF on all writes; the rules
     // live in App\Service\Ki\KiAnbieterService. The API key is server-key
     // ciphertext, no vault needed.
@@ -745,6 +746,8 @@ return static function (
     $post('/admin/ki-anbieter/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->speichern($r, $params));
     $post('/admin/ki-anbieter/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->loeschen($r, $params));
     $post('/admin/ki-anbieter/{id:\d+}/standard', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->standard($r, $params));
+    $post('/admin/ki-anbieter/{id:\d+}/fallback', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->fallback($r, $params));
+    $post('/admin/ki-anbieter/fallback-entfernen', $einstellungen, static fn(Request $r) => $kiAnbieter()->fallbackEntfernen($r));
     $post('/admin/ki-anbieter/{id:\d+}/testen', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->testen($r, $params));
 
     // Public submission's spam defence (01 §5, issue #25/M4-3): rate/size/

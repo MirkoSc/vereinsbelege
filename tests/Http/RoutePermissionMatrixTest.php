@@ -243,6 +243,10 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/ki-anbieter', false],
             [SystemRole::Finanzen, HttpMethod::Post, '/admin/ki-anbieter/3/testen', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/admin/ki-anbieter/3/standard', false],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/ki-anbieter/3/fallback', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/ki-anbieter/fallback-entfernen', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/ki-anbieter/3/fallback', false],
+            [SystemRole::Vorstand, HttpMethod::Post, '/admin/ki-anbieter/fallback-entfernen', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/ki-anbieter/3', false],
             // Lieferanten (M6-2): supplier.manage - Admin and Finanzen only,
             // reading included; Vorstand, Kassenprüfer and Steuerberater do not

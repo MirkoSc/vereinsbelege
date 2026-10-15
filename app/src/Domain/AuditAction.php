@@ -73,6 +73,9 @@ enum AuditAction: string
     case KiAnbieterGeaendert = 'ki_anbieter.geaendert';
     case KiAnbieterGeloescht = 'ki_anbieter.geloescht';
     case KiAnbieterStandard = 'ki_anbieter.standard';
+    /** Issue #180/M7-2b: the optional fallback profile of the AI client chosen or removed. */
+    case KiFallbackGewaehlt = 'ki_anbieter.fallback_gewaehlt';
+    case KiFallbackEntfernt = 'ki_anbieter.fallback_entfernt';
     case KontoauszugImportiert = 'kontoauszug.importiert';
     case BuchungAngelegt = 'buchung.angelegt';
     case BuchungGeaendert = 'buchung.geaendert';
@@ -172,6 +175,8 @@ enum AuditAction: string
             self::KiAnbieterGeaendert => 'KI-Anbieter geändert',
             self::KiAnbieterGeloescht => 'KI-Anbieter gelöscht',
             self::KiAnbieterStandard => 'KI-Standardprofil gewählt',
+            self::KiFallbackGewaehlt => 'KI-Fallback-Profil gewählt',
+            self::KiFallbackEntfernt => 'KI-Fallback-Profil entfernt',
             self::KontoauszugImportiert => 'Kontoauszug importiert',
             self::BuchungAngelegt => 'Buchung erfasst',
             self::BuchungGeaendert => 'Buchung geändert',
@@ -233,7 +238,7 @@ enum AuditAction: string
             self::KassensturzErfasst => 'cash_count',
             self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',
             self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
-            self::KiAnbieterStandard => 'ai_provider',
+            self::KiAnbieterStandard, self::KiFallbackGewaehlt, self::KiFallbackEntfernt => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
             self::ArchivImportiert => 'archive_import',
             self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,

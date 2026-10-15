@@ -9,7 +9,9 @@ namespace App\Service\Ki;
  * "Client"): the "Ergebnisstatus" of the call log. Only an answer that is
  * there but does not fit - no JSON, or JSON against the schema - is worth
  * the one repair call; asking again does not cure a timeout, an HTTP error
- * or an answer that is no chat completion at all.
+ * or an answer that is no chat completion at all. Only an outage - the
+ * provider did not answer, or said "try later" - is worth the one attempt
+ * with the fallback profile (ausfall()).
  */
 enum KiAufrufStatus: string
 {
@@ -24,6 +26,22 @@ enum KiAufrufStatus: string
     public function reparierbar(): bool
     {
         return $this === self::KeinJson || $this === self::SchemaVerletzt;
+    }
+
+    /**
+     * The provider is out of reach for now: no connection, no answer in
+     * time, or HTTP 429 (rate limit) / 5xx (its own trouble). Another
+     * profile may still answer. Not an outage: a 4xx like 401/400 (key or
+     * request is wrong - the fallback would get the same request), a 2xx
+     * that is no chat completion, and answers that arrived but do not fit.
+     */
+    public function ausfall(?int $httpStatus): bool
+    {
+        return match ($this) {
+            self::Zeitueberschreitung, self::Verbindungsfehler => true,
+            self::HttpFehler => $httpStatus === 429 || ($httpStatus !== null && $httpStatus >= 500 && $httpStatus <= 599),
+            default => false,
+        };
     }
 
     /**

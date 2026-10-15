@@ -389,6 +389,183 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertSame([], $this->http->anfragen);
     }
 
+    // ------------------------------------------------- fallback (M7-2b, #180)
+
+    public function testAFreshInstallationHasNoFallbackProfile(): void
+    {
+        self::assertNull($this->anbieter->fallback());
+        self::assertFalse($this->openai()->isFallback);
+
+        $antwort = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter'));
+
+        self::assertStringContainsString('Aktuell ist kein Fallback-Profil gewählt.', $antwort->body);
+        self::assertStringNotContainsString('marke marke-ok">Fallback', $antwort->body);
+        self::assertStringNotContainsString('Fallback entfernen', $antwort->body);
+    }
+
+    public function testChoosingReplacingAndRemovingTheFallbackKeepsAtMostOne(): void
+    {
+        $openai = $this->openai();
+        $this->post('/admin/ki-anbieter/' . $openai->id, self::formular(['name' => 'OpenAI', 'api_key' => self::KEY]));
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'base_url' => 'https://ki.verein.example/v1', 'api_key' => 'sk-eigen-1111']));
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Zweiter Server', 'base_url' => 'https://ki2.verein.example/v1', 'api_key' => 'sk-eigen-2222']));
+        $eigener = $this->profil('Eigener Server');
+        $zweiter = $this->profil('Zweiter Server');
+
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+        self::assertSame('„Eigener Server“ ist jetzt das Fallback-Profil.', $this->flash()->text);
+        self::assertSame($eigener->id, $this->anbieter->fallback()?->id);
+
+        $liste = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter'))->body;
+        self::assertStringContainsString('marke marke-ok">Fallback', $liste);
+        self::assertStringContainsString('Aktuell: „Eigener Server“.', $liste);
+        self::assertStringContainsString('action="/admin/ki-anbieter/fallback-entfernen"', $liste);
+        self::assertStringContainsString('action="/admin/ki-anbieter/' . $zweiter->id . '/fallback"', $liste, 'the other usable profile can be chosen');
+        self::assertStringNotContainsString('action="/admin/ki-anbieter/' . $openai->id . '/fallback"', $liste, 'not the default');
+
+        // Another profile replaces it - never two.
+        $this->post('/admin/ki-anbieter/' . $zweiter->id . '/fallback', []);
+        self::assertSame($zweiter->id, $this->anbieter->fallback()?->id);
+        $fallbacks = array_filter($this->anbieter->all(), static fn(KiAnbieter $p): bool => $p->isFallback);
+        self::assertCount(1, $fallbacks);
+
+        // Removing leaves the profile itself alone.
+        $this->post('/admin/ki-anbieter/fallback-entfernen', []);
+        self::assertSame('Das Fallback-Profil ist entfernt.', $this->flash()->text);
+        self::assertNull($this->anbieter->fallback());
+        self::assertNotNull($this->anbieter->find($zweiter->id));
+        $this->post('/admin/ki-anbieter/fallback-entfernen', []);
+        self::assertSame('Es war kein Fallback-Profil gewählt.', $this->flash()->text);
+
+        // The audit log keeps the choice (names only, no key).
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::KiFallbackGewaehlt), null, 10);
+        self::assertSame([$zweiter->id, $eigener->id], array_map(static fn(AuditEntry $e): ?int => $e->entityId, $zeilen));
+        $entfernt = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::KiFallbackEntfernt), null, 10);
+        self::assertSame([$zweiter->id], array_map(static fn(AuditEntry $e): ?int => $e->entityId, $entfernt), 'the second removal with nothing chosen writes nothing');
+        self::assertSame('ai_provider', $entfernt[0]->entity);
+    }
+
+    public function testTheFallbackMustBeActiveWithAKeyAndNotTheDefault(): void
+    {
+        $openai = $this->openai();
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Ohne Key']));
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Ruhend', 'active' => '', 'api_key' => 'sk-ruhend-1111']));
+        $ohneKey = $this->profil('Ohne Key');
+        $ruhend = $this->profil('Ruhend');
+
+        // The default - even with a key - cannot be its own fallback.
+        $this->post('/admin/ki-anbieter/' . $openai->id, self::formular(['name' => 'OpenAI', 'api_key' => self::KEY]));
+        $this->post('/admin/ki-anbieter/' . $openai->id . '/fallback', []);
+        self::assertStringContainsString('nicht zugleich Fallback sein', $this->flash()->text);
+
+        $this->post('/admin/ki-anbieter/' . $ohneKey->id . '/fallback', []);
+        self::assertStringContainsString('ohne API-Key kann nicht Fallback werden', $this->flash()->text);
+
+        $this->post('/admin/ki-anbieter/' . $ruhend->id . '/fallback', []);
+        self::assertSame('Ein deaktiviertes Profil kann nicht Fallback werden.', $this->flash()->text);
+
+        $this->post('/admin/ki-anbieter/999/fallback', []);
+        self::assertSame('Dieses Profil gibt es nicht (mehr).', $this->flash()->text);
+
+        self::assertNull($this->anbieter->fallback());
+        self::assertSame([], new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::KiFallbackGewaehlt), null, 10));
+    }
+
+    public function testDeletingTheFallbackProfileRemovesTheChoice(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/loeschen', []);
+
+        self::assertStringContainsString('Es gibt jetzt kein Fallback-Profil mehr.', $this->flash()->text);
+        self::assertNull($this->anbieter->fallback());
+        self::assertNull($this->anbieter->find($eigener->id));
+        self::assertCount(1, $this->anbieter->all(), 'no orphaned choice left on another row');
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM ai_provider WHERE is_fallback = 1')->fetchColumn());
+    }
+
+    public function testTheFallbackBecomingTheDefaultLeavesTheFallbackRole(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/standard', []);
+
+        self::assertStringContainsString('Es war das Fallback-Profil', $this->flash()->text);
+        $jetzt = $this->profil('Eigener Server');
+        self::assertTrue($jetzt->isDefault);
+        self::assertFalse($jetzt->isFallback, 'never both');
+        self::assertNull($this->anbieter->fallback());
+    }
+
+    public function testADeactivatedFallbackIsRemovedWithAHint(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+
+        // Saving without change keeps it ...
+        $this->post('/admin/ki-anbieter/' . $eigener->id, self::formular(['name' => 'Eigener Server', 'model' => 'anderes-modell']));
+        self::assertSame($eigener->id, $this->anbieter->fallback()?->id);
+
+        // ... deactivating drops it, with a hint.
+        $this->post('/admin/ki-anbieter/' . $eigener->id, self::formular(['name' => 'Eigener Server', 'active' => '']));
+        self::assertStringContainsString('das Fallback-Profil ist deshalb entfernt', $this->flash()->text);
+        self::assertFalse($this->profil('Eigener Server')->isFallback);
+        self::assertNull($this->anbieter->fallback());
+
+        $geaendert = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::KiAnbieterGeaendert), null, 10);
+        self::assertCount(2, $geaendert, 'both saves are audited');
+    }
+
+    public function testRemovingTheKeyOfTheFallbackDropsTheChoice(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+
+        $this->post('/admin/ki-anbieter/' . $eigener->id, self::formular(['name' => 'Eigener Server', 'api_key_entfernen' => '1']));
+
+        self::assertStringContainsString('das Fallback-Profil ist deshalb entfernt', $this->flash()->text);
+        self::assertFalse($this->profil('Eigener Server')->isFallback);
+        self::assertNull($this->anbieter->fallback());
+    }
+
+    public function testTheDatabaseKeepsDefaultAndFallbackApart(): void
+    {
+        $openai = $this->openai();
+
+        $this->expectException(\PDOException::class);
+
+        $this->pdo()->prepare('UPDATE ai_provider SET is_fallback = 1 WHERE id = ?')->execute([$openai->id]);
+    }
+
+    public function testTheRepositoryIgnoresAFallbackRowThatIsNoLongerUsable(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+        $this->pdo()->prepare('UPDATE ai_provider SET api_key_enc = NULL WHERE id = ?')->execute([$eigener->id]);
+
+        self::assertNull($this->anbieter->fallback(), 'edited by hand: the client must not rely on it');
+    }
+
+    public function testFallbackWritesWithoutCsrfTokenChangeNothing(): void
+    {
+        $this->post('/admin/ki-anbieter', self::formular(['name' => 'Eigener Server', 'api_key' => 'sk-eigen-1111']));
+        $eigener = $this->profil('Eigener Server');
+
+        $this->dispatch(new Request(HttpMethod::Post, '/admin/ki-anbieter/' . $eigener->id . '/fallback'));
+        self::assertNull($this->anbieter->fallback());
+
+        $this->post('/admin/ki-anbieter/' . $eigener->id . '/fallback', []);
+        $this->dispatch(new Request(HttpMethod::Post, '/admin/ki-anbieter/fallback-entfernen'));
+        self::assertSame($eigener->id, $this->anbieter->fallback()?->id);
+    }
+
     public function testAnUnknownProfileIsNotFound(): void
     {
         self::assertSame(404, $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter/999'))->status);

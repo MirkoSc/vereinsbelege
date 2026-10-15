@@ -21,8 +21,12 @@ use App\Repository\AiProviderRepository;
  * - The API key is printable ASCII without spaces: it ends up in an HTTP
  *   header, and a line break there would be header injection.
  * - The default profile cannot be deleted, and only an active profile can
- *   become the default. There is no fallback profile yet - it follows the
- *   client in issue #180 (M7-2b).
+ *   become the default.
+ * - The optional fallback profile (M7-2b, issue #180) is another profile
+ *   than the default, active and with a key. The choice goes away by itself
+ *   when it stops being true: the profile is deleted (same row), becomes the
+ *   default, is deactivated or loses its key - the methods report that, so
+ *   the page can say so and the audit log records it.
  */
 final readonly class KiAnbieterService
 {
@@ -59,39 +63,98 @@ final readonly class KiAnbieterService
      * @param array{name: string, base_url: string, model: string, vision: bool, json_schema: bool, max_images: string, max_tokens: string, timeout_s: string, active: bool} $felder
      * @param ?string $neuerKey null keeps the stored key, '' removes it
      *
+     * @return bool whether the profile was the fallback and is no longer
+     *         (deactivated, or its key removed)
+     *
      * @throws KiAnbieterRegelverstoss
      */
-    public function aendern(int $id, array $felder, #[\SensitiveParameter] ?string $neuerKey): void
+    public function aendern(int $id, array $felder, #[\SensitiveParameter] ?string $neuerKey): bool
     {
-        $this->profil($id);
+        $vorher = $this->profil($id);
         $name = $this->pruefeName($felder['name'], $id);
         [$baseUrl, $model, $faehigkeiten, $timeout] = self::pruefe($felder);
 
         $this->anbieter->update($id, $name, $baseUrl, $model, $faehigkeiten, $timeout, $felder['active'], self::pruefeKey($neuerKey));
+
+        if ($vorher->isFallback && !($this->anbieter->find($id)?->nutzbar() ?? false)) {
+            $this->anbieter->clearFallback();
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
+     * @return bool whether the deleted profile was the fallback (the choice
+     *         goes with the row)
+     *
      * @throws KiAnbieterRegelverstoss
      */
-    public function loeschen(int $id): void
+    public function loeschen(int $id): bool
     {
-        if ($this->profil($id)->isDefault) {
+        $profil = $this->profil($id);
+        if ($profil->isDefault) {
             throw new KiAnbieterRegelverstoss('Das Standardprofil lässt sich nicht löschen – zuerst ein anderes Profil zum Standard machen.');
         }
 
         $this->anbieter->delete($id);
+
+        return $profil->isFallback;
     }
 
     /**
+     * @return bool whether the profile was the fallback and is no longer
+     *         (the default cannot be the fallback at the same time)
+     *
      * @throws KiAnbieterRegelverstoss
      */
-    public function alsStandard(int $id): void
+    public function alsStandard(int $id): bool
     {
-        if (!$this->profil($id)->active) {
+        $profil = $this->profil($id);
+        if (!$profil->active) {
             throw new KiAnbieterRegelverstoss('Ein deaktiviertes Profil kann nicht Standard werden.');
         }
 
         $this->anbieter->setDefault($id);
+
+        return $profil->isFallback;
+    }
+
+    /**
+     * @return ?KiAnbieter the fallback profile that was replaced, if any
+     *
+     * @throws KiAnbieterRegelverstoss
+     */
+    public function alsFallback(int $id): ?KiAnbieter
+    {
+        $profil = $this->profil($id);
+        if ($profil->isDefault) {
+            throw new KiAnbieterRegelverstoss('Das Standardprofil kann nicht zugleich Fallback sein – das Fallback-Profil muss ein anderes Profil sein.');
+        }
+        if (!$profil->active) {
+            throw new KiAnbieterRegelverstoss('Ein deaktiviertes Profil kann nicht Fallback werden.');
+        }
+        if (!$profil->keyGesetzt) {
+            throw new KiAnbieterRegelverstoss('Ein Profil ohne API-Key kann nicht Fallback werden – zuerst den Key hinterlegen.');
+        }
+
+        $bisher = $this->anbieter->fallback();
+        $this->anbieter->setFallback($id);
+
+        return $bisher !== null && $bisher->id !== $id ? $bisher : null;
+    }
+
+    /**
+     * @return ?KiAnbieter the profile that was the fallback, null if there
+     *         was none
+     */
+    public function fallbackEntfernen(): ?KiAnbieter
+    {
+        $bisher = $this->anbieter->fallback();
+        $this->anbieter->clearFallback();
+
+        return $bisher;
     }
 
     /**
