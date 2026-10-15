@@ -26,6 +26,7 @@ use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\BuchungsregelController;
+use App\App\ArchivImportController;
 use App\App\ExportController;
 use App\App\ErfassungController;
 use App\App\InboxController;
@@ -64,6 +65,7 @@ use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
 use App\Repository\DocumentDuplicateRepository;
+use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
@@ -100,6 +102,7 @@ use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\VaultRecovery;
+use App\Service\Archiv\ArchivImport;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
@@ -629,6 +632,49 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
         $kategorien,
         $kostenstellen,
         $auditFor($pdo),
+    );
+};
+
+// The archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
+// export.md section 3): the ZIP arrives through the chunk upload with a
+// larger limit and is read in place; the import writes documents with the
+// session's unlocked vault. Opening a chunk needs no connection - the
+// import service is built lazily, only where a page or a step needs it.
+$archivImport = static function () use ($connections, $view, $auditFor, $paths, $logger): ArchivImportController {
+    $archivUploads = new UploadService($paths->uploadDir(), maxBytes: ArchivImport::MAX_ZIP_BYTES);
+
+    return new ArchivImportController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new UploadController(
+            new Session(),
+            $archivUploads,
+            // finish() of the shared controller is never routed here - the
+            // archive's own closing request creates an import, not a blob.
+            static fn(): never => throw new \LogicException('The archive upload stores no blob of its own.'),
+            logger: $logger,
+        ),
+        static function () use ($connections, $auditFor, $paths, $archivUploads): ArchivImport {
+            $pdo = $connections->pdo();
+            $blobs = new BlobRepository($pdo);
+            $kategorien = new CategoryRepository($pdo);
+
+            return new ArchivImport(
+                $pdo,
+                new ArchiveImportRepository($pdo),
+                $archivUploads,
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+                new SettingRepository($pdo),
+                new DocumentRepository($pdo),
+                new DocumentArtifactRepository($pdo),
+                new JobRepository($pdo),
+                new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+                $kategorien,
+                $auditFor($pdo),
+            );
+        },
+        $logger,
     );
 };
 
@@ -1189,6 +1235,7 @@ $router = new Router();
     $buchungen,
     $buchungsregeln,
     $export,
+    $archivImport,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

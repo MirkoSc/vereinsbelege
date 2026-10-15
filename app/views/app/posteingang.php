@@ -23,6 +23,7 @@
  * @var string $pdfjsWorkerSrc
  * @var string $pdfjsWasmSrc
  * @var string $csrf
+ * @var bool $darfArchivImport link to the archive import (issue #77/M12-3)
  */
 
 use App\Service\Inbox\InboxFilter;
@@ -37,6 +38,9 @@ $kurz = static fn(string $text, int $max = 60): string => mb_strlen($text) > $ma
         Ablehnen braucht einen Grund, die Einreichung bleibt erhalten; eine Wiedervorlage taucht am
         gewählten Tag wieder unter „Offen“ auf.
     </p>
+    <?php if ($darfArchivImport ?? false): ?>
+        <p><a href="/app/archiv-import">Bisheriges Belegarchiv (ZIP) importieren</a></p>
+    <?php endif; ?>
 
     <?php if (!$entsperrt): ?>
         <p class="hinweis hinweis-info">

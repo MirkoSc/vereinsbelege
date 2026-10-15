@@ -313,6 +313,12 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   der Seite mit „Fortsetzen“ weiter. Regeln (M9-6) wendet der
   Import-Schritt selbst an; was danach noch automatisch laufen soll
   (Abgleich M10), legt dieses Issue als Job an.
+- **Ebenso der Archiv-Import** (M12-3, 05 §3): `POST
+  /app/archiv-import/{id}/schritt`, Stand und Cursor in `archive_import`.
+  Je Datei entstehen die üblichen Session-Jobs (PDF, Duplikatindex, Text),
+  die danach über `/api/jobs/step` laufen. Das hochgeladene ZIP bleibt als
+  Upload-Chunks liegen, bis der Import endet; jeder Schritt frischt den
+  Zeitstempel auf, den der Cron für die 24-h-Regel liest.
 - **Browser-Jobs** (PDF rendern mit pdf.js): Worker holt Aufgabe, rendert,
   lädt Seitenbilder hoch.
 - **Worker-Jobs** (optionales Modul, 07-worker.md): werden nur angelegt,

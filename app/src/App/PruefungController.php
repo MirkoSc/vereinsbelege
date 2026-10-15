@@ -121,11 +121,22 @@ final readonly class PruefungController
         // #46/M7-4) - the person still confirms it by saving.
         $eRechnung = $beleg === null && $document->status->pruefbar() ? $this->pruefung->eRechnung($document, $tresor) : null;
         $hinweise = [];
+        $leer = $felder;
         if ($eRechnung !== null && $eRechnung->extraktion !== null && $eRechnung->gelesen()) {
             ['felder' => $felder, 'hinweise' => $hinweise] = $this->pruefung->vorbelegen($felder, $eRechnung->extraktion, $tresor);
         }
 
-        return $this->seite($eintrag, $tresor, $felder, null, eRechnung: $eRechnung, eRechnungHinweise: $hinweise);
+        // From the archive import (issue #77/M12-3): what the path said lies
+        // over what was read automatically - the archive was sorted by a
+        // person. The AI's suggestions (M7-5) go in before this, like the
+        // e-invoice.
+        $archivHinweise = [];
+        $archiv = $beleg === null && $document->status->pruefbar() ? $this->pruefung->archivVorgabe($document, $tresor) : null;
+        if ($archiv !== null) {
+            ['felder' => $felder, 'hinweise' => $archivHinweise] = $archiv->ueberlagern($leer, $felder, 'E-Rechnung');
+        }
+
+        return $this->seite($eintrag, $tresor, $felder, null, eRechnung: $eRechnung, eRechnungHinweise: $hinweise, archivHinweise: $archivHinweise);
     }
 
     /**
@@ -386,6 +397,7 @@ final readonly class PruefungController
     /**
      * @param array<string, string> $felder
      * @param list<string> $eRechnungHinweise
+     * @param list<string> $archivHinweise from the archive import (issue #77/M12-3)
      */
     private function seite(
         InboxItem $eintrag,
@@ -395,6 +407,7 @@ final readonly class PruefungController
         int $status = 200,
         ?ERechnungAuszug $eRechnung = null,
         array $eRechnungHinweise = [],
+        array $archivHinweise = [],
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
@@ -430,6 +443,7 @@ final readonly class PruefungController
             'duplikatAufloesbar' => $tresor !== null,
             'eRechnung' => $eRechnung,
             'eRechnungHinweise' => $eRechnungHinweise,
+            'archivHinweise' => $archivHinweise,
             'scripts' => ['/js/pruefansicht.js'],
         ], Area::App), $status);
     }

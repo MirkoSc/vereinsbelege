@@ -42,6 +42,7 @@
  * @var bool $duplikatAufloesbar
  * @var \App\Service\Document\ERechnungAuszug|null $eRechnung the e-invoice, only before a receipt is saved (issue #46/M7-4)
  * @var list<string> $eRechnungHinweise
+ * @var list<string> $archivHinweise what the archive import read, and where it differs (issue #77/M12-3)
  * @var string $csrf
  */
 
@@ -105,6 +106,20 @@ $rollenGruppe = [
     <?php endif; ?>
 
     <?php require __DIR__ . '/duplikat-hinweis.php'; ?>
+
+    <?php if (($archivHinweise ?? []) !== [] && $bearbeitbar): ?>
+        <div class="hinweis hinweis-info">
+            <p>
+                Lieferant, Datum und weitere Angaben sind aus dem Archiv vorbelegt (Ordner und Dateiname).
+                Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts.
+            </p>
+            <ul>
+                <?php foreach ($archivHinweise as $hinweis): ?>
+                    <li><?= e($hinweis) ?></li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    <?php endif; ?>
 
     <?php if ($eRechnung !== null && $bearbeitbar): ?>
         <?php if ($eRechnung->gelesen()): ?>

@@ -301,6 +301,65 @@ final class UploadServiceTest extends TestCase
         self::assertSame(0, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
     }
 
+    // ------------------------------------------- Archiv-Import (#77, M12-3)
+
+    public function testALargerLimitIsTheArchiveImportsAlone(): void
+    {
+        $archiv = new UploadService($this->dir, self::CHUNK, UploadService::MAX_FILE_BYTES * 10);
+
+        self::assertSame(UploadService::MAX_FILE_BYTES + 1, $archiv->create(UploadService::MAX_FILE_BYTES + 1)->groesse);
+        $this->expectUploadError(UploadError::TooLarge);
+        $this->service()->create(UploadService::MAX_FILE_BYTES + 1);
+    }
+
+    public function testItReadsAnyRangeAcrossChunkBoundaries(): void
+    {
+        $dienst = $this->service();
+        $inhalt = 'abcdefghijklmnopqrstuvw';
+        $ticket = $dienst->create(strlen($inhalt));
+        foreach (str_split($inhalt, self::CHUNK) as $i => $stueck) {
+            $dienst->writeChunk($ticket->id, $i, self::stream($stueck));
+        }
+
+        self::assertSame(strlen($inhalt), $dienst->groesse($ticket->id));
+        foreach ([[0, 4], [3, 2], [3, 10], [7, 1], [20, 100], [0, 23]] as [$offset, $laenge]) {
+            self::assertSame(substr($inhalt, $offset, $laenge), $dienst->lesen($ticket->id, $offset, $laenge), $offset . '+' . $laenge);
+        }
+        self::assertSame('', $dienst->lesen($ticket->id, 23, 5), 'nothing after the end');
+        self::assertSame('', $dienst->lesen($ticket->id, 3, 0));
+    }
+
+    public function testReadingAMissingChunkFails(): void
+    {
+        $dienst = $this->service();
+        $ticket = $dienst->create(8);
+        $dienst->writeChunk($ticket->id, 0, self::stream('abcd'));
+
+        $this->expectUploadError(UploadError::Incomplete);
+        $dienst->lesen($ticket->id, 2, 4);
+    }
+
+    public function testTouchingKeepsAnUploadFromTheCleanup(): void
+    {
+        $dienst = $this->service();
+        $ticket = $dienst->create(4);
+        $dienst->writeChunk($ticket->id, 0, self::stream('abcd'));
+        foreach (['meta.json', '0.part'] as $datei) {
+            touch($this->dir . '/' . $ticket->id . '/' . $datei, time() - 2 * 86400);
+        }
+        touch($this->dir . '/' . $ticket->id, time() - 2 * 86400);
+
+        $dienst->beruehren($ticket->id);
+
+        self::assertSame(0, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertTrue($dienst->vorhanden($ticket->id));
+        $dienst->discard($ticket->id);
+        self::assertFalse($dienst->vorhanden($ticket->id));
+        $dienst->beruehren($ticket->id);
+        self::assertFalse($dienst->vorhanden($ticket->id), 'touching never brings one back');
+        self::assertFalse($dienst->vorhanden('../etwas'));
+    }
+
     // ------------------------------------------------------------------ Hilfe
 
     private function service(): UploadService

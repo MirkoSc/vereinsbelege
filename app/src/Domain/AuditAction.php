@@ -117,6 +117,8 @@ enum AuditAction: string
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
+    // The archive import (issue #77/M12-3): counts and document ids - never a name.
+    case ArchivImportiert = 'archiv.importiert';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -200,6 +202,7 @@ enum AuditAction: string
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::EinstellungExport => 'Export-Muster geändert',
             self::ExportErstellt => 'ZIP-Export erstellt',
+            self::ArchivImportiert => 'Archiv importiert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -232,6 +235,7 @@ enum AuditAction: string
             self::KiAnbieterAngelegt, self::KiAnbieterGeaendert, self::KiAnbieterGeloescht,
             self::KiAnbieterStandard => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
+            self::ArchivImportiert => 'archive_import',
             self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,
             self::BuchungEingeordnet => 'bank_transaction',
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
@@ -266,6 +270,7 @@ enum AuditAction: string
             'csv_profile' => 'CSV-Format',
             'ai_provider' => 'KI-Anbieter',
             'bank_import' => 'Kontoauszug-Import',
+            'archive_import' => 'Archiv-Import',
             'bank_transaction' => 'Buchung',
             'assignment_rule' => 'Buchungsregel',
             'document' => 'Beleg',

@@ -60,10 +60,14 @@ final readonly class UploadService
      *        tests pass anything but the constant - every upload carries the
      *        size it was opened with in its metadata, so changing it later
      *        never breaks one that is already running.
+     * @param int $maxBytes the largest file create() accepts. Only the
+     *        archive import (issue #77/M12-3) passes more: a year's ZIP is
+     *        far larger than one receipt.
      */
     public function __construct(
         private string $uploadDir,
         private int $chunkBytes = self::CHUNK_BYTES,
+        private int $maxBytes = self::MAX_FILE_BYTES,
     ) {
     }
 
@@ -79,7 +83,7 @@ final readonly class UploadService
             throw new UploadException(UploadError::EmptyFile);
         }
 
-        if ($groesse > self::MAX_FILE_BYTES) {
+        if ($groesse > $this->maxBytes) {
             throw new UploadException(UploadError::TooLarge);
         }
 
@@ -266,6 +270,73 @@ final readonly class UploadService
             } finally {
                 fclose($in);
             }
+        }
+    }
+
+    /**
+     * Up to $laenge bytes from $offset on, read across chunk boundaries -
+     * for the archive import, which reads the ZIP in place instead of
+     * joining it (App\Service\Archiv\UploadQuelle). Fewer only at the end
+     * of the file.
+     *
+     * @throws UploadException when the upload or one of its chunks is gone
+     */
+    public function lesen(string $id, int $offset, int $laenge): string
+    {
+        $dir = $this->directory($id);
+        $meta = $this->meta($id);
+        if ($offset < 0 || $laenge < 1 || $offset >= $meta['groesse']) {
+            return '';
+        }
+
+        $laenge = min($laenge, $meta['groesse'] - $offset);
+        $teile = '';
+        while (strlen($teile) < $laenge) {
+            $position = $offset + strlen($teile);
+            $index = intdiv($position, $meta['chunk_bytes']);
+            $innen = $position - $index * $meta['chunk_bytes'];
+            $pfad = sprintf('%s/%d.part', $dir, $index);
+            $stueck = is_file($pfad) ? file_get_contents($pfad, false, null, $innen, $laenge - strlen($teile)) : false;
+            if ($stueck === false || $stueck === '') {
+                throw new UploadException(UploadError::Incomplete);
+            }
+
+            $teile .= $stueck;
+        }
+
+        return $teile;
+    }
+
+    /**
+     * The size the upload was announced with - the length of the file once
+     * status() says it is complete.
+     *
+     * @throws UploadException when the upload is unknown
+     */
+    public function groesse(string $id): int
+    {
+        $this->directory($id);
+
+        return $this->meta($id)['groesse'];
+    }
+
+    /**
+     * Whether the upload is still there - the cron may have removed it.
+     */
+    public function vorhanden(string $id): bool
+    {
+        return preg_match(self::ID_PATTERN, $id) === 1 && is_file($this->uploadDir . '/' . $id . '/' . self::META);
+    }
+
+    /**
+     * Refreshes the timestamp cleanup() goes by. The archive import reads an
+     * upload over many requests; every step touches it, so the cron's 24 h
+     * count from the last step, not from the upload.
+     */
+    public function beruehren(string $id, ?\DateTimeImmutable $now = null): void
+    {
+        if ($this->vorhanden($id)) {
+            @touch($this->uploadDir . '/' . $id . '/' . self::META, ($now ?? new \DateTimeImmutable())->getTimestamp());
         }
     }
 

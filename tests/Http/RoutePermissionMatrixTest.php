@@ -354,6 +354,16 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/export', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/zip', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/buchungen', false],
+            // Archive import (M12-3): archive.import - Admin and Finanzen
+            // only; the board and the auditors read, they do not import.
+            [SystemRole::Admin, HttpMethod::Get, '/app/archiv-import', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/archiv-import/upload', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/archiv-import/7/schritt', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/archiv-import/upload/0123456789abcdef0123456789abcdef/finish', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/archiv-import', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/archiv-import/7/starten', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/archiv-import/upload/0123456789abcdef0123456789abcdef/chunk/0', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/archiv-import/7', false],
             // Einordnung und Buchungsregeln (M9-6): bank.view reads the
             // rules - auditors see what they do -, bank.book does
             // everything that writes.
@@ -572,6 +582,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

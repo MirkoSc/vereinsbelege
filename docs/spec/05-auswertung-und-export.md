@@ -203,6 +203,100 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
   Warnung gezeigt.
 - Nutzen: Lieferantenstamm, Kategorien-Regeln und wiederkehrende Serien
   sind nach dem Import sofort gefüllt.
+- **Umsetzung (M12-3, issue #77):**
+  - **Seite und Rechte:** `/app/archiv-import` auf der Anwenderseite, Recht
+    `archive.import` (Admin, Finanzen) auf allen Routen, CSRF auf jedem
+    POST, ohne entsperrten Tresor wird nichts gelesen oder geschrieben. Der
+    Einstieg ist ein Link im Posteingang. Ablauf: Upload → Vorschau (nichts
+    gespeichert) → „Import starten“ → seitengesteuerte Schrittkette wie der
+    Kontoauszug-Import (06 §4) → Ergebnis mit Bericht.
+  - **Upload:** Chunk-Upload (`public/js/upload.js`) unter eigenem Präfix
+    `/app/archiv-import/upload…`: Öffnen, Chunks und Abbruch sind der
+    gemeinsame `App\Api\UploadController` mit größerer Grenze
+    (`ArchivImport::MAX_ZIP_BYTES` = 2 GiB, `UploadService` mit
+    `maxBytes`); nur der Abschluss ist eigen – er liest das
+    Inhaltsverzeichnis und legt `archive_import` als `vorschau` an, ein
+    Nicht-ZIP wird mit Meldung abgelehnt und sofort gelöscht.
+  - **Kein zusammengesetztes ZIP, keine Temp-Datei:** Das ZIP bleibt als
+    Upload-Chunks in `shared/var/tmp/upload/<id>/` (die Klartext-Ausnahme
+    von CLAUDE.md §2) und wird dort gelesen: eigener Leser
+    `App\Service\Archiv\ZipLeser` in reinem PHP auf ext-zlib
+    (`UploadService::lesen()` liest über Chunk-Grenzen). `ZipArchive`
+    scheidet aus (braucht eine Datei am Stück), ein verschlüsselter
+    ZIP-Blob auch (secretstream liest nur von vorn – jeder Schritt müsste
+    ab Byte 0 entschlüsseln). Jede Datei wird stückweise entpackt und direkt
+    an `BlobService::store()` gegeben. Ist der Import `fertig` oder
+    `abgebrochen`, werden die Chunks gelöscht; jeder Schritt
+    „berührt“ den Upload, die 24-h-Regel des Crons zählt also ab dem letzten
+    Schritt. Fehlen die Chunks, endet der Import als `abgebrochen` mit
+    Hinweis; Übernommenes bleibt.
+  - **ZIP-Leser:** Methoden 0 und 8, mit oder ohne Data Descriptor
+    (Größen und CRC aus dem Inhaltsverzeichnis); Namen mit UTF-8-Flag, sonst
+    gültiges UTF-8 (macOS), sonst CP850 (deutsches Windows), Unicode-Path-
+    Feld `0x7075` bei passender Prüfsumme; danach NFC (ext-intl, sonst
+    eigene Tabelle der gängigen Umlaute/Akzente). Abgelehnt als Ganzes:
+    ZIP64, mehrteilige Archive, > 20 000 Einträge. Je Eintrag übersprungen:
+    verschlüsselt, anderes Verfahren, Pfad mit `..`/absolut, größer als
+    32 MiB. CRC-32 und angekündigte Größe werden beim Entpacken geprüft,
+    Inflate in 8-KiB-Scheiben (ZIP-Bomben brechen sofort ab).
+  - **Dateinamen-Muster** (`App\Service\Archiv\DateinamenMuster`, je
+    Import auf der Vorschau einstellbar, Default `{lieferant} {datum}`):
+    Platzhalter `{lieferant}`, `{datum}` (T.M.JJJJ/TT.MM.JJJJ),
+    `{datum_iso}`, `{nr}`, `{egal}`; die Endung und ein Suffix ` (2)`/`(3)`
+    zählen nicht, ein Leerzeichen im Muster passt auf Leerzeichen und `_`.
+    Passt der Name nicht, wird aus ihm nichts vorbelegt. Ein unmögliches
+    Datum oder ein Jahr außerhalb 1990 bis nächstes Jahr gibt kein Datum,
+    aber einen Hinweis; der Lieferant bleibt. `_Ohne Lieferant` heißt: kein
+    Lieferant.
+  - **Ordner-Semantik** (`App\Service\Archiv\ArchivPfad`, rein):
+    - `Kasse` → bar bezahlt;
+    - `Wiedervorlage`/`_Wiedervorlage` → Status `wiedervorlage`, fällig am
+      Importtag;
+    - `Ausgaben`/`Einnahmen` → Richtung;
+    - Jahres- (`2026`, `Belege_2026`) und Monatsordner (`02`, `02. Februar`,
+      `Februar`, `Feb`) prüfen nur das Datum aus dem Dateinamen –
+      Abweichung = Hinweis, nie ein Datum aus Ordnern allein;
+    - ein Ordner mit dem Namen einer aktiven Kategorie der Richtung → diese
+      Kategorie (der tiefste gewinnt);
+    - `_Originale/` (Kopien aus dem eigenen Export), `__MACOSX/`,
+      versteckte Dateien, `Thumbs.db`, `desktop.ini` → übersprungen;
+    - alle übrigen Ordner (z. B. Lieferantenordner) werden ignoriert.
+  - **Je Datei** (`App\Service\Archiv\ArchivImport`): nur PDF/JPEG/PNG
+    (bzw. E-Rechnungs-XML, `MagicBytes`), sonst Eintrag im Bericht.
+    Lieferant über den Blind Index des Namens
+    (`SupplierService::idsZuNamen()`, Rechtsform/Umlaute/Groß-
+    schreibung egal, Rolle passend zur Richtung): genau einer → zugeordnet,
+    keiner → neu angelegt mit `created_via = archiv`
+    (`anlegenAusArchiv()`, Audit `lieferant.angelegt`), mehrere → nicht
+    zugeordnet, Hinweis. Dann `document` (`source = archiv`, Status
+    `bereit_zur_auswertung` – das Archiv ist sortiert, kein Posteingang –
+    bzw. `wiedervorlage`), das Vorgabe-Artefakt (02, Kind `vorgabe`,
+    Format `archiv-v1`) und die drei Session-Jobs `pdf_erzeugen`,
+    `detect_duplicate`, `extract_text` wie bei jeder Erfassung. Ein
+    zweimal importiertes PDF fällt über die Duplikaterkennung auf.
+  - **Idempotenz:** eine Transaktion je Datei, eröffnet mit
+    `ArchiveImportRepository::advance()` (`next_index` nur vom gelesenen
+    Wert aus, Zeilensperre) – ein wiederholter oder paralleler Schritt
+    schreibt nichts doppelt. Der Blob wird vor der Transaktion gespeichert
+    und gelöscht, wenn sie verliert. Budget je Schritt: 10 Dateien, 24 MiB
+    entpackt oder 15 s.
+  - **Vorrang vor der automatischen Erkennung:** Auf der Prüfseite legt
+    `ArchivVorgabe::ueberlagern()` die Archivwerte über das, was die
+    E-Rechnung (bzw. ab M7-5 die KI, die vor der Überlagerung läuft)
+    gelesen hat – solange noch keine `invoice`-Zeile existiert. Weicht ein
+    gelesener Wert ab, gewinnt das Archiv, und ein Hinweis nennt beide
+    Werte. Dazu: Herkunftspfad, Hinweise aus dem Pfad und für `Kasse` der
+    Hinweis „bar bezahlt“ – ein Feld dafür kommt erst mit der Zuordnung
+    Beleg ↔ Zahlung (M10-1, #65), die `kasse` aus dem Artefakt übernimmt.
+  - **Bericht und Audit:** Nicht übernommene Dateien stehen mit Grund
+    verschlüsselt in `archive_import.report_enc` (höchstens 2 000), die
+    Seite zeigt sie nach dem Import. Audit `archiv.importiert` genau einmal
+    am Ende (bzw. beim Abbruch, wenn schon Belege angelegt sind): Status,
+    Zähler, erste/letzte Dokument-ID – nie ein Name.
+  - **Probelauf:** synthetisch (420 erfundene PDFs, 44,5 MB, beide Layouts
+    mit Kasse/Wiedervorlage) im Docker gegen MariaDB: 43 Schritte, gesamt
+    3,8 s, Schritt im Median 0,09 s. Der Probelauf mit einem echten
+    Jahresarchiv wird nur mit Zahlen (keine Namen) im Issue festgehalten.
 
 ## Pflicht-Tests
 
@@ -214,4 +308,8 @@ ZIP-Stream ist gültiges ZIP und enthält genau die gefilterten Belege +
 index.csv; kein Temp-File mit Klartext (Test prüft `var/tmp` nach Export);
 Archiv-Dateinamen-Parser (Varianten, Suffix, ungültige Daten → keine
 Vorbelegung), Ordner-Semantik Kasse/Wiedervorlage, Idempotenz bei
-wiederholtem Schritt.
+wiederholtem Schritt. Umgesetzt (M12-3): `tests/Service/Archiv/`
+(`DateinamenMusterTest`, `ArchivPfadTest`, `ZipLeserTest`,
+`ArchivVorgabeTest`), `tests/Integration/ArchivImportFlowTest.php`
+(ganzer Ablauf, Idempotenz, kein Klartext in `var/tmp` nach dem Import),
+Prüfseite in `PruefungFlowTest`, `tests/js/archivimport.test.js`.

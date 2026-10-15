@@ -8,6 +8,7 @@ use App\Domain\ArtifactKind;
 use App\Domain\AuditAction;
 use App\Domain\Document;
 use App\Domain\DocumentArtifact;
+use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
 use App\Domain\Iban;
 use App\Domain\InboxItem;
@@ -25,6 +26,7 @@ use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\SupplierRepository;
+use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -285,6 +287,49 @@ final readonly class Pruefung
     public function eRechnung(Document $document, Vault $vault): ?ERechnungAuszug
     {
         return $this->texterkennung->eRechnung($document, $vault);
+    }
+
+    /**
+     * What the archive import read from the document's path (issue
+     * #77/M12-3), or null for a document that did not come from an archive.
+     * A supplier merged away since is replaced by the one it went into.
+     */
+    public function archivVorgabe(Document $document, Vault $vault): ?ArchivVorgabe
+    {
+        if ($document->source !== DocumentSource::Archiv) {
+            return null;
+        }
+        $artefakt = $this->artefakte->fuerDokument($document->id, ArtifactKind::Vorgabe)[0] ?? null;
+        if ($artefakt === null || $artefakt->dataEnc === null) {
+            return null;
+        }
+
+        $json = FieldCipher::decrypt(
+            $vault->openDataKey($artefakt->dekSealed),
+            $artefakt->dataEnc,
+            new FieldContext('document_artifact', $artefakt->id, 'data_enc'),
+        );
+        $werte = json_decode($json, true, 8, JSON_THROW_ON_ERROR);
+        $vorgabe = is_array($werte) ? ArchivVorgabe::fromArray($werte) : null;
+        if ($vorgabe?->lieferantId === null) {
+            return $vorgabe;
+        }
+
+        $lieferant = $this->lieferantenRepository->aufgeloest($vorgabe->lieferantId);
+
+        return $lieferant === $vorgabe->lieferantId ? $vorgabe : new ArchivVorgabe(
+            pfad: $vorgabe->pfad,
+            lieferantId: $lieferant,
+            lieferantName: $vorgabe->lieferantName,
+            datum: $vorgabe->datum,
+            nr: $vorgabe->nr,
+            kategorieId: $vorgabe->kategorieId,
+            richtung: $vorgabe->richtung,
+            richtungAusOrdner: $vorgabe->richtungAusOrdner,
+            kasse: $vorgabe->kasse,
+            wiedervorlage: $vorgabe->wiedervorlage,
+            hinweise: $vorgabe->hinweise,
+        );
     }
 
     /**

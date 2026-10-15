@@ -83,6 +83,9 @@ final readonly class InboxController
             'abgeschnitten' => $abgeschnitten,
             'entsperrt' => $tresor !== null,
             'heute' => self::heute(),
+            // The way in to the archive import (issue #77/M12-3) - old
+            // receipts land here and in the review list.
+            'darfArchivImport' => $this->berechtigungen()->darf(Permission::ArchiveImport),
             ...$this->rasterungDaten(),
         ], Area::App));
     }
