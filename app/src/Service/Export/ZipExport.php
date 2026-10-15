@@ -92,7 +92,12 @@ final readonly class ZipExport
     ) {
     }
 
-    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault): ExportPlan
+    /**
+     * @param int|null $lauf the documents of this export run instead of the
+     *        filter's "nur noch nicht exportierte" (issue #179/M12-4,
+     *        InvoiceRepository::exportListe())
+     */
+    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault, ?int $lauf = null): ExportPlan
     {
         $muster = ExportEinstellungen::fromSettings($this->settings)->muster;
         $wurzel = ExportEinstellungen::wurzelordner($filter->von, $filter->bis);
@@ -117,10 +122,10 @@ final readonly class ZipExport
         $eintraege = [];
         $groesse = 0;
         $fehlend = 0;
-        $anzahl = 0;
+        $documentIds = [];
 
-        foreach ($this->belege->exportListe($filter, $bereich) as $beleg) {
-            $anzahl++;
+        foreach ($this->belege->exportListe($filter, $bereich, $lauf) as $beleg) {
+            $documentIds[] = $beleg->invoice->documentId;
             $invoice = $beleg->invoice;
             $daten = Pruefung::entschluesseln($vault, $invoice);
 
@@ -195,7 +200,7 @@ final readonly class ZipExport
             ]);
         }
 
-        return new ExportPlan($wurzel, $indexPfad, $csv, $eintraege, $anzahl, $groesse, $fehlend);
+        return new ExportPlan($wurzel, $indexPfad, $csv, $eintraege, $documentIds, $groesse, $fehlend);
     }
 
     /**

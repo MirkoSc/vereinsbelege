@@ -11,6 +11,7 @@ use App\Domain\BlobMeta;
 use App\Domain\BlobStorage;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
+use App\Domain\ExportRunStatus;
 use App\Domain\InvoiceData;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
@@ -33,6 +34,7 @@ use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\ExportRunRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
@@ -372,7 +374,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
         self::assertStringContainsString('<code>Belege_2025.zip</code>', $seite->body);
         self::assertStringContainsString('<strong>4 Belege</strong>', $seite->body);
         self::assertStringContainsString('5 Dateien inkl. <code>index.csv</code>', $seite->body);
-        self::assertStringContainsString('<form method="post" action="/app/export/zip"', $seite->body);
+        self::assertStringContainsString('<form method="post" action="/app/export/lauf"', $seite->body);
         self::assertStringContainsString('<input type="hidden" name="von" value="2025-01-01">', $seite->body);
         self::assertStringContainsString('<option value="' . $this->stamm['bauhaus'] . '">Bauhaus</option>', $seite->body, 'suppliers decrypted for the filter');
     }
@@ -384,9 +386,9 @@ final class ExportZipFlowTest extends DatabaseTestCase
 
         $seite = $this->get('/app/export', $falsch);
         self::assertStringContainsString('Das Von-Datum liegt nach dem Bis-Datum.', $seite->body);
-        self::assertStringNotContainsString('action="/app/export/zip"', $seite->body);
+        self::assertStringNotContainsString('action="/app/export/lauf"', $seite->body);
 
-        $antwort = $this->post('/app/export/zip', $falsch);
+        $antwort = $this->post('/app/export/lauf', $falsch);
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(302, $antwort->status);
     }
@@ -398,12 +400,13 @@ final class ExportZipFlowTest extends DatabaseTestCase
 
         self::assertStringContainsString('Für diese Auswahl gibt es keine Belege.', $this->get('/app/export', $leer)->body);
 
-        $antwort = $this->post('/app/export/zip', $leer);
+        $antwort = $this->post('/app/export/lauf', $leer);
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(302, $antwort->status);
         self::assertSame('/app/export?von=2023-01-01&bis=2023-12-31&status=geprueft', $antwort->headers['Location'] ?? null, 'back to the same filter');
         self::assertStringContainsString('es wurde kein ZIP erstellt', $this->get('/app/export', $leer)->body);
         self::assertSame([], $this->exportAudits());
+        self::assertSame(0, $this->anzahlLaeufe(), 'no run without receipts');
     }
 
     // --------------------------------------------- vault, CSRF, rights
@@ -416,9 +419,9 @@ final class ExportZipFlowTest extends DatabaseTestCase
         self::assertSame(200, $seite->status);
         self::assertStringContainsString('nur mit entsperrtem Tresor lesbar', $seite->body);
         self::assertStringNotContainsString('Bauhaus', $seite->body);
-        self::assertStringNotContainsString('action="/app/export/zip"', $seite->body);
+        self::assertStringNotContainsString('action="/app/export/lauf"', $seite->body);
 
-        $antwort = $this->post('/app/export/zip', self::ZEITRAUM, entsperrt: false);
+        $antwort = $this->post('/app/export/lauf', self::ZEITRAUM, entsperrt: false);
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(302, $antwort->status);
         self::assertSame([], $this->exportAudits());
@@ -428,11 +431,12 @@ final class ExportZipFlowTest extends DatabaseTestCase
     {
         $this->belege();
 
-        $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/zip', post: self::ZEITRAUM, cookies: $this->tresorCookie(), ip: self::IP));
+        $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/lauf', post: self::ZEITRAUM, cookies: $this->tresorCookie(), ip: self::IP));
 
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(302, $antwort->status);
         self::assertSame([], $this->exportAudits());
+        self::assertSame(0, $this->anzahlLaeufe());
     }
 
     public function testTheExportIsAuditedWithFilterAndCounts(): void
@@ -453,6 +457,8 @@ final class ExportZipFlowTest extends DatabaseTestCase
             'kostenstelle' => null,
             'lieferant' => $this->stamm['bauhaus'],
             'originale' => true,
+            'nur_neue' => false,
+            'lauf' => $this->letzterLauf(),
             'belege' => 3,
             'dateien' => 7,
         ], $this->audit->details($eintraege[0], $this->tresor), 'filter, counts, user - no names');
@@ -502,11 +508,193 @@ final class ExportZipFlowTest extends DatabaseTestCase
         self::assertSame(200, $this->get('/app/export', self::ZEITRAUM)->status);
         self::assertSame(['A', 'D', 'B', 'C'], $this->exportiert([]));
 
+        $lauf = $this->laufAnlegen(self::ZEITRAUM);
+
         $this->rolle(SystemRole::Vereinsverantwortlicher);
         self::assertSame(403, $this->get('/app/export', self::ZEITRAUM)->status);
-        $antwort = $this->post('/app/export/zip', self::ZEITRAUM);
+        self::assertSame(403, $this->get('/app/export/lauf/' . $lauf)->status);
+        foreach (['zip', 'bestaetigen', 'zuruecksetzen'] as $aktion) {
+            $antwort = $this->post('/app/export/lauf/' . $lauf . '/' . $aktion, []);
+            self::assertInstanceOf(Response::class, $antwort);
+            self::assertSame(403, $antwort->status, $aktion);
+        }
+        $antwort = $this->post('/app/export/lauf', self::ZEITRAUM);
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(403, $antwort->status);
+    }
+
+    // ------------------------------- export runs (issue #179/M12-4)
+
+    /**
+     * Pflicht-Test "Abbruch": neither a download broken off halfway nor a
+     * complete one marks anything - only the confirmation does. After it,
+     * "nur noch nicht exportierte" leaves the run's receipts out; without
+     * the option they stay in.
+     */
+    public function testOnlyTheConfirmationMarksTheReceiptsAsExported(): void
+    {
+        $this->belege();
+        $lauf = $this->laufAnlegen(self::ZEITRAUM);
+
+        foreach ($this->laufHerunterladen($lauf)->chunks as $stueck) {
+            break; // the connection drops after the first bytes
+        }
+        self::assertSame(['A', 'D', 'B', 'C'], $this->exportiert(['nur_neue' => '1']), 'an aborted download marks nothing');
+        self::bytes($this->laufHerunterladen($lauf));
+        self::assertSame(['A', 'D', 'B', 'C'], $this->exportiert(['nur_neue' => '1']), 'nor does a complete one');
+
+        $this->bestaetigen($lauf);
+        $h = $this->beleg('2025-07-01', lieferant: $this->stamm['stadtwerke']);
+        $this->buchstaben[$h] = 'H';
+
+        self::assertSame(['H'], $this->exportiert(['nur_neue' => '1']), 'only what came after');
+        self::assertSame(['A', 'D', 'B', 'C', 'H'], $this->exportiert([]), 'without the option: everything');
+    }
+
+    public function testNothingNewGivesANoticeInsteadOfARun(): void
+    {
+        $this->belege();
+        $this->bestaetigen($this->laufAnlegen(self::ZEITRAUM));
+        $laeufe = $this->anzahlLaeufe();
+
+        $antwort = $this->post('/app/export/lauf', [...self::ZEITRAUM, 'nur_neue' => '1']);
+
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame('/app/export?von=2025-01-01&bis=2025-12-31&status=geprueft&nur_neue=1', $antwort->headers['Location'] ?? null);
+        self::assertSame($laeufe, $this->anzahlLaeufe());
+        $seite = $this->get('/app/export', [...self::ZEITRAUM, 'nur_neue' => '1'])->body;
+        self::assertStringContainsString('es wurde kein ZIP erstellt', $seite);
+        self::assertStringContainsString('Für diese Auswahl gibt es keine Belege.', $seite);
+        self::assertStringContainsString('<input type="checkbox" name="nur_neue" value="1" checked>', $seite);
+    }
+
+    /**
+     * Pflicht-Test "Idempotenz": a second confirmation (another tab, a
+     * repeated request) changes nothing and writes no second audit entry;
+     * the same for resetting. The audit names the run and the count, never
+     * a name.
+     */
+    public function testConfirmingAndResettingAreIdempotentAndAudited(): void
+    {
+        $this->belege();
+        $lauf = $this->laufAnlegen(self::ZEITRAUM);
+
+        $this->bestaetigen($lauf);
+        self::assertStringContainsString('4 Belege sind als exportiert markiert.', $this->get('/app/export/lauf/' . $lauf)->body);
+        $this->bestaetigen($lauf);
+        self::assertStringContainsString('bereits als exportiert markiert', $this->get('/app/export/lauf/' . $lauf)->body);
+
+        $markiert = $this->audits(AuditAction::ExportMarkiert);
+        self::assertCount(1, $markiert);
+        self::assertSame($this->userId, $markiert[0]->userId);
+        self::assertSame('export_run', $markiert[0]->entity);
+        self::assertSame($lauf, $markiert[0]->entityId);
+        self::assertSame(['belege' => 4], $this->audit->details($markiert[0], $this->tresor));
+        self::assertSame(ExportRunStatus::Bestaetigt, new ExportRunRepository($this->pdo())->find($lauf)?->status);
+
+        $this->zuruecksetzen($lauf);
+        $this->zuruecksetzen($lauf);
+        $zurueck = $this->audits(AuditAction::ExportZurueckgesetzt);
+        self::assertCount(1, $zurueck);
+        self::assertSame($lauf, $zurueck[0]->entityId);
+        self::assertSame(['belege' => 4], $this->audit->details($zurueck[0], $this->tresor));
+        self::assertSame(['A', 'D', 'B', 'C'], $this->exportiert(['nur_neue' => '1']), 'reset: new again');
+
+        $this->bestaetigen($lauf);
+        self::assertCount(1, $this->audits(AuditAction::ExportMarkiert), 'a reset run is not confirmed again');
+        self::assertSame(ExportRunStatus::Zurueckgesetzt, new ExportRunRepository($this->pdo())->find($lauf)?->status);
+    }
+
+    /**
+     * Downloading a run again gives its receipts - even after another
+     * confirmed run took some of them, and although the run was created
+     * with "nur noch nicht exportierte".
+     */
+    public function testARunDownloadsTheSameReceiptsAgain(): void
+    {
+        $this->belege();
+        $erster = $this->laufAnlegen([...self::ZEITRAUM, 'nur_neue' => '1']);
+        $zweiter = $this->laufAnlegen([...self::ZEITRAUM, 'kategorie' => (string) $this->stamm['platzpflege']]);
+        $this->bestaetigen($zweiter);
+
+        self::assertSame(['A', 'D', 'B', 'C'], $this->buchstabenIn($this->laufHerunterladen($erster)));
+        self::assertSame(['D', 'C'], $this->exportiert(['nur_neue' => '1']));
+    }
+
+    /**
+     * Pflicht-Test "Scope": the option works together with the period
+     * scope in SQL, and a scoped role sees only its own runs - a run of
+     * someone else is not found, whatever the request.
+     */
+    public function testRunsAndTheOptionStayWithinTheScope(): void
+    {
+        $b = $this->belege();
+        // Finanzen confirms a run holding B only.
+        $this->bestaetigen($this->laufAnlegen([...self::ZEITRAUM, 'status' => 'festgeschrieben']));
+        $fremd = new ExportRunRepository($this->pdo())->anlegen(self::ZEITRAUM, [$b['C']], 1, 2, $this->andererBenutzer(), new \DateTimeImmutable());
+
+        self::assertSame(200, $this->get('/app/export/lauf/' . $fremd)->status, 'without a scope every run is visible');
+        self::assertStringContainsString('href="/app/export/lauf/' . $fremd . '"', $this->get('/app/export')->body);
+
+        $this->rolle(SystemRole::Steuerberater);
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-05-01'), null);
+
+        self::assertSame(['C'], $this->exportiert(['nur_neue' => '1']), 'B was exported, A and D lie outside the scope');
+        self::assertSame(404, $this->get('/app/export/lauf/' . $fremd)->status);
+        self::assertStringNotContainsString('href="/app/export/lauf/' . $fremd . '"', $this->get('/app/export')->body);
+        foreach (['zip', 'bestaetigen'] as $aktion) {
+            $antwort = $this->post('/app/export/lauf/' . $fremd . '/' . $aktion, []);
+            self::assertInstanceOf(Response::class, $antwort);
+            self::assertSame(404, $antwort->status, $aktion);
+        }
+        self::assertSame(ExportRunStatus::Offen, new ExportRunRepository($this->pdo())->find($fremd)?->status);
+    }
+
+    public function testTheRunPageLeadsThroughDownloadAndConfirmation(): void
+    {
+        $this->belege();
+        $lauf = $this->laufAnlegen(self::ZEITRAUM);
+        $pfad = '/app/export/lauf/' . $lauf;
+
+        $seite = $this->get($pfad);
+        self::assertSame(200, $seite->status);
+        self::assertStringContainsString('<code>Belege_2025.zip</code>', $seite->body);
+        self::assertStringContainsString('<strong>4 Belege</strong>', $seite->body);
+        self::assertStringContainsString('<form method="post" action="' . $pfad . '/zip"', $seite->body);
+        self::assertStringContainsString('<form method="post" action="' . $pfad . '/bestaetigen"', $seite->body);
+        self::assertStringNotContainsString('/zuruecksetzen', $seite->body);
+        self::assertStringNotContainsString('Bauhaus', $seite->body, 'structure only on this page');
+
+        $ohneTresor = $this->get($pfad, entsperrt: false);
+        self::assertStringNotContainsString('action="' . $pfad . '/zip"', $ohneTresor->body);
+        self::assertStringContainsString('action="' . $pfad . '/bestaetigen"', $ohneTresor->body, 'confirming needs no vault');
+
+        $this->bestaetigen($lauf);
+        $seite = $this->get($pfad);
+        self::assertStringContainsString('<form method="post" action="' . $pfad . '/zuruecksetzen"', $seite->body);
+        self::assertStringNotContainsString('/bestaetigen', $seite->body);
+
+        $liste = $this->get('/app/export')->body;
+        self::assertStringContainsString('<a href="' . $pfad . '">', $liste);
+        self::assertStringContainsString('marke-ok">Exportiert</span>', $liste);
+
+        self::assertSame(404, $this->get('/app/export/lauf/999999')->status);
+    }
+
+    public function testTheRunRoutesNeedTheCsrfToken(): void
+    {
+        $this->belege();
+        $lauf = $this->laufAnlegen(self::ZEITRAUM);
+
+        foreach (['zip', 'bestaetigen', 'zuruecksetzen'] as $aktion) {
+            new Session()->start();
+            $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/lauf/' . $lauf . '/' . $aktion, cookies: $this->tresorCookie(), ip: self::IP));
+            self::assertInstanceOf(Response::class, $antwort, $aktion);
+            self::assertSame(302, $antwort->status, $aktion);
+        }
+        self::assertSame(ExportRunStatus::Offen, new ExportRunRepository($this->pdo())->find($lauf)?->status);
+        self::assertSame([], $this->exportAudits());
+        self::assertSame([], $this->audits(AuditAction::ExportMarkiert));
     }
 
     // ------------------------------------------------------ helpers
@@ -644,13 +832,23 @@ final class ExportZipFlowTest extends DatabaseTestCase
      */
     private function exportiert(array $felder): array
     {
+        return $this->buchstabenIn($this->download([...self::ZEITRAUM, ...$felder]));
+    }
+
+    /**
+     * The letters (see belege()) of the receipts in a downloaded ZIP.
+     *
+     * @return list<string>
+     */
+    private function buchstabenIn(StreamResponse $antwort): array
+    {
         $nachInhalt = [];
         foreach ($this->buchstaben as $id => $buchstabe) {
             $nachInhalt[$this->pdfInhalt($id)] = $buchstabe;
         }
 
         $buchstaben = [];
-        foreach (ZipLeser::inhalte(self::bytes($this->download([...self::ZEITRAUM, ...$felder]))) as $name => $inhalt) {
+        foreach (ZipLeser::inhalte(self::bytes($antwort)) as $name => $inhalt) {
             if (!str_ends_with($name, '/index.csv')) {
                 $buchstaben[] = $nachInhalt[$inhalt] ?? 'unbekannt: ' . $name;
             }
@@ -659,14 +857,57 @@ final class ExportZipFlowTest extends DatabaseTestCase
         return $buchstaben;
     }
 
+    private function bestaetigen(int $lauf): void
+    {
+        $antwort = $this->post('/app/export/lauf/' . $lauf . '/bestaetigen', []);
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame('/app/export/lauf/' . $lauf, $antwort->headers['Location'] ?? null);
+    }
+
+    private function zuruecksetzen(int $lauf): void
+    {
+        $antwort = $this->post('/app/export/lauf/' . $lauf . '/zuruecksetzen', []);
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame('/app/export/lauf/' . $lauf, $antwort->headers['Location'] ?? null);
+    }
+
+    private function anzahlLaeufe(): int
+    {
+        return (int) $this->pdo()->query('SELECT COUNT(*) FROM export_run')->fetchColumn();
+    }
+
+    private function letzterLauf(): int
+    {
+        return (int) $this->pdo()->query('SELECT MAX(id) FROM export_run')->fetchColumn();
+    }
+
+    private function andererBenutzer(): int
+    {
+        return new UserRepository($this->pdo())->insert(
+            $this->crypto->encrypt('kasse@example.org'),
+            random_bytes(32),
+            $this->crypto->encrypt('Klara Kasse'),
+            'hash',
+            mfaRequired: false,
+        );
+    }
+
     /**
      * @return list<\App\Domain\AuditEntry>
      */
     private function exportAudits(): array
     {
+        return $this->audits(AuditAction::ExportErstellt);
+    }
+
+    /**
+     * @return list<\App\Domain\AuditEntry>
+     */
+    private function audits(AuditAction $aktion): array
+    {
         return array_values(array_filter(
             new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 50),
-            static fn(\App\Domain\AuditEntry $e): bool => $e->action === AuditAction::ExportErstellt->value,
+            static fn(\App\Domain\AuditEntry $e): bool => $e->action === $aktion->value,
         ));
     }
 
@@ -723,7 +964,28 @@ final class ExportZipFlowTest extends DatabaseTestCase
      */
     private function download(array $felder): StreamResponse
     {
-        $antwort = $this->post('/app/export/zip', $felder);
+        return $this->laufHerunterladen($this->laufAnlegen($felder));
+    }
+
+    /**
+     * "Export erstellen": the run's id from the redirect to its page.
+     *
+     * @param array<string, string> $felder
+     */
+    private function laufAnlegen(array $felder): int
+    {
+        $antwort = $this->post('/app/export/lauf', $felder);
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame(302, $antwort->status);
+        $ziel = $antwort->headers['Location'] ?? '';
+        self::assertMatchesRegularExpression('#^/app/export/lauf/\d+$#', $ziel, 'on to the run\'s page');
+
+        return (int) substr($ziel, strlen('/app/export/lauf/'));
+    }
+
+    private function laufHerunterladen(int $lauf): StreamResponse
+    {
+        $antwort = $this->post('/app/export/lauf/' . $lauf . '/zip', []);
         self::assertInstanceOf(StreamResponse::class, $antwort, 'the download streams');
 
         return $antwort;
@@ -796,6 +1058,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
                 new Session(),
                 new SessionVault(),
                 new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), new FileLogger($this->logDatei())),
+                new ExportRunRepository($pdo),
                 $kategorien,
                 $kostenstellen,
                 $this->audit,

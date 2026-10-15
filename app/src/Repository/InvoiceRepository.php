@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repository;
 
 use App\Domain\DocumentStatus;
+use App\Domain\ExportRunStatus;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\Zugriffsbereich;
@@ -194,9 +195,16 @@ final readonly class InvoiceRepository
      * fixed order - receipt date, then id - so the same filter gives the
      * same file names on every run (App\Service\Export\PfadVergabe).
      *
+     * "Nur noch nicht exportierte" (issue #179/M12-4) leaves out every
+     * document a confirmed export run holds. With $lauf the list is that
+     * run's documents instead - so downloading a run again gives the same
+     * receipts, even after another run confirmed some of them.
+     *
+     * @param int|null $lauf an `export_run` id
+     *
      * @return list<ExportBeleg>
      */
-    public function exportListe(ExportFilter $filter, Zugriffsbereich $bereich): array
+    public function exportListe(ExportFilter $filter, Zugriffsbereich $bereich, ?int $lauf = null): array
     {
         $status = $filter->status->statusse();
         $bedingungen = [
@@ -217,6 +225,15 @@ final readonly class InvoiceRepository
                 $bedingungen[] = $spalte . ' = ?';
                 $parameter[] = $id;
             }
+        }
+
+        if ($lauf !== null) {
+            $bedingungen[] = 'd.id IN (SELECT erd.document_id FROM export_run_document erd WHERE erd.export_run_id = ?)';
+            $parameter[] = $lauf;
+        } elseif ($filter->nurNeue) {
+            $bedingungen[] = 'NOT EXISTS (SELECT 1 FROM export_run_document erd JOIN export_run r ON r.id = erd.export_run_id
+                                          WHERE erd.document_id = d.id AND r.status = ?)';
+            $parameter[] = ExportRunStatus::Bestaetigt->value;
         }
 
         [$scope, $scopeParameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');

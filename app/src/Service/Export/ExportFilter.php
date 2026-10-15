@@ -8,7 +8,9 @@ namespace App\Service\Export;
  * The filters of the ZIP export /app/export (issue #76/M12-2,
  * docs/spec/05-auswertung-und-export.md section 2): period (default: the
  * current business year = calendar year, E-16), status, category, cost
- * center, supplier, and whether the originals come along. All of it is
+ * center, supplier, whether the originals come along, and whether only
+ * receipts not yet exported count (issue #179/M12-4: no confirmed export
+ * run holds them, App\Domain\ExportRunStatus). All of it is
  * plaintext structure and filters in SQL
  * (App\Repository\InvoiceRepository::exportListe()) - ids and dates only,
  * so the filter may travel in the page's URL and into the audit log.
@@ -29,6 +31,7 @@ final readonly class ExportFilter
         public ?int $kostenstelleId = null,
         public ?int $lieferantId = null,
         public bool $originale = false,
+        public bool $nurNeue = false,
     ) {
     }
 
@@ -66,6 +69,7 @@ final readonly class ExportFilter
             kostenstelleId: $auswahl('kostenstelle'),
             lieferantId: $auswahl('lieferant'),
             originale: $text('originale') === '1',
+            nurNeue: $text('nur_neue') === '1',
         );
     }
 
@@ -97,6 +101,7 @@ final readonly class ExportFilter
             'kostenstelle' => $auswahl($this->kostenstelleId),
             'lieferant' => $auswahl($this->lieferantId),
             'originale' => $this->originale ? '1' : '',
+            'nur_neue' => $this->nurNeue ? '1' : '',
         ];
     }
 
@@ -116,6 +121,7 @@ final readonly class ExportFilter
             'kostenstelle' => $this->kostenstelleId,
             'lieferant' => $this->lieferantId,
             'originale' => $this->originale,
+            'nur_neue' => $this->nurNeue,
         ];
     }
 }

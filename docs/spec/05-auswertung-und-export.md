@@ -113,9 +113,11 @@ leer → Ebene entfällt).
     `export.zip`, aber keinen Admin-Bereich.
     - `GET /app/export` zeigt das Filterformular und eine Vorschau (Anzahl
       Belege und Dateien, Größe, ZIP-Name).
-    - `POST /app/export/zip` lädt herunter: CSRF, entsperrter Tresor, Audit
-      `export.erstellt` (Details: Filter-IDs/Daten, Anzahl Belege und
-      Dateien – nie Namen). Der Filter steht als Hidden Fields im Formular.
+    - Der Download (seit M12-4 `POST /app/export/lauf/{id}/zip`, siehe
+      unten) braucht CSRF und einen entsperrten Tresor. Er schreibt Audit
+      `export.erstellt` mit Filter-IDs/Daten, Lauf-ID und der Anzahl Belege
+      und Dateien, nie Namen. Der Filter steht als Hidden Fields im
+      Formular.
     - Der Zeitraum-Scope externer Rollen greift auf das Belegdatum in SQL
       (`InvoiceRepository::exportListe()`, sortiert nach Belegdatum, ID).
       Die Lieferanten-Auswahl zeigt nur Lieferanten von Belegen im Scope
@@ -182,9 +184,54 @@ leer → Ebene entfällt).
     - Wird eine Datei mitten im Strom unlesbar, endet der Strom ohne
       Central Directory: Das ZIP ist erkennbar defekt, nie still
       unvollständig. Das Log enthält nur Klasse und Meldung.
-  - **Offen:** Die Option „nur noch nicht exportierte“ braucht eine
-    Export-Markierung (Migration) und muss klären, wann ein abgebrochener
-    Download als exportiert gilt. Dafür gibt es Issue #179 (M12-4).
+- **Umsetzung „nur noch nicht exportierte“ (M12-4, issue #179):**
+  - **Semantik:** Der Server streamt das ZIP und erfährt nicht, ob der
+    Download vollständig ankam. Deshalb ist jeder Export ein
+    **Export-Lauf** (`export_run` + `export_run_document`, Migration 029,
+    nur Klartext-Struktur). Ein Beleg gilt als exportiert, sobald ein
+    Lauf mit ihm **bestätigt** ist („Vollständig gespeichert – als
+    exportiert markieren“). Ein abgebrochener oder nie bestätigter Download
+    markiert nichts. Verworfen wurden:
+    - eine Markierung am Ende des Streams, weil ein Abbruch nach dem letzten
+      Byte unbemerkt bliebe;
+    - ein Lauf nur in der Session, weil er weder nachvollziehbar noch
+      rücksetzbar wäre.
+  - **Reichweite:** Die Markierung gilt **für den ganzen Verein**, nicht je
+    Benutzer. Wer nur zum Ansehen exportiert (Kassenprüfer, Steuerberater),
+    bestätigt nicht.
+  - **Ablauf:**
+    - „Export erstellen“ (`POST /app/export/lauf`) prüft wie bisher
+      Tresor, Leere und Größe. Dann legt es den Lauf (`offen`) mit den
+      Dokument-IDs der Vorschau an und leitet auf die Laufseite
+      `GET /app/export/lauf/{id}`.
+    - Dort lädt `POST …/zip` das ZIP herunter, beliebig oft. Jeder Download
+      schreibt Audit `export.erstellt` mit Lauf-ID. Ein erneuter Download
+      liefert die Belege des Laufs (ohne „nur neue“), auch wenn ein anderer
+      Lauf sie inzwischen bestätigt hat. Der aktuelle Scope greift trotzdem.
+    - `POST …/bestaetigen` (`offen` → `bestaetigt`) schreibt Audit
+      `export.markiert`, `POST …/zuruecksetzen` (`bestaetigt` →
+      `zurueckgesetzt`) schreibt `export.zurueckgesetzt`. Beide Einträge
+      nennen den Lauf (`entity` `export_run`) und die Anzahl Belege, nie
+      Namen.
+    - Beide Wechsel sind idempotent: Das bedingte UPDATE nennt den
+      Ausgangsstatus, ein zweiter Klick ändert nichts und schreibt kein
+      zweites Audit.
+    - Ein zurückgesetzter Lauf wird nicht erneut bestätigt; dafür gibt es
+      einen neuen Export.
+    - Bestätigen und Zurücksetzen brauchen keinen Tresor (nur IDs),
+      Erstellen und Herunterladen schon.
+  - **Filter:** Die Option `nur_neue` lässt in SQL jedes Dokument weg, das
+    ein `bestaetigt`er Lauf enthält (`NOT EXISTS`, zusammen mit Zeitraum-Scope
+    und übrigen Filtern, `InvoiceRepository::exportListe()`). Wer einen Lauf
+    zurücksetzt, macht dessen Belege wieder „neu“ – außer ein anderer
+    bestätigter Lauf enthält sie auch.
+  - **Sichtbarkeit:** `/app/export` listet die letzten 10 Läufe. Sichtbar
+    sind die eigenen; wer `export.zip` ohne Scope hat, sieht alle. Für
+    Laufseite, Download, Bestätigen und Zurücksetzen gilt dieselbe Regel,
+    sonst antwortet der Server mit 404. Ein Steuerberater mit Zeitraum-Scope
+    sieht so nur seine eigenen Läufe. Alle Routen verlangen `export.zip`.
+  - Offene Läufe bleiben als Verlauf stehen. Sie markieren nichts, ein
+    Aufräumen ist nicht nötig.
 
 ## 3. Archiv-Import (Bestandsdaten)
 
@@ -313,3 +360,12 @@ wiederholtem Schritt. Umgesetzt (M12-3): `tests/Service/Archiv/`
 `ArchivVorgabeTest`), `tests/Integration/ArchivImportFlowTest.php`
 (ganzer Ablauf, Idempotenz, kein Klartext in `var/tmp` nach dem Import),
 Prüfseite in `PruefungFlowTest`, `tests/js/archivimport.test.js`.
+Umgesetzt (M12-2/M12-4): `tests/Integration/ExportZipFlowTest.php` –
+gültiges ZIP mit genau den gefilterten Belegen, kein Klartext in `var/tmp`.
+Für „nur noch nicht exportierte“ prüft er:
+- **Abbruch:** Ein abgebrochener oder unbestätigter Download markiert nichts.
+- **Idempotenz:** Doppeltes Bestätigen bzw. Zurücksetzen schreibt je ein Audit.
+- **Wiederholung:** Ein erneuter Download eines Laufs liefert dessen Belege.
+- **Scope:** Die Option wirkt zusammen mit dem Zeitraum-Scope; fremde Läufe
+  ergeben 404 für eingeschränkte Rollen.
+- **CSRF** ist auf allen Lauf-Routen Pflicht.

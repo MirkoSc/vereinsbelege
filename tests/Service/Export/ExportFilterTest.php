@@ -33,6 +33,7 @@ final class ExportFilterTest extends TestCase
         self::assertNull($filter->kostenstelleId);
         self::assertNull($filter->lieferantId);
         self::assertFalse($filter->originale);
+        self::assertFalse($filter->nurNeue, 'every receipt, exported before or not');
         self::assertNull($filter->fehler());
     }
 
@@ -46,6 +47,7 @@ final class ExportFilterTest extends TestCase
             'kostenstelle' => ExportFilter::OHNE,
             'lieferant' => ' 12 ',
             'originale' => '1',
+            'nur_neue' => '1',
         ], $this->heute);
 
         self::assertSame('2026-01-01', $filter->von->format('Y-m-d'));
@@ -55,6 +57,7 @@ final class ExportFilterTest extends TestCase
         self::assertSame(0, $filter->kostenstelleId, '"ohne" means none assigned');
         self::assertSame(12, $filter->lieferantId);
         self::assertTrue($filter->originale);
+        self::assertTrue($filter->nurNeue);
     }
 
     public function testMalformedValuesFallBackToTheDefault(): void
@@ -67,6 +70,7 @@ final class ExportFilterTest extends TestCase
             'kostenstelle' => '-3',
             'lieferant' => '1 OR 1=1',
             'originale' => 'ja',
+            'nur_neue' => 'true',
         ], $this->heute);
 
         self::assertEquals(ExportFilter::ausFeldern([], $this->heute), $filter);
@@ -86,6 +90,7 @@ final class ExportFilterTest extends TestCase
             ExportFilter::ausFeldern([], $this->heute),
             new ExportFilter(new \DateTimeImmutable('2025-01-01 00:00:00'), new \DateTimeImmutable('2025-12-31 00:00:00'), ExportStatus::Festgeschrieben, 0, 3, 0, true),
             new ExportFilter(new \DateTimeImmutable('2026-04-01 00:00:00'), new \DateTimeImmutable('2026-06-30 00:00:00'), ExportStatus::Alle, 4, null, 9),
+            new ExportFilter(new \DateTimeImmutable('2026-01-01 00:00:00'), new \DateTimeImmutable('2026-12-31 00:00:00'), nurNeue: true),
         ] as $filter) {
             self::assertEquals($filter, ExportFilter::ausFeldern($filter->alsFelder(), $this->heute));
         }
@@ -93,7 +98,7 @@ final class ExportFilterTest extends TestCase
 
     public function testTheAuditDetailsHoldIdsAndDatesOnly(): void
     {
-        $filter = new ExportFilter(new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31'), ExportStatus::Alle, 4, 0, 9, true);
+        $filter = new ExportFilter(new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31'), ExportStatus::Alle, 4, 0, 9, true, true);
 
         self::assertSame([
             'von' => '2026-01-01',
@@ -103,6 +108,7 @@ final class ExportFilterTest extends TestCase
             'kostenstelle' => 0,
             'lieferant' => 9,
             'originale' => true,
+            'nur_neue' => true,
         ], $filter->auditDetails());
     }
 
