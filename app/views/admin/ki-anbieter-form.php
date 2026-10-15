@@ -76,6 +76,9 @@ $ziel = $neu ? '/admin/ki-anbieter' : '/admin/ki-anbieter/' . $profil->id;
 
         <fieldset>
             <legend>Fähigkeiten des Modells</legend>
+            <p class="feld-hilfe">
+                „Verbindung testen“ ermittelt Bilder und JSON-Schema selbst und trägt das Ergebnis hier ein.
+            </p>
 
             <label class="feld-ankreuz">
                 <input type="checkbox" name="vision" value="1" <?= $felder['vision'] ? 'checked' : '' ?>>

@@ -199,8 +199,10 @@ final readonly class KiAnbieterController
     }
 
     /**
-     * One short call to the provider (App\Service\Ki\Verbindungstest), the
-     * outcome as flash message. Not audited: it changes nothing.
+     * Two short probes against the provider (App\Service\Ki\Verbindungstest),
+     * the outcome as flash message. What they found out (pictures, JSON
+     * schema) is written into the profile; that is audited like any other
+     * change of the profile, a test that changes nothing is not.
      *
      * @param array<string, string> $params
      */
@@ -227,8 +229,20 @@ final readonly class KiAnbieterController
         }
 
         $ergebnis = $this->verbindungstest->pruefe($profil, $apiKey ?? '');
+        $text = $ergebnis->text();
+        if ($ergebnis->erkannt !== null) {
+            $geaendert = $this->service->faehigkeitenUebernehmen($id, $ergebnis->erkannt);
+            if ($geaendert !== []) {
+                $this->audit->record(AuditAction::KiAnbieterGeaendert, $this->session->userId(), $request->ip, $id, [
+                    ...self::details($this->anbieter->find($id) ?? $profil),
+                    'felder' => ['faehigkeiten'],
+                    'quelle' => 'verbindungstest',
+                ]);
+                $text .= ' · Ins Profil übernommen: ' . implode(', ', array_map(self::faehigkeitName(...), $geaendert)) . '.';
+            }
+        }
         $this->session->flash(
-            sprintf('„%s“: %s', $profil->name, $ergebnis->text()),
+            sprintf('„%s“: %s', $profil->name, $text),
             $ergebnis->ok ? FlashArt::Ok : FlashArt::Fehler,
         );
 
@@ -331,6 +345,15 @@ final readonly class KiAnbieterController
             'aktiv' => $vorher->active !== $nachher->active,
             'api_key' => $neuerKey !== null && ($neuerKey !== '' || $vorher->keyGesetzt),
         ]));
+    }
+
+    private static function faehigkeitName(string $feld): string
+    {
+        return match ($feld) {
+            'vision' => 'Bilder',
+            'json_schema' => 'JSON-Schema',
+            default => 'Bilder je Aufruf',
+        };
     }
 
     private static function text(Request $request, string $feld): string

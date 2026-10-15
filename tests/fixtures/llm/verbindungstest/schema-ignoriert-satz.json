@@ -1,0 +1,1 @@
+{"id":"msg_test0011","object":"chat.completion","created":1790000000,"model":"claude-sonnet-5-5","choices":[{"index":0,"message":{"role":"assistant","content":"An einem klaren Tag ist der Himmel blau."},"finish_reason":"stop"}],"usage":{"prompt_tokens":48,"completion_tokens":14,"total_tokens":62}}
