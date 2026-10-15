@@ -48,9 +48,12 @@ use App\Repository\VaultRepository;
 use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
+use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
+use App\Service\Crypto\FieldCipher;
+use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatpruefung;
@@ -1014,6 +1017,60 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertMatchesRegularExpression('/<option value="' . $zahler . '" selected>/', $seite->body);
     }
 
+    // ------------------------------------ archive import (M12-3, #77)
+
+    public function testWhatTheArchivePathSaidFillsTheForm(): void
+    {
+        $lieferant = $this->lieferant('Kiosk am Platz', SupplierRole::Lieferant);
+        $id = $this->beleg(quelle: DocumentSource::Archiv);
+        $this->vorgabe($id, new ArchivVorgabe(
+            pfad: '2026/02. Februar/Kasse/Kiosk am Platz 05.02.2026.pdf',
+            lieferantId: $lieferant,
+            lieferantName: 'Kiosk am Platz',
+            datum: new \DateTimeImmutable('2026-02-05'),
+            kategorieId: $this->ausgabeKategorie,
+            kasse: true,
+            hinweise: ['Der Ordner „03“ passt nicht zum Datum 05.02.2026 im Dateinamen.'],
+        ));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertSame(200, $seite->status);
+        self::assertMatchesRegularExpression('/name="datum"[^>]*value="2026-02-05"/', $seite->body);
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite->body);
+        self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '"[^>]* selected/', $seite->body);
+        self::assertStringContainsString('aus dem Archiv vorbelegt', $seite->body);
+        self::assertStringContainsString('Aus dem Archiv-Import: „2026/02. Februar/Kasse/Kiosk am Platz 05.02.2026.pdf“.', $seite->body);
+        self::assertStringContainsString('Archiv: Ordner „Kasse“ – bar bezahlt.', $seite->body);
+        self::assertStringContainsString('Der Ordner „03“ passt nicht zum Datum 05.02.2026 im Dateinamen.', $seite->body);
+        self::assertSame(0, $this->anzahlBelege(), 'a suggestion until a person saves it');
+
+        $this->post('/app/belege/pruefen/' . $id, $this->felder(['datum' => '2026-02-05', 'lieferant' => (string) $lieferant]));
+        self::assertStringNotContainsString('aus dem Archiv vorbelegt', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'once saved, the receipt is what counts');
+    }
+
+    public function testTheArchiveBeatsTheEInvoiceAndSaysWhereTheyDiffer(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-cii.xml'), MagicBytes::XML]], quelle: DocumentSource::Archiv);
+        $this->eRechnungLesen();
+        $lieferant = $this->lieferant('Muster Sport', SupplierRole::Lieferant);
+        $this->vorgabe($id, new ArchivVorgabe(
+            pfad: 'Muster Sport 14.09.2026.pdf',
+            lieferantId: $lieferant,
+            lieferantName: 'Muster Sport',
+            datum: new \DateTimeImmutable('2026-09-14'),
+        ));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertMatchesRegularExpression('/name="datum"[^>]*value="2026-09-14"/', $seite->body, 'the archive wins');
+        self::assertMatchesRegularExpression('/name="nummer"[^>]*value="RE-2026-0042"/', $seite->body, 'what the archive does not know stays');
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite->body);
+        self::assertDoesNotMatchRegularExpression('/name="lieferant_neu_name"[^>]*value="[^"]+"/', $seite->body);
+        self::assertStringContainsString('Archiv: Datum 14.09.2026, E-Rechnung: 15.09.2026 – Archivwert übernommen.', $seite->body);
+        self::assertStringContainsString('Archiv: Lieferant „Muster Sport“, E-Rechnung nennt einen anderen – Archivwert übernommen.', $seite->body);
+    }
+
     public function testAnEInvoiceThatCouldNotBeReadAsksForManualCapture(): void
     {
         $id = $this->beleg(seiten: [[self::eRechnung('zugferd-1.xml'), MagicBytes::XML]]);
@@ -1170,6 +1227,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         ?int $kostenstelle = null,
         ?\DateTimeImmutable $erstellt = null,
         ?array $seiten = null,
+        DocumentSource $quelle = DocumentSource::Intern,
     ): int {
         $seiten ??= [[FakeJpeg::bauen(10, 10), MagicBytes::JPEG]];
         $blobIds = [];
@@ -1179,7 +1237,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         ++$this->laufnummer;
 
         return new DocumentRepository($this->pdo())->insert(
-            DocumentSource::Intern,
+            $quelle,
             null,
             $blobIds,
             $this->tresor->sealDataKey(DataKey::generate()),
@@ -1188,6 +1246,15 @@ final class PruefungFlowTest extends DatabaseTestCase
             costCenterId: $kostenstelle,
             createdBy: $this->userId,
         );
+    }
+
+    /** The `vorgabe` artifact the archive import writes with a document (issue #77/M12-3). */
+    private function vorgabe(int $documentId, ArchivVorgabe $vorgabe): void
+    {
+        $artefakte = new DocumentArtifactRepository($this->pdo());
+        $schluessel = DataKey::generate();
+        $id = $artefakte->insert($documentId, ArtifactKind::Vorgabe, 0, null, $this->tresor->sealDataKey($schluessel), null, JobExecutor::Session, null, new \DateTimeImmutable());
+        $artefakte->setzeDaten($id, FieldCipher::encrypt($schluessel, (string) json_encode($vorgabe->toArray()), new FieldContext('document_artifact', $id, 'data_enc')));
     }
 
     /** Runs `extract_text` for every queued document, as a signed-in session would. */
@@ -1478,7 +1545,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the review page 27th.
-        $controller = array_fill(0, 36, $unerreichbar);
+        $controller = array_fill(0, 37, $unerreichbar);
         $controller[1] = $guard;
         $controller[26] = $pruefung;
 

@@ -145,6 +145,58 @@ final readonly class SupplierService
     }
 
     /**
+     * The suppliers a name or alias belongs to, among those of the given
+     * roles - the same normalisation as the keys (legal form, umlauts and
+     * case aside), so "BAUHAUS GmbH & Co. KG" finds "Bauhaus". For the
+     * archive import (issue #77/M12-3): 0 means new, 1 a match, more an
+     * ambiguous name nobody should guess at.
+     *
+     * @param list<SupplierRole> $rollen
+     * @return list<int>
+     */
+    public function idsZuNamen(Vault $vault, string $name, array $rollen): array
+    {
+        $normal = SupplierKeys::name($name);
+        if ($normal === '') {
+            return [];
+        }
+
+        $ids = $this->lieferanten->idsWithKey(SupplierKeyKind::Name, $vault->blindIndex()->forValue(SupplierKeyKind::Name->purpose(), $normal));
+
+        return array_values(array_filter($ids, function (int $id) use ($rollen): bool {
+            $record = $this->lieferanten->find($id);
+
+            return $record !== null && in_array($record->role, $rollen, true);
+        }));
+    }
+
+    /**
+     * Creates a supplier or payer with nothing but its name, marked as
+     * coming from the archive import (issue #77/M12-3). Opens no transaction
+     * of its own: the import writes it together with the document it was
+     * read for, so a step that rolls back leaves no supplier behind. The
+     * caller writes the audit entry once the transaction is committed.
+     *
+     * @throws SupplierRuleViolation a name the form would refuse as well
+     */
+    public function anlegenAusArchiv(Vault $vault, string $name, SupplierRole $rolle, \DateTimeImmutable $now): int
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new \LogicException('anlegenAusArchiv() runs inside the caller\'s transaction.');
+        }
+
+        [$rolle, $kategorie, $daten] = $this->pruefe(['name' => $name, 'rolle' => $rolle->value], null);
+        $keys = $this->keys($vault, $daten);
+
+        $key = DataKey::generate();
+        $id = $this->lieferanten->insert($rolle, $kategorie, SupplierOrigin::Archiv, $vault->sealDataKey($key), $now);
+        $this->lieferanten->setData($id, self::verschluesseln($key, $id, $daten));
+        $this->lieferanten->replaceKeys($id, $keys);
+
+        return $id;
+    }
+
+    /**
      * @param array<string, string> $felder
      *
      * @throws SupplierRuleViolation

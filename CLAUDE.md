@@ -95,7 +95,8 @@ Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
 - **Anwenderseite** (`/app/...`): Posteingang, Belege, Lieferanten, Konten,
   Abgleich, Auswertungen, ZIP-Export (`export.zip`), Audit-Log
   (`audit.view`) – beide auch für Vorstand und Kassenprüfer, die kein
-  `admin.*`-Recht haben – je nach Rolle.
+  `admin.*`-Recht haben –, Archiv-Import (`archive.import`) – je nach
+  Rolle.
 - **Adminseite** (`/admin/...`): Benutzer, Rollen, Tresor-Freigaben,
   KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
   Update, Systemcheck.

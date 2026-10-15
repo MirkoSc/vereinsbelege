@@ -805,7 +805,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the export last (36th).
-        $controller = array_fill(0, 36, $unerreichbar);
+        $controller = array_fill(0, 37, $unerreichbar);
         $controller[1] = $guard;
         $controller[35] = $export;
 

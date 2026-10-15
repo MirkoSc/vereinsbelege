@@ -21,6 +21,7 @@ use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
 use App\App\AccountController;
+use App\App\ArchivImportController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
@@ -161,6 +162,9 @@ use App\View\View;
  *        (issue #64/M9-6).
  * @param \Closure(): ExportController $export built lazily, same reason as
  *        $mail: only the ZIP export needs the database (issue #76/M12-2).
+ * @param \Closure(): ArchivImportController $archivImport built lazily, same
+ *        reason as $mail: only the archive import needs the database (issue
+ *        #77/M12-3).
  */
 return static function (
     Router $router,
@@ -201,6 +205,7 @@ return static function (
     \Closure $buchungen,
     \Closure $buchungsregeln,
     \Closure $export,
+    \Closure $archivImport,
 ): void {
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -590,6 +595,26 @@ return static function (
     $exportZip = Zugriff::recht(Permission::ExportZip);
     $get('/app/export', $exportZip, static fn(Request $r) => $export()->seite($r));
     $post('/app/export/zip', $exportZip, static fn(Request $r) => $export()->zip($r));
+
+    // Archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
+    // export.md section 3). Permission: `archive.import` (Admin, Finanzen)
+    // on every route. The ZIP arrives through the chunk upload under its own
+    // prefix (larger limit, finish() checks a ZIP instead of a receipt) →
+    // preview (nothing written) → start → the page drives the step chain one
+    // POST at a time. The upload routes and `…/schritt` answer JSON, hence
+    // alsApi(). CSRF on every POST; without the unlocked vault nothing is
+    // read or written (App\App\ArchivImportController).
+    $archiv = Zugriff::recht(Permission::ArchiveImport);
+    $archivApi = Zugriff::recht(Permission::ArchiveImport)->alsApi();
+    $get('/app/archiv-import', $archiv, static fn(Request $r) => $archivImport()->start($r));
+    $post('/app/archiv-import/upload', $archivApi, static fn(Request $r) => $archivImport()->uploadOeffnen($r));
+    $post('/app/archiv-import/upload/{id:[0-9a-f]+}/chunk/{n:\d+}', $archivApi, static fn(Request $r, array $params) => $archivImport()->uploadChunk($r, $params));
+    $post('/app/archiv-import/upload/{id:[0-9a-f]+}/finish', $archivApi, static fn(Request $r, array $params) => $archivImport()->uploadAbschliessen($r, $params));
+    $post('/app/archiv-import/upload/{id:[0-9a-f]+}/abort', $archivApi, static fn(Request $r, array $params) => $archivImport()->uploadAbbrechen($r, $params));
+    $get('/app/archiv-import/{id:\d+}', $archiv, static fn(Request $r, array $params) => $archivImport()->ansicht($r, $params));
+    $post('/app/archiv-import/{id:\d+}/starten', $archiv, static fn(Request $r, array $params) => $archivImport()->starten($r, $params));
+    $post('/app/archiv-import/{id:\d+}/schritt', $archivApi, static fn(Request $r, array $params) => $archivImport()->schritt($r, $params));
+    $post('/app/archiv-import/{id:\d+}/verwerfen', $archiv, static fn(Request $r, array $params) => $archivImport()->verwerfen($r, $params));
 
     // Permission: any `admin.*` right; sends the account to the first admin
     // page it may open (App\View\Area::adminStartFuer()).
