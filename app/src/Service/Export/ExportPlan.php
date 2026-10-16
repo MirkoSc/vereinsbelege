@@ -17,9 +17,13 @@ namespace App\Service\Export;
  */
 final readonly class ExportPlan
 {
+    public int $anzahlBelege;
+
     /**
      * @param list<array{pfad: string, blobId: int, stufe: int}> $eintraege
      *        in the order they go into the ZIP
+     * @param list<int> $documentIds the receipts' documents, in ZIP order -
+     *        what an export run records (issue #179/M12-4)
      * @param int $groesse plaintext bytes of all files (`file_blob.size`)
      * @param int $fehlend files of matching receipts that could not be
      *        exported - blob missing or never finished; index.csv says so
@@ -29,10 +33,11 @@ final readonly class ExportPlan
         public string $indexPfad,
         public string $indexCsv,
         public array $eintraege,
-        public int $anzahlBelege,
+        public array $documentIds,
         public int $groesse,
         public int $fehlend,
     ) {
+        $this->anzahlBelege = count($documentIds);
     }
 
     /** The download name: the period only, never business data (05 section 2). */

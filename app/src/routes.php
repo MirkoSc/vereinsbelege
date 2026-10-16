@@ -589,12 +589,18 @@ return static function (
     // ZIP export (issue #76/M12-2, docs/spec/05-auswertung-und-export.md
     // section 2). Permission: `export.zip` - on the user side, because the
     // board, the auditors and the tax advisor hold it without the admin
-    // area; the period scope narrows it in SQL. The download is a POST with
-    // CSRF (it writes the audit log) and needs the unlocked vault
+    // area; the period scope narrows it in SQL. Every export is a run
+    // (issue #179/M12-4): created from the filter, downloaded from its page,
+    // and only a confirmation marks its receipts as exported. Every POST
+    // carries CSRF; creating and downloading need the unlocked vault
     // (App\App\ExportController).
     $exportZip = Zugriff::recht(Permission::ExportZip);
     $get('/app/export', $exportZip, static fn(Request $r) => $export()->seite($r));
-    $post('/app/export/zip', $exportZip, static fn(Request $r) => $export()->zip($r));
+    $post('/app/export/lauf', $exportZip, static fn(Request $r) => $export()->anlegen($r));
+    $get('/app/export/lauf/{id:\d+}', $exportZip, static fn(Request $r, array $params) => $export()->lauf($r, $params));
+    $post('/app/export/lauf/{id:\d+}/zip', $exportZip, static fn(Request $r, array $params) => $export()->zip($r, $params));
+    $post('/app/export/lauf/{id:\d+}/bestaetigen', $exportZip, static fn(Request $r, array $params) => $export()->bestaetigen($r, $params));
+    $post('/app/export/lauf/{id:\d+}/zuruecksetzen', $exportZip, static fn(Request $r, array $params) => $export()->zuruecksetzen($r, $params));
 
     // Archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
     // export.md section 3). Permission: `archive.import` (Admin, Finanzen)

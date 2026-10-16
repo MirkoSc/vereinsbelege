@@ -67,6 +67,7 @@ use App\Repository\BlobRepository;
 use App\Repository\DocumentDuplicateRepository;
 use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
+use App\Repository\ExportRunRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
@@ -629,6 +630,7 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
             $logger,
             sekundenJeDatei: 30,
         ),
+        new ExportRunRepository($pdo),
         $kategorien,
         $kostenstellen,
         $auditFor($pdo),
