@@ -125,6 +125,7 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Auftragsverarbeitungsvertrag', $antwort->body);
         self::assertStringContainsString('<option value="openai">OpenAI</option>', $antwort->body);
         self::assertStringContainsString('<option value="anthropic">Anthropic</option>', $antwort->body);
+        self::assertStringContainsString('<option value="llamacpp">llama.cpp-Server</option>', $antwort->body);
         self::assertStringContainsString('href="/admin/ki-anbieter" aria-current="page"', $antwort->body, 'the navigation entry is live');
     }
 
@@ -150,6 +151,56 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertStringContainsString('name="vision" value="1" checked', $antwort->body);
         self::assertStringNotContainsString('name="json_schema" value="1" aria-describedby="ki-json-schema-hilfe" checked', $antwort->body, 'no response_format there, until the test finds out');
         self::assertStringContainsString('„Verbindung testen“ ermittelt Bilder und JSON-Schema selbst', $antwort->body);
+    }
+
+    /**
+     * Acceptance criterion "Profil-Vorlage llama.cpp-Server" (M7-1c, issue #43).
+     */
+    public function testANewProfileFromTheLlamaCppTemplate(): void
+    {
+        $antwort = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter/neu', query: ['vorlage' => 'llamacpp']));
+
+        self::assertSame(200, $antwort->status);
+        self::assertStringContainsString('value="llama.cpp-Server"', $antwort->body);
+        self::assertStringContainsString('value="https://llm.example.org/v1"', $antwort->body);
+        self::assertStringContainsString('name="vision" value="1" checked', $antwort->body);
+        self::assertStringContainsString('name="json_schema" value="1" aria-describedby="ki-json-schema-hilfe" checked', $antwort->body);
+        self::assertStringContainsString('name="max_images" value="2"', $antwort->body);
+        self::assertStringContainsString('name="timeout_s" value="180"', $antwort->body);
+        self::assertStringContainsString('name="api_key" value=""', $antwort->body);
+        self::assertStringContainsString('docs/llama-cpp-reverse-proxy.md', $antwort->body);
+    }
+
+    public function testAProfileFromTheLlamaCppTemplateCanBeSavedAndTested(): void
+    {
+        $vorlage = KiVorlage::LlamaCpp;
+        $url = 'https://llm.verein.test/v1';
+        $this->post('/admin/ki-anbieter', self::formular([
+            'name' => $vorlage->label(),
+            'base_url' => $url,
+            'model' => $vorlage->modell(),
+            'vision' => '1',
+            'json_schema' => '1',
+            'max_images' => '2',
+            'timeout_s' => '180',
+            'api_key' => self::KEY,
+        ]));
+        $profil = $this->profil('llama.cpp-Server');
+        self::assertEquals($vorlage->faehigkeiten(), $profil->faehigkeiten);
+        self::assertSame(180, $profil->timeoutS);
+        $this->http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
+
+        $this->post('/admin/ki-anbieter/' . $profil->id . '/testen', []);
+
+        $flash = $this->flash();
+        self::assertSame(FlashArt::Ok, $flash->art);
+        self::assertStringContainsString('„llama.cpp-Server“: Verbindung erfolgreich.', $flash->text);
+        self::assertSame($url . '/chat/completions', $this->http->anfragen[0]['url']);
+        self::assertEquals($vorlage->faehigkeiten(), $this->profil('llama.cpp-Server')->faehigkeiten, 'the test found what the template claims');
+        self::assertStringNotContainsString(self::KEY, $flash->text);
     }
 
     /**

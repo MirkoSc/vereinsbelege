@@ -760,7 +760,7 @@ sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
 Regeln in `App\Service\Ki\KiAnbieterService`, SQL in
 `App\Repository\AiProviderRepository`). Vorlagen sind
 `App\Service\Ki\KiVorlage` (`OpenAi`, Modell `gpt-6-luna`; `Anthropic`,
-siehe M7-1b unten; llama.cpp folgt in M7-1c). Regeln: Basis-URL nur `https://`,
+siehe M7-1b unten; `LlamaCpp`, siehe M7-1c unten). Regeln: Basis-URL nur `https://`,
 ohne Zugangsdaten, Parameter und `/chat/completions`; API-Key nur sichtbares
 ASCII (er landet in einem HTTP-Header); das Standardprofil ist nicht
 löschbar, nur ein aktives Profil kann Standard werden. Der Key wird nie
@@ -819,6 +819,28 @@ darauf baut M7-2 den `LlmClient` auf.
 - Das Formular weist darauf hin, dass der Test Bilder und JSON-Schema selbst
   einträgt; wer ein Häkchen bewusst abschalten will (z. B. Bilder aus
   Kostengründen), muss damit rechnen, dass der nächste Test es wieder setzt.
+
+**Umsetzung (M7-1c, issue #43):** keine Migration, keine neue Route, keine
+Client-Änderung. Reihenfolge der Vorlagen: OpenAI, Anthropic, llama.cpp (E-08).
+- **Vorlage `LlamaCpp`** (`llamacpp`, Name „llama.cpp-Server“): Basis-URL
+  `https://llm.example.org/v1` als **Platzhalter** (der Verein hostet den
+  Server selbst; die Anwendung spricht nur `https://`, also steht ein
+  Reverse-Proxy mit TLS davor), Modell `default` (`llama-server` prüft den
+  Namen nicht), Zeitlimit 180 s (Raspberry Pi/kleiner VPS), `vision` ja
+  (Modell mit `--mmproj`), `json_schema` ja (`llama-server` setzt
+  `response_format` in eine Grammatik um), `max_images` 2 (kleiner Kontext),
+  `max_tokens` 4000. „Verbindung testen“ ersetzt `vision`/`json_schema`
+  wie bei den anderen Anbietern durch das tatsächliche Verhalten; fehlt die
+  `mmproj`-Datei, meldet der Test „keine Bilder“.
+- **Auth:** der API-Key des Profils geht wie bei jedem Anbieter als Bearer
+  an den Proxy bzw. `llama-server --api-key`. Weiterleitungen folgt der
+  Client nicht – die Basis-URL muss direkt antworten.
+- **Offen (geprüft in M7-5):** Ob die eingesetzte `llama-server`-Version
+  `max_completion_tokens` (Name, den der Client sendet) auswertet, ist nicht
+  zugesichert; ohne Auswertung begrenzt nur der Kontext die Antwortlänge.
+- **Doku:** `docs/llama-cpp-reverse-proxy.md` (Serverstart, Caddy/nginx mit
+  TLS und Key, freizugebender Pfad, Timeouts, Profil anlegen, Prüfung mit
+  `tools/hosting-check.php?llm_url=…`).
 
 **Umsetzung (M7-2, issue #44):** alles in `App\Service\Ki`, framework-frei
 (kein Http/Session/Repository), damit Job (M7-5) und Worker (M7b) denselben
@@ -1184,8 +1206,8 @@ ohne `response_format`, Bild nicht gesehen/abgelehnt → `vision` nein,
 `max_images` mindestens 1 bei Vision, Zeitlimit je Aufruf und Gesamtbudget,
 401 ohne Key im Ergebnis, HTTP-Fehler und Timeout in beiden Proben ohne
 Ergebnis, keine Chat-Antwort; `KiAnbieterRegelnTest`: Basis-URL, Vorlagen
-OpenAI/Anthropic; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard
-ohne Key, Vorlage Anthropic im Formular, Fallback wählen/ersetzen/entfernen
+OpenAI/Anthropic/llama.cpp; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard
+ohne Key, Vorlagen Anthropic und llama.cpp im Formular (speichern + testen), Fallback wählen/ersetzen/entfernen
 (höchstens eins, Regeln aktiv + Key + nicht Standard,
 Löschen/Standard/Deaktivieren/Key entfernen löscht die Wahl, CHECK, CSRF,
 Audit), Key nur als Server-Chiffrat und nie
