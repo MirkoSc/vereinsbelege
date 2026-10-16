@@ -352,11 +352,17 @@ final class RoutePermissionMatrixTest extends TestCase
             // area; a club officer without the right does not.
             [SystemRole::Admin, HttpMethod::Get, '/app/export', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/app/export', true],
-            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/export/zip', true],
-            [SystemRole::Steuerberater, HttpMethod::Post, '/app/export/zip', true],
+            // Export runs (M12-4): the same right for creating, downloading,
+            // confirming and resetting a run.
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/export/lauf', true],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/export/lauf/7/zip', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/export/lauf/7', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/export/lauf/7/bestaetigen', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/export/lauf/7/zuruecksetzen', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/app/export', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/export', false],
-            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/zip', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/lauf', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/lauf/7/bestaetigen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/buchungen', false],
             // Archive import (M12-3): archive.import - Admin and Finanzen
             // only; the board and the auditors read, they do not import.

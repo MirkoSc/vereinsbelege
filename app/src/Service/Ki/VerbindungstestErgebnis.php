@@ -14,12 +14,16 @@ final readonly class VerbindungstestErgebnis
     /**
      * @param list<string> $details what was checked and what came back
      *        (model, tokens, picture, schema)
+     * @param ?KiFaehigkeiten $erkannt what the probes found out - only on
+     *        success, null when nothing could be determined (the profile
+     *        stays as it is then)
      */
     public function __construct(
         public bool $ok,
         public string $meldung,
         public array $details = [],
         public ?int $dauerMs = null,
+        public ?KiFaehigkeiten $erkannt = null,
     ) {
     }
 

@@ -759,27 +759,66 @@ sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
 (`admin.settings`) verwaltet die Profile (`App\Admin\KiAnbieterController`,
 Regeln in `App\Service\Ki\KiAnbieterService`, SQL in
 `App\Repository\AiProviderRepository`). Vorlagen sind
-`App\Service\Ki\KiVorlage` (bisher nur `OpenAi`, Modell `gpt-6-luna`;
-Anthropic/llama.cpp folgen in M7-1b/c). Regeln: Basis-URL nur `https://`,
+`App\Service\Ki\KiVorlage` (`OpenAi`, Modell `gpt-6-luna`; `Anthropic`,
+siehe M7-1b unten; llama.cpp folgt in M7-1c). Regeln: Basis-URL nur `https://`,
 ohne Zugangsdaten, Parameter und `/chat/completions`; API-Key nur sichtbares
 ASCII (er landet in einem HTTP-Header); das Standardprofil ist nicht
 löschbar, nur ein aktives Profil kann Standard werden. Der Key wird nie
 zurück ins Formular geschrieben (leer = unverändert, Ankreuzfeld entfernt
 ihn) und nur über `AiProviderRepository::apiKey()` gelesen; ein mit anderem
 Server-Schlüssel verschlüsselter Key gilt als fehlend. Das
-**Fallback-Profil** kam mit issue #180 (M7-2b, Migration 029, siehe unten).
+**Fallback-Profil** kam mit issue #180 (M7-2b, Migration 030, siehe unten).
 
-Der **Verbindungstest** (`App\Service\Ki\Verbindungstest`) ist *ein*
-Aufruf mit festem Mini-Prompt, Zeitlimit `min(timeout_s, 20 s)`: bei
-`vision` mit einem erzeugten roten Testbild (das Modell muss „rot"
-antworten), bei `json_schema` mit `response_format` und Mini-Schema
-`{ok, farbe}`. Ohne `max_tokens`/`temperature`, weil neuere OpenAI-Modelle
-beide unter diesem Namen ablehnen. Ergebnis als Meldung (HTTP-Status
-übersetzt, Text des Anbieters gekürzt und um den Key bereinigt), nichts
-wird geloggt. Transport ist `App\Service\Ki\ChatHttp`
-(`CurlChatHttp`: nur HTTPS, folgt **keinen** Weiterleitungen, damit der
-Bearer-Key nicht an ein Umleitungsziel geht) – darauf baut M7-2 den
-`LlmClient` auf.
+Der **Verbindungstest** (`App\Service\Ki\Verbindungstest`) prüft Adresse,
+Key und Modell und **ermittelt die Fähigkeiten** (M7-1b, issue #42; vorher
+ein einziger Aufruf, der nur die Angaben des Profils bestätigte). Zwei
+Proben, höchstens drei Aufrufe, je Aufruf `min(timeout_s, 20 s)`, alle
+zusammen höchstens `Verbindungstest::GESAMT_S` = 24 s (unter
+`max_execution_time` 30 s):
+1. *Text mit Schema:* eine Frage, die in einem Satz zu beantworten ist
+   („Welche Farbe hat der Himmel …“), gesendet mit `response_format` und
+   einem Mini-Schema `{ok, farbe}`. Antwortet der Server mit **nacktem
+   JSON** `{ok: bool, farbe: string}`, erzwingt er das Schema → `json_schema`
+   = ja; antwortet er mit dem Satz, ignoriert er den Parameter (so der
+   OpenAI-kompatible Endpunkt von Anthropic: kein Fehler, kein Effekt) → nein.
+   Lehnt er den Parameter ab (HTTP 400/422), geht die Frage **einmal** ohne
+   `response_format` erneut hinaus, das Ergebnis ist „nein“. Diese Probe ist
+   zugleich der eigentliche Verbindungstest.
+2. *Bild:* ein erzeugtes rotes Testbild (`data:image/jpeg;base64,…`); das
+   Modell muss „rot“/„red“ antworten → `vision` = ja. Falsche Antwort oder
+   HTTP 400/422 → nein.
+
+Beide Proben laufen **immer**, unabhängig von den Häkchen im Profil – das
+Ergebnis ist, was das Modell tut, nicht was im Formular steht. Jeder andere
+Fehler (401/403/404/429/5xx, Weiterleitung, keine Chat-Antwort, Timeout,
+Zeitbudget) beendet den Test **ohne Ergebnis**: Meldung (HTTP-Status
+übersetzt, Text des Anbieters gekürzt und um den Key bereinigt), das Profil
+bleibt unverändert. Ohne `max_tokens`/`temperature`, weil neuere OpenAI-Modelle
+beide unter diesem Namen ablehnen. Nichts wird geloggt. Transport ist
+`App\Service\Ki\ChatHttp` (`CurlChatHttp`: nur HTTPS, folgt **keinen**
+Weiterleitungen, damit der Bearer-Key nicht an ein Umleitungsziel geht) –
+darauf baut M7-2 den `LlmClient` auf.
+
+**Umsetzung (M7-1b, issue #42):** keine Migration, keine neue Route.
+- **Vorlage `Anthropic`:** Basis-URL `https://api.anthropic.com/v1` (der
+  Client hängt `/chat/completions` an), Modell `claude-sonnet-5-5`, Zeitlimit
+  60 s, `vision` ja, `json_schema` **nein** (der Endpunkt ignoriert
+  `response_format`, das Schema geht in den Prompt, bis der Test etwas anderes
+  zeigt), `max_images` 4, `max_tokens` 4000. Reihenfolge der Vorlagen: OpenAI,
+  Anthropic (E-08). Eine zweite Client-Implementierung gibt es nicht.
+- **Übernahme:** `POST /admin/ki-anbieter/{id}/testen` (unverändert,
+  `admin.settings`, CSRF) schreibt das Ergebnis über
+  `KiAnbieterService::faehigkeitenUebernehmen()` in `ai_provider.caps`:
+  `vision` und `json_schema` aus den Proben; `max_images` und `max_tokens` sind
+  nicht erkennbar und bleiben (erkennt der Test `vision`, aber das Profil hat
+  `max_images` 0, wird es 1 – die Regel „Vision braucht mindestens ein Bild“).
+  Die Meldung nennt, was sich geändert hat („Ins Profil übernommen: Bilder,
+  JSON-Schema.“). Hat sich etwas geändert, entsteht ein Audit-Eintrag
+  `ki_anbieter.geaendert` (Details: Profil ohne Key, `felder` = `faehigkeiten`,
+  `quelle` = `verbindungstest`); ein Test ohne Änderung bleibt ohne Spur.
+- Das Formular weist darauf hin, dass der Test Bilder und JSON-Schema selbst
+  einträgt; wer ein Häkchen bewusst abschalten will (z. B. Bilder aus
+  Kostengründen), muss damit rechnen, dass der nächste Test es wieder setzt.
 
 **Umsetzung (M7-2, issue #44):** alles in `App\Service\Ki`, framework-frei
 (kein Http/Session/Repository), damit Job (M7-5) und Worker (M7b) denselben
@@ -827,7 +866,7 @@ Code nutzen; keine Migration, keine Route, nichts wird geloggt.
   `Paths::promptsDir()`); `{{platzhalter}}` müssen alle und genau gefüllt
   werden.
 
-**Umsetzung (M7-2b, issue #180, Migration 029):** das optionale
+**Umsetzung (M7-2b, issue #180, Migration 030):** das optionale
 **Fallback-Profil**. Fällt das Standardprofil aus, fragt der Client **einmal**
 das Fallback-Profil.
 - *Daten und Regeln:* `ai_provider.is_fallback` (höchstens eine Zeile, per
@@ -1138,16 +1177,22 @@ ohne Key, Timeout/Verbindung, keine Chat-Antwort/Verweigerung, nur JPEG;
 `KiSchemaTest`: alle Schlüsselwörter, keine Werte in Fehlern, unbekannte
 Schlüsselwörter abgewiesen, `extract-v1` strict-konform, E-Rechnung hat
 dieselbe Form; `KiPromptsTest`); KI-Anbieter (`VerbindungstestTest` mit
-`tests/fixtures/llm/verbindungstest/`: Bild + Schema in einem Aufruf,
-Klartext-Anfrage ohne Fähigkeiten, 401 ohne Key im Ergebnis, HTTP-Fehler,
-Timeout, kein JSON, Testbild nicht erkannt; `KiAnbieterRegelnTest`:
-Basis-URL; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard ohne
-Key, Fallback wählen/ersetzen/entfernen (höchstens eins, Regeln aktiv + Key +
-nicht Standard, Löschen/Standard/Deaktivieren/Key entfernen löscht die Wahl,
-CHECK, CSRF, Audit), Key nur als Server-Chiffrat und nie auf einer Seite, leer =
-unverändert, Entfernen, fremder Server-Schlüssel, Validierung, genau ein
-Standard und nicht löschbar, Verbindungstest mit gespeichertem Key, kein
-Key im Log, CSRF); Betrags-Parsing („1.234,56", „1234.56",
+`tests/fixtures/llm/verbindungstest/`: erzwungenes Schema + Bild
+erkannt (zwei Aufrufe, Anfrage-Inhalt), ignoriertes Schema (Satz statt JSON,
+Anthropic) → `json_schema` nein, abgelehnter Parameter → eine Wiederholung
+ohne `response_format`, Bild nicht gesehen/abgelehnt → `vision` nein,
+`max_images` mindestens 1 bei Vision, Zeitlimit je Aufruf und Gesamtbudget,
+401 ohne Key im Ergebnis, HTTP-Fehler und Timeout in beiden Proben ohne
+Ergebnis, keine Chat-Antwort; `KiAnbieterRegelnTest`: Basis-URL, Vorlagen
+OpenAI/Anthropic; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard
+ohne Key, Vorlage Anthropic im Formular, Fallback wählen/ersetzen/entfernen
+(höchstens eins, Regeln aktiv + Key + nicht Standard,
+Löschen/Standard/Deaktivieren/Key entfernen löscht die Wahl, CHECK, CSRF,
+Audit), Key nur als Server-Chiffrat und nie
+auf einer Seite, leer = unverändert, Entfernen, fremder Server-Schlüssel,
+Validierung, genau ein Standard und nicht löschbar, Verbindungstest mit
+gespeichertem Key, Fähigkeiten ins Profil übernommen + Audit (nur bei
+Änderung), fehlgeschlagene Probe ändert nichts, kein Key im Log, CSRF); Betrags-Parsing („1.234,56", „1234.56",
 negativ) und Summenprüfung; Lieferanten-Auflösung über alle 6 Stufen inkl.
 Rechtsform-Normalisierung; Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);

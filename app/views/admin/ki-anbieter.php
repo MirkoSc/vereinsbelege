@@ -11,8 +11,9 @@
  * actions a table hid the buttons behind a sideways scroll even on the
  * desktop. The actions are small POST forms in a <div class="knopfreihe">
  * (a <form> inside a <p> would close the paragraph). "Verbindung testen" waits for the provider (at most
- * App\Service\Ki\Verbindungstest::MAX_TIMEOUT_S) and answers with a flash
- * message.
+ * App\Service\Ki\Verbindungstest::GESAMT_S for up to three short calls),
+ * writes what it found out about pictures and JSON schema into the profile
+ * and answers with a flash message.
  *
  * @var string $csrf
  * @var list<\App\Service\Ki\KiAnbieter> $profile default first

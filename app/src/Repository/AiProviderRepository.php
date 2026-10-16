@@ -150,6 +150,16 @@ final readonly class AiProviderRepository
     }
 
     /**
+     * Only the capabilities - what "Verbindung testen" found out
+     * (App\Service\Ki\Verbindungstest); name, key and the rest stay.
+     */
+    public function setCapabilities(int $id, KiFaehigkeiten $faehigkeiten): void
+    {
+        $this->pdo->prepare('UPDATE ai_provider SET caps = ?, updated_at = NOW() WHERE id = ?')
+            ->execute([$faehigkeiten->toJson(), $id]);
+    }
+
+    /**
      * Makes $id the one default profile - one statement, so there is no
      * moment with none or two. `updated_at` comes first: MariaDB assigns
      * left to right and would otherwise compare against the new value.
@@ -157,7 +167,7 @@ final readonly class AiProviderRepository
     public function setDefault(int $id): void
     {
         // The new default cannot stay the fallback (check constraint in
-        // migration 029); the assignment sits before `is_default` so the
+        // migration 030); the assignment sits before `is_default` so the
         // row is consistent when the constraint is evaluated.
         $this->pdo->prepare('UPDATE ai_provider SET updated_at = IF(is_default <> (id = ?) OR (id = ? AND is_fallback = 1), NOW(), updated_at), is_fallback = IF(id = ?, 0, is_fallback), is_default = (id = ?)')
             ->execute([$id, $id, $id, $id]);

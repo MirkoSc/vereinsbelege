@@ -61,6 +61,27 @@ final class KiAnbieterRegelnTest extends TestCase
         );
     }
 
+    public function testTheTemplatesFollowTheOrderOfE08(): void
+    {
+        self::assertSame([KiVorlage::OpenAi, KiVorlage::Anthropic], KiVorlage::cases(), 'E-08: OpenAI, then Anthropic (llama.cpp: M7-1c)');
+    }
+
+    public function testTheAnthropicTemplateUsesTheCompatibleEndpointAndStartsWithoutJsonSchema(): void
+    {
+        $vorlage = KiVorlage::Anthropic;
+
+        self::assertSame('Anthropic', $vorlage->label());
+        self::assertSame('https://api.anthropic.com/v1', $vorlage->baseUrl());
+        self::assertSame('https://api.anthropic.com/v1/chat/completions', rtrim($vorlage->baseUrl(), '/') . '/chat/completions');
+        self::assertSame('claude-sonnet-5-5', $vorlage->modell());
+        // response_format is ignored there: the schema goes into the prompt
+        // until "Verbindung testen" says otherwise (03 section 6).
+        self::assertEquals(new KiFaehigkeiten(vision: true, jsonSchema: false, maxImages: 4, maxTokens: 4000), $vorlage->faehigkeiten());
+        self::assertSame(60, $vorlage->timeoutS());
+        self::assertSame('anthropic', $vorlage->value);
+        self::assertSame($vorlage, KiVorlage::tryFrom('anthropic'));
+    }
+
     public function testTheOpenAiTemplateIsTheFirstAndAcceptsItsOwnUrl(): void
     {
         self::assertSame(KiVorlage::OpenAi, KiVorlage::cases()[0], 'E-08: OpenAI first');

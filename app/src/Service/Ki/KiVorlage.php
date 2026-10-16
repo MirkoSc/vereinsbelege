@@ -11,16 +11,24 @@ namespace App\Service\Ki;
  *
  * Order of E-08: OpenAI first (and the default after the installation,
  * migrations/024_ai_provider.sql seeds exactly this case); Anthropic
- * (M7-1b) and the llama.cpp server (M7-1c) follow as further cases.
+ * (M7-1b, through its OpenAI-compatible endpoint) next; the llama.cpp
+ * server (M7-1c) follows as a further case.
+ *
+ * The capabilities of a template are a starting point. "Verbindung testen"
+ * (App\Service\Ki\Verbindungstest) finds out what the model really does
+ * and writes `vision` and `json_schema` into the profile - Anthropic's
+ * compatible endpoint, for one, ignores `response_format` without an error.
  */
 enum KiVorlage: string
 {
     case OpenAi = 'openai';
+    case Anthropic = 'anthropic';
 
     public function label(): string
     {
         return match ($this) {
             self::OpenAi => 'OpenAI',
+            self::Anthropic => 'Anthropic',
         };
     }
 
@@ -28,6 +36,7 @@ enum KiVorlage: string
     {
         return match ($this) {
             self::OpenAi => 'https://api.openai.com/v1',
+            self::Anthropic => 'https://api.anthropic.com/v1',
         };
     }
 
@@ -35,6 +44,7 @@ enum KiVorlage: string
     {
         return match ($this) {
             self::OpenAi => 'gpt-6-luna',
+            self::Anthropic => 'claude-sonnet-5-5',
         };
     }
 
@@ -42,13 +52,16 @@ enum KiVorlage: string
     {
         return match ($this) {
             self::OpenAi => new KiFaehigkeiten(vision: true, jsonSchema: true, maxImages: 4, maxTokens: 4000),
+            // No json_schema: the compatible endpoint ignores response_format,
+            // so the schema goes into the prompt until the test says otherwise.
+            self::Anthropic => new KiFaehigkeiten(vision: true, jsonSchema: false, maxImages: 4, maxTokens: 4000),
         };
     }
 
     public function timeoutS(): int
     {
         return match ($this) {
-            self::OpenAi => 60,
+            self::OpenAi, self::Anthropic => 60,
         };
     }
 }

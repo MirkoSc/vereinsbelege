@@ -120,6 +120,9 @@ enum AuditAction: string
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
+    // Export runs (issue #179/M12-4): the run id and the number of receipts.
+    case ExportMarkiert = 'export.markiert';
+    case ExportZurueckgesetzt = 'export.zurueckgesetzt';
     // The archive import (issue #77/M12-3): counts and document ids - never a name.
     case ArchivImportiert = 'archiv.importiert';
 
@@ -207,6 +210,8 @@ enum AuditAction: string
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::EinstellungExport => 'Export-Muster geändert',
             self::ExportErstellt => 'ZIP-Export erstellt',
+            self::ExportMarkiert => 'Export als vollständig bestätigt',
+            self::ExportZurueckgesetzt => 'Export-Markierung zurückgesetzt',
             self::ArchivImportiert => 'Archiv importiert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
@@ -241,6 +246,7 @@ enum AuditAction: string
             self::KiAnbieterStandard, self::KiFallbackGewaehlt, self::KiFallbackEntfernt => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
             self::ArchivImportiert => 'archive_import',
+            self::ExportMarkiert, self::ExportZurueckgesetzt => 'export_run',
             self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,
             self::BuchungEingeordnet => 'bank_transaction',
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
@@ -276,6 +282,7 @@ enum AuditAction: string
             'ai_provider' => 'KI-Anbieter',
             'bank_import' => 'Kontoauszug-Import',
             'archive_import' => 'Archiv-Import',
+            'export_run' => 'Export',
             'bank_transaction' => 'Buchung',
             'assignment_rule' => 'Buchungsregel',
             'document' => 'Beleg',
