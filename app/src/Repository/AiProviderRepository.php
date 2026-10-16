@@ -63,6 +63,20 @@ final readonly class AiProviderRepository
     }
 
     /**
+     * The chosen fallback profile, or null when there is none - or when it
+     * cannot be used (inactive, no key, or the default): the choice is
+     * checked when it is made and when a profile changes, but a client must
+     * not rely on a row that was edited by hand.
+     */
+    public function fallback(): ?KiAnbieter
+    {
+        $row = $this->pdo->query('SELECT * FROM ai_provider WHERE is_fallback = 1 AND is_default = 0 ORDER BY id LIMIT 1')->fetch();
+        $profil = $row === false ? null : self::hydrate($row);
+
+        return $profil !== null && $profil->nutzbar() ? $profil : null;
+    }
+
+    /**
      * The decrypted API key, or null when none is stored - or when the
      * stored value cannot be decrypted (a different server key after a
      * restore, a damaged row): like the SMTP password
@@ -152,8 +166,28 @@ final readonly class AiProviderRepository
      */
     public function setDefault(int $id): void
     {
-        $this->pdo->prepare('UPDATE ai_provider SET updated_at = IF(is_default <> (id = ?), NOW(), updated_at), is_default = (id = ?)')
+        // The new default cannot stay the fallback (check constraint in
+        // migration 030); the assignment sits before `is_default` so the
+        // row is consistent when the constraint is evaluated.
+        $this->pdo->prepare('UPDATE ai_provider SET updated_at = IF(is_default <> (id = ?) OR (id = ? AND is_fallback = 1), NOW(), updated_at), is_fallback = IF(id = ?, 0, is_fallback), is_default = (id = ?)')
+            ->execute([$id, $id, $id, $id]);
+    }
+
+    /**
+     * Makes $id the one fallback profile - one statement, like setDefault().
+     */
+    public function setFallback(int $id): void
+    {
+        $this->pdo->prepare('UPDATE ai_provider SET updated_at = IF(is_fallback <> (id = ?), NOW(), updated_at), is_fallback = (id = ?)')
             ->execute([$id, $id]);
+    }
+
+    /**
+     * No fallback profile any more.
+     */
+    public function clearFallback(): void
+    {
+        $this->pdo->exec('UPDATE ai_provider SET updated_at = NOW(), is_fallback = 0 WHERE is_fallback = 1');
     }
 
     public function delete(int $id): void
@@ -176,6 +210,7 @@ final readonly class AiProviderRepository
             active: (int) $row['active'] === 1,
             isDefault: (int) $row['is_default'] === 1,
             keyGesetzt: $row['api_key_enc'] !== null && $row['api_key_enc'] !== '',
+            isFallback: (int) $row['is_fallback'] === 1,
         );
     }
 }

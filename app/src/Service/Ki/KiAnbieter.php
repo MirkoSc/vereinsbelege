@@ -23,6 +23,7 @@ final readonly class KiAnbieter
         public bool $active,
         public bool $isDefault,
         public bool $keyGesetzt,
+        public bool $isFallback = false,
     ) {
     }
 

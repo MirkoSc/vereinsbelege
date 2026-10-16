@@ -112,9 +112,15 @@ $ziel = $neu ? '/admin/ki-anbieter' : '/admin/ki-anbieter/' . $profil->id;
         </label>
 
         <label class="feld-ankreuz">
-            <input type="checkbox" name="active" value="1" <?= $felder['active'] ? 'checked' : '' ?>>
+            <input type="checkbox" name="active" value="1" <?= $felder['active'] ? 'checked' : '' ?> <?= !$neu && $profil->isFallback ? 'aria-describedby="ki-aktiv-hilfe"' : '' ?>>
             Aktiv
         </label>
+        <?php if (!$neu && $profil->isFallback): ?>
+            <p class="feld-hilfe" id="ki-aktiv-hilfe">
+                Dieses Profil ist das Fallback-Profil. Wird es deaktiviert oder verliert es seinen
+                Key, ist die Fallback-Wahl entfernt.
+            </p>
+        <?php endif; ?>
 
         <p class="knopfreihe">
             <button type="submit" class="knopf knopf-primaer">Speichern</button>

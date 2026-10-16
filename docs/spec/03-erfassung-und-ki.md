@@ -767,8 +767,7 @@ löschbar, nur ein aktives Profil kann Standard werden. Der Key wird nie
 zurück ins Formular geschrieben (leer = unverändert, Ankreuzfeld entfernt
 ihn) und nur über `AiProviderRepository::apiKey()` gelesen; ein mit anderem
 Server-Schlüssel verschlüsselter Key gilt als fehlend. Das
-**Fallback-Profil** folgt in issue #180 (M7-2b, Migration + Admin-UI) auf
-dem Client aus M7-2.
+**Fallback-Profil** kam mit issue #180 (M7-2b, Migration 030, siehe unten).
 
 Der **Verbindungstest** (`App\Service\Ki\Verbindungstest`) prüft Adresse,
 Key und Modell und **ermittelt die Fähigkeiten** (M7-1b, issue #42; vorher
@@ -866,6 +865,45 @@ Code nutzen; keine Migration, keine Route, nichts wird geloggt.
 - Prompts und Schemas liegen unter `app/prompts/` (`KiPrompts`,
   `Paths::promptsDir()`); `{{platzhalter}}` müssen alle und genau gefüllt
   werden.
+
+**Umsetzung (M7-2b, issue #180, Migration 030):** das optionale
+**Fallback-Profil**. Fällt das Standardprofil aus, fragt der Client **einmal**
+das Fallback-Profil.
+- *Daten und Regeln:* `ai_provider.is_fallback` (höchstens eine Zeile, per
+  CHECK nie zugleich `is_default`; kein Unique-Index aus demselben Grund wie
+  bei `is_default`, `AiProviderRepository::setFallback()` schaltet in *einem*
+  Statement um). `KiAnbieterService::alsFallback()` verlangt: nicht der
+  Standard, aktiv, mit Key. Die Wahl entfällt von selbst – und die Seite
+  sagt es –, wenn das Profil gelöscht wird (gleiche Zeile), Standard wird,
+  deaktiviert wird oder seinen Key verliert. `AiProviderRepository::fallback()`
+  liefert nur ein *nutzbares* Fallback-Profil (eine von Hand geänderte Zeile
+  darf den Client nicht täuschen).
+- *Admin:* `/admin/ki-anbieter` (`admin.settings`) zeigt die Marke
+  „Fallback“ und je nutzbarem Nicht-Standard-Profil „Als Fallback“, am
+  Fallback-Profil „Fallback entfernen“ (`POST …/{id}/fallback`,
+  `POST …/fallback-entfernen`, CSRF). Audit: `ki_anbieter.fallback_gewaehlt`
+  (Name, ggf. `ersetzt`), `ki_anbieter.fallback_entfernt`; Löschen, Standard
+  setzen und Ändern vermerken im Audit, dass dabei die Fallback-Wahl entfiel
+  (`war_fallback`, `fallback_entfernt`) – nie ein Key.
+- *Client:* Ausfall = `KiAufrufStatus::ausfall()`: `zeitueberschreitung`,
+  `verbindungsfehler`, `http_fehler` mit HTTP **429 oder 5xx**. Nicht: 4xx
+  (Key oder Anfrage falsch – das Fallback bekäme dieselbe), 2xx ohne
+  Chat-Antwort, Antworten, die ankommen aber nicht passen (Reparatur-Weg).
+  `KiVersuch::fallbackMoeglich()` gilt nur für den **ersten** Aufruf einer
+  Kette – ein gescheiterter Reparatur-Call oder ein Fallback-Versuch selbst
+  weicht nie weiter aus. `KiAbfrage::fallbackFragen()` ist ein **eigener
+  Schritt** der Job-Kette (nie zwei lange Aufrufe in einem Request; derselbe
+  Verlauf wie `fragen()`, mit dem Key des Fallback-Profils; `LogicException`
+  bei unpassendem Vorgänger, gleichem oder unbrauchbarem Profil). Passt die
+  Antwort des Fallbacks nicht, folgt dessen *eigener* Reparatur-Call
+  (`reparieren()` mit dem Fallback-Profil) – höchstens **drei** Aufrufe je
+  Auslesen (`KiErgebnis`). `ausfuehren()` nimmt optional Fallback-Profil und
+  -Key. Der Job (M7-5) holt beides aus `AiProviderRepository::fallback()`/
+  `apiKey()`; die Fachlogik bleibt framework-frei.
+- *Protokoll:* `KiAufruf` nennt mit `anbieterId`/`anbieterName`/`modell` das
+  tatsächlich gefragte Profil, `fallback = true` kennzeichnet den
+  Ausweich-Aufruf; `KiErgebnis::meldung()` hängt „Das Fallback-Profil wurde
+  verwendet.“ an.
 
 ### Auslese-Schema (Prompt-Version `extract-v1`)
 
@@ -1128,7 +1166,11 @@ Reparatur mit Verlauf und Fehlerliste, nach der Reparatur ungültig →
 fehlgeschlagen ohne dritten Aufruf, kein JSON, JSON in Prosa/Code-Block,
 Klammern in Strings, kaputte und abgeschnittene Antwort, Timeout und
 HTTP-Fehler ohne Reparatur, keine Beleginhalte in Meldungen/Fehlern,
-Protokoll, getrennte Schritte; `OpenAiCompatibleClientTest`: Request je
+Protokoll, getrennte Schritte; `KiAbfrageFallbackTest`: Ausfall (Timeout,
+Verbindung, 429, 5xx) → ein Aufruf des Fallbacks mit eigenem Key und Protokoll
+des genutzten Profils, kein Fallback bei 4xx/Reparatur-Weg/gescheitertem
+Reparatur-Call, nie ein zweiter Fallback oder vierter Aufruf, eigene
+Reparatur am Fallback, unbrauchbares/gleiches Profil, getrennter Schritt; `OpenAiCompatibleClientTest`: Request je
 Fähigkeit inkl. `max_images`, `response_format` vs. Schema im Prompt,
 `max_completion_tokens`, kein `temperature`, Antwort-Parsing, HTTP-Fehler
 ohne Key, Timeout/Verbindung, keine Chat-Antwort/Verweigerung, nur JPEG;
@@ -1143,7 +1185,10 @@ ohne `response_format`, Bild nicht gesehen/abgelehnt → `vision` nein,
 401 ohne Key im Ergebnis, HTTP-Fehler und Timeout in beiden Proben ohne
 Ergebnis, keine Chat-Antwort; `KiAnbieterRegelnTest`: Basis-URL, Vorlagen
 OpenAI/Anthropic; `KiAnbieterFlowTest`: Seed = Vorlage OpenAI als Standard
-ohne Key, Vorlage Anthropic im Formular, Key nur als Server-Chiffrat und nie
+ohne Key, Vorlage Anthropic im Formular, Fallback wählen/ersetzen/entfernen
+(höchstens eins, Regeln aktiv + Key + nicht Standard,
+Löschen/Standard/Deaktivieren/Key entfernen löscht die Wahl, CHECK, CSRF,
+Audit), Key nur als Server-Chiffrat und nie
 auf einer Seite, leer = unverändert, Entfernen, fremder Server-Schlüssel,
 Validierung, genau ein Standard und nicht löschbar, Verbindungstest mit
 gespeichertem Key, Fähigkeiten ins Profil übernommen + Audit (nur bei

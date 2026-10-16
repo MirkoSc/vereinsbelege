@@ -23,8 +23,11 @@ use App\View\View;
 /**
  * Admin pages "KI-Anbieter" (M7-1, issue #41, docs/spec/
  * 03-erfassung-und-ki.md section 6 "Client"): the profiles, a new one from
- * a template, changing and deleting one, choosing the default and
- * "Verbindung testen".
+ * a template, changing and deleting one, choosing the default and the
+ * fallback and "Verbindung testen".
+ *
+ * M7-2b (issue #180): choosing and removing the optional fallback profile
+ * the AI client tries once when the default is out of reach.
  *
  * Behind `admin.settings` (docs/spec/01-sicherheit.md section 4: "KI, Mail,
  * Speicher, ..."), declared in app/src/routes.php; CSRF on every write.
@@ -38,6 +41,8 @@ use App\View\View;
  */
 final readonly class KiAnbieterController
 {
+    private const string FALLBACK_ENTFALLEN = ' Es ist nicht mehr nutzbar (inaktiv oder ohne Key) – das Fallback-Profil ist deshalb entfernt.';
+
     public function __construct(
         private View $view,
         private Session $session,
@@ -131,7 +136,7 @@ final readonly class KiAnbieterController
         $felder = self::felder($request);
         $neuerKey = self::neuerKey($request);
         try {
-            $this->service->aendern($id, $felder, $neuerKey);
+            $fallbackEntfernt = $this->service->aendern($id, $felder, $neuerKey);
         } catch (KiAnbieterRegelverstoss $e) {
             return $this->formular($vorher, $felder, $e->getMessage(), 422);
         }
@@ -140,8 +145,9 @@ final readonly class KiAnbieterController
         $this->audit->record(AuditAction::KiAnbieterGeaendert, $this->session->userId(), $request->ip, $id, [
             ...self::details($nachher),
             'felder' => self::geaendert($vorher, $nachher, $neuerKey),
+            ...($fallbackEntfernt ? ['fallback_entfernt' => true] : []),
         ]);
-        $this->session->flash(sprintf('KI-Anbieter „%s“ gespeichert.', $nachher->name));
+        $this->session->flash(sprintf('KI-Anbieter „%s“ gespeichert.', $nachher->name) . ($fallbackEntfernt ? self::FALLBACK_ENTFALLEN : ''));
 
         return Response::redirect('/admin/ki-anbieter');
     }
@@ -159,15 +165,18 @@ final readonly class KiAnbieterController
 
         $profil = $this->anbieter->find($id);
         try {
-            $this->service->loeschen($id);
+            $warFallback = $this->service->loeschen($id);
         } catch (KiAnbieterRegelverstoss $e) {
             $this->session->flash($e->getMessage(), FlashArt::Fehler);
 
             return Response::redirect($profil === null ? '/admin/ki-anbieter' : '/admin/ki-anbieter/' . $id);
         }
 
-        $this->audit->record(AuditAction::KiAnbieterGeloescht, $this->session->userId(), $request->ip, $id, ['name' => (string) $profil?->name]);
-        $this->session->flash(sprintf('KI-Anbieter „%s“ gelöscht.', (string) $profil?->name));
+        $this->audit->record(AuditAction::KiAnbieterGeloescht, $this->session->userId(), $request->ip, $id, [
+            'name' => (string) $profil?->name,
+            ...($warFallback ? ['war_fallback' => true] : []),
+        ]);
+        $this->session->flash(sprintf('KI-Anbieter „%s“ gelöscht.', (string) $profil?->name) . ($warFallback ? ' Es gibt jetzt kein Fallback-Profil mehr.' : ''));
 
         return Response::redirect('/admin/ki-anbieter');
     }
@@ -184,7 +193,7 @@ final readonly class KiAnbieterController
         }
 
         try {
-            $this->service->alsStandard($id);
+            $warFallback = $this->service->alsStandard($id);
         } catch (KiAnbieterRegelverstoss $e) {
             $this->session->flash($e->getMessage(), FlashArt::Fehler);
 
@@ -192,8 +201,63 @@ final readonly class KiAnbieterController
         }
 
         $profil = $this->anbieter->find($id);
-        $this->audit->record(AuditAction::KiAnbieterStandard, $this->session->userId(), $request->ip, $id, ['name' => (string) $profil?->name]);
-        $this->session->flash(sprintf('„%s“ ist jetzt das Standardprofil.', (string) $profil?->name));
+        $this->audit->record(AuditAction::KiAnbieterStandard, $this->session->userId(), $request->ip, $id, [
+            'name' => (string) $profil?->name,
+            ...($warFallback ? ['war_fallback' => true] : []),
+        ]);
+        $this->session->flash(sprintf('„%s“ ist jetzt das Standardprofil.', (string) $profil?->name) . ($warFallback ? ' Es war das Fallback-Profil – das Fallback-Profil ist damit entfernt.' : ''));
+
+        return Response::redirect('/admin/ki-anbieter');
+    }
+
+    /**
+     * Chooses the fallback profile (M7-2b, issue #180): the one profile the
+     * AI client tries once when the default is out of reach. A profile that
+     * was the fallback before is replaced; the audit entry names it.
+     *
+     * @param array<string, string> $params
+     */
+    public function fallback(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/admin/ki-anbieter');
+        }
+
+        try {
+            $ersetzt = $this->service->alsFallback($id);
+        } catch (KiAnbieterRegelverstoss $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+
+            return Response::redirect('/admin/ki-anbieter');
+        }
+
+        $profil = $this->anbieter->find($id);
+        $this->audit->record(AuditAction::KiFallbackGewaehlt, $this->session->userId(), $request->ip, $id, [
+            'name' => (string) $profil?->name,
+            ...($ersetzt === null ? [] : ['ersetzt' => $ersetzt->name]),
+        ]);
+        $this->session->flash(sprintf('„%s“ ist jetzt das Fallback-Profil.', (string) $profil?->name));
+
+        return Response::redirect('/admin/ki-anbieter');
+    }
+
+    /**
+     * Removes the fallback choice; the profile itself stays.
+     */
+    public function fallbackEntfernen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/admin/ki-anbieter');
+        }
+
+        $bisher = $this->service->fallbackEntfernen();
+        if ($bisher !== null) {
+            $this->audit->record(AuditAction::KiFallbackEntfernt, $this->session->userId(), $request->ip, $bisher->id, ['name' => $bisher->name]);
+        }
+        $this->session->flash($bisher === null ? 'Es war kein Fallback-Profil gewählt.' : 'Das Fallback-Profil ist entfernt.');
 
         return Response::redirect('/admin/ki-anbieter');
     }

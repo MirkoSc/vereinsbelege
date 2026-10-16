@@ -3,7 +3,8 @@
 /**
  * AI provider profiles (M7-1, issue #41, docs/spec/03-erfassung-und-ki.md
  * section 6 "Client"): the list with default, status and "Verbindung
- * testen", and a new profile from a template.
+ * testen", the fallback choice (M7-2b, issue #180) and a new profile from a
+ * template.
  *
  * Only components from /admin/designsystem, no JavaScript. One .karte per
  * profile instead of a table: with name, address, model, status and three
@@ -20,9 +21,13 @@
  */
 
 $standard = null;
+$fallback = null;
 foreach ($profile as $profil) {
     if ($profil->isDefault) {
         $standard = $profil;
+    }
+    if ($profil->isFallback) {
+        $fallback = $profil;
     }
 }
 ?>
@@ -44,6 +49,18 @@ foreach ($profile as $profil) {
             Belege werden dann nur von Hand erfasst.
         </p>
     <?php endif; ?>
+
+    <p class="gedaempft">
+        Optional kann ein <strong>Fallback-Profil</strong> bestimmt werden: Antwortet das
+        Standardprofil nicht (keine Verbindung, Zeitüberschreitung, Überlastung oder
+        Serverfehler), versucht die Anwendung es einmal mit diesem Profil. Es muss aktiv sein,
+        einen API-Key haben und ein anderes Profil als der Standard sein.
+        <?php if ($fallback === null): ?>
+            Aktuell ist kein Fallback-Profil gewählt.
+        <?php else: ?>
+            Aktuell: „<?= e($fallback->name) ?>“.
+        <?php endif; ?>
+    </p>
 
     <p class="hinweis hinweis-info">
         Datenschutz: Der Anbieter sieht die Belege im Klartext, auch Namen und IBANs von
@@ -73,6 +90,9 @@ foreach ($profile as $profil) {
                 <?php if ($profil->isDefault): ?>
                     <span class="marke marke-ok">Standard</span>
                 <?php endif; ?>
+                <?php if ($profil->isFallback): ?>
+                    <span class="marke marke-ok">Fallback</span>
+                <?php endif; ?>
                 <?php if (!$profil->active): ?>
                     <span class="marke">Inaktiv</span>
                 <?php endif; ?>
@@ -95,6 +115,17 @@ foreach ($profile as $profil) {
                     <form method="post" action="/admin/ki-anbieter/<?= e((string) $profil->id) ?>/standard">
                         <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
                         <button type="submit" class="knopf knopf-still" aria-label="„<?= e($profil->name) ?>“ als Standard">Als Standard</button>
+                    </form>
+                <?php endif; ?>
+                <?php if ($profil->isFallback): ?>
+                    <form method="post" action="/admin/ki-anbieter/fallback-entfernen">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="knopf knopf-still" aria-label="„<?= e($profil->name) ?>“ nicht mehr als Fallback verwenden">Fallback entfernen</button>
+                    </form>
+                <?php elseif (!$profil->isDefault && $profil->nutzbar()): ?>
+                    <form method="post" action="/admin/ki-anbieter/<?= e((string) $profil->id) ?>/fallback">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="knopf knopf-still" aria-label="„<?= e($profil->name) ?>“ als Fallback">Als Fallback</button>
                     </form>
                 <?php endif; ?>
                 <a class="knopf knopf-still" href="/admin/ki-anbieter/<?= e((string) $profil->id) ?>" aria-label="„<?= e($profil->name) ?>“ bearbeiten">Bearbeiten</a>

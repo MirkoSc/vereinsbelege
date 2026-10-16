@@ -19,6 +19,12 @@ namespace App\Service\Ki;
  *    receipt instead of making a value up.
  * 3. Still not valid, or a call without usable answer (timeout, HTTP
  *    error): the result is "KI fehlgeschlagen" - nothing is guessed.
+ * 4. Exception: if the FIRST call finds the provider out of reach
+ *    (KiAufrufStatus::ausfall(): connection, timeout, HTTP 429/5xx) and an
+ *    optional fallback profile exists, fallbackFragen() asks that profile
+ *    once - from scratch, and with its own repair call if its answer does
+ *    not fit. Never a second fallback, never a fallback after a repair
+ *    call, and each call is a step of its own.
  *
  * Two methods instead of one loop because no request may run long
  * (CLAUDE.md section 1): the job (M7-5) runs each call as a step of its
@@ -46,11 +52,41 @@ final readonly class KiAbfrage
 
     public function fragen(KiAnbieter $profil, #[\SensitiveParameter] string $apiKey, LlmAnfrage $anfrage, string $promptVersion): KiVersuch
     {
-        return $this->versuch($profil, $apiKey, $anfrage, $promptVersion, false);
+        return $this->versuch($profil, $apiKey, $anfrage, $promptVersion, false, false);
     }
 
     /**
-     * @param KiVersuch $vorher the first attempt for the same request
+     * The one step with the fallback profile, after fragen() found the
+     * default profile out of reach. Same request, same prompt version; the
+     * KiAufruf says that the fallback answered ($fallback = true), so the
+     * log names the profile that was actually used.
+     *
+     * @param KiVersuch $vorher the first attempt (with the default profile)
+     *
+     * @throws \LogicException when $vorher is no outage of a first call,
+     *         $fallback is the profile that just failed, or it is not usable
+     */
+    public function fallbackFragen(
+        KiAnbieter $fallback,
+        #[\SensitiveParameter] string $apiKey,
+        LlmAnfrage $anfrage,
+        KiVersuch $vorher,
+        string $promptVersion,
+    ): KiVersuch {
+        if (!$vorher->fallbackMoeglich()) {
+            throw new \LogicException('Only the first call of a chain that found the provider out of reach can fall back.');
+        }
+        if ($fallback->id === $vorher->aufruf->anbieterId || !$fallback->nutzbar()) {
+            throw new \LogicException('The fallback must be another profile that is active and has a key.');
+        }
+
+        return $this->versuch($fallback, $apiKey, $anfrage, $promptVersion, false, true);
+    }
+
+    /**
+     * @param KiVersuch $vorher the first attempt for the same request; made
+     *        with the fallback profile, so is the repair ($profil must then
+     *        be that profile)
      *
      * @throws \LogicException when $vorher cannot be repaired - it is valid,
      *         a repair already, or a call without answer
@@ -70,23 +106,50 @@ final readonly class KiAbfrage
             'fehler' => implode("\n", array_map(static fn(string $fehler): string => '- ' . $fehler, $vorher->fehler)),
         ]);
 
-        return $this->versuch($profil, $apiKey, $anfrage->mitNachtrag($vorher->inhalt, $nachfrage), $promptVersion, true);
+        return $this->versuch($profil, $apiKey, $anfrage->mitNachtrag($vorher->inhalt, $nachfrage), $promptVersion, true, $vorher->aufruf->fallback);
     }
 
     /**
-     * Both steps in a row: at most two calls, never a third.
+     * All steps in a row: at most three calls - the default profile's first
+     * call, then either its repair call or (if it was out of reach and
+     * $fallback is given) the fallback's first call and, if needed, the
+     * fallback's repair call. Never a fourth.
+     *
+     * @param ?KiAnbieter $fallback the optional fallback profile
+     *        (AiProviderRepository::fallback()), used only when it is
+     *        another, usable profile than $profil
      */
-    public function ausfuehren(KiAnbieter $profil, #[\SensitiveParameter] string $apiKey, LlmAnfrage $anfrage, string $promptVersion): KiErgebnis
-    {
+    public function ausfuehren(
+        KiAnbieter $profil,
+        #[\SensitiveParameter] string $apiKey,
+        LlmAnfrage $anfrage,
+        string $promptVersion,
+        ?KiAnbieter $fallback = null,
+        #[\SensitiveParameter] ?string $fallbackKey = null,
+    ): KiErgebnis {
         $erster = $this->fragen($profil, $apiKey, $anfrage, $promptVersion);
-        if (!$erster->reparaturMoeglich()) {
+        if ($erster->reparaturMoeglich()) {
+            return new KiErgebnis([$erster, $this->reparieren($profil, $apiKey, $anfrage, $erster, $promptVersion)]);
+        }
+        if (
+            !$erster->fallbackMoeglich()
+            || $fallback === null
+            || $fallbackKey === null
+            || $fallback->id === $profil->id
+            || !$fallback->nutzbar()
+        ) {
             return new KiErgebnis([$erster]);
         }
 
-        return new KiErgebnis([$erster, $this->reparieren($profil, $apiKey, $anfrage, $erster, $promptVersion)]);
+        $zweiter = $this->fallbackFragen($fallback, $fallbackKey, $anfrage, $erster, $promptVersion);
+        if (!$zweiter->reparaturMoeglich()) {
+            return new KiErgebnis([$erster, $zweiter]);
+        }
+
+        return new KiErgebnis([$erster, $zweiter, $this->reparieren($fallback, $fallbackKey, $anfrage, $zweiter, $promptVersion)]);
     }
 
-    private function versuch(KiAnbieter $profil, string $apiKey, LlmAnfrage $anfrage, string $promptVersion, bool $reparatur): KiVersuch
+    private function versuch(KiAnbieter $profil, string $apiKey, LlmAnfrage $anfrage, string $promptVersion, bool $reparatur, bool $fallback): KiVersuch
     {
         $schema = $anfrage->schema ?? throw new \LogicException('KiAbfrage needs a request with a schema.');
 
@@ -99,7 +162,7 @@ final readonly class KiAbfrage
                 [],
                 '',
                 $reparatur,
-                new KiAufruf($profil->id, $profil->name, $profil->model, $promptVersion, $reparatur, $e->status, null, null, null, null, $e->httpStatus, null),
+                new KiAufruf($profil->id, $profil->name, $profil->model, $promptVersion, $reparatur, $e->status, null, null, null, null, $e->httpStatus, null, $fallback),
             );
         }
 
@@ -136,6 +199,7 @@ final readonly class KiAbfrage
                 $antwort->dauerMs,
                 null,
                 $antwort->roh,
+                $fallback,
             ),
         );
     }

@@ -41,4 +41,16 @@ final readonly class KiVersuch
     {
         return !$this->reparatur && $this->status->reparierbar();
     }
+
+    /**
+     * The one attempt with the fallback profile: only after the first call
+     * of a chain (no repair, not itself a fallback) that found the provider
+     * out of reach. A repair call that fails stays "KI fehlgeschlagen": the
+     * first answer came from this provider, a fresh start elsewhere would
+     * only hide that.
+     */
+    public function fallbackMoeglich(): bool
+    {
+        return !$this->reparatur && !$this->aufruf->fallback && $this->status->ausfall($this->aufruf->httpStatus);
+    }
 }

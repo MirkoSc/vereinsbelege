@@ -10,6 +10,10 @@ namespace App\Service\Ki;
  * Ergebnisstatus; Rohantwort verschlüsselt"). Only handed back here - the
  * job (M7-5) stores the raw answer encrypted with the receipt, the log page
  * (M7-8) the rest. $rohantwort is business data: never log it.
+ *
+ * $anbieterId/$anbieterName/$modell name the profile that was actually
+ * asked; $fallback says that it was the fallback profile because the
+ * default one did not answer (docs/spec/03-erfassung-und-ki.md section 6).
  */
 final readonly class KiAufruf
 {
@@ -26,6 +30,7 @@ final readonly class KiAufruf
         public ?int $dauerMs,
         public ?int $httpStatus,
         public ?string $rohantwort,
+        public bool $fallback = false,
     ) {
     }
 }
