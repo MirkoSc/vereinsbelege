@@ -1,0 +1,1 @@
+{"id":"chatcmpl-test0013","object":"chat.completion","created":1790000000,"model":"local-model","choices":[{"index":0,"message":{"role":"assistant","content":"Ich sehe kein Bild."},"finish_reason":"stop"}]}

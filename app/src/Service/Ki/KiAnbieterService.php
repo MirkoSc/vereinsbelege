@@ -20,6 +20,8 @@ use App\Repository\AiProviderRepository;
  *   picture per call.
  * - The API key is printable ASCII without spaces: it ends up in an HTTP
  *   header, and a line break there would be header injection.
+ * - What the connection test found out (vision, JSON schema) replaces the
+ *   profile's claims (faehigkeitenUebernehmen()); the numbers stay.
  * - The default profile cannot be deleted, and only an active profile can
  *   become the default. There is no fallback profile yet - it follows the
  *   client in issue #180 (M7-2b).
@@ -68,6 +70,32 @@ final readonly class KiAnbieterService
         [$baseUrl, $model, $faehigkeiten, $timeout] = self::pruefe($felder);
 
         $this->anbieter->update($id, $name, $baseUrl, $model, $faehigkeiten, $timeout, $felder['active'], self::pruefeKey($neuerKey));
+    }
+
+    /**
+     * Takes over `vision` and `json_schema` found by the connection test
+     * (App\Service\Ki\Verbindungstest). `max_images` and `max_tokens` of
+     * the result are the profile's own and are stored as they are given -
+     * the test never invents them.
+     *
+     * @return list<string> the capabilities that changed (`vision`,
+     *         `json_schema`, `max_images`), empty = nothing written
+     *
+     * @throws KiAnbieterRegelverstoss
+     */
+    public function faehigkeitenUebernehmen(int $id, KiFaehigkeiten $erkannt): array
+    {
+        $bisher = $this->profil($id)->faehigkeiten;
+        $geaendert = array_keys(array_filter([
+            'vision' => $bisher->vision !== $erkannt->vision,
+            'json_schema' => $bisher->jsonSchema !== $erkannt->jsonSchema,
+            'max_images' => $bisher->maxImages !== $erkannt->maxImages,
+        ]));
+        if ($geaendert !== []) {
+            $this->anbieter->setCapabilities($id, $erkannt);
+        }
+
+        return $geaendert;
     }
 
     /**

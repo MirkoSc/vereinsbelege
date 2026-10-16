@@ -15,40 +15,54 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * "Verbindung testen" (M7-1, issue #41, docs/spec/03-erfassung-und-ki.md
- * section 6) against recorded answers (tests/fixtures/llm/verbindungstest/):
- * valid, invalid, HTTP errors, timeout, no JSON - and never the key in what
- * comes back.
+ * "Verbindung testen" (M7-1, issue #41, M7-1b, issue #42,
+ * docs/spec/03-erfassung-und-ki.md section 6) against recorded answers
+ * (tests/fixtures/llm/verbindungstest/): the probes that find out pictures
+ * and JSON schema, HTTP errors, timeout, no chat completion - and never the
+ * key in what comes back.
  */
 final class VerbindungstestTest extends TestCase
 {
     private const string KEY = 'sk-test-0000-nicht-echt-AbCdWxYz';
 
-    public function testOneCallChecksPictureAndSchemaWhenTheProfileClaimsBoth(): void
+    public function testAServerThatEnforcesTheSchemaAndSeesPicturesIsRecognisedWithTwoCalls(): void
     {
-        $http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/ok-bild-schema.json')]);
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
 
-        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: true, jsonSchema: true, timeoutS: 60), self::KEY);
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: false, jsonSchema: false, timeoutS: 60), self::KEY);
 
         self::assertTrue($ergebnis->ok, $ergebnis->text());
         self::assertSame('Verbindung erfolgreich.', $ergebnis->meldung);
         self::assertContains('Modell: gpt-6-luna-2026-08-01', $ergebnis->details);
-        self::assertContains('Tokens: 127', $ergebnis->details);
-        self::assertContains('Testbild erkannt', $ergebnis->details);
-        self::assertContains('JSON-Schema eingehalten', $ergebnis->details);
+        self::assertContains('Tokens: 70', $ergebnis->details, 'of the first call');
+        self::assertContains('Bilder: ja', $ergebnis->details);
+        self::assertContains('JSON-Schema: ja', $ergebnis->details);
         self::assertNotNull($ergebnis->dauerMs);
+        self::assertEquals(new KiFaehigkeiten(true, true, 4, 4000), $ergebnis->erkannt, 'whatever the profile claimed');
 
-        self::assertCount(1, $http->anfragen, 'one call only - no request may run long');
-        $anfrage = $http->anfragen[0];
-        self::assertSame('https://api.example.org/v1/chat/completions', $anfrage['url']);
-        self::assertSame(self::KEY, $anfrage['apiKey'], 'the key goes to the transport as Bearer');
-        self::assertSame(Verbindungstest::MAX_TIMEOUT_S, $anfrage['timeoutS'], 'capped below the request limit');
+        self::assertCount(2, $http->anfragen, 'two calls - no request may run long');
+        foreach ($http->anfragen as $anfrage) {
+            self::assertSame('https://api.example.org/v1/chat/completions', $anfrage['url']);
+            self::assertSame(self::KEY, $anfrage['apiKey'], 'the key goes to the transport as Bearer');
+            self::assertSame(Verbindungstest::MAX_TIMEOUT_S, $anfrage['timeoutS'], 'capped below the request limit');
+            self::assertSame('gpt-6-luna', $anfrage['body']['model']);
+            self::assertArrayNotHasKey('max_tokens', $anfrage['body']);
+            self::assertArrayNotHasKey('temperature', $anfrage['body']);
+        }
 
-        $body = $anfrage['body'];
-        self::assertSame('gpt-6-luna', $body['model']);
-        self::assertArrayNotHasKey('max_tokens', $body);
-        self::assertArrayNotHasKey('temperature', $body);
-        $inhalt = $body['messages'][0]['content'];
+        $text = $http->anfragen[0]['body'];
+        self::assertIsString($text['messages'][0]['content'], 'probe 1 has no picture');
+        self::assertStringContainsString('in einem kurzen deutschen Satz', $text['messages'][0]['content'], 'a sentence, so bare JSON proves enforcement');
+        self::assertSame('json_schema', $text['response_format']['type']);
+        self::assertTrue($text['response_format']['json_schema']['strict']);
+        self::assertSame(['ok', 'farbe'], $text['response_format']['json_schema']['schema']['required']);
+
+        $bild = $http->anfragen[1]['body'];
+        self::assertArrayNotHasKey('response_format', $bild, 'probe 2 asks about the picture only');
+        $inhalt = $bild['messages'][0]['content'];
         self::assertIsArray($inhalt);
         self::assertSame('text', $inhalt[0]['type']);
         self::assertSame('image_url', $inhalt[1]['type']);
@@ -57,26 +71,94 @@ final class VerbindungstestTest extends TestCase
         $jpeg = base64_decode(substr($url, strlen('data:image/jpeg;base64,')), true);
         self::assertIsString($jpeg);
         self::assertStringStartsWith("\xFF\xD8\xFF", $jpeg, 'a real JPEG');
-
-        self::assertSame('json_schema', $body['response_format']['type']);
-        self::assertTrue($body['response_format']['json_schema']['strict']);
-        self::assertSame(['ok', 'farbe'], $body['response_format']['json_schema']['schema']['required']);
     }
 
-    public function testWithoutCapabilitiesTheRequestIsPlainTextAndProseAroundTheJsonIsAccepted(): void
+    /**
+     * Anthropic's compatible endpoint takes `response_format` without an
+     * error and ignores it: the answer is a sentence.
+     */
+    public function testAServerThatIgnoresTheSchemaAnswersWithASentenceAndHasNoJsonSchema(): void
     {
-        $http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/ok-text-prosa.json')]);
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-ignoriert-satz.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
 
-        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: false, jsonSchema: false, timeoutS: 7), self::KEY);
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: true, jsonSchema: true), self::KEY);
 
         self::assertTrue($ergebnis->ok, $ergebnis->text());
-        self::assertNotContains('Testbild erkannt', $ergebnis->details);
-        self::assertNotContains('JSON-Schema eingehalten', $ergebnis->details);
+        self::assertContains('Modell: claude-sonnet-5-5', $ergebnis->details);
+        self::assertContains('JSON-Schema: nein', $ergebnis->details);
+        self::assertEquals(new KiFaehigkeiten(true, false, 4, 4000), $ergebnis->erkannt, 'the claim is replaced');
+        self::assertCount(2, $http->anfragen, 'the schema was accepted, no retry');
+    }
 
-        $anfrage = $http->anfragen[0];
-        self::assertSame(7, $anfrage['timeoutS'], "the profile's own, shorter timeout");
-        self::assertIsString($anfrage['body']['messages'][0]['content'], 'no picture');
-        self::assertArrayNotHasKey('response_format', $anfrage['body']);
+    public function testAServerThatRejectsSchemaAndPictureGetsTheQuestionOnceWithoutTheSchema(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/400-bild.json', 400),
+            FakeChatHttp::fixture('verbindungstest/schema-ignoriert-satz.json'),
+            FakeChatHttp::fixture('verbindungstest/400-bild.json', 422),
+        ]);
+
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: true, jsonSchema: true), self::KEY);
+
+        self::assertTrue($ergebnis->ok, $ergebnis->text());
+        self::assertEquals(new KiFaehigkeiten(false, false, 4, 4000), $ergebnis->erkannt);
+        self::assertContains('Bilder: nein', $ergebnis->details);
+        self::assertCount(3, $http->anfragen, 'never more than three calls');
+        self::assertArrayHasKey('response_format', $http->anfragen[0]['body']);
+        self::assertArrayNotHasKey('response_format', $http->anfragen[1]['body'], 'the retry without the parameter');
+        self::assertIsString($http->anfragen[1]['body']['messages'][0]['content']);
+    }
+
+    public function testAPictureTheModelDidNotSeeIsNoVision(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-kein-bild.json'),
+        ]);
+
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: true, jsonSchema: true), self::KEY);
+
+        self::assertTrue($ergebnis->ok, 'the connection works, the model just cannot read pictures');
+        self::assertEquals(new KiFaehigkeiten(false, true, 4, 4000), $ergebnis->erkannt);
+    }
+
+    public function testAProfileWithPicturesSendsAtLeastOneAndOtherwiseKeepsItsNumbers(): void
+    {
+        $mitBild = [
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ];
+        $ohneBild = [
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-kein-bild.json'),
+        ];
+
+        $erkannt = new Verbindungstest(new FakeChatHttp($mitBild))->pruefe(self::profil(vision: false, maxImages: 0, maxTokens: 1500), self::KEY)->erkannt;
+        self::assertEquals(new KiFaehigkeiten(true, true, 1, 1500), $erkannt);
+
+        $erkannt = new Verbindungstest(new FakeChatHttp($ohneBild))->pruefe(self::profil(vision: true, maxImages: 6, maxTokens: 1500), self::KEY)->erkannt;
+        self::assertEquals(new KiFaehigkeiten(false, true, 6, 1500), $erkannt);
+    }
+
+    public function testTheProfilesShorterTimeoutAppliesToEveryCall(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
+
+        new Verbindungstest($http)->pruefe(self::profil(timeoutS: 7), self::KEY);
+
+        self::assertSame([7, 7], array_column($http->anfragen, 'timeoutS'));
+    }
+
+    public function testAllCallsTogetherStayBelowTheRequestLimit(): void
+    {
+        self::assertLessThan(30, Verbindungstest::GESAMT_S, 'max_execution_time=30 (CLAUDE.md section 8)');
+        self::assertGreaterThanOrEqual(Verbindungstest::MAX_TIMEOUT_S, Verbindungstest::GESAMT_S);
     }
 
     public function testAWrongKeyIsReportedWithoutEverShowingTheKey(): void
@@ -102,11 +184,10 @@ final class VerbindungstestTest extends TestCase
      */
     public static function httpFehler(): iterable
     {
-        yield 'picture not supported' => ['400-bild.json', 400, 'Anfrage abgelehnt (HTTP 400) – Modell und Fähigkeiten (Bilder, JSON-Schema) prüfen.', 'image_url is only supported'];
         yield 'unknown model' => ['404-modell.json', 404, 'Adresse oder Modell nicht gefunden (HTTP 404)', 'gpt-gibt-es-nicht'];
         yield 'quota' => ['429-limit.json', 429, 'Anfragelimit oder Guthaben erschöpft (HTTP 429).', 'exceeded your current quota'];
         yield 'proxy page' => ['502-proxy.html', 502, 'Der Anbieter meldet HTTP 502.', '502 Bad Gateway 502 Bad Gateway nginx'];
-        yield 'redirect' => ['ok-bild-schema.json', 301, 'Weiterleitung (HTTP 301)', ''];
+        yield 'redirect' => ['schema-erzwungen.json', 301, 'Weiterleitung (HTTP 301)', ''];
     }
 
     #[DataProvider('httpFehler')]
@@ -117,11 +198,59 @@ final class VerbindungstestTest extends TestCase
         $ergebnis = new Verbindungstest($http)->pruefe(self::profil(), self::KEY);
 
         self::assertFalse($ergebnis->ok);
+        self::assertNull($ergebnis->erkannt, 'no result - the profile stays as it is');
+        self::assertCount(1, $http->anfragen, 'a failure on the first call ends the test');
         self::assertStringContainsString($meldung, $ergebnis->meldung);
         if ($anbietertext !== '') {
             self::assertStringContainsString($anbietertext, $ergebnis->text());
         }
         self::assertStringNotContainsString('<', $ergebnis->text(), 'no markup');
+    }
+
+    public function testARequestTheServerRejectsEvenWithoutTheSchemaIsAnError(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/400-bild.json', 400),
+            FakeChatHttp::fixture('verbindungstest/400-bild.json', 400),
+        ]);
+
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(), self::KEY);
+
+        self::assertFalse($ergebnis->ok);
+        self::assertNull($ergebnis->erkannt);
+        self::assertSame('Anfrage abgelehnt (HTTP 400) – Modell und Fähigkeiten (Bilder, JSON-Schema) prüfen.', $ergebnis->meldung);
+        self::assertStringContainsString('image_url is only supported', $ergebnis->text());
+        self::assertCount(2, $http->anfragen);
+    }
+
+    public function testAFailureOfTheSecondProbeKeepsTheProfileAndNamesTheProvidersText(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/429-limit.json', 429),
+        ]);
+
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(), self::KEY);
+
+        self::assertFalse($ergebnis->ok);
+        self::assertNull($ergebnis->erkannt, 'quota is no statement about pictures');
+        self::assertSame('Anfragelimit oder Guthaben erschöpft (HTTP 429).', $ergebnis->meldung);
+        self::assertContains('Modell: gpt-6-luna-2026-08-01', $ergebnis->details);
+        self::assertStringContainsString('exceeded your current quota', $ergebnis->text());
+    }
+
+    public function testATimeoutOfTheSecondProbeKeepsTheProfile(): void
+    {
+        $http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            KiVerbindungsfehler::zeitueberschreitung(Verbindungstest::MAX_TIMEOUT_S),
+        ]);
+
+        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(), self::KEY);
+
+        self::assertFalse($ergebnis->ok);
+        self::assertNull($ergebnis->erkannt);
+        self::assertSame('Keine Antwort innerhalb von 20 Sekunden (Zeitüberschreitung).', $ergebnis->meldung);
     }
 
     public function testATimeoutIsAFailureWithItsOwnMessage(): void
@@ -132,32 +261,6 @@ final class VerbindungstestTest extends TestCase
 
         self::assertFalse($ergebnis->ok);
         self::assertSame('Keine Antwort innerhalb von 20 Sekunden (Zeitüberschreitung).', $ergebnis->meldung);
-    }
-
-    public function testAnAnswerWithoutJsonFailsAndPointsAtTheSchemaCapability(): void
-    {
-        $http = new FakeChatHttp([
-            FakeChatHttp::fixture('verbindungstest/kein-json.json'),
-            FakeChatHttp::fixture('verbindungstest/kein-json.json'),
-        ]);
-        $test = new Verbindungstest($http);
-
-        $mitSchema = $test->pruefe(self::profil(vision: false, jsonSchema: true), self::KEY);
-        self::assertFalse($mitSchema->ok);
-        self::assertStringContainsString('kein gültiges JSON – Fähigkeit „JSON-Schema“ prüfen', $mitSchema->meldung);
-
-        $ohneSchema = $test->pruefe(self::profil(vision: false, jsonSchema: false), self::KEY);
-        self::assertFalse($ohneSchema->ok);
-        self::assertStringContainsString('enthielt kein gültiges JSON', $ohneSchema->meldung);
-    }
-
-    public function testWithASchemaProseAroundTheJsonIsNotAccepted(): void
-    {
-        $http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/ok-text-prosa.json')]);
-
-        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: false, jsonSchema: true), self::KEY);
-
-        self::assertFalse($ergebnis->ok, 'json_schema promises bare JSON');
     }
 
     public function testSomethingThatIsNoChatCompletionFails(): void
@@ -172,26 +275,6 @@ final class VerbindungstestTest extends TestCase
             self::assertFalse($ergebnis->ok);
             self::assertSame('Die Antwort ist keine Chat-Completions-Antwort – Basis-URL prüfen.', $ergebnis->meldung);
         }
-    }
-
-    public function testAPictureTheModelDidNotSeeFailsTheVisionCapability(): void
-    {
-        $http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/farbe-falsch.json')]);
-
-        $ergebnis = new Verbindungstest($http)->pruefe(self::profil(vision: true), self::KEY);
-
-        self::assertFalse($ergebnis->ok);
-        self::assertSame(
-            'Verbindung steht, aber das Testbild wurde nicht erkannt (Antwort: „Ich sehe kein Bild“) – Fähigkeit „Bilder“ prüfen.',
-            $ergebnis->meldung,
-        );
-    }
-
-    public function testOkFalseIsNotASuccess(): void
-    {
-        $http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/ok-false.json')]);
-
-        self::assertFalse(new Verbindungstest($http)->pruefe(self::profil(), self::KEY)->ok);
     }
 
     public function testWithoutAKeyNothingIsSent(): void
@@ -241,13 +324,15 @@ final class VerbindungstestTest extends TestCase
         bool $jsonSchema = true,
         int $timeoutS = 60,
         string $baseUrl = 'https://api.example.org/v1',
+        int $maxImages = 4,
+        int $maxTokens = 4000,
     ): KiAnbieter {
         return new KiAnbieter(
             id: 1,
             name: 'Test',
             baseUrl: $baseUrl,
             model: 'gpt-6-luna',
-            faehigkeiten: new KiFaehigkeiten($vision, $jsonSchema, 4, 4000),
+            faehigkeiten: new KiFaehigkeiten($vision, $jsonSchema, $maxImages, $maxTokens),
             timeoutS: $timeoutS,
             active: true,
             isDefault: true,

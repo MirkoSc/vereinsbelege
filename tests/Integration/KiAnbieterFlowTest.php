@@ -30,6 +30,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Ki\KiAnbieter;
 use App\Service\Ki\KiAnbieterService;
+use App\Service\Ki\KiFaehigkeiten;
 use App\Service\Ki\KiVorlage;
 use App\Service\Ki\Verbindungstest;
 use App\Service\Migration\Migrator;
@@ -123,6 +124,7 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertStringContainsString('marke marke-ok">Standard', $antwort->body);
         self::assertStringContainsString('Auftragsverarbeitungsvertrag', $antwort->body);
         self::assertStringContainsString('<option value="openai">OpenAI</option>', $antwort->body);
+        self::assertStringContainsString('<option value="anthropic">Anthropic</option>', $antwort->body);
         self::assertStringContainsString('href="/admin/ki-anbieter" aria-current="page"', $antwort->body, 'the navigation entry is live');
     }
 
@@ -135,6 +137,19 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertStringContainsString('value="gpt-6-luna"', $antwort->body);
         self::assertStringContainsString('name="vision" value="1" checked', $antwort->body);
         self::assertStringContainsString('name="api_key" value=""', $antwort->body);
+    }
+
+    public function testANewProfileFromTheAnthropicTemplate(): void
+    {
+        $antwort = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter/neu', query: ['vorlage' => 'anthropic']));
+
+        self::assertSame(200, $antwort->status);
+        self::assertStringContainsString('value="Anthropic"', $antwort->body);
+        self::assertStringContainsString('value="https://api.anthropic.com/v1"', $antwort->body);
+        self::assertStringContainsString('value="claude-sonnet-5-5"', $antwort->body);
+        self::assertStringContainsString('name="vision" value="1" checked', $antwort->body);
+        self::assertStringNotContainsString('name="json_schema" value="1" aria-describedby="ki-json-schema-hilfe" checked', $antwort->body, 'no response_format there, until the test finds out');
+        self::assertStringContainsString('„Verbindung testen“ ermittelt Bilder und JSON-Schema selbst', $antwort->body);
     }
 
     /**
@@ -289,7 +304,11 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
     {
         $id = $this->openai()->id;
         $this->post('/admin/ki-anbieter/' . $id, self::formular(['name' => 'OpenAI', 'api_key' => self::KEY]));
-        $this->http = new FakeChatHttp([FakeChatHttp::fixture('verbindungstest/ok-bild-schema.json')]);
+        $auditVorher = $this->auditAktionen($id);
+        $this->http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-erzwungen.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
 
         $antwort = $this->post('/admin/ki-anbieter/' . $id . '/testen', []);
 
@@ -298,17 +317,88 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         $flash = $this->flash();
         self::assertSame(FlashArt::Ok, $flash->art);
         self::assertStringStartsWith('„OpenAI“: Verbindung erfolgreich.', $flash->text);
-        self::assertStringContainsString('Testbild erkannt', $flash->text);
+        self::assertStringContainsString('Bilder: ja', $flash->text);
+        self::assertStringContainsString('JSON-Schema: ja', $flash->text);
+        self::assertStringNotContainsString('Ins Profil übernommen', $flash->text, 'the profile already said so');
 
-        self::assertCount(1, $this->http->anfragen);
+        self::assertCount(2, $this->http->anfragen);
         self::assertSame('https://api.openai.com/v1/chat/completions', $this->http->anfragen[0]['url']);
         self::assertSame(self::KEY, $this->http->anfragen[0]['apiKey']);
         self::assertSame('gpt-6-luna', $this->http->anfragen[0]['body']['model']);
+        self::assertSame($auditVorher, $this->auditAktionen($id), 'a test that changes nothing leaves no trace');
 
         // The list now has a usable default.
         $liste = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-anbieter'))->body;
         self::assertStringNotContainsString('KI-Funktionen sind ausgeschaltet', $liste);
         self::assertStringContainsString('API-Key hinterlegt', $liste);
+    }
+
+    /**
+     * Acceptance criterion "Fähigkeiten werden beim Verbindungstest erkannt
+     * und ins Profil übernommen" (M7-1b, issue #42): Anthropic's compatible
+     * endpoint ignores `response_format` and answers with a sentence.
+     */
+    public function testTheConnectionTestWritesWhatItFoundOutIntoTheProfile(): void
+    {
+        $vorlage = KiVorlage::Anthropic;
+        $this->post('/admin/ki-anbieter', self::formular([
+            'name' => 'Anthropic',
+            'base_url' => $vorlage->baseUrl(),
+            'model' => $vorlage->modell(),
+            'vision' => '',
+            'json_schema' => '1',
+            'api_key' => self::KEY,
+        ]));
+        $id = $this->profil('Anthropic')->id;
+        self::assertEquals(new KiFaehigkeiten(false, true, 4, 4000), $this->profil('Anthropic')->faehigkeiten, 'as claimed in the form');
+        $this->http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-ignoriert-satz.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
+
+        $this->post('/admin/ki-anbieter/' . $id . '/testen', []);
+
+        $flash = $this->flash();
+        self::assertSame(FlashArt::Ok, $flash->art);
+        self::assertStringContainsString('„Anthropic“: Verbindung erfolgreich.', $flash->text);
+        self::assertStringContainsString('Ins Profil übernommen: Bilder, JSON-Schema.', $flash->text);
+        self::assertStringNotContainsString(self::KEY, $flash->text);
+        self::assertSame('https://api.anthropic.com/v1/chat/completions', $this->http->anfragen[0]['url']);
+
+        $profil = $this->profil('Anthropic');
+        self::assertEquals(new KiFaehigkeiten(true, false, 4, 4000), $profil->faehigkeiten);
+        self::assertSame(self::KEY, $this->anbieter->apiKey($id), 'the key is untouched');
+        self::assertSame('claude-sonnet-5-5', $profil->model);
+        self::assertSame(
+            [AuditAction::KiAnbieterAngelegt->value, AuditAction::KiAnbieterGeaendert->value],
+            $this->auditAktionen($id),
+        );
+
+        // The next test finds the same - nothing to take over, nothing audited.
+        $this->http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-ignoriert-satz.json'),
+            FakeChatHttp::fixture('verbindungstest/bild-rot.json'),
+        ]);
+        $this->post('/admin/ki-anbieter/' . $id . '/testen', []);
+        self::assertStringNotContainsString('Ins Profil übernommen', $this->flash()->text);
+        self::assertCount(2, $this->auditAktionen($id));
+    }
+
+    public function testAFailedProbeLeavesTheCapabilitiesAlone(): void
+    {
+        $id = $this->openai()->id;
+        $this->post('/admin/ki-anbieter/' . $id, self::formular(['name' => 'OpenAI', 'api_key' => self::KEY]));
+        $vorher = $this->openai()->faehigkeiten;
+        $this->http = new FakeChatHttp([
+            FakeChatHttp::fixture('verbindungstest/schema-ignoriert-satz.json'),
+            FakeChatHttp::fixture('verbindungstest/429-limit.json', 429),
+        ]);
+
+        $this->post('/admin/ki-anbieter/' . $id . '/testen', []);
+
+        self::assertSame(FlashArt::Fehler, $this->flash()->art);
+        self::assertEquals($vorher, $this->openai()->faehigkeiten, 'no statement about pictures, so no change');
+        self::assertSame([AuditAction::KiAnbieterGeaendert->value], $this->auditAktionen($id), 'only the save of the key above');
     }
 
     public function testAFailedConnectionTestIsAnErrorWithoutTheKey(): void
@@ -428,6 +518,16 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
     private function profil(string $name): KiAnbieter
     {
         return $this->anbieter->findByName($name) ?? self::fail('Profile not found: ' . $name);
+    }
+
+    /**
+     * @return list<string> audit actions of a profile, oldest first
+     */
+    private function auditAktionen(int $id): array
+    {
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'ai_provider', entityId: $id), null, 20);
+
+        return array_reverse(array_map(static fn(AuditEntry $e): string => $e->action, $zeilen));
     }
 
     private function flash(): Flash

@@ -136,6 +136,16 @@ final readonly class AiProviderRepository
     }
 
     /**
+     * Only the capabilities - what "Verbindung testen" found out
+     * (App\Service\Ki\Verbindungstest); name, key and the rest stay.
+     */
+    public function setCapabilities(int $id, KiFaehigkeiten $faehigkeiten): void
+    {
+        $this->pdo->prepare('UPDATE ai_provider SET caps = ?, updated_at = NOW() WHERE id = ?')
+            ->execute([$faehigkeiten->toJson(), $id]);
+    }
+
+    /**
      * Makes $id the one default profile - one statement, so there is no
      * moment with none or two. `updated_at` comes first: MariaDB assigns
      * left to right and would otherwise compare against the new value.
