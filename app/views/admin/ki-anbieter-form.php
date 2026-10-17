@@ -46,7 +46,8 @@ $ziel = $neu ? '/admin/ki-anbieter' : '/admin/ki-anbieter/' . $profil->id;
         </label>
         <p class="feld-hilfe" id="ki-base-url-hilfe">
             Nur https://. Ohne „/chat/completions“ – das hängt die Anwendung selbst an,
-            z. B. https://api.openai.com/v1.
+            z. B. https://api.openai.com/v1. Beim eigenen llama.cpp-Server die Adresse des
+            Reverse-Proxys (docs/llama-cpp-reverse-proxy.md).
         </p>
 
         <label for="ki-model">Modell <span class="pflicht" aria-hidden="true">*</span>

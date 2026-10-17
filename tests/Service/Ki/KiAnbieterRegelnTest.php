@@ -63,7 +63,31 @@ final class KiAnbieterRegelnTest extends TestCase
 
     public function testTheTemplatesFollowTheOrderOfE08(): void
     {
-        self::assertSame([KiVorlage::OpenAi, KiVorlage::Anthropic], KiVorlage::cases(), 'E-08: OpenAI, then Anthropic (llama.cpp: M7-1c)');
+        self::assertSame([KiVorlage::OpenAi, KiVorlage::Anthropic, KiVorlage::LlamaCpp], KiVorlage::cases(), 'E-08: OpenAI, then Anthropic, then llama.cpp');
+    }
+
+    public function testTheLlamaCppTemplateIsASelfHostedVisionProfileWithJsonSchema(): void
+    {
+        $vorlage = KiVorlage::LlamaCpp;
+
+        self::assertSame('llama.cpp-Server', $vorlage->label());
+        // The application only talks https: the server sits behind a reverse
+        // proxy, and the placeholder must be a URL the profile form accepts.
+        self::assertStringStartsWith('https://', $vorlage->baseUrl());
+        self::assertSame($vorlage->baseUrl(), KiAnbieterService::normalisiereBaseUrl($vorlage->baseUrl()));
+        self::assertSame('default', $vorlage->modell());
+        // llama-server turns response_format into a grammar; the pages are
+        // few because a local vision model has a small context.
+        self::assertEquals(new KiFaehigkeiten(vision: true, jsonSchema: true, maxImages: 2, maxTokens: 4000), $vorlage->faehigkeiten());
+        self::assertSame(180, $vorlage->timeoutS());
+        self::assertGreaterThanOrEqual(KiAnbieterService::TIMEOUT_MIN, $vorlage->timeoutS());
+        self::assertLessThanOrEqual(KiAnbieterService::TIMEOUT_MAX, $vorlage->timeoutS());
+        self::assertSame('llamacpp', $vorlage->value);
+        self::assertSame($vorlage, KiVorlage::tryFrom('llamacpp'));
+        self::assertSame(
+            'https://llm.example.org/v1/chat/completions',
+            rtrim($vorlage->baseUrl(), '/') . '/chat/completions',
+        );
     }
 
     public function testTheAnthropicTemplateUsesTheCompatibleEndpointAndStartsWithoutJsonSchema(): void

@@ -65,6 +65,8 @@ foreach ($profile as $profil) {
     <p class="hinweis hinweis-info">
         Datenschutz: Der Anbieter sieht die Belege im Klartext, auch Namen und IBANs von
         Einreichern. Für OpenAI und Anthropic ist ein Auftragsverarbeitungsvertrag nötig.
+        Ein eigener llama.cpp-Server gibt keine Daten an Dritte weiter; er wird über einen
+        Reverse-Proxy mit TLS und API-Key angebunden (docs/llama-cpp-reverse-proxy.md).
     </p>
 
     <form method="get" action="/admin/ki-anbieter/neu" class="formular">
