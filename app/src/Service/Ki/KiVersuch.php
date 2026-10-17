@@ -53,4 +53,53 @@ final readonly class KiVersuch
     {
         return !$this->reparatur && !$this->aufruf->fallback && $this->status->ausfall($this->aufruf->httpStatus);
     }
+
+    /**
+     * The attempt as the job keeps it between two requests (issue #47/M7-5):
+     * encrypted in a `document_artifact`, because $inhalt and $daten are
+     * business data - `job.state` only ever holds counters.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return [
+            'status' => $this->status->value,
+            'daten' => $this->daten,
+            'fehler' => $this->fehler,
+            'inhalt' => $this->inhalt,
+            'reparatur' => $this->reparatur,
+            'aufruf' => $this->aufruf->toArray(),
+        ];
+    }
+
+    /**
+     * @param array<mixed> $daten what toArray() stored
+     *
+     * @throws \UnexpectedValueException when $daten is not such an attempt
+     */
+    public static function fromArray(array $daten): self
+    {
+        $status = KiAufrufStatus::tryFrom(is_string($daten['status'] ?? null) ? $daten['status'] : '');
+        $werte = $daten['daten'] ?? null;
+        if (
+            $status === null
+            || !($werte === null || (is_array($werte) && !array_is_list($werte)))
+            || !is_array($daten['fehler'] ?? null)
+            || !is_string($daten['inhalt'] ?? null)
+            || !is_bool($daten['reparatur'] ?? null)
+            || !is_array($daten['aufruf'] ?? null)
+        ) {
+            throw new \UnexpectedValueException('Not a stored AI attempt.');
+        }
+
+        return new self(
+            $status,
+            $werte,
+            array_values(array_filter($daten['fehler'], is_string(...))),
+            $daten['inhalt'],
+            $daten['reparatur'],
+            KiAufruf::fromArray($daten['aufruf']),
+        );
+    }
 }

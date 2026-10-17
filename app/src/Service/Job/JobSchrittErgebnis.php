@@ -23,6 +23,7 @@ final readonly class JobSchrittErgebnis
         public JobStatus $status,
         public string $step,
         public array $state,
+        public int $wartenSekunden = 0,
     ) {
     }
 
@@ -32,6 +33,25 @@ final readonly class JobSchrittErgebnis
     public static function weiter(string $naechsterSchritt, array $state): self
     {
         return new self(JobStatus::Offen, $naechsterSchritt, $state);
+    }
+
+    /**
+     * Not yet: the job waits for other work on the same document (issue
+     * #47/M7-5: `ai_extract` waits for the text layer and the page images)
+     * and is not claimed again for $sekunden - App\Repository\
+     * JobRepository::schrittErledigt() keeps it in `locked_until`, which
+     * claim() already skips. Unlike weiter(), the next call does not come
+     * right away, so a job that waits does not keep the browser busy.
+     *
+     * @param array<string, mixed> $state
+     */
+    public static function warten(string $schritt, array $state, int $sekunden): self
+    {
+        if ($sekunden < 1) {
+            throw new \InvalidArgumentException('A job waits at least one second.');
+        }
+
+        return new self(JobStatus::Offen, $schritt, $state, $sekunden);
     }
 
     public static function fertig(): self

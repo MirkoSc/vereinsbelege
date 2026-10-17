@@ -66,6 +66,7 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Upload\MagicBytes;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\KiAuslesungFabrik;
 use App\Tests\Support\FakeJpeg;
 use App\View\View;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -777,7 +778,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
             $view,
             new Session(),
             new SessionVault(),
-            new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
+            new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
             $kostenstellen,
             $duplikate,
         );
@@ -795,8 +796,9 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 $this->supplierService(),
                 new DocumentArtifactRepository($pdo),
                 new Texterkennung($documents, new DocumentArtifactRepository($pdo), $this->blobService()),
-                new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
+                new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
                 $this->audit,
+                KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto),
             ),
             new Festschreibung($pdo, $documents, new InvoiceRepository($pdo), $this->audit),
             new CategoryRepository($pdo),

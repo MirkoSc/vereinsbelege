@@ -164,7 +164,12 @@ final class ArchivImportFlowTest extends DatabaseTestCase
             self::assertSame(DocumentSource::Archiv->value, $d['source']);
             self::assertSame('ausstehend', $d['ocr_status']);
             self::assertSame($this->userId, (int) $d['created_by']);
-            self::assertSame(3, $this->jobsFuer((int) $d['id']), 'PDF, duplicate index, text - as for any captured receipt');
+            // PDF, duplicate index, text - as for any captured receipt; and
+            // the AI (issue #47/M7-5) for what is ready for evaluation right
+            // away, not for a Wiedervorlage.
+            $ki = $d['status'] === DocumentStatus::BereitZurAuswertung->value ? 1 : 0;
+            self::assertSame(3 + $ki, $this->jobsFuer((int) $d['id']));
+            self::assertSame($ki, $this->jobsFuer((int) $d['id'], 'ai_extract'));
         }
 
         $nachPfad = [];
@@ -577,10 +582,10 @@ final class ArchivImportFlowTest extends DatabaseTestCase
         return implode('', iterator_to_array($this->blobs()->openRead($blob, $this->tresor), false));
     }
 
-    private function jobsFuer(int $documentId): int
+    private function jobsFuer(int $documentId, ?string $typ = null): int
     {
-        $stmt = $this->pdo()->prepare("SELECT COUNT(*) FROM job WHERE ref_type = 'document' AND ref_id = ?");
-        $stmt->execute([$documentId]);
+        $stmt = $this->pdo()->prepare("SELECT COUNT(*) FROM job WHERE ref_type = 'document' AND ref_id = ? AND (? IS NULL OR typ = ?)");
+        $stmt->execute([$documentId, $typ, $typ]);
 
         return (int) $stmt->fetchColumn();
     }

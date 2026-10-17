@@ -37,6 +37,8 @@ use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Document\PdfErzeugung;
+use App\Service\Job\ExternerAufruf;
+use App\Service\Job\ExternerJobHandler;
 use App\Service\Job\JobAbgebrochen;
 use App\Service\Job\JobHandler;
 use App\Service\Job\JobRunner;
@@ -55,6 +57,12 @@ use App\View\View;
  * section 4): the real route table, guard, controller, JobRunner and
  * database, driving the real `pdf_erzeugen` handler plus a throwing test
  * handler that stands in for a job type crashing.
+ *
+ * Since issue #47/M7-5 also the three-phase step of a handler that waits on
+ * an external call (App\Service\Job\ExternerJobHandler): the connection is
+ * released before the call and the step finishes on a fresh one
+ * (06-betrieb.md section 4), and a waiting step (JobSchrittErgebnis::
+ * warten()) is not claimed again before its time.
  */
 final class JobStepFlowTest extends DatabaseTestCase
 {
@@ -217,6 +225,149 @@ final class JobStepFlowTest extends DatabaseTestCase
         self::assertSame(JobAbgebrochen::class, $job?->lastError, 'the handler must not have been called at all');
     }
 
+    // ------------------------------------------------- external calls (M7-5)
+
+    public function testAStepWaitingOnAnExternalCallReleasesTheConnectionFirstAndFinishesAfterwards(): void
+    {
+        $jobId = $this->jobRepository()->enqueue('extern', JobExecutor::Session);
+        $ablauf = [];
+        $sperreWaehrendDesAufrufs = null;
+        $sessionWaehrendDesAufrufs = null;
+
+        $handler = self::externerHandler(
+            aufruf: function (Job $job) use (&$ablauf, &$sperreWaehrendDesAufrufs, &$sessionWaehrendDesAufrufs, $jobId): ExternerAufruf {
+                return new ExternerAufruf(
+                    function () use (&$ablauf, &$sperreWaehrendDesAufrufs, &$sessionWaehrendDesAufrufs, $jobId): string {
+                        $ablauf[] = 'aufruf';
+                        $sperreWaehrendDesAufrufs = $this->job($jobId)?->lockedUntil;
+                        $sessionWaehrendDesAufrufs = session_status();
+
+                        return 'antwort';
+                    },
+                    90,
+                );
+            },
+            nachAufruf: function (Job $job, mixed $ergebnis) use (&$ablauf): JobSchrittErgebnis {
+                $ablauf[] = 'nach:' . $ergebnis;
+
+                return JobSchrittErgebnis::fertig();
+            },
+        );
+        $vorher = new \DateTimeImmutable();
+
+        $antwort = self::json($this->schritt(handler: [$handler], freigeben: function () use (&$ablauf): void {
+            $ablauf[] = 'freigegeben';
+        }));
+
+        self::assertSame('gearbeitet', $antwort['status']);
+        self::assertSame(0, $antwort['offen']);
+        self::assertSame(['freigegeben', 'aufruf', 'nach:antwort'], $ablauf, 'connection released before the call, result stored after it');
+        self::assertSame(JobStatus::Fertig, $this->job($jobId)?->status);
+        self::assertNotNull($sperreWaehrendDesAufrufs);
+        self::assertGreaterThanOrEqual(
+            $vorher->modify('+149 seconds')->getTimestamp(),
+            $sperreWaehrendDesAufrufs->getTimestamp(),
+            'the lock covers the call\'s own limit plus room to store the result',
+        );
+        self::assertNotSame(PHP_SESSION_ACTIVE, $sessionWaehrendDesAufrufs, 'the session lock is free while the call runs');
+    }
+
+    public function testAHandlerWithoutAnExternalCallInThisStepRunsItsPlainStep(): void
+    {
+        $jobId = $this->jobRepository()->enqueue('extern', JobExecutor::Session);
+        $freigegeben = false;
+
+        $handler = self::externerHandler(
+            aufruf: static fn(Job $job): ?ExternerAufruf => null,
+            nachAufruf: static fn(Job $job, mixed $ergebnis): never => throw new \LogicException('No call, no nachAufruf().'),
+            schritt: static fn(Job $job): JobSchrittErgebnis => JobSchrittErgebnis::weiter('zwei', ['n' => 1]),
+        );
+
+        self::json($this->schritt(handler: [$handler], freigeben: function () use (&$freigegeben): void {
+            $freigegeben = true;
+        }));
+
+        self::assertFalse($freigegeben, 'nothing external, nothing released');
+        self::assertSame('zwei', $this->job($jobId)?->step);
+        self::assertSame(['n' => 1], $this->job($jobId)?->state);
+    }
+
+    public function testAThrowingExternalCallFailsTheJobWithOnlyItsClassName(): void
+    {
+        $jobId = $this->jobRepository()->enqueue('extern', JobExecutor::Session);
+        $handler = self::externerHandler(
+            aufruf: static fn(Job $job): ExternerAufruf => new ExternerAufruf(
+                static fn(): never => throw new \RuntimeException('IBAN DE89370400440532013000 im Fehlertext.'),
+                30,
+            ),
+            nachAufruf: static fn(Job $job, mixed $ergebnis): never => throw new \LogicException('Never reached.'),
+        );
+
+        self::json($this->schritt(handler: [$handler]));
+
+        $job = $this->job($jobId);
+        self::assertSame(JobStatus::Fehler, $job?->status);
+        self::assertSame(\RuntimeException::class, $job?->lastError);
+    }
+
+    /**
+     * A call that outlived its lock: the job expired, another tab claimed
+     * it - the late result must not overwrite what that tab is doing.
+     */
+    public function testAResultArrivingAfterTheLockWasLostIsDropped(): void
+    {
+        $jobId = $this->jobRepository()->enqueue('extern', JobExecutor::Session);
+        $nachAufrufGerufen = false;
+        $handler = self::externerHandler(
+            aufruf: fn(Job $job): ExternerAufruf => new ExternerAufruf(function () use ($jobId): string {
+                $this->pdo()->prepare("UPDATE job SET locked_by = 'anderer-tab' WHERE id = ?")->execute([$jobId]);
+
+                return 'zu spät';
+            }, 30),
+            nachAufruf: function (Job $job, mixed $ergebnis) use (&$nachAufrufGerufen): JobSchrittErgebnis {
+                $nachAufrufGerufen = true;
+
+                return JobSchrittErgebnis::fertig();
+            },
+        );
+
+        self::json($this->schritt(handler: [$handler]));
+
+        self::assertFalse($nachAufrufGerufen);
+        $job = $this->job($jobId);
+        self::assertSame(JobStatus::Laeuft, $job?->status);
+        self::assertSame('anderer-tab', $job?->lockedBy);
+    }
+
+    public function testAWaitingJobIsNotClaimedAgainBeforeItsTime(): void
+    {
+        $jobId = $this->jobRepository()->enqueue('extern', JobExecutor::Session);
+        $aufrufe = 0;
+        $handler = self::externerHandler(
+            aufruf: static fn(Job $job): ?ExternerAufruf => null,
+            nachAufruf: static fn(Job $job, mixed $ergebnis): never => throw new \LogicException('Never reached.'),
+            schritt: function (Job $job) use (&$aufrufe): JobSchrittErgebnis {
+                $aufrufe++;
+
+                return JobSchrittErgebnis::warten('', [], 30);
+            },
+        );
+        $vorher = new \DateTimeImmutable();
+
+        $erste = self::json($this->schritt(handler: [$handler]));
+        $zweite = self::json($this->schritt(handler: [$handler]));
+
+        self::assertSame('gearbeitet', $erste['status']);
+        self::assertSame('leer', $zweite['status'], 'parked until its time');
+        self::assertSame(1, $zweite['offen'], 'still counts as waiting');
+        self::assertSame(1, $aufrufe);
+        $job = $this->job($jobId);
+        self::assertSame(JobStatus::Offen, $job?->status);
+        self::assertNull($job?->lockedBy);
+        self::assertSame(0, $job?->attempts, 'waiting is progress, not a crash');
+        self::assertGreaterThanOrEqual($vorher->modify('+29 seconds')->getTimestamp(), $job?->lockedUntil?->getTimestamp());
+    }
+
     // ----------------------------------------------------------- scaffolding
 
     /**
@@ -312,6 +463,52 @@ final class JobStepFlowTest extends DatabaseTestCase
     }
 
     /**
+     * A job type `extern` whose three hooks are the given closures (issue
+     * #47/M7-5): aufruf() and nachAufruf() of App\Service\Job\
+     * ExternerJobHandler, schritt() for a step without external call.
+     *
+     * @param \Closure(Job): ?ExternerAufruf $aufruf
+     * @param \Closure(Job, mixed): JobSchrittErgebnis $nachAufruf
+     * @param ?\Closure(Job): JobSchrittErgebnis $schritt
+     */
+    private static function externerHandler(\Closure $aufruf, \Closure $nachAufruf, ?\Closure $schritt = null): ExternerJobHandler
+    {
+        return new readonly class ($aufruf, $nachAufruf, $schritt) implements ExternerJobHandler {
+            public function __construct(
+                private \Closure $aufrufFn,
+                private \Closure $nachAufrufFn,
+                private ?\Closure $schrittFn,
+            ) {
+            }
+
+            public function typ(): string
+            {
+                return 'extern';
+            }
+
+            public function recht(): Permission
+            {
+                return Permission::DocumentEdit;
+            }
+
+            public function aufruf(Job $job, Vault $vault, \DateTimeImmutable $now): ?ExternerAufruf
+            {
+                return ($this->aufrufFn)($job);
+            }
+
+            public function nachAufruf(Job $job, Vault $vault, mixed $ergebnis, \DateTimeImmutable $now): JobSchrittErgebnis
+            {
+                return ($this->nachAufrufFn)($job, $ergebnis);
+            }
+
+            public function schritt(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
+            {
+                return ($this->schrittFn ?? static fn(): never => throw new \LogicException('No plain step.'))($job);
+            }
+        };
+    }
+
+    /**
      * @return array<string, string>
      */
     private function tresorCookie(): array
@@ -322,10 +519,17 @@ final class JobStepFlowTest extends DatabaseTestCase
     /**
      * @param list<JobHandler> $handler defaults to the real pdf_erzeugen
      *        handler; a test that enqueues its own type passes its own list.
+     * @param ?\Closure(): void $freigeben stands in for
+     *        ConnectionFactory::release() - the test keeps its one connection
      */
-    private function schritt(bool $entsperrt = true, array $handler = []): Response
+    private function schritt(bool $entsperrt = true, array $handler = [], ?\Closure $freigeben = null): Response
     {
-        $antwort = $this->kernel($handler)->handle(new Request(
+        // JobController closes the session after each step (issue #47/
+        // M7-5); open it again before tresorCookie() writes the vault key
+        // into it, or the controller's start() would load the saved state
+        // over it.
+        new Session()->start();
+        $antwort = $this->kernel($handler, $freigeben)->handle(new Request(
             HttpMethod::Post,
             '/api/jobs/step',
             cookies: $entsperrt ? $this->tresorCookie() : [],
@@ -338,8 +542,9 @@ final class JobStepFlowTest extends DatabaseTestCase
 
     /**
      * @param list<JobHandler> $handler
+     * @param ?\Closure(): void $freigeben
      */
-    private function kernel(array $handler = []): Kernel
+    private function kernel(array $handler = [], ?\Closure $freigeben = null): Kernel
     {
         $paths = new Paths(dirname(__DIR__, 2));
         $view = new View($paths->viewsDir(), '0.0.0-test');
@@ -367,7 +572,9 @@ final class JobStepFlowTest extends DatabaseTestCase
             new Session(),
             new SessionVault(),
             $view,
-            new JobRunner(new JobRepository($pdo), $handler),
+            static fn(): JobRunner => new JobRunner(new JobRepository($pdo), $handler),
+            $freigeben ?? static function (): void {
+            },
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

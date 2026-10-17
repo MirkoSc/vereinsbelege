@@ -726,6 +726,58 @@ weil es kein Auslese-Ergebnis, sondern die Datei selbst ist.
 Jeder Schritt idempotent, einzeln wiederholbar, Fehler landen am Beleg
 sichtbar („KI-Anbieter nicht erreichbar – erneut versuchen").
 
+**Stand M7-5** (issue #47, Migration 031): `ai_extract` ist
+`App\Service\Document\KiAuslesung` (Recht `document.edit`, Executor
+`session`); die Fachlogik liegt framework-frei in
+`App\Service\Processing\KiAuslese\` (`Auslesung`, `AusleseEingabe`,
+`AusleseVorschlag`), geprüft durch den Architekturtest
+`tests/Support/ProcessingArchitectureTest.php` (kein `App\Http`,
+`App\Repository`, `App\Database`, … , kein PDO, keine Superglobals, keine
+Session-/Header-Funktionen in `app/src/Service/Processing/`).
+- *Eingereiht* beim Annehmen im Posteingang (`Posteingang::entscheiden()`,
+  Ziel `bereit_zur_auswertung`), beim Archiv-Import für Belege, die gleich
+  `bereit_zur_auswertung` sind (nicht für Wiedervorlagen), über „KI erneut
+  versuchen“ in der Prüfansicht und per Migration 031 für alle Belege, die
+  schon in `bereit_zur_auswertung` stehen – immer über
+  `KiAuslesung::einreihen()`, das keinen zweiten offenen Lauf anlegt.
+- *Schritt `''`:* Beleg nicht (mehr) `bereit_zur_auswertung` (jemand hat ihn
+  übernommen, festgeschrieben …) oder kein nutzbares Standardprofil (aktiv,
+  Key lässt sich entschlüsseln) → Job `uebersprungen`, der Beleg wird von Hand
+  erfasst. Sind `extract_text` oder `render_pages` für das Dokument noch
+  offen, wartet der Job 30 s (`JobSchrittErgebnis::warten()`, 06 §4). Hat der
+  Beleg nichts, was die KI lesen kann (kein Text, keine E-Rechnung, keine
+  Seiten bzw. ein Profil ohne `vision`), gibt es keinen Aufruf: Artefakt mit
+  dem Grund, Status `ki_fehler`.
+- *Schritte `fragen`, `fallback`, `reparieren`:* je **ein** KI-Aufruf
+  (`KiAbfrage::fragen()`, `fallbackFragen()`, `reparieren()`), als
+  zweiphasiger Schritt (06 §4: Verbindung vor dem Aufruf freigegeben); die
+  Reparatur mit dem Profil des vorigen Versuchs, der Fallback nur, wenn der
+  erste Aufruf einen Ausfall traf und ein anderes nutzbares Fallback-Profil
+  da ist. Höchstens drei Aufrufe. Hat jemand den Beleg zwischen zwei Schritten
+  übernommen, wird nicht mehr gefragt.
+- *Eingabe:* Textlayer (`Texterkennung::textFuerKi()`, nur bei
+  `ocr_status = fertig` – dann keine Bilder), die Felder einer gelesenen
+  E-Rechnung, sonst Seitenbilder: je Original die aufbereitete Fassung des
+  Scanners, sonst das Bild selbst (PNG → JPEG per `PngZuJpeg`), für PDFs die
+  Seitenbilder des neuesten Rasterungslaufs; höchstens `max_images` und
+  20 MiB je Aufruf. Dazu Freitext der Einreichung, aktive Kategorien (mit
+  Richtung und `ai_hint`) und Kostenstellen.
+- *Ergebnis:* je Versuch ein `document_artifact` `kind = extraction`, `seq` =
+  Versuch 0–2, eigener DEK, `data_enc` = JSON `{versuch, meldung, extraktion,
+  hinweise}` – `versuch` mit Rohantwort, Modell, Prompt-Version, Tokens,
+  Dauer, HTTP-Status, Fallback ja/nein (`KiVersuch::toArray()`), `meldung`
+  ohne Beleginhalt (`KiErgebnis::meldung()` über die Kette), bei gültiger
+  Antwort `extraktion` (`extract-v1` nach den Server-Prüfungen, Abschnitt 6)
+  und `hinweise`. Dort liest der nächste Schritt den vorigen Versuch;
+  `job.state` hält nur den Zähler `n`. Der letzte Schritt löscht ältere Läufe
+  (`loescheAndereLaeufe()`) und setzt `ausgewertet` (gültig) bzw. `ki_fehler`
+  – nur aus `bereit_zur_auswertung` (`UPDATE … WHERE status = ?`), ein
+  inzwischen übernommener oder festgeschriebener Beleg bleibt, wie er ist
+  (01 §7). „KI fehlgeschlagen“ ist kein Jobfehler.
+- *Idempotenz:* Liegt der Versuch eines Schritts schon vor (Request nach dem
+  Aufruf abgebrochen), geht der wiederholte Schritt von dort weiter, ohne neu
+  zu fragen.
+
 ## 6. KI-Anbindung
 
 ### Client
@@ -970,11 +1022,64 @@ das Fallback-Profil.
   die komplette Lieferantenliste.
 - Prompts liegen versioniert unter `app/prompts/*.md`, nicht im Code.
 
+**Umsetzung (M7-5, issue #47):** `App\Service\Processing\KiAuslese\Auslesung`
+(framework-frei, Ablauf des Jobs: Abschnitt 5).
+- *Prompt:* System-Nachricht `app/prompts/extract-v1.md` (Regeln: nichts
+  raten, Formate, Richtung, Lieferant = Aussteller, `sphere` immer null;
+  `{{kategorien}}` als „Nummer: Name (Richtung) – ai_hint“ aller aktiven
+  Kategorien, `{{kostenstellen}}`, `{{lieferanten}}`), der Beleg in
+  `app/prompts/extract-v1-beleg.md` (`{{freitext}}`, `{{inhalt}}`: Felder der
+  E-Rechnung als JSON, Textlayer seitenweise, höchstens 60 000 Zeichen, bzw.
+  ein Satz zu den beiliegenden Seitenbildern). Freitext (höchstens
+  2000 Zeichen) und Beleg stehen zwischen Marken (`<<<FREITEXT …
+  FREITEXT>>>`, `<<<BELEG … BELEG>>>`), die die Daten selbst nicht schließen
+  können (`<<<`/`>>>` darin werden entschärft); der Prompt sagt, dass das
+  Daten und keine Anweisungen sind – der Freitext kommt aus der öffentlichen
+  Einreichung.
+- *Lieferanten-Vorauswahl:* kommt mit M7-6 (issue #48); bis dahin steht
+  „Keine Vorauswahl.“ im Prompt.
+- *Sphären:* `sphaeren_aktiv` gibt es noch nicht (E-15) – der Prompt erklärt
+  keine Sphären, `sphere` wird serverseitig immer null.
+- *Server-Prüfungen* (`Auslesung::auswerten()`, nach der Schema-Prüfung):
+  Beträge mit `Processing\Betrag` in Cent geparst (unbrauchbar → null +
+  Hinweis), Summenprüfung Netto + Steuern ≈ Brutto (Hinweis, Wert bleibt),
+  Daten, die es nicht gibt (2026-02-30) → null + Hinweis, Kategorie nicht
+  angeboten bzw. nicht zur Richtung passend → null + Hinweis, unbekannte
+  Kostenstelle → null, nicht gesendete Seiten bzw. gekürzter Text → Hinweis.
+  Hinweise nennen Felder, nie Werte.
+
 ### Prüfansicht
 - Links Beleg (Seiten blätterbar, Zoom), rechts Formular mit den
   ausgelesenen Feldern; Felder mit Konfidenz < 0.7 gelb markiert,
   KI-Warnungen oben. Tastatur-freundlich (Tab-Reihenfolge, Enter =
   „Geprüft, nächster Beleg").
+
+**Stand M7-5** (issue #47): die KI belegt das Formular vor.
+- *Reihenfolge* (nur ohne gespeicherten Beleg, `PruefungController::formular`):
+  KI-Vorschlag (`KiAuslesung::auszug()`, neuester Lauf), darüber eine gelesene
+  E-Rechnung (sie gewinnt bei allem, was sie kennt; die KI ergänzt Kategorie,
+  Zweck, Kostenstelle), darüber die Archiv-Vorgabe (Quelle in den Hinweisen
+  „KI“ bzw. „E-Rechnung“). Alles über `Pruefung::vorbelegen()`, das seit M7-5
+  auch `category_id` (aktiv, zur Richtung passend) und `cost_center_id` (nur
+  wenn das Dokument keine hat – sie bestimmt den Scope) übernimmt und beim
+  Lieferanten nie Auswahl und „Neu anlegen“ zugleich belegt.
+- *Konfidenz:* `supplier` → Lieferant bzw. „Neu anlegen: Name“, `total_gross`
+  → Brutto, `invoice_date` → Belegdatum, `category` → Kategorie; unter 0,7
+  (`AusleseVorschlag::KONFIDENZ_GRENZE`) bekommt das Feld die Klasse
+  `feld-unsicher` (gelb) und im Label die Marke „KI unsicher“ – nur, wenn die
+  KI es tatsächlich gefüllt hat und nichts darübergelegt wurde.
+- *Oben:* Hinweis „Vorschlag der KI (Profil, Modell)“ samt den `warnings` der
+  KI und den Server-Hinweisen (gelb, sobald es Warnungen oder unsichere Felder
+  gibt); bei `ki_fehler` die Meldung und „KI erneut versuchen“; bei einem Beleg
+  in `bereit_zur_auswertung` ohne Ergebnis „Mit KI auslesen“ bzw. „Die KI liest
+  diesen Beleg gerade aus“.
+- *„KI erneut versuchen“:* `POST /app/belege/pruefen/{id}/ki-erneut`
+  (`document.edit` mit Scope, CSRF, Tresor), `Pruefung::kiErneut()`:
+  `ki_fehler` → `bereit_zur_auswertung` und Job einreihen, aus
+  `bereit_zur_auswertung` nur einreihen; abgelehnt ohne nutzbares KI-Profil,
+  bei laufendem Lauf und in jedem anderen Status. Audit `beleg.ki_erneut`
+  (Details: `von`).
+- Gespeichert wird erst durch die Person (CLAUDE.md §6).
 
 **Stand M6-3** (issue #37, vollständig manuell – M7-5 belegt dasselbe
 Formular nur vor): `App\App\PruefungController`, Regeln und Verschlüsselung
@@ -1182,6 +1287,31 @@ Abbruch zwischen den Artefakten, neuer Lauf ersetzt, kein KI-Zugriff;
 nur mit passender Rolle, nicht lesbare E-Rechnung, Hinweise, nur passende
 Werte; `PdfErzeugungTest`, `ChunkUploadTest`, `InboxFlowTest`: XML ist keine
 Seite, Upload ok bzw. 415, Download als `attachment`);
+KI-Auslesen (M7-5: `KiAusleseTest`: Prompt mit Kategorien/`ai_hint`,
+Kostenstellen, ohne Lieferantenliste, Textlayer ohne Bilder, Bilder nur bei
+`vision` und höchstens `max_images`, E-Rechnung als Felder, Freitext als Daten
+ohne Ausbruch aus den Marken, „nicht lesbar“ mit Grund, Server-Prüfungen
+(Summe, Betrag, Datum, Kategorie inkl. Richtung, Kostenstelle, `sphere`,
+fehlende Seiten), Konfidenz-Grenze 0,7, Rundreise `KiVersuch`;
+`ProcessingArchitectureTest`: keine Web-Schicht in `Service/Processing`, samt
+Selbsttest des Detektors; `KiAuslesungJobTest`: gültig → `ausgewertet`,
+Artefakt verschlüsselt mit Rohantwort/Modell/Prompt-Version, kein Klartext
+in Artefakt-Spalten/`job`/`audit_log`, je Aufruf ein Schritt, Reparatur mit
+Verlauf, nach der Reparatur ungültig → `ki_fehler` ohne dritten Aufruf,
+Ausfall → Fallback mit eigenem Key, ohne Fallback → `ki_fehler`, gespeicherter
+Versuch wird nicht neu erfragt, übernommener/festgeschriebener Beleg ohne
+Aufruf (auch zwischen zwei Schritten), ohne nutzbares Profil übersprungen,
+Warten auf `render_pages`, digitales PDF als Text, PNG → JPEG und
+`max_images`, Profil ohne `vision`, Freitext, neuer Lauf ersetzt den alten,
+Migration 031; `JobStepFlowTest`: zweiphasiger Schritt mit Freigabe vor dem
+Aufruf, verlängerte Sperre, Session frei, verlorene Sperre verwirft das
+Ergebnis, Exception nur als Klassenname, `warten`; `PruefungFlowTest`:
+Vorbelegung ohne Speichern, gelbe Markierung mit Marke nur an KI-Feldern,
+Warnungen oben, E-Rechnung gewinnt, Archiv obenauf, `ki_fehler` mit Meldung
+und „KI erneut versuchen“ (Status, Job, Audit, kein zweiter Lauf), „Mit KI
+auslesen“, ohne Profil nichts angeboten, Tresor/CSRF/Scope;
+`InboxFlowTest`/`ArchivImportFlowTest`: Job beim Annehmen bzw. Import;
+`RoutePermissionMatrixTest`);
 KI-Client mit aufgezeichneten Antworten (`tests/fixtures/llm/extract-v1/`,
 `FakeLlmClient`/`FakeChatHttp`; `KiAbfrageTest`: gültig, ungültig +
 Reparatur mit Verlauf und Fehlerliste, nach der Reparatur ungültig →

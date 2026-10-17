@@ -31,6 +31,7 @@ use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Http\StreamResponse;
+use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
@@ -57,6 +58,7 @@ use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatpruefung;
+use App\Service\Document\KiAuslesung;
 use App\Service\Document\Texterkennung;
 use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
@@ -65,6 +67,8 @@ use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobLaufStatus;
 use App\Service\Job\JobRunner;
+use App\Service\Ki\KiFaehigkeiten;
+use App\Service\Ki\LlmAntwort;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
@@ -73,7 +77,10 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Upload\MagicBytes;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\FakeChatHttp;
 use App\Tests\Support\FakeJpeg;
+use App\Tests\Support\FakeLlmClient;
+use App\Tests\Support\KiAuslesungFabrik;
 use App\View\View;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -83,7 +90,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  * 02-datenmodell.md "Fachdaten"): the real route table, guard, controller,
  * service, repositories and schema - plus locking a checked receipt and
  * lifting the lock (issue #38/M6-4, docs/spec/01-sicherheit.md section 7) -
- * and the form filled from an e-invoice without AI (issue #46/M7-4).
+ * and the form filled from an e-invoice without AI (issue #46/M7-4) and
+ * from the AI's suggestion (issue #47/M7-5), with recorded answers.
  */
 final class PruefungFlowTest extends DatabaseTestCase
 {
@@ -102,6 +110,7 @@ final class PruefungFlowTest extends DatabaseTestCase
     private int $ausgabeKategorie;
     private int $einnahmeKategorie;
     private int $laufnummer = 0;
+    private FakeLlmClient $kiClient;
 
     protected function setUp(): void
     {
@@ -127,6 +136,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         );
         $this->alsRolle(SystemRole::Finanzen);
 
+        $this->kiClient = new FakeLlmClient([]);
         $this->ausgabeKategorie = $this->kategorie('Platzpflege & Grünanlagen');
         $this->einnahmeKategorie = $this->kategorie('Spenden');
 
@@ -1188,7 +1198,242 @@ final class PruefungFlowTest extends DatabaseTestCase
         ], $spalten);
     }
 
+    // ------------------------------------------ AI suggestion (M7-5, #47)
+
+    public function testTheAiSuggestionFillsTheFormWithoutSavingAnything(): void
+    {
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])]);
+        self::assertSame(DocumentStatus::Ausgewertet, $this->belegStatus($id));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+
+        self::assertSame(200, $seite->status);
+        self::assertMatchesRegularExpression('/Die Angaben sind ein Vorschlag der KI \(OpenAI, gpt-6-luna-2026-08-01\)\.\s+Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts\./', $seite->body);
+        foreach ([
+            'datum' => '2026-09-12', 'nummer' => self::NUMMER, 'brutto' => '238,00', 'netto' => '200,00', 'waehrung' => 'EUR',
+            'steuer_satz_1' => '19', 'steuer_betrag_1' => '38,00', 'faellig' => '2026-09-26',
+            'lieferant_neu_name' => 'Sporthaus Beispiel GmbH', 'lieferant_neu_iban' => self::IBAN,
+            'zweck' => 'Zehn Trainingsbälle für die Jugendabteilung',
+        ] as $feld => $wert) {
+            self::assertMatchesRegularExpression('/name="' . $feld . '"[^>]*value="' . preg_quote($wert, '/') . '"/', $seite->body, $feld);
+        }
+        self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '" selected>/', $seite->body);
+        self::assertSame(0, $this->anzahlBelege(), 'a suggestion until a person saves it');
+
+        // Saved by a person, the receipt is what the form shows - no more suggestion.
+        $this->post('/app/belege/pruefen/' . $id, $this->felder(['datum' => '2026-09-12', 'brutto' => '238,00', 'aktion' => 'speichern']));
+        self::assertSame(DocumentStatus::InPruefung, $this->belegStatus($id));
+        self::assertStringNotContainsString('Vorschlag der KI', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+    }
+
+    public function testFieldsTheAiReadUnsureAreMarkedYellowAndSaySo(): void
+    {
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort([
+            'category_id' => $this->ausgabeKategorie,
+            'confidence' => ['supplier' => 0.95, 'total_gross' => 0.5, 'invoice_date' => 0.9, 'category' => 0.6],
+        ])]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/<label for="pruefen-brutto">Brutto <span class="pflicht" aria-hidden="true">\*<\/span> <span class="marke marke-warnung">KI unsicher<\/span>\s+<input [^>]*name="brutto"[^>]*class="feld-unsicher"/', $seite);
+        self::assertMatchesRegularExpression('/<label for="pruefen-kategorie">Kategorie <span class="marke marke-warnung">KI unsicher<\/span>\s+<select id="pruefen-kategorie" name="kategorie" class="feld-unsicher">/', $seite);
+        self::assertDoesNotMatchRegularExpression('/name="datum"[^>]*class="feld-unsicher"/', $seite, '0.9 is sure enough');
+        self::assertDoesNotMatchRegularExpression('/name="lieferant_neu_name"[^>]*class="feld-unsicher"/', $seite);
+        self::assertSame(2, substr_count($seite, 'class="feld-unsicher"'));
+        self::assertStringContainsString('Gelb markierte Felder („KI unsicher“) hat die KI nur unsicher gelesen.', $seite);
+        self::assertStringContainsString('class="hinweis hinweis-warnung"', $seite);
+    }
+
+    public function testTheAiWarningsAndTheServerHintsAreShownOnTop(): void
+    {
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['total_net' => '190.00', 'category_id' => 7, 'warnings' => ['Betrag schwer lesbar']])]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertStringContainsString('<li>Betrag schwer lesbar</li>', $seite);
+        self::assertStringContainsString('<li>Netto und Steuern ergeben laut KI-Vorschlag nicht den Bruttobetrag – bitte prüfen.</li>', $seite);
+        self::assertStringContainsString('<li>Die vorgeschlagene Kategorie passt nicht zur Richtung „Ausgabe“ – bitte selbst wählen.</li>', $seite);
+        self::assertLessThan(strpos($seite, '<form method="post" action="/app/belege/pruefen/' . $id . '" class="pruefen-formular">'), strpos($seite, 'Betrag schwer lesbar'), 'above the form');
+        self::assertDoesNotMatchRegularExpression('/<option value="7" selected>/', $seite, 'a category of the other direction is not taken');
+    }
+
+    public function testAnEInvoiceWinsOverTheAiWhichOnlyAddsWhatTheInvoiceDoesNotKnow(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-cii.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+        $this->kiLesen([$this->kiAntwort([
+            'invoice_number' => 'FALSCH-1',
+            'purpose_short' => 'Trikots für die Herren',
+            'category_id' => $this->ausgabeKategorie,
+            'confidence' => ['supplier' => 0.2, 'total_gross' => 0.2, 'invoice_date' => 0.2, 'category' => 0.6],
+        ])]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/name="nummer"[^>]*value="RE-2026-0042"/', $seite, 'the invoice states it');
+        self::assertMatchesRegularExpression('/name="brutto"[^>]*value="172,50"/', $seite);
+        self::assertMatchesRegularExpression('/name="lieferant_neu_name"[^>]*value="Muster Sportartikel GmbH"/', $seite);
+        self::assertMatchesRegularExpression('/name="zweck"[^>]*value="Trikots für die Herren"/', $seite, 'the AI adds what the invoice does not know');
+        self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '" selected>/', $seite);
+        self::assertSame(1, substr_count($seite, 'class="feld-unsicher"'), 'only the category - the rest came from the invoice');
+        self::assertStringContainsString('die KI ergänzt nur, was die E-Rechnung nicht kennt (z. B. Kategorie und Zweck)', $seite);
+    }
+
+    public function testTheArchiveStillLiesOverTheAi(): void
+    {
+        $id = $this->beleg(quelle: DocumentSource::Archiv);
+        $this->kiLesen([$this->kiAntwort()]);
+        $this->vorgabe($id, new ArchivVorgabe(pfad: 'Sporthaus 14.09.2026.pdf', datum: new \DateTimeImmutable('2026-09-14')));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/name="datum"[^>]*value="2026-09-14"/', $seite, 'the archive wins');
+        self::assertMatchesRegularExpression('/name="nummer"[^>]*value="' . self::NUMMER . '"/', $seite, 'what the archive does not know stays');
+        self::assertStringContainsString('Archiv: Datum 14.09.2026, KI: 12.09.2026 – Archivwert übernommen.', $seite);
+    }
+
+    public function testAFailedAiSaysWhyAndCanBeAskedAgain(): void
+    {
+        $id = $this->beleg();
+        $this->kiLesen([FakeLlmClient::fixture('extract-v1/kein-json.json'), FakeLlmClient::fixture('extract-v1/kein-json.json')]);
+        self::assertSame(DocumentStatus::KiFehler, $this->belegStatus($id));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Die KI konnte den Beleg nicht auslesen:', $seite);
+        self::assertStringContainsString('Auch der Korrekturversuch ist gescheitert.', $seite);
+        self::assertStringContainsString('action="/app/belege/pruefen/' . $id . '/ki-erneut"', $seite);
+        self::assertStringContainsString('>KI erneut versuchen</button>', $seite);
+        self::assertMatchesRegularExpression('/name="nummer"[^>]*value=""/', $seite, 'captured by hand meanwhile');
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', []);
+
+        self::assertSame(302, $antwort->status);
+        self::assertSame('/app/belege/pruefen/' . $id, $antwort->headers['Location']);
+        self::assertSame(DocumentStatus::BereitZurAuswertung, $this->belegStatus($id));
+        self::assertSame(1, $this->offeneKiJobs($id));
+        self::assertContains(AuditAction::BelegKiErneut->value, $this->auditAktionen($id));
+        $danach = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('neu aus. Das läuft im Hintergrund', $danach);
+        self::assertStringContainsString('Die KI liest diesen Beleg gerade aus.', $danach);
+        self::assertStringNotContainsString('/ki-erneut"', $danach, 'not offered twice');
+
+        $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', []);
+        self::assertStringContainsString('Die KI liest diesen Beleg bereits aus.', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        self::assertSame(1, $this->offeneKiJobs($id), 'never two pending runs');
+    }
+
+    public function testADocumentTheAiNeverReadCanBeSentToIt(): void
+    {
+        $id = $this->beleg();
+        $this->kiEinrichten();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Die KI hat diesen Beleg noch nicht ausgelesen.', $seite);
+        self::assertStringContainsString('>Mit KI auslesen</button>', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', []);
+        self::assertSame(1, $this->offeneKiJobs($id));
+        self::assertSame(DocumentStatus::BereitZurAuswertung, $this->belegStatus($id));
+    }
+
+    public function testWithoutAUsableAiProfileNothingIsOffered(): void
+    {
+        $id = $this->beleg(DocumentStatus::KiFehler);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('/ki-erneut"', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', []);
+        self::assertStringContainsString('Es ist kein nutzbares KI-Profil eingerichtet', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        self::assertSame(DocumentStatus::KiFehler, $this->belegStatus($id));
+        self::assertSame(0, $this->offeneKiJobs($id));
+    }
+
+    public function testAskingTheAiAgainNeedsTheVaultTheScopeAndCsrf(): void
+    {
+        $this->kiEinrichten();
+        $id = $this->beleg(DocumentStatus::KiFehler);
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', [], entsperrt: false)->status);
+        $this->dispatch(new Request(HttpMethod::Post, '/app/belege/pruefen/' . $id . '/ki-erneut', cookies: $this->tresorCookie(), post: ['_csrf' => 'falsch']));
+        self::assertSame(DocumentStatus::KiFehler, $this->belegStatus($id));
+        self::assertSame(0, $this->offeneKiJobs($id));
+
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2099-01-01'), null);
+        self::assertSame(404, $this->post('/app/belege/pruefen/' . $id . '/ki-erneut', [])->status);
+        self::assertSame(DocumentStatus::KiFehler, $this->belegStatus($id));
+
+        // A receipt a person captured is not sent to the AI any more.
+        new UserAccessRepository($this->pdo())->setScope($this->userId, null, null);
+        $erfasst = $this->beleg(DocumentStatus::InPruefung);
+        $this->post('/app/belege/pruefen/' . $erfasst . '/ki-erneut', []);
+        self::assertSame(0, $this->offeneKiJobs($erfasst));
+    }
+
     // ------------------------------------------------------------ helpers
+
+    /** The seeded default AI profile (migrations/024) gets a key: the AI is on. */
+    private function kiEinrichten(): void
+    {
+        $anbieter = new AiProviderRepository($this->pdo(), $this->crypto);
+        $profil = $anbieter->standard() ?? self::fail('no default profile');
+        $anbieter->update($profil->id, $profil->name, $profil->baseUrl, $profil->model, new KiFaehigkeiten(true, true, 4, 4000), $profil->timeoutS, true, 'sk-test-0000-nicht-echt');
+    }
+
+    /**
+     * Runs `ai_extract` for every document waiting for it, with these
+     * recorded answers - as a signed-in session would (App\Api\
+     * JobController: a step waiting on the AI finishes after the call).
+     *
+     * @param list<LlmAntwort|\Throwable> $antworten
+     */
+    private function kiLesen(array $antworten): void
+    {
+        $this->kiEinrichten();
+        $this->kiClient = new FakeLlmClient($antworten);
+        $jobs = new JobRepository($this->pdo());
+        foreach ($this->pdo()->query("SELECT id FROM document WHERE status = 'bereit_zur_auswertung'")->fetchAll(\PDO::FETCH_COLUMN) as $id) {
+            KiAuslesung::einreihen($jobs, (int) $id, new \DateTimeImmutable());
+        }
+        $berechtigungen = new UserAccessRepository($this->pdo())->berechtigungen($this->userId);
+        $runner = fn(): JobRunner => new JobRunner(new JobRepository($this->pdo()), [KiAuslesungFabrik::bauen($this->pdo(), $this->blobService(), $this->crypto, $this->kiClient)]);
+        for ($i = 0; $i < 30; $i++) {
+            $lauf = $runner()->schritt($berechtigungen, $this->tresor, new \DateTimeImmutable());
+            if ($lauf->aufrufAusstehend()) {
+                $lauf = $runner()->nachAufruf($berechtigungen, $this->tresor, $lauf, ($lauf->aufruf?->ausfuehren)(), new \DateTimeImmutable());
+            }
+            if ($lauf->status !== JobLaufStatus::Gearbeitet) {
+                break;
+            }
+        }
+        self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE status = 'fehler'")->fetchColumn());
+    }
+
+    /**
+     * The recorded valid answer (tests/fixtures/llm/extract-v1/gueltig.json)
+     * with $aenderungen laid over its content.
+     *
+     * @param array<string, mixed> $aenderungen
+     */
+    private function kiAntwort(array $aenderungen = []): LlmAntwort
+    {
+        $huelle = json_decode(FakeChatHttp::fixture('extract-v1/gueltig.json')->body, true, flags: JSON_THROW_ON_ERROR);
+        $inhalt = [...json_decode($huelle['choices'][0]['message']['content'], true, flags: JSON_THROW_ON_ERROR), ...$aenderungen];
+        $huelle['choices'][0]['message']['content'] = json_encode($inhalt, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+
+        return LlmAntwort::ausChatCompletion(json_encode($huelle, JSON_THROW_ON_ERROR), 'gpt-6-luna', 1200);
+    }
+
+    private function offeneKiJobs(int $documentId): int
+    {
+        $stmt = $this->pdo()->prepare("SELECT COUNT(*) FROM job WHERE typ = 'ai_extract' AND ref_id = ? AND status IN ('offen', 'laeuft')");
+        $stmt->execute([$documentId]);
+
+        return (int) $stmt->fetchColumn();
+    }
 
     /**
      * The valid form of an expense of 1.234,56 € with 19 % tax,
@@ -1311,8 +1556,9 @@ final class PruefungFlowTest extends DatabaseTestCase
             $this->supplierService(),
             new DocumentArtifactRepository($pdo),
             new Texterkennung($documents, new DocumentArtifactRepository($pdo), $this->blobService()),
-            new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit),
+            new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
             $this->audit,
+            KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto, $this->kiClient),
         );
     }
 
@@ -1327,7 +1573,7 @@ final class PruefungFlowTest extends DatabaseTestCase
     {
         $pdo = $this->pdo();
 
-        return new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit);
+        return new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit, new JobRepository($pdo));
     }
 
     /**

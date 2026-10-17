@@ -6,6 +6,7 @@ namespace App\Service\Job;
 
 use App\Domain\Berechtigungen;
 use App\Domain\JobExecutor;
+use App\Domain\JobStatus;
 use App\Repository\JobRepository;
 use App\Service\Crypto\Vault;
 
@@ -35,6 +36,13 @@ final readonly class JobRunner
     private const int MAX_VERSUCHE = 3;
 
     /**
+     * Added to an external call's own time limit (ExternerAufruf::
+     * $hoechstensSekunden) for the lock that covers it: room for reading the
+     * answer and writing the result over a fresh connection afterwards.
+     */
+    private const int AUFRUF_PUFFER_SEKUNDEN = 60;
+
+    /**
      * @param list<JobHandler> $handler every session job type this runner
      *        may drive - each declares the right it needs itself
      *        (JobHandler::recht()), so a new type needs no change here.
@@ -53,7 +61,10 @@ final readonly class JobRunner
 
     /**
      * Runs exactly one step of the oldest runnable job this account's
-     * rights allow, or reports there was nothing to do.
+     * rights allow, or reports there was nothing to do. A step that waits on
+     * an external call (App\Service\Job\ExternerJobHandler) comes back
+     * half done instead - JobLauf::aufrufAusstehend(), finished by
+     * nachAufruf().
      */
     public function schritt(Berechtigungen $berechtigungen, Vault $vault, \DateTimeImmutable $now): JobLauf
     {
@@ -79,7 +90,18 @@ final readonly class JobRunner
         }
 
         try {
-            $ergebnis = $this->handlerFuer($job->typ)->schritt($job, $vault, $now);
+            $handler = $this->handlerFuer($job->typ);
+            $aufruf = $handler instanceof ExternerJobHandler ? $handler->aufruf($job, $vault, $now) : null;
+            if ($aufruf !== null) {
+                // The call may take longer than a normal step: the lock has
+                // to outlast it, or a second tab claims the job meanwhile.
+                if (!$this->jobs->heartbeat($job->id, $lockedBy, $aufruf->hoechstensSekunden + self::AUFRUF_PUFFER_SEKUNDEN, $now)) {
+                    return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+                }
+
+                return JobLauf::aufruf($job, $lockedBy, $aufruf);
+            }
+            $ergebnis = $handler->schritt($job, $vault, $now);
         } catch (\Throwable $e) {
             // Only the class, never the message (App\Repository\
             // JobRepository::fail() docblock): a database or processing
@@ -90,6 +112,55 @@ final readonly class JobRunner
         }
 
         $this->jobs->schrittErledigt($job->id, $lockedBy, $ergebnis, $now);
+
+        return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+    }
+
+    /**
+     * Finishes a step that schritt() left waiting on an external call
+     * (JobLauf::aufrufAusstehend(), App\Service\Job\ExternerJobHandler):
+     * App\Api\JobController ran the call without database and session and
+     * built this runner anew, on a fresh connection (docs/spec/06-betrieb.md
+     * section 4). The result is written only while the job is still locked
+     * by the request that claimed it - a request that took longer than its
+     * lock lost the job to someone else and must not overwrite their work.
+     *
+     * @param mixed $ergebnis what ExternerAufruf::$ausfuehren returned, or
+     *        the \Throwable it threw - that fails the job with its class
+     *        name only, like an exception of schritt()
+     */
+    public function nachAufruf(Berechtigungen $berechtigungen, Vault $vault, JobLauf $lauf, mixed $ergebnis, \DateTimeImmutable $now): JobLauf
+    {
+        if ($lauf->job === null || $lauf->lockedBy === null) {
+            throw new \LogicException('nachAufruf() needs the run of a step that waits on an external call.');
+        }
+        $typen = $this->erlaubteTypen($berechtigungen, $this->handler);
+        $lockedBy = $lauf->lockedBy;
+
+        $job = $this->jobs->find($lauf->job->id);
+        if ($job === null || $job->status !== JobStatus::Laeuft || $job->lockedBy !== $lockedBy) {
+            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+        }
+
+        if ($ergebnis instanceof \Throwable) {
+            $this->jobs->fail($job->id, $ergebnis::class, $now, $lockedBy);
+
+            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+        }
+
+        try {
+            $handler = $this->handlerFuer($job->typ);
+            if (!$handler instanceof ExternerJobHandler) {
+                throw new \LogicException(sprintf('Job type "%s" has no external calls.', $job->typ));
+            }
+            $schritt = $handler->nachAufruf($job, $vault, $ergebnis, $now);
+        } catch (\Throwable $e) {
+            $this->jobs->fail($job->id, $e::class, $now, $lockedBy);
+
+            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+        }
+
+        $this->jobs->schrittErledigt($job->id, $lockedBy, $schritt, $now);
 
         return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
     }

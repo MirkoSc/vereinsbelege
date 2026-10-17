@@ -201,16 +201,23 @@ final readonly class JobRepository
      */
     public function schrittErledigt(int $id, string $lockedBy, JobSchrittErgebnis $ergebnis, ?\DateTimeImmutable $now = null): bool
     {
+        $now ??= new \DateTimeImmutable();
+        // A step that waits (JobSchrittErgebnis::warten()) parks the job in
+        // `locked_until` without a holder - claim() skips it until then.
+        $wartenBis = $ergebnis->wartenSekunden > 0
+            ? $now->modify(sprintf('+%d seconds', $ergebnis->wartenSekunden))->format(self::FORMAT)
+            : null;
         $stmt = $this->pdo->prepare(
             'UPDATE job
-             SET status = ?, step = ?, state = ?, attempts = 0, locked_by = NULL, locked_until = NULL, updated_at = ?
+             SET status = ?, step = ?, state = ?, attempts = 0, locked_by = NULL, locked_until = ?, updated_at = ?
              WHERE id = ? AND status = ? AND locked_by = ?',
         );
         $stmt->execute([
             $ergebnis->status->value,
             $ergebnis->step,
             json_encode($ergebnis->state, JSON_THROW_ON_ERROR),
-            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $wartenBis,
+            $now->format(self::FORMAT),
             $id,
             JobStatus::Laeuft->value,
             $lockedBy,
@@ -346,6 +353,25 @@ final readonly class JobRepository
     {
         $stmt = $this->pdo->prepare('SELECT 1 FROM job WHERE typ = ? AND ref_type = ? AND ref_id = ?');
         $stmt->execute([$typ, $refType, $refId]);
+
+        return $stmt->fetch() !== false;
+    }
+
+    /**
+     * Whether a job of one of these types is still to do for this row -
+     * `offen` or `laeuft`, any executor (issue #47/M7-5: `ai_extract` waits
+     * for `extract_text` and `render_pages` of the same document, and is
+     * queued again only when none of its own is pending).
+     *
+     * @param non-empty-list<string> $typen
+     */
+    public function offenFuer(array $typen, string $refType, int $refId): bool
+    {
+        $stmt = $this->pdo->prepare(sprintf(
+            'SELECT 1 FROM job WHERE typ IN (%s) AND ref_type = ? AND ref_id = ? AND status IN (?, ?) LIMIT 1',
+            implode(',', array_fill(0, count($typen), '?')),
+        ));
+        $stmt->execute([...$typen, $refType, $refId, JobStatus::Offen->value, JobStatus::Laeuft->value]);
 
         return $stmt->fetch() !== false;
     }

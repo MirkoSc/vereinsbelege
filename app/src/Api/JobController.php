@@ -13,6 +13,7 @@ use App\Http\Session;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Job\JobLauf;
 use App\Service\Job\JobRunner;
 use App\View\View;
 
@@ -30,14 +31,30 @@ use App\View\View;
  * without one (cookie missing, or a login that never released the vault,
  * docs/spec/01-sicherheit.md section 2) cannot run a step, but the header
  * still shows how many jobs wait, so `gesperrt` still carries `offen`.
+ *
+ * A step that waits on an external call (issue #47/M7-5, the AI provider,
+ * App\Service\Job\ExternerJobHandler) runs in three phases here
+ * (docs/spec/06-betrieb.md section 4): the runner prepares the call, then
+ * this controller drops that runner, releases the database connection and
+ * runs the call with neither database nor session, and finishes the step
+ * with a runner built anew - on a fresh connection, because the host closes
+ * one that idled for 120 s, and an AI call may take longer.
  */
 final readonly class JobController
 {
+    /**
+     * @param \Closure(): JobRunner $runner builds the runner on the current
+     *        database connection - once per phase
+     * @param \Closure(): void $verbindungFreigeben drops the connection
+     *        before an external call (App\Database\ConnectionFactory::
+     *        release()); the next $runner() opens a new one
+     */
     public function __construct(
         private Session $session,
         private SessionVault $sessionVault,
         private View $view,
-        private JobRunner $runner,
+        private \Closure $runner,
+        private \Closure $verbindungFreigeben,
     ) {
     }
 
@@ -51,13 +68,39 @@ final readonly class JobController
         $berechtigungen = $this->view->berechtigungen() ?? Berechtigungen::keine();
 
         $vault = $this->tresor($request);
+        $runner = ($this->runner)();
         if ($vault === null) {
-            return Response::json(['status' => 'gesperrt', 'offen' => $this->runner->offen($berechtigungen) ?? 0]);
+            return Response::json(['status' => 'gesperrt', 'offen' => $runner->offen($berechtigungen) ?? 0]);
         }
 
-        $lauf = $this->runner->schritt($berechtigungen, $vault, new \DateTimeImmutable());
+        // Nothing below writes the session: free its lock, so the person's
+        // other tabs need not wait for a step that waits on the AI provider.
+        $this->session->schliessen();
+
+        $lauf = $runner->schritt($berechtigungen, $vault, new \DateTimeImmutable());
+        if ($lauf->aufrufAusstehend()) {
+            unset($runner);
+            ($this->verbindungFreigeben)();
+            $ergebnis = $this->ausfuehren($lauf);
+            $lauf = ($this->runner)()->nachAufruf($berechtigungen, $vault, $lauf, $ergebnis, new \DateTimeImmutable());
+        }
 
         return Response::json(['status' => $lauf->status->value, 'offen' => $lauf->offen]);
+    }
+
+    /**
+     * The external call itself, with neither database nor session. A
+     * \Throwable is handed on as the result: JobRunner::nachAufruf() fails
+     * the job with its class name, like any step that throws.
+     */
+    private function ausfuehren(JobLauf $lauf): mixed
+    {
+        $aufruf = $lauf->aufruf ?? throw new \LogicException('No external call to run.');
+        try {
+            return ($aufruf->ausfuehren)();
+        } catch (\Throwable $e) {
+            return $e;
+        }
     }
 
     private function tresor(Request $request): ?Vault

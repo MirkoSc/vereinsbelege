@@ -124,6 +124,7 @@ use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\Duplikatindex;
+use App\Service\Document\KiAuslesung;
 use App\Service\Document\Texterkennung;
 use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
@@ -134,7 +135,10 @@ use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 use App\Service\Job\JobRunner;
 use App\Service\Ki\CurlChatHttp;
+use App\Service\Ki\KiAbfrage;
 use App\Service\Ki\KiAnbieterService;
+use App\Service\Ki\KiPrompts;
+use App\Service\Ki\OpenAiCompatibleClient;
 use App\Service\Ki\Verbindungstest;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\FreigabeBenachrichtigung;
@@ -147,6 +151,7 @@ use App\Service\MasterData\CostCenterService;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
+use App\Service\Processing\KiAuslese\Auslesung;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -505,9 +510,31 @@ $lieferanten = static function () use ($connections, $view, $auditFor): Supplier
     );
 };
 
+// The AI extraction (issue #47/M7-5): the `ai_extract` job handler, built
+// fresh from a connection - for the job list below and for the review page,
+// which reads its suggestions and queues it again.
+$kiAuslesungFor = static function (\PDO $pdo) use ($paths, $serverCrypto): KiAuslesung {
+    $blobs = new BlobRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    $prompts = new KiPrompts($paths->promptsDir());
+
+    return new KiAuslesung(
+        new DocumentRepository($pdo),
+        new DocumentArtifactRepository($pdo),
+        new JobRepository($pdo),
+        $blobService,
+        new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService),
+        new CategoryRepository($pdo),
+        new CostCenterRepository($pdo),
+        new AiProviderRepository($pdo, $serverCrypto),
+        new KiAbfrage(new OpenAiCompatibleClient(new CurlChatHttp(), $prompts), $prompts),
+        new Auslesung($prompts),
+    );
+};
+
 // The review page (M6-3, issue #37): captures a document as a receipt with
 // the session's unlocked vault - only the review pages open the connection.
-$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor): PruefungController {
+$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor): PruefungController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -534,8 +561,9 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor)
             new SupplierService($pdo, $lieferanten, $kategorien),
             $artefakte,
             new Texterkennung($documents, $artefakte, $blobService),
-            new Posteingang($documents, $kostenstellen, $blobService, $audit),
+            new Posteingang($documents, $kostenstellen, $blobService, $audit, new JobRepository($pdo)),
             $audit,
+            $kiAuslesungFor($pdo),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -1062,6 +1090,7 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
             $kostenstellen,
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             $audit,
+            new JobRepository($pdo),
         ),
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $audit),
@@ -1102,7 +1131,7 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
 // registered here once and both pick it up.
 //
 // @return list<\App\Service\Job\JobHandler>
-$jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
+$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor): array {
     $blobs = new BlobRepository($pdo);
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
 
@@ -1110,6 +1139,9 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths): array {
         new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo)),
         new Duplikatindex(new DocumentRepository($pdo), $blobService),
         new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService),
+        // The AI extraction (issue #47/M7-5): its calls run between the two
+        // halves of a step, without database (JobController, $jobsSeite).
+        $kiAuslesungFor($pdo),
     ];
 };
 
@@ -1134,11 +1166,21 @@ $browserJobTypenFor = static function (\PDO $pdo) use ($paths): array {
 };
 
 // One job step (M4-7, issue #29): built lazily like the other pages - only
-// a call that actually claims a job needs the database.
+// a call that actually claims a job needs the database. The runner is built
+// per phase: a step that waits on the AI provider (issue #47/M7-5) releases
+// the connection first and finishes on a fresh one (06-betrieb.md section 4).
 $jobsSeite = static function () use ($connections, $view, $jobHandlerFor): JobController {
-    $pdo = $connections->pdo();
+    return new JobController(
+        new Session(),
+        new SessionVault(),
+        $view,
+        static function () use ($connections, $jobHandlerFor): JobRunner {
+            $pdo = $connections->pdo();
 
-    return new JobController(new Session(), new SessionVault(), $view, new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo)));
+            return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo));
+        },
+        $connections->release(...),
+    );
 };
 
 // The `render_pages` browser job (issue #30/M4-8): claim, source PDF,

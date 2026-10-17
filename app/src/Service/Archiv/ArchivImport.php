@@ -29,6 +29,7 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
 use App\Service\Document\Duplikatindex;
+use App\Service\Document\KiAuslesung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\Texterkennung;
 use App\Service\MasterData\SupplierKeys;
@@ -477,6 +478,11 @@ final readonly class ArchivImport
 
             foreach ([PdfErzeugung::JOB_TYP, Duplikatindex::JOB_TYP, Texterkennung::JOB_TYP] as $typ) {
                 $this->jobs->enqueue($typ, JobExecutor::Session, 'document', $documentId, now: $now);
+            }
+            // Ready for evaluation right away (no inbox): the AI reads it
+            // (issue #47/M7-5); the path's values lie over its suggestion.
+            if ($status === DocumentStatus::BereitZurAuswertung) {
+                KiAuslesung::einreihen($this->jobs, $documentId, $now);
             }
 
             $stats = $stats->mitBeleg($documentId, $v->wiedervorlage, $v->kasse, !$v->musterPasst, $lieferantNeu !== null);

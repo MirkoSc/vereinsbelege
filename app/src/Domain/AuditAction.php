@@ -109,6 +109,8 @@ enum AuditAction: string
     // documents (ids) and the reasons, never a value.
     case BelegDuplikatVerworfen = 'beleg.duplikat_verworfen';
     case BelegDuplikatBehalten = 'beleg.duplikat_behalten';
+    // The AI extraction (issue #47/M7-5): a person asks for a new run.
+    case BelegKiErneut = 'beleg.ki_erneut';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -204,6 +206,7 @@ enum AuditAction: string
             self::BelegFestschreibungAufgehoben => 'Festschreibung aufgehoben',
             self::BelegDuplikatVerworfen => 'Beleg als Duplikat verworfen',
             self::BelegDuplikatBehalten => 'Duplikat-Verdacht: bewusst behalten',
+            self::BelegKiErneut => 'KI-Auslesen neu angestoßen',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -255,7 +258,7 @@ enum AuditAction: string
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
             self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben,
-            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten => 'document',
+            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut => 'document',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,

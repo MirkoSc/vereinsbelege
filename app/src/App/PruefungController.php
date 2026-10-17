@@ -28,6 +28,7 @@ use App\Service\Crypto\Vault;
 use App\Service\Document\DuplikatRuleViolation;
 use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\ERechnungAuszug;
+use App\Service\Document\KiAuszug;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\Pruefung;
@@ -56,6 +57,10 @@ use App\View\View;
  * A suspected duplicate (issue #40/M6-6, App\Service\Document\
  * Duplikatpruefung) is marked in the queue and explained on the page, with
  * "Als Duplikat verwerfen" and "Bewusst behalten" - same right and scope.
+ *
+ * The AI's suggestion (issue #47/M7-5) fills the form of a receipt not yet
+ * captured, unsure fields marked yellow, its warnings on top; after a
+ * failure the page offers "KI erneut versuchen" - same right and scope.
  *
  * Nothing of a receipt goes into a URL or a flash message.
  */
@@ -116,27 +121,128 @@ final readonly class PruefungController
         $document = $eintrag->document;
         $beleg = $this->pruefung->beleg($document, $tresor);
         $felder = $this->pruefung->felder($document, $beleg);
-
-        // No receipt captured yet: an e-invoice fills the form (issue
-        // #46/M7-4) - the person still confirms it by saving.
-        $eRechnung = $beleg === null && $document->status->pruefbar() ? $this->pruefung->eRechnung($document, $tresor) : null;
-        $hinweise = [];
+        $vorbelegbar = $beleg === null && $document->status->pruefbar();
         $leer = $felder;
+
+        // No receipt captured yet: what was read automatically fills the
+        // form - the person still confirms it by saving. First the AI's
+        // suggestion (issue #47/M7-5) ...
+        $ki = $vorbelegbar ? $this->pruefung->kiAuszug($document, $tresor) : null;
+        $nachKi = $felder;
+        if ($ki !== null && $ki->extraktion !== null) {
+            ['felder' => $felder] = $this->pruefung->vorbelegen($felder, $ki->extraktion, $tresor);
+            $nachKi = $felder;
+        }
+
+        // ... then an e-invoice over it (issue #46/M7-4): what it states was
+        // read from the invoice itself, not suggested; the AI only adds what
+        // it does not know (category, purpose, cost center).
+        $eRechnung = $vorbelegbar ? $this->pruefung->eRechnung($document, $tresor) : null;
+        $hinweise = [];
         if ($eRechnung !== null && $eRechnung->extraktion !== null && $eRechnung->gelesen()) {
             ['felder' => $felder, 'hinweise' => $hinweise] = $this->pruefung->vorbelegen($felder, $eRechnung->extraktion, $tresor);
         }
 
         // From the archive import (issue #77/M12-3): what the path said lies
         // over what was read automatically - the archive was sorted by a
-        // person. The AI's suggestions (M7-5) go in before this, like the
-        // e-invoice.
+        // person.
         $archivHinweise = [];
-        $archiv = $beleg === null && $document->status->pruefbar() ? $this->pruefung->archivVorgabe($document, $tresor) : null;
+        $archiv = $vorbelegbar ? $this->pruefung->archivVorgabe($document, $tresor) : null;
         if ($archiv !== null) {
-            ['felder' => $felder, 'hinweise' => $archivHinweise] = $archiv->ueberlagern($leer, $felder, 'E-Rechnung');
+            ['felder' => $felder, 'hinweise' => $archivHinweise] = $archiv->ueberlagern($leer, $felder, $eRechnung?->gelesen() === true ? 'E-Rechnung' : 'KI');
         }
 
-        return $this->seite($eintrag, $tresor, $felder, null, eRechnung: $eRechnung, eRechnungHinweise: $hinweise, archivHinweise: $archivHinweise);
+        return $this->seite(
+            $eintrag,
+            $tresor,
+            $felder,
+            null,
+            eRechnung: $eRechnung,
+            eRechnungHinweise: $hinweise,
+            archivHinweise: $archivHinweise,
+            ki: $ki,
+            unsicher: $ki === null ? [] : self::unsichereFelder($ki->unsicher, $leer, $nachKi, $felder),
+        );
+    }
+
+    /**
+     * "KI erneut versuchen" / "Mit KI auslesen" (issue #47/M7-5): queues
+     * the AI extraction again - from `ki_fehler` back to
+     * `bereit_zur_auswertung`, or for a document still waiting that was
+     * never read. CSRF, scope (404 outside it) and the unlocked vault like
+     * the page's other actions; a refusal comes back as a message.
+     *
+     * @param array<string, string> $params
+     */
+    public function kiErneut(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = '/app/belege/pruefen/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $eintrag = $this->pruefung->eintrag($id, $this->bereich());
+        if ($eintrag === null) {
+            return $this->nichtGefunden();
+        }
+        if ($this->tresor($request) === null) {
+            $this->session->flash(self::TRESOR_GESPERRT, FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        try {
+            $this->pruefung->kiErneut($eintrag->document, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        } catch (InvoiceRuleViolation $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $this->session->flash(sprintf(
+            'Die KI liest Beleg %s neu aus. Das läuft im Hintergrund, solange die App geöffnet ist – die Vorschläge erscheinen nach dem Neuladen dieser Seite.',
+            $eintrag->referenz ?? '#' . $id,
+        ));
+
+        return Response::redirect($ziel);
+    }
+
+    /**
+     * The form fields to mark yellow (issue #47/M7-5, docs/spec/
+     * 03-erfassung-und-ki.md section 6 "Prüfansicht": confidence below 0.7):
+     * only fields the AI actually filled in and nothing laid over since -
+     * not one an e-invoice or the archive filled, not one the AI left empty.
+     *
+     * @param list<string> $unsicher `confidence` keys (AusleseVorschlag::unsicher())
+     * @param array<string, string> $vorher the form before the AI
+     * @param array<string, string> $nachKi the form after the AI
+     * @param array<string, string> $zuletzt the form as the page shows it
+     *
+     * @return list<string>
+     */
+    private static function unsichereFelder(array $unsicher, array $vorher, array $nachKi, array $zuletzt): array
+    {
+        $felderJe = [
+            'supplier' => ['lieferant', 'lieferant_neu_name'],
+            'total_gross' => ['brutto'],
+            'invoice_date' => ['datum'],
+            'category' => ['kategorie'],
+        ];
+        $markiert = [];
+        foreach ($unsicher as $schluessel) {
+            foreach ($felderJe[$schluessel] ?? [] as $feld) {
+                $wert = $nachKi[$feld] ?? '';
+                if ($wert !== '' && $wert !== ($vorher[$feld] ?? '') && $wert === ($zuletzt[$feld] ?? '')) {
+                    $markiert[] = $feld;
+                }
+            }
+        }
+
+        return $markiert;
     }
 
     /**
@@ -398,6 +504,8 @@ final readonly class PruefungController
      * @param array<string, string> $felder
      * @param list<string> $eRechnungHinweise
      * @param list<string> $archivHinweise from the archive import (issue #77/M12-3)
+     * @param ?KiAuszug $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
+     * @param list<string> $unsicher form fields the AI filled in unsure
      */
     private function seite(
         InboxItem $eintrag,
@@ -408,9 +516,12 @@ final readonly class PruefungController
         ?ERechnungAuszug $eRechnung = null,
         array $eRechnungHinweise = [],
         array $archivHinweise = [],
+        ?KiAuszug $ki = null,
+        array $unsicher = [],
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
+        $kiOffen = $bearbeitbar && in_array($document->status, [DocumentStatus::BereitZurAuswertung, DocumentStatus::KiFehler], true);
         $warteschlange = $this->pruefung->warteschlange($this->bereich());
         $ids = array_map(static fn(InboxItem $item): int => $item->document->id, $warteschlange);
         $position = array_search($document->id, $ids, true);
@@ -444,6 +555,10 @@ final readonly class PruefungController
             'eRechnung' => $eRechnung,
             'eRechnungHinweise' => $eRechnungHinweise,
             'archivHinweise' => $archivHinweise,
+            'ki' => $ki,
+            'unsicher' => $unsicher,
+            'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
+            'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],
         ], Area::App), $status);
     }

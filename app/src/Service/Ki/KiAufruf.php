@@ -33,4 +33,68 @@ final readonly class KiAufruf
         public bool $fallback = false,
     ) {
     }
+
+    /**
+     * For the encrypted store at the receipt (issue #47/M7-5: the job keeps
+     * every call, raw answer included, in a `document_artifact` - never in
+     * plaintext).
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return [
+            'anbieter_id' => $this->anbieterId,
+            'anbieter_name' => $this->anbieterName,
+            'modell' => $this->modell,
+            'prompt_version' => $this->promptVersion,
+            'reparatur' => $this->reparatur,
+            'status' => $this->status->value,
+            'prompt_tokens' => $this->promptTokens,
+            'antwort_tokens' => $this->antwortTokens,
+            'tokens_gesamt' => $this->tokensGesamt,
+            'dauer_ms' => $this->dauerMs,
+            'http_status' => $this->httpStatus,
+            'rohantwort' => $this->rohantwort,
+            'fallback' => $this->fallback,
+        ];
+    }
+
+    /**
+     * @param array<mixed> $daten what toArray() stored
+     *
+     * @throws \UnexpectedValueException when $daten is not such an entry
+     */
+    public static function fromArray(array $daten): self
+    {
+        $status = KiAufrufStatus::tryFrom(is_string($daten['status'] ?? null) ? $daten['status'] : '');
+        if (
+            !is_int($daten['anbieter_id'] ?? null)
+            || !is_string($daten['anbieter_name'] ?? null)
+            || !is_string($daten['modell'] ?? null)
+            || !is_string($daten['prompt_version'] ?? null)
+            || !is_bool($daten['reparatur'] ?? null)
+            || $status === null
+            || !is_bool($daten['fallback'] ?? null)
+        ) {
+            throw new \UnexpectedValueException('Not a stored AI call.');
+        }
+        $zahl = static fn(string $schluessel): ?int => is_int($daten[$schluessel] ?? null) ? $daten[$schluessel] : null;
+
+        return new self(
+            $daten['anbieter_id'],
+            $daten['anbieter_name'],
+            $daten['modell'],
+            $daten['prompt_version'],
+            $daten['reparatur'],
+            $status,
+            $zahl('prompt_tokens'),
+            $zahl('antwort_tokens'),
+            $zahl('tokens_gesamt'),
+            $zahl('dauer_ms'),
+            $zahl('http_status'),
+            is_string($daten['rohantwort'] ?? null) ? $daten['rohantwort'] : null,
+            $daten['fallback'],
+        );
+    }
 }

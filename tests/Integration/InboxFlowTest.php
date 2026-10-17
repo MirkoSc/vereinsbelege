@@ -29,6 +29,7 @@ use App\Repository\CostCenterRepository;
 use App\Repository\DocumentDuplicateRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\JobRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\UserAccessRepository;
@@ -309,6 +310,11 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertSame((string) $this->userId, (string) $zeile['status_changed_by']);
         self::assertNotNull($zeile['status_changed_at']);
         self::assertSame([AuditAction::BelegAngenommen->value], $this->auditAktionen());
+
+        // Accepted, the AI reads it next (issue #47/M7-5).
+        $kiJobs = $this->pdo()->prepare("SELECT status FROM job WHERE typ = 'ai_extract' AND ref_type = 'document' AND ref_id = ?");
+        $kiJobs->execute([$id]);
+        self::assertSame(['offen'], $kiJobs->fetchAll(\PDO::FETCH_COLUMN));
 
         // Accepted, the document is ready for the review page (issue #37/M6-3).
         self::assertStringContainsString('href="/app/belege/pruefen/' . $id . '"', $this->get('/app/posteingang/' . $id, entsperrt: true)->body);
@@ -809,7 +815,7 @@ final class InboxFlowTest extends DatabaseTestCase
             $view,
             new Session(),
             new SessionVault(),
-            new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit),
+            new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit, new JobRepository($pdo)),
             new CostCenterRepository($pdo),
             new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
         );
