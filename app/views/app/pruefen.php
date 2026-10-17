@@ -17,6 +17,9 @@
  * chosen direction. The server checks all of it again
  * (App\Service\Invoice\Pruefung).
  *
+ * A field the AI filled in unsure (issue #47/M7-5) is yellow and says
+ * "KI unsicher" in its label - colour alone would not reach everyone.
+ *
  * @var \App\Domain\InboxItem $eintrag
  * @var bool $entsperrt
  * @var bool $bearbeitbar the form may be saved
@@ -43,6 +46,10 @@
  * @var \App\Service\Document\ERechnungAuszug|null $eRechnung the e-invoice, only before a receipt is saved (issue #46/M7-4)
  * @var list<string> $eRechnungHinweise
  * @var list<string> $archivHinweise what the archive import read, and where it differs (issue #77/M12-3)
+ * @var \App\Service\Document\KiAuszug|null $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
+ * @var list<string> $unsicher form fields the AI filled in unsure (confidence below 0.7)
+ * @var bool $kiLaeuft an AI run for this document is queued or running
+ * @var bool $kiAnstossbar the page may offer to ask the AI (again)
  * @var string $csrf
  */
 
@@ -62,6 +69,8 @@ $gesperrt = $bearbeitbar ? '' : ' disabled';
 $fehlerAn = static fn(string $feld): string => $fehlerFeld === $feld ? ' aria-invalid="true" aria-describedby="pruefen-fehler"' : '';
 $wert = static fn(string $feld): string => e($felder[$feld] ?? '');
 $gewaehlt = static fn(string $feld, string $option): string => ($felder[$feld] ?? '') === $option ? ' selected' : '';
+$unsicherAn = static fn(string $feld): string => in_array($feld, $unsicher, true) ? ' class="feld-unsicher"' : '';
+$unsicherMarke = static fn(string $feld): string => in_array($feld, $unsicher, true) ? ' <span class="marke marke-warnung">KI unsicher</span>' : '';
 
 $kategorieGruppen = [];
 foreach ($kategorien as $kategorie) {
@@ -121,12 +130,58 @@ $rollenGruppe = [
         </div>
     <?php endif; ?>
 
+    <?php if ($bearbeitbar && $ki !== null && $ki->gueltig()): ?>
+        <?php $kiWarnungen = $ki->warnungen(); ?>
+        <div class="hinweis <?= $kiWarnungen === [] && $unsicher === [] ? 'hinweis-info' : 'hinweis-warnung' ?>">
+            <p>
+                Die Angaben sind ein Vorschlag der KI (<?= e($ki->anbieter) ?><?= $ki->modell === '' ? '' : ', ' . e($ki->modell) ?><?= $ki->fallback ? ', Fallback-Profil' : '' ?>).
+                Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts.
+                <?php if ($unsicher !== []): ?>
+                    Gelb markierte Felder („KI unsicher“) hat die KI nur unsicher gelesen.
+                <?php endif; ?>
+                <?php if ($kiLaeuft): ?>
+                    Ein neuer Durchlauf der KI läuft gerade.
+                <?php endif; ?>
+            </p>
+            <?php if ($kiWarnungen !== []): ?>
+                <ul>
+                    <?php foreach ($kiWarnungen as $warnung): ?>
+                        <li><?= e($warnung) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </div>
+    <?php elseif ($bearbeitbar && $kiLaeuft): ?>
+        <p class="hinweis hinweis-info">
+            Die KI liest diesen Beleg gerade aus. Ihr Vorschlag erscheint nach dem Neuladen dieser Seite –
+            oder Sie erfassen den Beleg gleich von Hand.
+        </p>
+    <?php elseif ($bearbeitbar && ($ki !== null || $kiAnstossbar)): ?>
+        <div class="hinweis <?= $ki !== null ? 'hinweis-fehler' : 'hinweis-info' ?>">
+            <p>
+                <?php if ($ki !== null): ?>
+                    Die KI konnte den Beleg nicht auslesen: <?= e($ki->meldung) ?>
+                    Bitte von Hand erfassen<?= $kiAnstossbar ? ' oder die KI erneut fragen' : '' ?>.
+                <?php else: ?>
+                    Die KI hat diesen Beleg noch nicht ausgelesen.
+                <?php endif; ?>
+            </p>
+            <?php if ($kiAnstossbar): ?>
+                <form method="post" action="<?= e($basis) ?>/ki-erneut">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <button type="submit" class="knopf"><?= $ki !== null ? 'KI erneut versuchen' : 'Mit KI auslesen' ?></button>
+                </form>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
     <?php if ($eRechnung !== null && $bearbeitbar): ?>
         <?php if ($eRechnung->gelesen()): ?>
             <div class="hinweis hinweis-info">
                 <p>
                     Die Angaben stammen aus der E-Rechnung<?= $eRechnung->syntax === null ? '' : ' (' . e($eRechnung->syntax->label()) . ')' ?>
-                    und wurden ohne KI übernommen. Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts.
+                    und wurden ohne KI übernommen<?= $ki !== null && $ki->gueltig() ? ' – die KI ergänzt nur, was die E-Rechnung nicht kennt (z. B. Kategorie und Zweck)' : '' ?>.
+                    Bitte prüfen und mit „Geprüft“ bestätigen – gespeichert ist noch nichts.
                 </p>
                 <?php if ($eRechnungHinweise !== []): ?>
                     <ul>
@@ -222,8 +277,8 @@ $rollenGruppe = [
                         <?php endforeach; ?>
                     </select>
                 </label>
-                <label for="pruefen-datum">Belegdatum <span class="pflicht" aria-hidden="true">*</span>
-                    <input type="date" id="pruefen-datum" name="datum" value="<?= $wert('datum') ?>"
+                <label for="pruefen-datum">Belegdatum <span class="pflicht" aria-hidden="true">*</span><?= $unsicherMarke('datum') ?>
+                    <input type="date" id="pruefen-datum" name="datum" value="<?= $wert('datum') ?>"<?= $unsicherAn('datum') ?>
                            max="<?= e($heute->modify('+1 year')->format('Y-m-d')) ?>" required<?= $fehlerAn('datum') ?>>
                 </label>
             </div>
@@ -236,8 +291,8 @@ $rollenGruppe = [
             <fieldset>
                 <legend>Beträge</legend>
                 <div class="pruefen-zeile">
-                    <label for="pruefen-brutto">Brutto <span class="pflicht" aria-hidden="true">*</span>
-                        <input type="text" id="pruefen-brutto" name="brutto" value="<?= $wert('brutto') ?>" inputmode="decimal"
+                    <label for="pruefen-brutto">Brutto <span class="pflicht" aria-hidden="true">*</span><?= $unsicherMarke('brutto') ?>
+                        <input type="text" id="pruefen-brutto" name="brutto" value="<?= $wert('brutto') ?>" inputmode="decimal"<?= $unsicherAn('brutto') ?>
                                autocomplete="off" required aria-describedby="pruefen-betrag-hilfe"<?= $fehlerAn('brutto') ?>>
                     </label>
                     <label for="pruefen-waehrung" class="pruefen-waehrung">Währung
@@ -269,8 +324,8 @@ $rollenGruppe = [
 
             <fieldset>
                 <legend>Lieferant bzw. Zahler</legend>
-                <label for="pruefen-lieferant">Auswählen
-                    <select id="pruefen-lieferant" name="lieferant"<?= $fehlerAn('lieferant') ?>>
+                <label for="pruefen-lieferant">Auswählen<?= $unsicherMarke('lieferant') ?>
+                    <select id="pruefen-lieferant" name="lieferant"<?= $unsicherAn('lieferant') ?><?= $fehlerAn('lieferant') ?>>
                         <option value="">Keiner</option>
                         <?php foreach ($rollenGruppe as $rolle => $gruppe): ?>
                             <?php if (($lieferantenGruppen[$rolle] ?? []) !== []): ?>
@@ -285,8 +340,8 @@ $rollenGruppe = [
                 </label>
                 <?php if ($darfLieferantAnlegen && $bearbeitbar): ?>
                     <p class="feld-hilfe">Noch nicht vorhanden? Dann hier neu anlegen – als Lieferant bei einer Ausgabe, als Zahler bei einer Einnahme.</p>
-                    <label for="pruefen-lieferant-neu-name">Neu anlegen: Name
-                        <input type="text" id="pruefen-lieferant-neu-name" name="lieferant_neu_name" value="<?= $wert('lieferant_neu_name') ?>"
+                    <label for="pruefen-lieferant-neu-name">Neu anlegen: Name<?= $unsicherMarke('lieferant_neu_name') ?>
+                        <input type="text" id="pruefen-lieferant-neu-name" name="lieferant_neu_name" value="<?= $wert('lieferant_neu_name') ?>"<?= $unsicherAn('lieferant_neu_name') ?>
                                maxlength="200" autocomplete="off"<?= $fehlerAn('lieferant_neu_name') ?>>
                     </label>
                     <label for="pruefen-lieferant-neu-iban">IBAN (freiwillig)
@@ -296,8 +351,8 @@ $rollenGruppe = [
                 <?php endif; ?>
             </fieldset>
 
-            <label for="pruefen-kategorie">Kategorie
-                <select id="pruefen-kategorie" name="kategorie"<?= $fehlerAn('kategorie') ?>>
+            <label for="pruefen-kategorie">Kategorie<?= $unsicherMarke('kategorie') ?>
+                <select id="pruefen-kategorie" name="kategorie"<?= $unsicherAn('kategorie') ?><?= $fehlerAn('kategorie') ?>>
                     <option value="">Keine</option>
                     <?php foreach (CategoryDirection::cases() as $richtung): ?>
                         <?php if (($kategorieGruppen[$richtung->value] ?? []) !== []): ?>

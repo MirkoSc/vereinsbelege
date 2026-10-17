@@ -290,6 +290,12 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-behalten', true],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-verwerfen', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/belege/pruefen/7/duplikat-behalten', false],
+            // Asking the AI again (issue #47/M7-5): `document.edit` like capturing.
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7/ki-erneut', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/ki-erneut', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/belege/pruefen/7/ki-erneut', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/belege/pruefen/7/ki-erneut', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7/ki-erneut', false],
             // Konten (M9-1): bank.view reads - Vorstand, Kassenprüfer and
             // Steuerberater too; bank.book writes and records cash counts -
             // Admin and Finanzen only. The Vereinsverantwortlicher sees no

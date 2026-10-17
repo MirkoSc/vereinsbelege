@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace App\Service\Inbox;
 
 use App\Domain\Erstattungsart;
+use App\Domain\InboxItem;
+use App\Service\Crypto\CryptoException;
+use App\Service\Crypto\FieldCipher;
+use App\Service\Crypto\FieldContext;
+use App\Service\Crypto\Vault;
 
 /**
  * The decrypted `submission.payload_enc` (docs/spec/02-datenmodell.md
@@ -22,6 +27,36 @@ final readonly class EinreichungsDaten
         public string $freitext,
         public ?int $kostenstelleHinweis,
     ) {
+    }
+
+    private const string TABLE = 'submission';
+    private const string COLUMN = 'payload_enc';
+
+    /**
+     * The submission behind $item, decrypted - or null when the document has
+     * none (internal capture without submission, archive import) or it
+     * cannot be opened: sealed to an older vault version or damaged, the
+     * entry still shows with its plaintext columns. Used by the inbox and,
+     * for the free text, by the AI extraction (issue #47/M7-5).
+     */
+    public static function entschluesseln(InboxItem $item, Vault $vault): ?self
+    {
+        if ($item->document->submissionId === null || $item->submissionDekSealed === null || $item->payloadEnc === null) {
+            return null;
+        }
+
+        try {
+            $json = FieldCipher::decrypt(
+                $vault->openDataKey($item->submissionDekSealed),
+                $item->payloadEnc,
+                new FieldContext(self::TABLE, $item->document->submissionId, self::COLUMN),
+            );
+            $payload = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        } catch (CryptoException | \JsonException) {
+            return null;
+        }
+
+        return is_array($payload) ? self::fromPayload($payload) : null;
     }
 
     /**

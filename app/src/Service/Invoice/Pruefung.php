@@ -33,6 +33,8 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
 use App\Service\Document\ERechnungAuszug;
+use App\Service\Document\KiAuslesung;
+use App\Service\Document\KiAuszug;
 use App\Service\Document\Texterkennung;
 use App\Service\Inbox\Posteingang;
 use App\Service\MasterData\SupplierKeys;
@@ -62,11 +64,13 @@ use App\Service\Upload\MagicBytes;
  *   may maintain suppliers, and before the receipt's transaction (the
  *   supplier service runs its own).
  * - The sum check (net + taxes ≈ gross) warns, it does not refuse.
- * - A document without a receipt yet whose e-invoice was read (issue
- *   #46/M7-4, App\Service\Document\Texterkennung::eRechnung()) opens with
- *   the invoice's fields filled in - vorbelegen(), which takes the shape of
- *   the AI's answer (`extract-v1`) so M7-5 can fill the form the same way.
- *   Nothing is saved before a person does.
+ * - A document without a receipt yet opens with what was read
+ *   automatically filled in - vorbelegen(), in the shape of `extract-v1`:
+ *   the AI's suggestion (issue #47/M7-5, App\Service\Document\
+ *   KiAuslesung::auszug()), and over it the fields of a read e-invoice
+ *   (issue #46/M7-4, App\Service\Document\Texterkennung::eRechnung()).
+ *   Nothing is saved before a person does. kiErneut() queues the AI again
+ *   after it failed.
  *
  * Framework-free like the other services: no Http, no Session. Nothing
  * decrypted leaves through an exception message or the audit log - the log
@@ -105,6 +109,7 @@ final readonly class Pruefung
         private Texterkennung $texterkennung,
         private Posteingang $posteingang,
         private AuditLog $audit,
+        private KiAuslesung $kiAuslesung,
     ) {
     }
 
@@ -290,6 +295,62 @@ final readonly class Pruefung
     }
 
     /**
+     * The AI's suggestion as the newest `ai_extract` run left it, or null
+     * when the AI has not read the document (issue #47/M7-5).
+     */
+    public function kiAuszug(Document $document, Vault $vault): ?KiAuszug
+    {
+        return $this->kiAuslesung->auszug($document, $vault);
+    }
+
+    /** Whether the AI is reading the document right now (a run is queued or running). */
+    public function kiLaeuft(Document $document): bool
+    {
+        return $this->kiAuslesung->laeuft($document->id);
+    }
+
+    /**
+     * Whether the page offers to ask the AI (again): the document waits for
+     * it or it failed, the AI is set up, and no run is pending.
+     */
+    public function kiAnstossbar(Document $document): bool
+    {
+        return in_array($document->status, [DocumentStatus::BereitZurAuswertung, DocumentStatus::KiFehler], true)
+            && $this->kiAuslesung->eingerichtet()
+            && !$this->kiAuslesung->laeuft($document->id);
+    }
+
+    /**
+     * "KI erneut versuchen" (issue #47/M7-5, 02 "Statusmodell": `ki_fehler`
+     * -> `bereit_zur_auswertung`, "neuer Versuch"): queues `ai_extract`
+     * again - also for a document still waiting for the AI that was never
+     * read, e.g. because the key was added only afterwards.
+     *
+     * @throws InvoiceRuleViolation
+     */
+    public function kiErneut(Document $document, ?int $userId, string $ip, \DateTimeImmutable $now): void
+    {
+        if (!in_array($document->status, [DocumentStatus::BereitZurAuswertung, DocumentStatus::KiFehler], true)) {
+            throw new InvoiceRuleViolation('Dieser Beleg wird nicht mehr von der KI ausgelesen – bitte von Hand erfassen.');
+        }
+        if (!$this->kiAuslesung->eingerichtet()) {
+            throw new InvoiceRuleViolation('Es ist kein nutzbares KI-Profil eingerichtet (Administration → KI-Anbieter).');
+        }
+        if ($document->status === DocumentStatus::BereitZurAuswertung && $this->kiAuslesung->laeuft($document->id)) {
+            throw new InvoiceRuleViolation('Die KI liest diesen Beleg bereits aus.');
+        }
+        if (
+            $document->status === DocumentStatus::KiFehler
+            && !$this->documents->wechsleStatus($document->id, DocumentStatus::KiFehler, DocumentStatus::BereitZurAuswertung, null, null, $userId, $now)
+        ) {
+            throw new InvoiceRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
+        }
+
+        $this->kiAuslesung->anstossen($document->id, $now);
+        $this->audit->record(AuditAction::BelegKiErneut, $userId, $ip, $document->id, ['von' => $document->status->value], $now);
+    }
+
+    /**
      * What the archive import read from the document's path (issue
      * #77/M12-3), or null for a document that did not come from an archive.
      * A supplier merged away since is replaced by the one it went into.
@@ -334,9 +395,9 @@ final readonly class Pruefung
 
     /**
      * The form filled from a read receipt in the shape of `extract-v1`
-     * (docs/spec/03-erfassung-und-ki.md section 6) - an e-invoice now, the
-     * AI's answer with M7-5. Only values that fit their field are taken;
-     * anything else keeps the default of felder(). The supplier is looked
+     * (docs/spec/03-erfassung-und-ki.md section 6) - an e-invoice, or the
+     * AI's suggestion (issue #47/M7-5). Only values that fit their field
+     * are taken; anything else keeps what $felder had. The supplier is looked
      * up by its ids - VAT id, tax number, IBAN, creditor id, in that order
      * (section 7, steps 1-3), the first id that names exactly one supplier
      * of the direction's role wins; otherwise name and IBAN are offered as
@@ -399,13 +460,34 @@ final readonly class Pruefung
 
         $partner = is_array($extraktion['supplier'] ?? null) ? $extraktion['supplier'] : [];
         $richtung = InvoiceDirection::tryFrom($felder['richtung']) ?? InvoiceDirection::Ausgabe;
+        // Either a known supplier or a new one, never both (the form creates
+        // one only instead of a choice) - also when an e-invoice is laid
+        // over the AI's suggestion and names a different one.
         $lieferant = $this->lieferantZu($partner, $richtung, $vault);
+        $neuerName = mb_substr($text($partner['name'] ?? null), 0, 200);
         if ($lieferant !== null) {
             $felder['lieferant'] = (string) $lieferant;
-        } else {
-            $setze('lieferant_neu_name', mb_substr($text($partner['name'] ?? null), 0, 200));
+            $felder['lieferant_neu_name'] = '';
+            $felder['lieferant_neu_iban'] = '';
+        } elseif ($neuerName !== '') {
             $iban = Iban::normalisieren($text($partner['iban'] ?? null));
-            $setze('lieferant_neu_iban', Iban::istGueltig($iban) ? $iban : '');
+            $felder['lieferant'] = '';
+            $felder['lieferant_neu_name'] = $neuerName;
+            $felder['lieferant_neu_iban'] = Iban::istGueltig($iban) ? $iban : '';
+        }
+
+        // Category and cost center come from the AI only (issue #47/M7-5;
+        // an e-invoice leaves both null): an active category of the
+        // direction, a cost center only for a document that has none - the
+        // one it came with decides the scope "eigene Kostenstelle".
+        $kategorieId = $extraktion['category_id'] ?? null;
+        $kategorie = is_int($kategorieId) ? $this->kategorien->find($kategorieId) : null;
+        if ($kategorie !== null && $kategorie->active && $richtung->passtZuKategorie($kategorie->direction)) {
+            $felder['kategorie'] = (string) $kategorie->id;
+        }
+        $kostenstelleId = $extraktion['cost_center_id'] ?? null;
+        if (is_int($kostenstelleId) && $felder['kostenstelle'] === '' && array_key_exists($kostenstelleId, $this->kostenstellen->active())) {
+            $felder['kostenstelle'] = (string) $kostenstelleId;
         }
 
         return ['felder' => $felder, 'hinweise' => $hinweise];

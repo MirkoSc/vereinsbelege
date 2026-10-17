@@ -528,6 +528,28 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   verbunden, sondern mit `ConnectionLostException` abgebrochen: der Server
   hat die Transaktion bereits zurückgerollt.
 
+  **Umsetzung für Session-Jobs (M7-5, issue #47):** ein Job-Typ mit externem
+  Aufruf implementiert `App\Service\Job\ExternerJobHandler`. Ein
+  `POST /api/jobs/step` läuft dann in drei Phasen: (1) `JobRunner::schritt()`
+  beansprucht den Job und lässt den Handler den Aufruf vorbereiten
+  (`aufruf()` → `ExternerAufruf` mit einer Closure ohne DB und Session und dem
+  Zeitlimit des Profils); die Sperre wird per `heartbeat()` auf Zeitlimit +
+  60 s verlängert, damit kein zweiter Tab den Job währenddessen beansprucht.
+  (2) `App\Api\JobController` verwirft den Runner, gibt die Verbindung mit
+  `ConnectionFactory::release()` frei und führt die Closure aus. (3) Ein neu
+  gebauter Runner (frische Verbindung) liest den Job erneut, schreibt nur,
+  solange er ihn noch hält (sonst wird das Ergebnis verworfen), und lässt den
+  Handler speichern (`nachAufruf()`); eine Exception scheitert wie jeder
+  Schritt mit dem Klassennamen. Der Controller schließt außerdem die PHP-
+  Session (`Session::schliessen()`), sobald der Tresor entsperrt ist – andere
+  Tabs warten nicht auf den Aufruf. Die Grenze, ab der der Webserver selbst
+  kappt, bleibt im Hosting-Check zu messen (Profil-Zeitlimit darunter).
+- **Warten auf andere Jobs** (M7-5): `JobSchrittErgebnis::warten()` parkt
+  einen Job ohne Halter in `locked_until`, `claim()` überspringt ihn bis
+  dahin; `attempts` wird wie bei jedem erledigten Schritt zurückgesetzt.
+  `ai_extract` wartet so auf `extract_text` und `render_pages` desselben
+  Dokuments (`JobRepository::offenFuer()`).
+
 ## 5. Hosting-Check (Meilenstein M0)
 
 Eigenständiges Skript `tools/hosting-check.php`, einmalig per FTP in ein

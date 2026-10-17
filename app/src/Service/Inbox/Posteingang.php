@@ -14,11 +14,13 @@ use App\Domain\InboxItem;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\JobRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
+use App\Service\Document\KiAuslesung;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
 
@@ -48,8 +50,6 @@ final readonly class Posteingang
 
     public const int NOTIZ_MAX = 1000;
 
-    private const string TABLE_SUBMISSION = 'submission';
-    private const string COLUMN_PAYLOAD = 'payload_enc';
     private const string TABLE_DOCUMENT = 'document';
     private const string COLUMN_NOTE = 'status_note_enc';
 
@@ -66,6 +66,7 @@ final readonly class Posteingang
         private CostCenterRepository $kostenstellen,
         private BlobService $blobs,
         private AuditLog $audit,
+        private JobRepository $jobs,
     ) {
     }
 
@@ -266,6 +267,12 @@ final readonly class Posteingang
         if (!$this->documents->wechsleStatus($document->id, $document->status, $ziel, $notizEnc, $resubmitOn, $userId, $now)) {
             throw new InboxRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
         }
+        // Accepted: now the AI reads it (issue #47/M7-5, 02 "Statusmodell":
+        // bereit_zur_auswertung -> KI-Job). Without a usable AI profile the
+        // job skips itself and the receipt is captured by hand.
+        if ($ziel === DocumentStatus::BereitZurAuswertung) {
+            KiAuslesung::einreihen($this->jobs, $document->id, $now);
+        }
 
         $this->audit->record($aktion->auditAction(), $userId, $ip, $document->id, $details, $now);
     }
@@ -301,24 +308,7 @@ final readonly class Posteingang
 
     private function daten(InboxItem $item, Vault $vault): ?EinreichungsDaten
     {
-        if ($item->document->submissionId === null || $item->submissionDekSealed === null || $item->payloadEnc === null) {
-            return null;
-        }
-
-        try {
-            $json = FieldCipher::decrypt(
-                $vault->openDataKey($item->submissionDekSealed),
-                $item->payloadEnc,
-                new FieldContext(self::TABLE_SUBMISSION, $item->document->submissionId, self::COLUMN_PAYLOAD),
-            );
-            $payload = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
-        } catch (CryptoException | \JsonException) {
-            // Sealed to an older vault version or damaged - the entry still
-            // shows with its plaintext columns.
-            return null;
-        }
-
-        return is_array($payload) ? EinreichungsDaten::fromPayload($payload) : null;
+        return EinreichungsDaten::entschluesseln($item, $vault);
     }
 
     private function notiz(Document $document, Vault $vault): ?string

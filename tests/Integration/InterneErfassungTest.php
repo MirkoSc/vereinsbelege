@@ -666,7 +666,7 @@ final class InterneErfassungTest extends DatabaseTestCase
             $view,
             new Session(),
             new SessionVault(),
-            new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit),
+            new Posteingang(new DocumentRepository($pdo), new CostCenterRepository($pdo), $this->blobService(), $this->audit, new JobRepository($pdo)),
             new CostCenterRepository($pdo),
             new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
         );

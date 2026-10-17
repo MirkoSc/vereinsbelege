@@ -73,6 +73,11 @@
         </label>
         <p class="feld-fehler" id="ds-fehler-meldung">Bitte einen Betrag wie 12,00 eingeben.</p>
 
+        <?php /* Prüfansicht (issue #47/M7-5): von der KI vorbelegt, aber unsicher gelesen - Farbe und Wort. */ ?>
+        <label for="ds-unsicher">Brutto (von der KI vorbelegt) <span class="marke marke-warnung">KI unsicher</span>
+            <input type="text" id="ds-unsicher" name="ds_unsicher" class="feld-unsicher" value="238,00">
+        </label>
+
         <label for="ds-betrag" class="feld-kurz">Betrag (€)
             <input type="text" id="ds-betrag" name="ds_betrag" inputmode="decimal" value="42,00">
         </label>

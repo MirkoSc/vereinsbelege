@@ -197,7 +197,8 @@ zu erfinden.
 - Jeder Verarbeitungsschritt hat einen **Executor** (`session`, `browser`,
   `worker`). Fachlogik liegt in `app/src/Service/Processing/` **ohne**
   Abhängigkeit zu Http/Session/Repository, damit sie in Web-App und Worker
-  identisch läuft. Wer neue Verarbeitungslogik schreibt, hält sich daran.
+  identisch läuft (geprüft von `tests/Support/ProcessingArchitectureTest.php`).
+  Wer neue Verarbeitungslogik schreibt, hält sich daran.
 - Der Worker bekommt nie den Tresor-Schlüssel, nur je Dokument versiegelte
   DEKs (`worker_grant`), die nach der Verarbeitung gelöscht werden.
   Ergebnisse verschlüsselt er an den Tresor-Public-Key.

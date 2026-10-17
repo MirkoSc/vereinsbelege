@@ -657,6 +657,17 @@ textarea::placeholder {
     color: var(--farbe-gedaempft);
 }
 
+/* Ein Feld, das die KI vorbelegt hat, sich dabei aber unsicher war
+   (Konfidenz unter 0,7): gelb hinterlegt – und immer mit dem Wort „KI
+   unsicher“ (.marke-warnung) im Label, nicht nur über die Farbe. Steht vor
+   aria-invalid, damit ein Fehler den roten Rand behält. */
+input.feld-unsicher,
+select.feld-unsicher {
+    background: var(--farbe-warnung-flaeche);
+    border-color: var(--farbe-warnung);
+    border-width: 2px;
+}
+
 input[aria-invalid="true"],
 select[aria-invalid="true"],
 textarea[aria-invalid="true"] {

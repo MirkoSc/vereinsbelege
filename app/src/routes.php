@@ -500,6 +500,9 @@ return static function (
     // vault required like for everything on the review page.
     $post('/app/belege/pruefen/{id:\d+}/festschreiben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreiben($r, $params));
     $post('/app/belege/pruefen/{id:\d+}/festschreibung-aufheben', $documentEdit, static fn(Request $r, array $params) => $pruefung()->festschreibungAufheben($r, $params));
+    // The AI extraction once more (issue #47/M7-5): after `ki_fehler`, or
+    // for a receipt still waiting that was never read.
+    $post('/app/belege/pruefen/{id:\d+}/ki-erneut', $documentEdit, static fn(Request $r, array $params) => $pruefung()->kiErneut($r, $params));
 
     // Duplicate detection (M6-6, issue #40) from the review page: the same
     // two decisions as in the inbox, with the review page's scope.
