@@ -65,6 +65,7 @@
 use App\Domain\CategoryDirection;
 use App\Domain\DocumentStatus;
 use App\Domain\SupplierRole;
+use App\Domain\Zahlungsweg;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
 
@@ -291,6 +292,15 @@ $rollenGruppe = [
                            max="<?= e($heute->modify('+1 year')->format('Y-m-d')) ?>" required<?= $fehlerAn('datum') ?>>
                 </label>
             </div>
+
+            <label for="pruefen-zahlungsweg">Zahlungsweg <span class="pflicht" aria-hidden="true">*</span>
+                <select id="pruefen-zahlungsweg" name="zahlungsweg"<?= $fehlerAn('zahlungsweg') ?>>
+                    <?php foreach (Zahlungsweg::cases() as $weg): ?>
+                        <option value="<?= e($weg->value) ?>"<?= $gewaehlt('zahlungsweg', $weg->value) ?>><?= e($weg->label()) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <span class="feld-hilfe">Entscheidet, ob eine Buchung erwartet wird: nur „über Konto oder Kasse gebucht“ und „Erstattung“ werden mit Buchungen abgeglichen.</span>
+            </label>
 
             <label for="pruefen-nummer">Belegnummer
                 <input type="text" id="pruefen-nummer" name="nummer" value="<?= $wert('nummer') ?>"

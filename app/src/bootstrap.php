@@ -57,6 +57,7 @@ use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
+use App\Repository\AllocationRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
@@ -121,6 +122,7 @@ use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Import\KontoauszugImport;
+use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\AuthTokenCleanupTask;
@@ -328,6 +330,18 @@ $auditFor = static fn(\PDO $pdo): AuditLog => new AuditLog(
     new AuditLogRepository($pdo),
     new VaultRepository($pdo),
     $serverCrypto,
+);
+
+// Matching receipt <-> booking (M10-1, issue #65): the allocations and the
+// statuses derived from them - the review page (Zahlungsweg) and the ZIP
+// export (bezahlt am/Konto/Referenz) need it besides the matching itself.
+$zuordnungFor = static fn(\PDO $pdo): Zuordnung => new Zuordnung(
+    $pdo,
+    new AllocationRepository($pdo),
+    new InvoiceRepository($pdo),
+    new BankTransactionRepository($pdo),
+    new BankAccountService($pdo, new BankAccountRepository($pdo)),
+    $auditFor($pdo),
 );
 
 // Second factor (M3-4, issue #17, docs/spec/01-sicherheit.md section 3):
@@ -607,7 +621,7 @@ $serienSeite = static function () use ($connections, $view, $serienFor): SerienC
 
 // The review page (M6-3, issue #37): captures a document as a receipt with
 // the session's unlocked vault - only the review pages open the connection.
-$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor): PruefungController {
+$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor, $zuordnungFor): PruefungController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -640,6 +654,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
             $lieferantenAufloesungFor($pdo),
             new JobRepository($pdo),
+            $zuordnungFor($pdo),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -713,7 +728,7 @@ $buchungsregeln = static function () use ($connections, $view, $auditFor): Buchu
 // section 2): reads and decrypts with the session's unlocked vault - only
 // these pages open the connection. The time limit restarts before every
 // file, so a long download never hits it.
-$export = static function () use ($connections, $view, $auditFor, $paths, $logger): ExportController {
+$export = static function () use ($connections, $view, $auditFor, $paths, $logger, $zuordnungFor): ExportController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -728,6 +743,7 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
         $kategorien,
         $kostenstellen,
         new SettingRepository($pdo),
+        $zuordnungFor($pdo),
         $logger,
         sekundenJeDatei: 30,
     );

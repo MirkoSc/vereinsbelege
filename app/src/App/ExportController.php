@@ -98,7 +98,7 @@ final readonly class ExportController
             'entsperrt' => $tresor !== null,
             'filter' => $filter,
             'fehler' => $fehler,
-            'plan' => $tresor === null || $fehler !== null ? null : $this->export->vorbereiten($filter, $this->bereich(), $tresor),
+            'plan' => $tresor === null || $fehler !== null ? null : $this->export->vorbereiten($filter, $this->bereich(), $tresor, null, $this->buchungsbereich()),
             'lieferanten' => $tresor === null ? [] : $this->export->lieferantenAuswahl($this->bereich(), $tresor),
             'kategorien' => $this->kategorien->all(),
             'kostenstellen' => $this->kostenstellen->all(),
@@ -131,7 +131,7 @@ final readonly class ExportController
             return $this->zurueck($zurueck, $fehler, FlashArt::Fehler);
         }
 
-        $plan = $this->export->vorbereiten($filter, $this->bereich(), $tresor);
+        $plan = $this->export->vorbereiten($filter, $this->bereich(), $tresor, null, $this->buchungsbereich());
         if ($plan->anzahlBelege === 0) {
             return $this->zurueck($zurueck, 'Für diese Auswahl gibt es keine Belege – es wurde kein ZIP erstellt.', FlashArt::Info);
         }
@@ -194,7 +194,7 @@ final readonly class ExportController
         }
 
         try {
-            $this->nextcloud->starten($lauf, $this->bereich(), $tresor, $this->session->userId(), new \DateTimeImmutable());
+            $this->nextcloud->starten($lauf, $this->bereich(), $this->buchungsbereich(), $tresor, $this->session->userId(), new \DateTimeImmutable());
         } catch (NextcloudAblageFehler | WebDavFehler $e) {
             return $this->zurueck($zurueck, $e->getMessage(), FlashArt::Fehler);
         }
@@ -226,7 +226,7 @@ final readonly class ExportController
         $this->session->schliessen();
 
         try {
-            $stand = $this->nextcloud->schritt($lauf, $this->bereich(), $tresor, $userId, $request->ip, new \DateTimeImmutable());
+            $stand = $this->nextcloud->schritt($lauf, $this->bereich(), $this->buchungsbereich(), $tresor, $userId, $request->ip, new \DateTimeImmutable());
         } catch (NextcloudAblageFehler | WebDavFehler $e) {
             return Response::json(['fehler' => $e->getMessage()], 409);
         }
@@ -273,7 +273,7 @@ final readonly class ExportController
         }
 
         $filter = $this->filter($lauf);
-        $plan = $this->export->vorbereiten($filter, $this->bereich(), $tresor, $lauf->id);
+        $plan = $this->export->vorbereiten($filter, $this->bereich(), $tresor, $lauf->id, $this->buchungsbereich());
         if ($plan->anzahlBelege === 0) {
             return $this->zurueck($zurueck, 'Die Belege dieses Exports sind nicht mehr verfügbar – es wurde kein ZIP erstellt.', FlashArt::Info);
         }
@@ -424,6 +424,12 @@ final readonly class ExportController
     private function bereich(): Zugriffsbereich
     {
         return $this->berechtigungen()->zugriffsbereich(Permission::ExportZip);
+    }
+
+    /** Payment details in index.csv come from bookings: only with `bank.view`, within its scope. */
+    private function buchungsbereich(): ?Zugriffsbereich
+    {
+        return $this->berechtigungen()->darf(Permission::BankView) ? $this->berechtigungen()->zugriffsbereich(Permission::BankView) : null;
     }
 
     private function tresor(Request $request): ?Vault

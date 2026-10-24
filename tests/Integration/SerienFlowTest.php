@@ -61,6 +61,7 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\KiAuslesungFabrik;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 
 /**
@@ -229,7 +230,7 @@ final class SerienFlowTest extends DatabaseTestCase
         // Back to review and saved with the other supplier.
         $documents = new DocumentRepository($this->pdo());
         $this->pdo()->prepare("UPDATE document SET status = 'in_pruefung' WHERE id = ?")->execute([$dritter]);
-        $felder = [...array_fill_keys(Pruefung::feldnamen(), ''), 'richtung' => 'ausgabe', 'belegart' => 'rechnung', 'datum' => '2026-03-02', 'brutto' => '450,00', 'waehrung' => 'EUR', 'lieferant' => (string) $andere];
+        $felder = [...array_fill_keys(Pruefung::feldnamen(), ''), 'richtung' => 'ausgabe', 'belegart' => 'rechnung', 'datum' => '2026-03-02', 'brutto' => '450,00', 'waehrung' => 'EUR', 'zahlungsweg' => 'konto', 'lieferant' => (string) $andere];
         $this->pruefung()->speichern($documents->find($dritter) ?? self::fail(), $this->tresor, $felder, true, false, $this->userId, '127.0.0.1', new \DateTimeImmutable());
         $this->allesAbarbeiten();
 
@@ -510,6 +511,7 @@ final class SerienFlowTest extends DatabaseTestCase
             'datum' => $datum,
             'brutto' => $brutto,
             'waehrung' => 'EUR',
+            'zahlungsweg' => 'konto',
             'lieferant' => (string) ($lieferant ?? $this->miete),
         ];
         $this->pruefung()->speichern($documents->find($id) ?? self::fail(), $this->tresor, $felder, true, false, $this->userId, '127.0.0.1', new \DateTimeImmutable());
@@ -661,6 +663,7 @@ final class SerienFlowTest extends DatabaseTestCase
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
             KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
             new JobRepository($pdo),
+            ZuordnungFabrik::bauen($pdo, $this->audit),
         );
     }
 
