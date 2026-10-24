@@ -979,6 +979,23 @@ das Fallback-Profil.
   Ausweich-Aufruf; `KiErgebnis::meldung()` hängt „Das Fallback-Profil wurde
   verwendet.“ an.
 
+**Umsetzung (M7-8, issue #50, Migration 032):** das **KI-Protokoll**.
+- *Daten:* `ai_call_log` (Betriebsdaten im Klartext, kein Tresor): Zeitpunkt,
+  Anbieter (ID + kopierter Name/Modell), Prompt-Version, Reparatur/Fallback,
+  Status (`KiAufrufStatus`, das „Ergebnis“), Tokens, Dauer, HTTP-Status –
+  **nie** Anfrage, Antwort oder ein Wert vom Beleg (die Rohantwort bleibt
+  verschlüsselt im `extraction`-Artefakt). `KiAuslesung::nachAufruf()` schreibt
+  die Zeile über `AiCallLogRepository`, *nachdem* der Versuch gespeichert ist
+  (ein wiederholter Schritt protokolliert nichts doppelt). „Verbindung testen“
+  protokolliert weiterhin nichts.
+- *Ansicht:* `GET /admin/ki-protokoll` (`admin.settings`, Seite im
+  `KiAnbieterController`, Nav-Eintrag „KI-Protokoll“): je Anbieter eine Karte
+  mit Summen der letzten 30 Tage (Aufrufe, gültig/Fehler, Tokens,
+  Ø-Dauer) und den neuesten 25 Aufrufen. Aufrufe gelöschter Profile erscheinen
+  unter ihrem kopierten Namen mit dem Zusatz „(Profil gelöscht)“.
+- *Offen/vorläufig:* keine automatische Bereinigung alter Zeilen (ein Verein
+  erzeugt wenige tausend Zeilen im Jahr).
+
 ### Auslese-Schema (Prompt-Version `extract-v1`)
 
 ```json
