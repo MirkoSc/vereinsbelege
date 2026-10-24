@@ -47,6 +47,64 @@ final class QrCodeTest extends TestCase
         );
     }
 
+    /**
+     * Versions 7-13 (issue #86): version information, two block groups,
+     * several alignment patterns and - from version 10 - the 16-bit count
+     * field, each checked as a full matrix against the same reference
+     * encoder (`qrcode` 8.2 on PyPI, byte mode, level M; every matrix also
+     * decoded by zxing-cpp to the original bytes).
+     */
+    #[DataProvider('referenzMatrizen')]
+    public function testLargerVersionsMatchTheReferenceEncoder(string $daten, int $groesse, string $hash): void
+    {
+        $matrix = QrCode::matrix($daten);
+
+        self::assertCount($groesse, $matrix);
+        self::assertSame($hash, hash('sha256', self::bits($matrix)));
+    }
+
+    /**
+     * @return iterable<string, array{string, int, string}>
+     */
+    public static function referenzMatrizen(): iterable
+    {
+        yield 'Version 7, 122 Byte' => [str_repeat('x', 122), 45, '91c925bdfb77e72b0588d633a6da626a8e78d53a86b2fc001044e012bc75568f'];
+        yield 'Version 10, 200 Byte' => [implode('', array_map(static fn(int $i): string => chr(97 + $i % 26), range(0, 199))), 57, '7c05f34a0a25a2dfc27660b0b9cd15947a937dc79a7f38320e893523cb2754a8'];
+        yield 'Version 13, 331 Byte' => [implode('', array_map(static fn(int $i): string => chr(48 + $i % 43), range(0, 330))), 69, 'b03a7d7e267abea6f18c54809014373870000d40032291fc5e1388660b5575f2'];
+        yield 'GiroCode mit Umlauten' => ["BCD\n002\n1\nSCT\nCOBADEFFXXX\nMüller & Söhne Sportartikel GmbH\nDE89370400440532013000\nEUR1234.56\n\n\nRE-2026-0042", 45, '094c4b759356708144c402db4ef85426700374edb3708e8aaa8739aa1e687b96'];
+    }
+
+    public function testTheVersionInformationOfVersion7SitsInBothCorners(): void
+    {
+        $matrix = QrCode::matrix(str_repeat('x', 122));
+        $size = count($matrix);
+
+        // Version 7 = 000111 + BCH remainder 110010010100 (ISO/IEC 18004 Annex D).
+        $erwartet = 0b000111110010010100;
+        for ($i = 0; $i < 18; $i++) {
+            $bit = (($erwartet >> $i) & 1) === 1;
+            self::assertSame($bit, $matrix[intdiv($i, 3)][$i % 3 + $size - 11], 'top right, bit ' . $i);
+            self::assertSame($bit, $matrix[$i % 3 + $size - 11][intdiv($i, 3)], 'bottom left, bit ' . $i);
+        }
+    }
+
+    public function testTheSvgLabelIsEscaped(): void
+    {
+        self::assertStringContainsString('aria-label="a &quot;b&quot; &lt;c&gt;"', QrCode::svg('x', label: 'a "b" <c>'));
+        self::assertStringContainsString('aria-label="QR-Code zur Einrichtung des Authenticators"', QrCode::svg('x'));
+    }
+
+    /**
+     * @param list<list<bool>> $matrix
+     */
+    private static function bits(array $matrix): string
+    {
+        return implode("\n", array_map(
+            static fn(array $row): string => implode('', array_map(static fn(bool $v): string => $v ? '1' : '0', $row)),
+            $matrix,
+        ));
+    }
+
     #[DataProvider('kapazitaetsGrenzen')]
     public function testDieVersionWaechstGenauAnDenKapazitaetsgrenzen(int $bytes, int $erwarteteGroesse): void
     {
@@ -73,13 +131,24 @@ final class QrCodeTest extends TestCase
         yield '84 Byte -> noch Version 5' => [84, 37];
         yield '85 Byte -> Version 6 (41x41)' => [85, 41];
         yield '106 Byte -> noch Version 6' => [106, 41];
+        // Versions 7-13 (issue #86, for the GiroCode): 122/152/180/213/251/287/331.
+        yield '107 Byte -> Version 7 (45x45)' => [107, 45];
+        yield '122 Byte -> noch Version 7' => [122, 45];
+        yield '123 Byte -> Version 8 (49x49)' => [123, 49];
+        yield '180 Byte -> Version 9 (53x53)' => [180, 53];
+        yield '181 Byte -> Version 10 (57x57), 16-Bit-Längenfeld' => [181, 57];
+        yield '213 Byte -> noch Version 10' => [213, 57];
+        yield '251 Byte -> Version 11 (61x61)' => [251, 61];
+        yield '287 Byte -> Version 12 (65x65)' => [287, 65];
+        yield '288 Byte -> Version 13 (69x69)' => [288, 69];
+        yield '331 Byte -> noch Version 13' => [331, 69];
     }
 
     public function testEinZuLangerInhaltWirdAbgelehntStattAbgeschnitten(): void
     {
         $this->expectException(\InvalidArgumentException::class);
 
-        QrCode::matrix(str_repeat('x', 107));
+        QrCode::matrix(str_repeat('x', 332));
     }
 
     public function testDieDreiSuchmusterStehenAnDenErwartetenEcken(): void

@@ -627,6 +627,11 @@ final readonly class PruefungController
             'lieferanten' => $tresor === null ? [] : $this->lieferantenAuswahl($tresor),
             'kostenstellen' => $this->kostenstellenAuswahl($felder['kostenstelle'] ?? ''),
             'darfLieferantAnlegen' => $this->berechtigungen()->darf(Permission::SupplierManage),
+            // The GiroCode page has the unpaid list's right and scope (issue #86).
+            'girocodeLink' => $tresor !== null && $document->status !== DocumentStatus::Abgelehnt
+                && $this->berechtigungen()->darf(Permission::ReportView) && $this->pruefung->zuUeberweisen($document)
+                ? '/app/offen/rechnungen/' . $document->id . '/girocode'
+                : null,
             'position' => $position === false ? null : $position + 1,
             'anzahl' => count($ids),
             'naechster' => Pruefung::naechsterIn($ids, $document->id),

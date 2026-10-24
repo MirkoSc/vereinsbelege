@@ -339,6 +339,101 @@ final class UebersichtFlowTest extends DatabaseTestCase
 
     // ----------------------------------------------------------- helpers
 
+    // ---------------------------------------------------------- GiroCode
+
+    public function testTheGiroCodeCarriesTheOpenRestTheInvoiceNumberAndIsNeverCached(): void
+    {
+        $lieferant = $this->lieferantMitIban('Sporthaus Beispiel', 'DE89 3704 0044 0532 0130 00', 'COBADEFFXXX');
+        $beleg = $this->beleg(10000, lieferant: $lieferant, nummer: 'RE-2026-9');
+        $this->zuordnen($beleg, $this->buchung($this->bankkonto(), '2026-03-20', -4000), 4000);
+        $pfad = '/app/offen/rechnungen/' . $this->dokumentVon($beleg) . '/girocode';
+
+        self::assertStringContainsString('href="' . $pfad . '"', $this->get('/app/offen/rechnungen')->body, 'the unpaid list links the code');
+
+        $seite = $this->get($pfad);
+        self::assertSame(200, $seite->status);
+        self::assertSame('no-store, private', $seite->headers['Cache-Control'] ?? null);
+        self::assertStringContainsString('<svg xmlns="http://www.w3.org/2000/svg"', $seite->body);
+        self::assertStringContainsString('aria-label="GiroCode für die Überweisung"', $seite->body);
+        self::assertStringContainsString('DE89 3704 0044 0532 0130 00', $seite->body);
+        self::assertStringContainsString('COBADEFFXXX', $seite->body);
+        self::assertStringContainsString('<dd>60,00 EUR</dd>', $seite->body, 'the open rest, not the gross amount');
+        self::assertStringContainsString('<dd>RE-2026-9</dd>', $seite->body);
+        self::assertStringNotContainsString('keine Rechnungsnummer', $seite->body);
+    }
+
+    public function testNoGiroCodeForTheClubsOwnIbanAnIncomeOrAMissingIban(): void
+    {
+        $vereinsIban = 'DE02120300000000202051';
+        // Learned before the club's account was set up - the page must not
+        // trust what is stored (E-29).
+        $verein = $this->lieferantMitIban('Verwechselt', $vereinsIban);
+        $this->konten()->anlegen($this->tresor, BankAccountKind::Bank, ['name' => 'Girokonto', 'iban' => $vereinsIban, 'bic' => '', 'bank' => '', 'opening_balance' => '0,00', 'opening_date' => '2026-01-01'], new \DateTimeImmutable());
+        $ohneIban = $this->beleg(5000, lieferant: $this->lieferant('Ohne IBAN'));
+        $einnahme = $this->beleg(7000, richtung: InvoiceDirection::Einnahme, lieferant: $this->lieferantMitIban('Sponsor', 'DE89370400440532013000'));
+        $ohneNummer = $this->beleg(1234, lieferant: $this->lieferantMitIban('Platzwart-Bedarf', 'DE75512108001245126199'));
+
+        $body = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($ohneIban) . '/girocode')->body;
+        self::assertStringContainsString('Kein GiroCode: Beim Lieferanten ist keine gültige IBAN hinterlegt.', $body);
+        self::assertStringNotContainsString('<svg', $body);
+
+        $body = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($einnahme) . '/girocode')->body;
+        self::assertStringContainsString('Das ist eine Einnahme', $body);
+        self::assertStringNotContainsString('<svg', $body);
+        self::assertStringNotContainsString('/girocode"', $this->zeileVon($this->get('/app/offen/rechnungen')->body, $einnahme), 'the list offers no code for an income');
+
+        $body = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($ohneNummer) . '/girocode')->body;
+        self::assertStringContainsString('<svg', $body);
+        self::assertStringContainsString('keine Rechnungsnummer', $body);
+
+        // The club's own account is never a payee (E-29).
+        $body = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($this->beleg(990, lieferant: $verein)) . '/girocode')->body;
+        self::assertStringNotContainsString('<svg', $body);
+        self::assertStringNotContainsString('DE02 1203', $body);
+        self::assertStringContainsString('1 beim Lieferanten hinterlegte IBAN ist ungültig oder ein Konto des Vereins', $body);
+    }
+
+    public function testTheGiroCodePageKeepsTheListsScopeAndNeedsTheVault(): void
+    {
+        $kostenstellen = new CostCenterRepository($this->pdo());
+        $jugend = $kostenstellen->create('Jugend');
+        $heim = $kostenstellen->create('Vereinsheim');
+        $lieferant = $this->lieferantMitIban('Sporthaus Beispiel', 'DE89370400440532013000');
+        $eigen = $this->beleg(1000, lieferant: $lieferant, kostenstelle: $jugend);
+        $fremd = $this->beleg(2000, lieferant: $lieferant, kostenstelle: $heim);
+        $bezahlt = $this->beleg(999, lieferant: $lieferant, kostenstelle: $jugend);
+        $this->zuordnen($bezahlt, $this->buchung($this->bankkonto(), '2026-03-21', -999), 999);
+
+        $this->rolle(SystemRole::Vereinsverantwortlicher);
+        new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$jugend]);
+
+        self::assertStringContainsString('<svg', $this->get('/app/offen/rechnungen/' . $this->dokumentVon($eigen) . '/girocode')->body);
+        $fremdSeite = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($fremd) . '/girocode');
+        self::assertSame(404, $fremdSeite->status, 'another cost center is "not found", like a paid one');
+        self::assertStringNotContainsString('20,00', $fremdSeite->body);
+        self::assertSame(404, $this->get('/app/offen/rechnungen/' . $this->dokumentVon($bezahlt) . '/girocode')->status);
+
+        $gesperrt = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($eigen) . '/girocode', entsperrt: false);
+        self::assertSame(200, $gesperrt->status);
+        self::assertStringNotContainsString('<svg', $gesperrt->body);
+        self::assertStringContainsString('nur mit entsperrtem Tresor lesbar', $gesperrt->body);
+    }
+
+    private function lieferantMitIban(string $name, string $iban, string $bic = ''): int
+    {
+        return $this->lieferanten()->anlegen($this->tresor, ['name' => $name, 'rolle' => SupplierRole::Lieferant->value, 'ibans' => $iban, 'bic' => $bic], new \DateTimeImmutable())->id;
+    }
+
+    /** The table row of one receipt on the unpaid list. */
+    private function zeileVon(string $body, int $invoiceId): string
+    {
+        $start = strpos($body, 'href="/app/belege/pruefen/' . $this->dokumentVon($invoiceId) . '"');
+        self::assertNotFalse($start);
+        $ende = strpos($body, '</tr>', $start);
+
+        return substr($body, $start, ($ende === false ? strlen($body) : $ende) - $start);
+    }
+
     private function rolle(SystemRole $rolle): void
     {
         $rollen = new RoleRepository($this->pdo());

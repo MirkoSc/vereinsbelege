@@ -18,6 +18,7 @@ use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
+use App\Domain\PaymentStatus;
 use App\Domain\Supplier;
 use App\Domain\SupplierKeyKind;
 use App\Domain\Zahlungsweg;
@@ -162,6 +163,22 @@ final readonly class Pruefung
     public function festgeschriebenAm(Document $document): ?\DateTimeImmutable
     {
         return $this->invoices->findByDocument($document->id)?->lockedAt;
+    }
+
+    /**
+     * Whether the saved receipt is an expense still to transfer - Zahlungsweg
+     * `konto`, open or partly paid - so the review page links its GiroCode
+     * (issue #86, E-40). Plaintext structure, no vault needed; the GiroCode
+     * page decides the rest (IBAN, currency, scope).
+     */
+    public function zuUeberweisen(Document $document): bool
+    {
+        $record = $this->invoices->findByDocument($document->id);
+
+        return $record !== null
+            && $record->direction === InvoiceDirection::Ausgabe
+            && $record->paymentKind === Zahlungsweg::Konto
+            && in_array($record->paymentStatus, [PaymentStatus::Offen, PaymentStatus::Teilbezahlt], true);
     }
 
     /**

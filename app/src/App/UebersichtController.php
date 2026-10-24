@@ -90,6 +90,43 @@ final readonly class UebersichtController
         ]);
     }
 
+    /**
+     * The GiroCode of one unpaid receipt (issue #86, E-40) - same right and
+     * scope as the unpaid list. The page carries payee, IBAN and amount in
+     * clear text and in the code, so it is never cached; the URL holds only
+     * the document id.
+     *
+     * @param array<string, string> $params
+     */
+    public function girocode(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $tresor = $this->tresor($request);
+        $ueberweisung = $tresor === null
+            ? null
+            : $this->uebersichten->ueberweisung($tresor, $this->berechtigungen()->zugriffsbereich(Permission::ReportView), (int) ($params['id'] ?? 0), new \DateTimeImmutable());
+        if ($tresor !== null && $ueberweisung === null) {
+            return self::ohneCache(Response::html($this->view->render('error', [
+                'title' => 'Nicht gefunden',
+                'message' => 'Diese Rechnung ist nicht (mehr) offen oder liegt außerhalb Ihres Zugriffsbereichs.',
+                'startseite' => '/app/offen/rechnungen',
+            ], Area::App), 404));
+        }
+
+        return self::ohneCache(Response::html($this->view->render('app/offen-girocode', [
+            'title' => 'GiroCode',
+            'flash' => $this->session->pullFlash(),
+            'entsperrt' => $tresor !== null,
+            'ueberweisung' => $ueberweisung,
+            'belegPfad' => $this->belegPfad(),
+        ], Area::App)));
+    }
+
+    private static function ohneCache(Response $response): Response
+    {
+        return new Response($response->status, [...$response->headers, 'Cache-Control' => 'no-store, private'], $response->body);
+    }
+
     public function erstattungen(Request $request): ResponseInterface
     {
         $this->session->start();
@@ -163,9 +200,16 @@ final readonly class UebersichtController
             'reiter' => $reiter,
             // Where a receipt opens: the review page for who may edit, else
             // the read-only inbox entry, else nowhere.
-            'belegPfad' => $b->darf(Permission::DocumentEdit) ? '/app/belege/pruefen/' : ($b->darf(Permission::InboxView) ? '/app/posteingang/' : null),
+            'belegPfad' => $this->belegPfad(),
             ...$daten,
         ], Area::App));
+    }
+
+    private function belegPfad(): ?string
+    {
+        $b = $this->berechtigungen();
+
+        return $b->darf(Permission::DocumentEdit) ? '/app/belege/pruefen/' : ($b->darf(Permission::InboxView) ? '/app/posteingang/' : null);
     }
 
     private function einreichenUrl(Request $request): ?string
