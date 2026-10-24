@@ -364,6 +364,9 @@ function initEinreichen() {
         entfernen.addEventListener('click', function () {
             vorschauFreigeben(seite);
             seiten = seitenEntfernen(seiten, seite.id);
+            // The limit message ("höchstens N Seiten") is stale as soon as
+            // there is room again.
+            zeigeUploadFehler('');
             renderSeiten();
         });
 
