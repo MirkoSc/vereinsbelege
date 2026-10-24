@@ -562,6 +562,80 @@ final class SupplierFlowTest extends DatabaseTestCase
 
     // ---------------------------------------------------------- helpers
 
+    // ------------------------- "Neue Lieferanten prüfen" (M7-6, #48)
+
+    public function testTheReviewListShowsOnlyWhatTheAiCreatedAndTheListPointsToIt(): void
+    {
+        $this->lieferant(['name' => 'Getränke Müller']);
+        $ki = $this->kiLieferant('Sporthaus Beispiel GmbH');
+
+        $liste = $this->get('/app/lieferanten');
+        self::assertMatchesRegularExpression('/1 Lieferant wurde von der KI neu angelegt und\s+wartet auf eine Prüfung\./', $liste->body);
+        self::assertStringContainsString('<a href="/app/lieferanten?pruefen=1">Neue Lieferanten prüfen</a>', $liste->body);
+        self::assertMatchesRegularExpression('/Sporthaus Beispiel GmbH<\/a>\s+<span class="marke marke-warnung">prüfen<\/span>/', $liste->body);
+
+        $pruefen = $this->get('/app/lieferanten', ['pruefen' => '1']);
+        self::assertSame(200, $pruefen->status);
+        self::assertStringContainsString('<h2>Neue Lieferanten prüfen</h2>', $pruefen->body);
+        self::assertStringContainsString('Sporthaus Beispiel GmbH', $pruefen->body);
+        self::assertStringNotContainsString('Getränke Müller', $pruefen->body);
+        self::assertStringContainsString('action="/app/lieferanten/' . $ki . '/geprueft"', $pruefen->body);
+
+        $seite = $this->get('/app/lieferanten/' . $ki);
+        self::assertStringContainsString('Von der KI beim Auslesen eines Belegs angelegt', $seite->body);
+        self::assertStringContainsString('Als geprüft markieren', $seite->body);
+    }
+
+    public function testMarkingAsReviewedTakesItOffTheListOnceAndIsAudited(): void
+    {
+        $ki = $this->kiLieferant('Sporthaus Beispiel GmbH');
+
+        $antwort = $this->post('/app/lieferanten/' . $ki . '/geprueft', ['zurueck' => 'pruefen']);
+        self::assertSame(302, $antwort->status);
+        self::assertSame('/app/lieferanten?pruefen=1', $antwort->headers['Location'] ?? null);
+        self::assertFalse($this->lieferanten->find($ki)?->needsReview);
+        self::assertSame('Sporthaus Beispiel GmbH', $this->daten($ki)->name, 'nothing else changed');
+        self::assertStringContainsString('Keine neuen Lieferanten zu prüfen.', $this->get('/app/lieferanten', ['pruefen' => '1'])->body);
+        self::assertSame([AuditAction::LieferantGeprueft->value], array_values(array_filter($this->aktionen(), static fn(string $a): bool => $a === AuditAction::LieferantGeprueft->value)));
+
+        $nochmal = $this->post('/app/lieferanten/' . $ki . '/geprueft', []);
+        self::assertSame('/app/lieferanten/' . $ki, $nochmal->headers['Location'] ?? null);
+        self::assertCount(1, array_filter($this->aktionen(), static fn(string $a): bool => $a === AuditAction::LieferantGeprueft->value), 'a second click writes nothing');
+    }
+
+    public function testSavingASupplierTheAiCreatedCountsAsReviewed(): void
+    {
+        $ki = $this->kiLieferant('Sporthaus Beispiel GmbH');
+
+        $this->post('/app/lieferanten/' . $ki, $this->felder(['name' => 'Sporthaus Beispiel GmbH']));
+
+        self::assertFalse($this->lieferanten->find($ki)?->needsReview);
+        $stmt = $this->pdo()->query("SELECT action FROM audit_log WHERE action = 'lieferant.geaendert'");
+        self::assertCount(1, $stmt->fetchAll(), 'saving without other change still says it was reviewed');
+    }
+
+    public function testMergingKeepsTheTargetsReviewFlag(): void
+    {
+        $ki = $this->kiLieferant('Sporthaus Beispiel GmbH');
+        $quelle = $this->lieferant(['name' => 'Sporthaus Beispiel']);
+
+        $this->post('/app/lieferanten/' . $quelle . '/zusammenfuehren', ['ziel' => (string) $ki]);
+
+        self::assertSame($ki, $this->lieferanten->find($quelle)?->mergedInto);
+        self::assertTrue($this->lieferanten->find($ki)?->needsReview, 'the target is still the AI\'s and still to review');
+    }
+
+    public function testMarkingAsReviewedNeedsTheVaultAndTheCsrfToken(): void
+    {
+        $ki = $this->kiLieferant('Sporthaus Beispiel GmbH');
+
+        $this->dispatch(new Request(HttpMethod::Post, '/app/lieferanten/' . $ki . '/geprueft', cookies: $this->tresorCookie(), post: ['_csrf' => 'falsch']));
+        $this->post('/app/lieferanten/' . $ki . '/geprueft', [], entsperrt: false);
+
+        self::assertTrue($this->lieferanten->find($ki)?->needsReview);
+        self::assertNotContains(AuditAction::LieferantGeprueft->value, $this->aktionen());
+    }
+
     /**
      * @param array<string, string> $felder
      *
@@ -587,6 +661,17 @@ final class SupplierFlowTest extends DatabaseTestCase
         self::assertCount(1, $neu);
 
         return $neu[0];
+    }
+
+    /** A supplier as the resolution's step 6 creates it (issue #48/M7-6). */
+    private function kiLieferant(string $name): int
+    {
+        $this->pdo()->beginTransaction();
+        $id = new SupplierService($this->pdo(), $this->lieferanten, $this->kategorien)
+            ->anlegenAusKi($this->tresor, ['name' => $name], SupplierRole::Lieferant, new \DateTimeImmutable())->id;
+        $this->pdo()->commit();
+
+        return $id;
     }
 
     private function daten(int $id): SupplierData

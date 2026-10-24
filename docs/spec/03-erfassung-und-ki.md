@@ -776,7 +776,10 @@ aktivem Worker-Modul.
    `browser`/`worker`
 3. `ocr` (durchsuchbares PDF/A + Text) – *entfällt*/`worker`
 4. `ai_extract` (→ KI-Anbieter) – `session`/`worker`
-5. `resolve_supplier` (Abschnitt 7) – immer `session`
+5. `resolve_supplier` (Abschnitt 7; seit issue #48/M7-6
+   `App\Service\Document\LieferantenAufloesung`, eingereiht von `ai_extract`,
+   sobald es einen Beleg mit gültigem Ergebnis auf `ausgewertet` setzt, und per
+   Migration 035 für schon ausgewertete Belege) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
 7. `detect_recurring` (Abschnitt 9) – `session`
 8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
@@ -1130,8 +1133,22 @@ das Fallback-Profil.
   können (`<<<`/`>>>` darin werden entschärft); der Prompt sagt, dass das
   Daten und keine Anweisungen sind – der Freitext kommt aus der öffentlichen
   Einreichung.
-- *Lieferanten-Vorauswahl:* kommt mit M7-6 (issue #48); bis dahin steht
-  „Keine Vorauswahl.“ im Prompt.
+- *Lieferanten-Vorauswahl* (seit M7-6, issue #48,
+  `SupplierAufloesung::vorauswahl()`): Aus Textlayer und Freitext liest
+  `App\Service\MasterData\LieferantenKandidaten` alles, was wie IBAN, USt-ID,
+  Steuernummer oder Gläubiger-ID aussieht, und jede Folge von 1–4 Wörtern einer
+  Zeile als Name (die ersten 20 000 Zeichen), normalisiert wie die
+  `supplier_key`-Schlüssel; dazu Kennungen und Name des Verkäufers einer
+  E-Rechnung. Deren Blind Indexes werden gesammelt nachgeschlagen
+  (`SupplierRepository::idsMitSchluesseln()`); in `{{lieferanten}}` stehen die
+  **Namen** von höchstens 10 Treffern der Rolle `lieferant`/`beide` (nie Zahler –
+  das können Privatpersonen sein; Datensparsamkeit) – über eine Kennung gefundene zuerst, dann
+  nach Fundstelle –, je höchstens 100 Zeichen, einzeilig und ohne Marken, mit
+  dem Hinweis, dass es Daten sind und der Name bei einem Treffer genau so in
+  `supplier.name` gehört (ein Name kann aus Stufe 6 einer öffentlichen
+  Einreichung stammen). Ohne Treffer bzw. ohne Text (Foto) bleibt es bei
+  „Keine Vorauswahl.“. Gesammelt in der Session (`AusleseEingabe::$lieferanten`)
+  – der Blind-Index-Schlüssel kommt aus dem Tresor.
 - *Sphären:* `sphaeren_aktiv` gibt es noch nicht (E-15) – der Prompt erklärt
   keine Sphären, `sphere` wird serverseitig immer null.
 - *Server-Prüfungen* (`Auslesung::auswerten()`, nach der Schema-Prüfung):
@@ -1167,6 +1184,9 @@ das Fallback-Profil.
   gibt); bei `ki_fehler` die Meldung und „KI erneut versuchen“; bei einem Beleg
   in `bereit_zur_auswertung` ohne Ergebnis „Mit KI auslesen“ bzw. „Die KI liest
   diesen Beleg gerade aus“.
+- *Lieferant* (seit M7-6, issue #48): über KI und E-Rechnung legt sich das
+  Ergebnis von `resolve_supplier` (`Pruefung::lieferantVorbelegen()`, Abschnitt 7
+  „Stand M7-6“), darüber weiterhin die Archiv-Vorgabe.
 - *„KI erneut versuchen“:* `POST /app/belege/pruefen/{id}/ki-erneut`
   (`document.edit` mit Scope, CSRF, Tresor), `Pruefung::kiErneut()`:
   `ki_fehler` → `bereit_zur_auswertung` und Job einreihen, aus
@@ -1311,6 +1331,64 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     aufs Ziel), lässt sich weder ändern noch löschen und ist keine Auswahl
     in der Prüfansicht. Nicht mit sich selbst, nicht in einen bereits
     zusammengeführten.
+
+- **Stand M7-6** (issue #48, Migration 035; vorläufige Details E-23): Job
+  `resolve_supplier` (`App\Service\Document\LieferantenAufloesung`, Recht
+  `document.edit`, Executor `session`), Stufen in
+  `App\Service\MasterData\SupplierAufloesung::aufloesen()`:
+  - *Eingabe:* der neueste KI-Vorschlag (`supplier`, `direction`,
+    `payment.mandate_reference`), darüber jeder Wert des Verkäufers einer
+    gelesenen E-Rechnung. Übersprungen, wenn der Beleg nicht (mehr)
+    `ausgewertet` ist oder die Archiv-Vorgabe schon einen Lieferanten nennt.
+  - *Rolle:* es zählen nur Partner, deren Rolle zur Richtung passt
+    (`InvoiceDirection::passtZuLieferant()`). Trifft eine Kennung (Stufen
+    1–3) nur einen Partner der anderen Rolle, dürfen die folgenden Kennungen
+    noch den passenden finden; findet keine ihn – oder trifft der Name (Stufe
+    4) nur die andere Rolle –, endet die Auflösung mit „Rolle passt nicht“ – keine Wahl, keine Neuanlage (die Kennung gehört
+    schon ihm). Mehrere gleichnamige Partner der Rolle (Stufe 4) →
+    „mehrdeutig“, ebenso ohne Wahl und Neuanlage.
+  - *Stufe 5:* `App\Service\MasterData\LieferantenAehnlichkeit` – das
+    Maximum aus Levenshtein (je Buchstabe, nicht Byte) und Trigramm-Dice der
+    normalisierten Namen, gegen Name und Aliasse aller Partner der Rolle;
+    ab 0,8 ein Vorschlag (höchstens drei, der beste zuerst); unter 4
+    Buchstaben nur Gleichheit.
+  - *Stufe 6:* `SupplierService::anlegenAusKi()` mit Name, Anschrift, IBAN,
+    BIC, USt-ID, Steuernummer, E-Mail, Website, Gläubiger-ID (Mandatsreferenz
+    nur mit Gläubiger-ID) – Werte, die das Formular ablehnen würde, fallen weg,
+    ein zu langer Name wird gekürzt; Rolle aus der Richtung, keine
+    Standard-Kategorie, `created_via = ki`, `needs_review = 1`. Audit
+    `lieferant.angelegt` in derselben Transaktion, ohne Benutzer, Details `{herkunft: ki, beleg, felder}`.
+  - *Ergebnis* (`App\Service\MasterData\Aufloesung`, Schema `lieferant-v1`):
+    `{art, stufe, merkmal, supplier_id, kandidaten[{id, aehnlichkeit}], felder}` –
+    nur IDs –, als `document_artifact` `kind = lieferant` (seq 0) unter eigenem
+    DEK, in **einer** Transaktion mit einer Neuanlage; ältere Läufe werden
+    gelöscht. Ein gespeichertes Ergebnis beendet einen wiederholten Schritt;
+    ein neuer Lauf (z. B. nach „KI erneut versuchen“) findet den angelegten
+    Lieferanten in Stufe 4 wieder.
+  - *Gleichzeitig:* mit Neuanlage liest die Auflösung die Schlüssel mit
+    `FOR UPDATE` (`idsWithKey(sperren: true)`); verliert ein paralleler Lauf
+    (Deadlock/Sperr-Timeout bzw. Kennung inzwischen vergeben), rollt er
+    zurück und wartet 5 s (`warten`), nach zwei Versuchen löst er ohne
+    Neuanlage auf; jeder andere Fehler ist ein Jobfehler.
+  - *Prüfansicht* (`Pruefung::lieferantVorbelegen()`): Treffer und Neuanlage
+    werden gewählt, ein Vorschlag gewählt **und** gelb markiert („KI
+    unsicher“); unter der Auswahl steht, wie der Partner gefunden wurde
+    („Lieferant automatisch erkannt (Stufe 2 – IBAN).“, „Kein genauer Treffer
+    (Stufe 5) – Vorschlag nach ähnlichem Namen: „…“ (93 %)“, „Die KI hat „…“
+    neu angelegt (Stufe 6 …) – bitte unter „Neue Lieferanten prüfen“
+    kontrollieren.“ mit Link, Rolle passt nicht, mehrdeutig – diese beiden
+    ohne Wahl und ohne „Neu anlegen“-Vorbelegung). Ein inzwischen
+    gelöschter oder unpassender Partner wird nicht gewählt; ein
+    zusammengeführter steht für sein Ziel. Der Hinweis entfällt, wenn die
+    Archiv-Vorgabe einen anderen Partner wählt.
+  - *„Neue Lieferanten prüfen“:* `/app/lieferanten?pruefen=1` (dieselbe Liste,
+    nur `needs_review = 1`, mit „Als geprüft markieren“ je Zeile); die normale
+    Liste nennt die Anzahl und verlinkt dorthin. `POST
+    /app/lieferanten/{id}/geprueft` (`supplier.manage`, CSRF, Tresor) setzt
+    `needs_review = 0`, Audit `lieferant.geprueft` (nur beim ersten Mal).
+    Speichern des Formulars gilt ebenfalls als geprüft (geänderte Felder dann
+    inkl. `needs_review`); Zusammenführen lässt das Flag des Ziels.
+  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23).
 
 ## 8. Kategorisierung
 
@@ -1491,7 +1569,23 @@ Validierung, genau ein Standard und nicht löschbar, Verbindungstest mit
 gespeichertem Key, Fähigkeiten ins Profil übernommen + Audit (nur bei
 Änderung), fehlgeschlagene Probe ändert nichts, kein Key im Log, CSRF); Betrags-Parsing („1.234,56", „1234.56",
 negativ) und Summenprüfung; Lieferanten-Auflösung über alle 6 Stufen inkl.
-Rechtsform-Normalisierung; Serienerkennung (monatlich, quartalsweise,
+Rechtsform-Normalisierung (M7-6: `LieferantenAufloesungJobTest`: Stufe 1
+USt-ID und Steuernummer in anderer Schreibweise, Stufe 2 IBAN mit Leerzeichen,
+Stufe 3 Gläubiger-ID, Stufe 4 Name ohne Rechtsform/Umlaute und Alias,
+Reihenfolge der Stufen, mehrdeutiger Name, Rolle passt nicht ohne Neuanlage,
+Einnahme → Zahler, zusammengeführter Lieferant, Stufe 5 nur Vorschlag ohne
+Anlage, Stufe 6 mit `created_via = ki`/`needs_review`, Schlüsseln, Audit ohne
+Benutzer und ohne Klartext, unbrauchbare Werte weggelassen, ohne Lieferant
+nichts, zweiter Lauf legt nicht doppelt an, wiederholter Schritt, übernommener
+Beleg, gescheiterte KI, Archiv-Vorgabe, E-Rechnung über KI, Vorauswahl im
+Prompt bzw. ohne Text keine, Migration 035; `LieferantenAehnlichkeitTest`;
+`LieferantenKandidatenTest`; `KiAusleseTest`: Vorauswahl höchstens 10 Namen,
+als Daten, Marken entschärft; `PruefungFlowTest`: Treffer gewählt mit Stufe,
+Vorschlag gelb, Neuanlage mit Link, Rolle passt nicht, Verkäufer der
+E-Rechnung, Archiv gewinnt; `SupplierFlowTest`: Liste „Neue Lieferanten
+prüfen“, „Als geprüft markieren“ einmal mit Audit, Speichern gilt als geprüft,
+Zusammenführen lässt das Flag, Tresor/CSRF; `RoutePermissionMatrixTest`);
+Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);
 Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der
 Stückelung, Seitenreihenfolge zählt, kein reiner SHA-256, anderer Tresor anders,

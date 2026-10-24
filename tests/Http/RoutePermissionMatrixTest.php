@@ -264,6 +264,11 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Finanzen, HttpMethod::Post, '/app/lieferanten/7/zusammenfuehren', true],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/lieferanten/7/zusammenfuehren', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/lieferanten/7/zusammenfuehren', false],
+            // "Als geprüft markieren" (M7-6): the same permission.
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/lieferanten/7/geprueft', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/lieferanten/7/geprueft', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/lieferanten/7/geprueft', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/lieferanten/7/geprueft', false],
             // Prüfansicht (M6-3): document.edit - Admin and Finanzen capture
             // receipts; the reading roles and the Vereinsverantwortlicher
             // (inbox.view only) do not.

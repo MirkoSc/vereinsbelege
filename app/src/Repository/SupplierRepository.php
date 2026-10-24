@@ -27,21 +27,49 @@ final readonly class SupplierRepository
     }
 
     /**
-     * Every supplier not merged into another, optionally of one role. The
-     * order is the id: sorting by name happens after decrypting.
+     * Every supplier not merged into another, optionally of one role and
+     * optionally only those still to review (`needs_review`, the list "Neue
+     * Lieferanten prüfen", issue #48/M7-6). The order is the id: sorting by
+     * name happens after decrypting.
      *
      * @return list<SupplierRecord>
      */
-    public function all(?SupplierRole $role = null): array
+    public function all(?SupplierRole $role = null, bool $nurZuPruefen = false): array
     {
-        if ($role === null) {
-            $stmt = $this->pdo->query('SELECT * FROM supplier WHERE merged_into IS NULL ORDER BY id');
-        } else {
-            $stmt = $this->pdo->prepare('SELECT * FROM supplier WHERE merged_into IS NULL AND role = ? ORDER BY id');
-            $stmt->execute([$role->value]);
+        $sql = 'SELECT * FROM supplier WHERE merged_into IS NULL';
+        $params = [];
+        if ($role !== null) {
+            $sql .= ' AND role = ?';
+            $params[] = $role->value;
         }
+        if ($nurZuPruefen) {
+            $sql .= ' AND needs_review = 1';
+        }
+        $stmt = $this->pdo->prepare($sql . ' ORDER BY id');
+        $stmt->execute($params);
 
         return array_map(self::hydrate(...), $stmt->fetchAll());
+    }
+
+    /**
+     * How many suppliers the AI created that nobody has looked at yet
+     * (issue #48/M7-6) - plaintext, the list page shows it without vault.
+     */
+    public function anzahlZuPruefen(): int
+    {
+        return (int) $this->pdo->query('SELECT COUNT(*) FROM supplier WHERE merged_into IS NULL AND needs_review = 1')->fetchColumn();
+    }
+
+    /**
+     * "Als geprüft markieren" (issue #48/M7-6) - whether the row still was
+     * to review: a second click changes nothing and writes no audit line.
+     */
+    public function markiereGeprueft(int $id, \DateTimeImmutable $now): bool
+    {
+        $stmt = $this->pdo->prepare('UPDATE supplier SET needs_review = 0, updated_at = ? WHERE id = ? AND needs_review = 1 AND merged_into IS NULL');
+        $stmt->execute([$now->format(self::FORMAT), $id]);
+
+        return $stmt->rowCount() === 1;
     }
 
     public function find(int $id): ?SupplierRecord
@@ -80,7 +108,8 @@ final readonly class SupplierRepository
     /**
      * First step of a new row: everything but the ciphertext, whose AAD
      * needs the id this returns. The caller writes setData() in the same
-     * transaction.
+     * transaction. $needsReview for a supplier the AI created (issue
+     * #48/M7-6).
      */
     public function insert(
         SupplierRole $role,
@@ -88,17 +117,19 @@ final readonly class SupplierRepository
         SupplierOrigin $createdVia,
         string $dekSealed,
         \DateTimeImmutable $now,
+        bool $needsReview = false,
     ): int {
         $stmt = $this->pdo->prepare(
             "INSERT INTO supplier (role, dek_sealed, data_enc, default_category_id, created_via, needs_review, created_at, updated_at)
-             VALUES (?, ?, '', ?, ?, 0, ?, ?)",
+             VALUES (?, ?, '', ?, ?, ?, ?, ?)",
         );
         $stmt->bindValue(1, $role->value);
         $stmt->bindValue(2, $dekSealed, \PDO::PARAM_LOB);
         $stmt->bindValue(3, $defaultCategoryId, $defaultCategoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(4, $createdVia->value);
-        $stmt->bindValue(5, $now->format(self::FORMAT));
+        $stmt->bindValue(5, $needsReview ? 1 : 0, \PDO::PARAM_INT);
         $stmt->bindValue(6, $now->format(self::FORMAT));
+        $stmt->bindValue(7, $now->format(self::FORMAT));
         $stmt->execute();
 
         return (int) $this->pdo->lastInsertId();
@@ -112,16 +143,24 @@ final readonly class SupplierRepository
         $stmt->execute();
     }
 
-    public function update(int $id, SupplierRole $role, ?int $defaultCategoryId, string $dataEnc, \DateTimeImmutable $now): void
+    /**
+     * $geprueft settles `needs_review` as well (issue #48/M7-6): saving the
+     * form means a person has looked at the supplier. Merging (M6-5) keeps
+     * the target's flag and passes false.
+     */
+    public function update(int $id, SupplierRole $role, ?int $defaultCategoryId, string $dataEnc, \DateTimeImmutable $now, bool $geprueft = false): void
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE supplier SET role = ?, default_category_id = ?, data_enc = ?, updated_at = ? WHERE id = ?',
+            'UPDATE supplier SET role = ?, default_category_id = ?, data_enc = ?, updated_at = ?,
+                    needs_review = CASE WHEN ? = 1 THEN 0 ELSE needs_review END
+             WHERE id = ?',
         );
         $stmt->bindValue(1, $role->value);
         $stmt->bindValue(2, $defaultCategoryId, $defaultCategoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(3, $dataEnc, \PDO::PARAM_LOB);
         $stmt->bindValue(4, $now->format(self::FORMAT));
-        $stmt->bindValue(5, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(5, $geprueft ? 1 : 0, \PDO::PARAM_INT);
+        $stmt->bindValue(6, $id, \PDO::PARAM_INT);
         $stmt->execute();
     }
 
@@ -160,15 +199,22 @@ final readonly class SupplierRepository
 
     /**
      * Suppliers (not merged away) that carry this key - what the uniqueness
-     * check and later the automatic resolution (M7-6) ask.
+     * check and the automatic resolution (issue #48/M7-6) ask.
+     *
+     * $sperren reads with FOR UPDATE, inside the caller's transaction: the
+     * resolution creates a supplier when none carries the key, and the
+     * locks on the key's index range keep a second request from creating
+     * the same supplier at the same moment (InnoDB answers the loser with a
+     * deadlock, App\Service\Document\LieferantenAufloesung tries again).
      *
      * @return list<int>
      */
-    public function idsWithKey(SupplierKeyKind $kind, string $bi, ?int $ausser = null): array
+    public function idsWithKey(SupplierKeyKind $kind, string $bi, ?int $ausser = null, bool $sperren = false): array
     {
         $stmt = $this->pdo->prepare(
             'SELECT DISTINCT k.supplier_id FROM supplier_key k JOIN supplier s ON s.id = k.supplier_id
-             WHERE k.kind = ? AND k.value_bi = ? AND s.merged_into IS NULL AND s.id <> ? ORDER BY k.supplier_id',
+             WHERE k.kind = ? AND k.value_bi = ? AND s.merged_into IS NULL AND s.id <> ? ORDER BY k.supplier_id'
+            . ($sperren ? ' FOR UPDATE' : ''),
         );
         $stmt->bindValue(1, $kind->value);
         $stmt->bindValue(2, $bi, \PDO::PARAM_LOB);
@@ -176,6 +222,38 @@ final readonly class SupplierRepository
         $stmt->execute();
 
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Which suppliers (not merged away) carry any of these blind indexes -
+     * the preselection of the prompt (issue #48/M7-6) asks for the
+     * thousands of values of a receipt's text at once, in a few queries.
+     * The purpose is part of each blind index, so a value only matches the
+     * kind it was hashed for.
+     *
+     * @param list<string> $bis blind indexes (32 raw bytes)
+     *
+     * @return array<string, list<int>> blind index => supplier ids
+     */
+    public function idsMitSchluesseln(array $bis): array
+    {
+        $treffer = [];
+        foreach (array_chunk(array_values(array_unique($bis)), 500) as $teil) {
+            $stmt = $this->pdo->prepare(
+                'SELECT k.value_bi, k.supplier_id FROM supplier_key k JOIN supplier s ON s.id = k.supplier_id
+                 WHERE s.merged_into IS NULL AND k.value_bi IN (' . implode(', ', array_fill(0, count($teil), '?')) . ')
+                 ORDER BY k.supplier_id',
+            );
+            foreach ($teil as $i => $bi) {
+                $stmt->bindValue($i + 1, $bi, \PDO::PARAM_LOB);
+            }
+            $stmt->execute();
+            foreach ($stmt->fetchAll() as $zeile) {
+                $treffer[(string) $zeile['value_bi']][] = (int) $zeile['supplier_id'];
+            }
+        }
+
+        return $treffer;
     }
 
     /**

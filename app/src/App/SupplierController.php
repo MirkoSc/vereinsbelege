@@ -30,7 +30,9 @@ use App\View\View;
  * Suppliers and payers /app/lieferanten (M6-2, issue #36, docs/spec/
  * 03-erfassung-und-ki.md section 7): the list with search and role filter,
  * a new supplier, changing and deleting one, merging a duplicate into
- * another (M6-5, issue #39) - first a preview, then the merge.
+ * another (M6-5, issue #39) - first a preview, then the merge - and the list
+ * "Neue Lieferanten prüfen" of the suppliers the AI created (M7-6, issue
+ * #48) with "Als geprüft markieren".
  *
  * Behind `supplier.manage` (Admin, Finanzen - app/src/routes.php). Names,
  * IBANs and everything else of a supplier are vault data, and even writing
@@ -65,15 +67,20 @@ final readonly class SupplierController
 
         $rolle = SupplierRole::tryFrom(self::abfrage($request, 'rolle'));
         $suche = trim(self::abfrage($request, 'q'));
+        // "Neue Lieferanten prüfen" (issue #48/M7-6): the same list, only the
+        // suppliers the AI created that nobody has looked at yet.
+        $pruefen = self::abfrage($request, 'pruefen') === '1';
         $tresor = $this->tresor($request);
 
         return Response::html($this->view->render('app/lieferanten', [
-            'title' => 'Lieferanten & Zahler',
+            'title' => $pruefen ? 'Neue Lieferanten prüfen' : 'Lieferanten & Zahler',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
-            'lieferanten' => $tresor === null ? [] : $this->service->liste($tresor, $rolle, $suche),
+            'lieferanten' => $tresor === null ? [] : $this->service->liste($tresor, $rolle, $suche, $pruefen),
             'rolle' => $rolle,
             'suche' => $suche,
+            'pruefen' => $pruefen,
+            'zuPruefen' => $this->service->anzahlZuPruefen(),
             'kategorien' => $this->kategorieNamen(),
         ], Area::App));
     }
@@ -200,6 +207,38 @@ final readonly class SupplierController
         $this->session->flash('Lieferant gelöscht.');
 
         return Response::redirect('/app/lieferanten');
+    }
+
+    /**
+     * "Als geprüft markieren" (issue #48/M7-6): a supplier the AI created
+     * leaves the list "Neue Lieferanten prüfen" as it is. Back to that list
+     * when it came from there, else to the supplier.
+     *
+     * @param array<string, string> $params
+     */
+    public function geprueft(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $zurListe = ($request->post['zurueck'] ?? '') === 'pruefen';
+        $ziel = $zurListe ? '/app/lieferanten?pruefen=1' : '/app/lieferanten/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure($ziel);
+        }
+        // Like deleting: no ciphertext is touched, but a page that cannot
+        // show the supplier should not settle it either.
+        if ($this->tresor($request) === null) {
+            return $this->gesperrt(true);
+        }
+
+        if ($this->service->alsGeprueft($id, new \DateTimeImmutable())) {
+            $this->audit->record(AuditAction::LieferantGeprueft, $this->session->userId(), $request->ip, $id);
+            $this->session->flash('Lieferant als geprüft markiert.');
+        } else {
+            $this->session->flash('Dieser Lieferant wartet nicht (mehr) auf eine Prüfung.', FlashArt::Fehler);
+        }
+
+        return Response::redirect($ziel);
     }
 
     /**

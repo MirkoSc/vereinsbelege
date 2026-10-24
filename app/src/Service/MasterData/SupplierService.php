@@ -70,13 +70,14 @@ final readonly class SupplierService
      * Every supplier (not merged away), decrypted, sorted by name. The
      * search looks at name, aliases and IBANs - in PHP, after decrypting:
      * a club has a few hundred suppliers, and SQL cannot see into
-     * `data_enc` anyway.
+     * `data_enc` anyway. $nurZuPruefen: only those the AI created and
+     * nobody has looked at yet (issue #48/M7-6, "Neue Lieferanten prüfen").
      *
      * @return list<Supplier>
      */
-    public function liste(Vault $vault, ?SupplierRole $rolle = null, string $suche = ''): array
+    public function liste(Vault $vault, ?SupplierRole $rolle = null, string $suche = '', bool $nurZuPruefen = false): array
     {
-        $alle = array_map(fn(SupplierRecord $r): Supplier => $this->entschluesseln($vault, $r), $this->lieferanten->all($rolle));
+        $alle = array_map(fn(SupplierRecord $r): Supplier => $this->entschluesseln($vault, $r), $this->lieferanten->all($rolle, $nurZuPruefen));
 
         $suche = SupplierKeys::umschrift($suche);
         if ($suche !== '') {
@@ -197,6 +198,79 @@ final readonly class SupplierService
     }
 
     /**
+     * Creates the supplier or payer the AI read from a receipt that matched
+     * no known one (issue #48/M7-6, step 6 of docs/spec/
+     * 03-erfassung-und-ki.md section 7): `created_via = ki`, `needs_review`,
+     * so it shows up under "Neue Lieferanten prüfen". Opens no transaction
+     * of its own - the resolution writes it together with its result. The
+     * caller writes the audit entry once that is committed.
+     *
+     * $felder are the form's fields (name, ibans, vat_id, …) as the AI read
+     * them. A value the form would refuse (an IBAN with a wrong check sum, a
+     * VAT id that is none) is left out rather than failing the supplier: the
+     * AI may misread one value, the rest is still worth keeping. A name that
+     * is too long is cut.
+     *
+     * @param array<string, string> $felder
+     *
+     * @throws SupplierRuleViolation no usable name, or an id that already
+     *         belongs to another supplier (only when one was created at the
+     *         same moment - the resolution looks the ids up first)
+     */
+    public function anlegenAusKi(Vault $vault, array $felder, SupplierRole $rolle, \DateTimeImmutable $now): SupplierSaved
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new \LogicException('anlegenAusKi() runs inside the caller\'s transaction.');
+        }
+
+        $basis = [
+            'name' => mb_substr(trim((string) preg_replace('/\s+/u', ' ', $felder['name'] ?? '')), 0, self::NAME_MAX),
+            'rolle' => $rolle->value,
+        ];
+        $gueltig = $basis;
+        foreach ($felder as $feld => $wert) {
+            if (in_array($feld, ['name', 'rolle', 'kategorie', 'notes'], true) || trim($wert) === '') {
+                continue;
+            }
+            try {
+                $this->pruefe([...$basis, $feld => $wert], null);
+                $gueltig[$feld] = $wert;
+            } catch (SupplierRuleViolation) {
+                // Left out - see the docblock.
+            }
+        }
+
+        [$rolle, , $daten] = $this->pruefe($gueltig, null);
+        $keys = $this->keys($vault, $daten);
+        $this->pruefeEindeutig($vault, $keys, []);
+
+        $key = DataKey::generate();
+        $id = $this->lieferanten->insert($rolle, null, SupplierOrigin::Ki, $vault->sealDataKey($key), $now, needsReview: true);
+        $this->lieferanten->setData($id, self::verschluesseln($key, $id, $daten));
+        $this->lieferanten->replaceKeys($id, $keys);
+
+        $felderMitWert = array_keys(array_filter($daten->toPayload(), static fn(string|array $v): bool => $v !== '' && $v !== []));
+
+        return new SupplierSaved($id, ['role', ...$felderMitWert], $this->namensgleich($keys, $id));
+    }
+
+    /**
+     * "Als geprüft markieren" (issue #48/M7-6): a supplier the AI created
+     * leaves the list "Neue Lieferanten prüfen" without being changed.
+     * False when there was nothing to mark (already reviewed, merged away,
+     * gone).
+     */
+    public function alsGeprueft(int $id, \DateTimeImmutable $now): bool
+    {
+        return $this->lieferanten->markiereGeprueft($id, $now);
+    }
+
+    public function anzahlZuPruefen(): int
+    {
+        return $this->lieferanten->anzahlZuPruefen();
+    }
+
+    /**
      * @param array<string, string> $felder
      *
      * @throws SupplierRuleViolation
@@ -216,7 +290,7 @@ final readonly class SupplierService
         $key = $vault->openDataKey($record->dekSealed);
         $this->pdo->beginTransaction();
         try {
-            $this->lieferanten->update($id, $rolle, $kategorie, self::verschluesseln($key, $id, $daten), $now);
+            $this->lieferanten->update($id, $rolle, $kategorie, self::verschluesseln($key, $id, $daten), $now, geprueft: true);
             $this->lieferanten->replaceKeys($id, $keys);
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -227,7 +301,8 @@ final readonly class SupplierService
             throw $e;
         }
 
-        $geaendert = [];
+        // Saving settles `needs_review` (issue #48/M7-6) - that is a change too.
+        $geaendert = $record->needsReview ? ['needs_review'] : [];
         if ($rolle !== $record->role) {
             $geaendert[] = 'role';
         }
