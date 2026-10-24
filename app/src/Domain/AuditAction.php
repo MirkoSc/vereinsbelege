@@ -145,6 +145,10 @@ enum AuditAction: string
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
     case WartungAufgehoben = 'wartung.aufgehoben';
 
+    // Backups page (issue #112): file name and whether config.php is in it.
+    case BackupErstellt = 'backup.erstellt';
+    case BackupHeruntergeladen = 'backup.heruntergeladen';
+
     public function label(): string
     {
         return match ($this) {
@@ -236,6 +240,8 @@ enum AuditAction: string
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
+            self::BackupErstellt => 'Backup erstellt',
+            self::BackupHeruntergeladen => 'Backup heruntergeladen',
         };
     }
 
@@ -282,7 +288,8 @@ enum AuditAction: string
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud,
             self::ExportErstellt,
-            self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
+            self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
+            self::BackupErstellt, self::BackupHeruntergeladen => null,
         };
     }
 

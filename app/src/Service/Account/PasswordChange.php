@@ -25,8 +25,12 @@ use App\Service\RateLimiter;
  */
 final readonly class PasswordChange
 {
-    /** Wrong old passwords, counted per account in `rate_limit`. */
-    private const string LIMIT_ACCOUNT = 'passwort.account';
+    /**
+     * Wrong old passwords, counted per account in `rate_limit`. Shared with
+     * every other password confirmation inside a session (the backup
+     * download, issue #112), so they cannot be used for extra guesses.
+     */
+    public const string LIMIT_ACCOUNT = 'passwort.account';
 
     private UserRepository $users;
 
