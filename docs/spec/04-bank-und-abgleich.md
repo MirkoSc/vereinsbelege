@@ -648,12 +648,16 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
   bis +7 Tage, `BelegFaelligkeit`). Spalten Brutto und **offen** (Brutto −
   zugeordnet; Zuordnungen werden nur bei `teilbezahlt` gelesen), Summen je
   Richtung und Währung.
-- **Altbestand:** Belege, die vor Migration 037 erfasst wurden
-  (`invoice.created_at` < `schema_version.applied_at` von 37), stehen alle
+- **Altbestand:** Belege, die vor Migration 037 erfasst und seitdem nicht
+  mehr gespeichert wurden (`created_at` und `updated_at` <
+  `schema_version.applied_at` von 37; einmal in der Prüfansicht speichern
+  beendet das), stehen alle
   auf `konto`/`offen` (E-27) – auch Kassenbelege aus dem Archiv. Sie stehen
   nicht in der Liste und nicht in der Summe; ein Hinweis nennt ihre Zahl und
   öffnet sie gesondert (`?altbestand=1`) mit der Bitte, Zahlungsweg oder
-  Zuordnung nachzuholen.
+  Zuordnung nachzuholen. Entschlüsselt wird nur die gezeigte Menge.
+- **Beleg-Links:** mit `document.edit` in die Prüfansicht, sonst mit
+  `inbox.view` in den lesenden Posteingang, sonst kein Link.
 - **Offene Erstattungen** (`/app/offen/erstattungen`, `report.view`):
   Zahlungsweg `erstattung`, Status `erstattung_offen`/`teilbezahlt`,
   gruppiert nach dem Namen aus der Einreichung (Groß-/Kleinschreibung und
@@ -669,7 +673,7 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
   Datum, Betrag, Gegenseite, Zweck und dem Link auf `/einreichen`; es wird
   nichts verschickt und nichts in eine URL geschrieben.
 - **Erwartete Belege** (`/app/offen/erwartet`, `document.edit` ohne Scope wie
-  `/app/serien`, E-26): bestätigte Serien mit Fälligkeit **fällig** oder
+  `/app/serien`, E-26; der Reiter erscheint nur ohne Scope): bestätigte Serien mit Fälligkeit **fällig** oder
   **überfällig** aus `App\Service\Invoice\Serien` (E-33), überfällige
   zuerst.
 

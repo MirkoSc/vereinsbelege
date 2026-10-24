@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace App\Service\Bank;
 
 use App\Domain\BankTransactionDocStatus;
+use App\Domain\Belegstand;
 use App\Domain\InvoiceDirection;
 use App\Domain\OffenerBelegRecord;
 use App\Domain\PaymentStatus;
+use App\Domain\Zahlungsstand;
 use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Repository\InvoiceRepository;
-use App\Repository\SupplierRepository;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Inbox\EinreichungsDaten;
@@ -35,7 +36,6 @@ final readonly class Uebersichten
 {
     public function __construct(
         private InvoiceRepository $belege,
-        private SupplierRepository $lieferantenRepository,
         private SupplierService $lieferanten,
         private Zuordnung $zuordnung,
         private Buchungen $buchungen,
@@ -44,13 +44,18 @@ final readonly class Uebersichten
 
     /**
      * Receipts paid via an account (`konto`) that are `offen` or
-     * `teilbezahlt`: due date first.
+     * `teilbezahlt`: due date first. Either the receipts from before the
+     * matching ($altbestand) or the others - only those are decrypted; the
+     * other set is just counted.
      *
-     * @return array{posten: list<OffenerPosten>, unlesbar: int}
+     * @return array{posten: list<OffenerPosten>, unlesbar: int, andere: int}
      */
-    public function unbezahlt(Vault $vault, Zugriffsbereich $bereich, \DateTimeImmutable $heute): array
+    public function unbezahlt(Vault $vault, Zugriffsbereich $bereich, \DateTimeImmutable $heute, bool $altbestand = false): array
     {
-        return $this->posten($vault, $this->belege->offen(Zahlungsweg::Konto, [PaymentStatus::Offen, PaymentStatus::Teilbezahlt], $bereich), $heute);
+        $records = $this->belege->offen(Zahlungsweg::Konto, [PaymentStatus::Offen, PaymentStatus::Teilbezahlt], $bereich);
+        $gewaehlt = array_values(array_filter($records, static fn(OffenerBelegRecord $r): bool => $r->altbestand === $altbestand));
+
+        return [...$this->posten($vault, $gewaehlt, $heute), 'andere' => count($records) - count($gewaehlt)];
     }
 
     /**
@@ -104,13 +109,19 @@ final readonly class Uebersichten
         $liste = [];
         foreach ([BankTransactionDocStatus::Fehlt, BankTransactionDocStatus::Teilweise] as $status) {
             foreach ($this->buchungen->liste($vault, new BuchungFilter(belegStatus: $status), $bereich) as $buchung) {
-                $fehlt = abs($buchung->amount);
+                $zugeordnet = 0;
                 if ($status === BankTransactionDocStatus::Teilweise) {
-                    foreach ($this->zuordnung->fuerBuchung($vault, $buchung->id) as $z) {
-                        $fehlt -= $z->amount;
+                    try {
+                        foreach ($this->zuordnung->fuerBuchung($vault, $buchung->id) as $z) {
+                            $zugeordnet += $z->amount;
+                        }
+                    } catch (CryptoException | \JsonException) {
+                        // Unreadable allocation: show the booking, without the part.
+                        $zugeordnet = 0;
                     }
                 }
-                $liste[] = new FehlenderBeleg($buchung, max(0, $fehlt));
+                $fehlt = new Belegstand($buchung->docRequired, $buchung->amount, $zugeordnet)->offen();
+                $liste[] = new FehlenderBeleg($buchung, $fehlt);
             }
         }
         usort($liste, static fn(FehlenderBeleg $a, FehlenderBeleg $b): int => [$b->buchung->bookingDate, $b->buchung->id] <=> [$a->buchung->bookingDate, $a->buchung->id]);
@@ -154,15 +165,23 @@ final readonly class Uebersichten
             try {
                 $daten = Pruefung::entschluesseln($vault, $record);
                 // Nothing allocated yet: all of it is open - no need to read allocations.
-                $offen = $record->paymentStatus === PaymentStatus::Teilbezahlt
-                    ? $this->zuordnung->zahlungsstand($vault, $record)->offen()
-                    : $daten->gross;
-                if ($record->supplierId !== null) {
-                    $namen[$record->supplierId] ??= $this->lieferantName($vault, $record->supplierId);
+                $zugeordnet = 0;
+                if ($record->paymentStatus === PaymentStatus::Teilbezahlt) {
+                    foreach ($this->zuordnung->fuerBeleg($vault, $record->id) as $z) {
+                        $zugeordnet += $z->amount;
+                    }
                 }
+                $offen = new Zahlungsstand($record->paymentKind, $daten->gross, $zugeordnet, $record->differenceReason)->offen();
             } catch (CryptoException | \JsonException) {
                 ++$unlesbar;
                 continue;
+            }
+            if ($record->supplierId !== null && !isset($namen[$record->supplierId])) {
+                try {
+                    $namen[$record->supplierId] = $this->lieferanten->finde($vault, $record->supplierId)?->data->name ?? '';
+                } catch (CryptoException | \JsonException) {
+                    $namen[$record->supplierId] = '';
+                }
             }
             $einreichung = EinreichungsDaten::ausChiffrat($zeile->submissionId, $zeile->submissionDekSealed, $zeile->submissionPayloadEnc, $vault);
             $posten[] = new OffenerPosten(
@@ -181,13 +200,6 @@ final readonly class Uebersichten
         }
 
         return ['posten' => $posten, 'unlesbar' => $unlesbar];
-    }
-
-    private function lieferantName(Vault $vault, int $id): string
-    {
-        $record = $this->lieferantenRepository->find($id);
-
-        return $record === null ? '' : $this->lieferanten->entschluesseln($vault, $record)->data->name;
     }
 
     private static function schluessel(string $name): string

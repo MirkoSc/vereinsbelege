@@ -644,7 +644,6 @@ $offenSeite = static function () use ($connections, $view, $serienFor, $zuordnun
         new SessionVault(),
         new Uebersichten(
             new InvoiceRepository($pdo),
-            $lieferanten,
             new SupplierService($pdo, $lieferanten, $kategorien),
             $zuordnungFor($pdo),
             new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),

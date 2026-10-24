@@ -762,7 +762,6 @@ final class SerienFlowTest extends DatabaseTestCase
             new SessionVault(),
             new Uebersichten(
                 new InvoiceRepository($pdo),
-                new SupplierRepository($pdo),
                 $this->supplierService(),
                 ZuordnungFabrik::bauen($pdo, $this->audit),
                 new Buchungen($pdo, new BankTransactionRepository($pdo), new BankAccountService($pdo, new BankAccountRepository($pdo)), new CategoryRepository($pdo), BelegStandard::fromSettings(new SettingRepository($pdo))),

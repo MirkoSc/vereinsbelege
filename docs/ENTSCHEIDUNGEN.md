@@ -428,8 +428,10 @@ Die Spec (04 §5 „Übersichten“) nennt nur die vier Listen. Umgesetzt (Detai
 - **Altbestand getrennt:** Migration 037 hat alle Belege auf `konto`/`offen`
   gesetzt (E-27), auch Archiv-Kassenbelege. Statt einer Fehlerflut zählt die
   Liste Belege, die vor Migration 037 erfasst wurden, nur in einem Hinweis
-  und zeigt sie auf Klick gesondert. Kriterium ist `invoice.created_at`
-  gegen `schema_version.applied_at` – keine Migration, kein Backfill.
+  und zeigt sie auf Klick gesondert. Kriterium: `created_at` und `updated_at`
+  vor `schema_version.applied_at` von 037 – wer den Beleg in der Prüfansicht
+  einmal speichert (Zahlungsweg bestätigt), holt ihn in die normale Liste.
+  Keine Migration, kein Backfill.
   Verworfen: automatischer Backfill auf `bar` (die Spec sagt nicht, welche
   Alt-Belege bar waren; der offene Punkt aus E-27 bleibt bei Mirko).
 - **„Fällig“** = Fälligkeit heute bis in 7 Tagen, **„überfällig“** = Fälligkeit

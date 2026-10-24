@@ -60,8 +60,8 @@ final readonly class UebersichtController
     public function start(Request $request): ResponseInterface
     {
         $b = $this->berechtigungen();
-        foreach (self::REITER as [$href, , $recht]) {
-            if ($b->darf($recht)) {
+        foreach (self::REITER as $name => [$href, , $recht]) {
+            if (self::darf($b, $recht, $name === 'offen-erwartet')) {
                 return Response::redirect($href);
             }
         }
@@ -75,16 +75,14 @@ final readonly class UebersichtController
         $tresor = $this->tresor($request);
         $altbestand = ($request->query['altbestand'] ?? '') === '1';
         $ergebnis = $tresor === null
-            ? ['posten' => [], 'unlesbar' => 0]
-            : $this->uebersichten->unbezahlt($tresor, $this->berechtigungen()->zugriffsbereich(Permission::ReportView), new \DateTimeImmutable());
-        $alt = array_values(array_filter($ergebnis['posten'], static fn($p): bool => $p->altbestand));
-        $posten = $altbestand ? $alt : array_values(array_filter($ergebnis['posten'], static fn($p): bool => !$p->altbestand));
+            ? ['posten' => [], 'unlesbar' => 0, 'andere' => 0]
+            : $this->uebersichten->unbezahlt($tresor, $this->berechtigungen()->zugriffsbereich(Permission::ReportView), new \DateTimeImmutable(), $altbestand);
 
         return $this->seite('offen-unbezahlt', 'Unbezahlte Rechnungen', $tresor !== null, [
-            'posten' => $posten,
-            'summen' => Uebersichten::summen($posten),
+            'posten' => $ergebnis['posten'],
+            'summen' => Uebersichten::summen($ergebnis['posten']),
             'altbestand' => $altbestand,
-            'altbestandAnzahl' => count($alt),
+            'altbestandAnzahl' => $altbestand ? 0 : $ergebnis['andere'],
             'unlesbar' => $ergebnis['unlesbar'],
         ]);
     }
@@ -115,7 +113,7 @@ final readonly class UebersichtController
     public function erwartet(Request $request): ResponseInterface
     {
         $this->session->start();
-        if (!$this->berechtigungen()->zugriffsbereich(Permission::DocumentEdit)->istUnbeschraenkt()) {
+        if (!self::darf($this->berechtigungen(), Permission::DocumentEdit, true)) {
             return Response::html($this->view->render('error', [
                 'title' => 'Nicht verfügbar',
                 'message' => 'Erwartete Belege kommen aus wiederkehrenden Rechnungen, die alle Belege eines Lieferanten umfassen. Ihr Zugriff ist auf einen Bereich beschränkt, deshalb ist diese Seite für Sie nicht verfügbar.',
@@ -148,7 +146,7 @@ final readonly class UebersichtController
         $b = $this->berechtigungen();
         $reiter = [];
         foreach (self::REITER as $name => [$href, $label, $recht]) {
-            if ($b->darf($recht)) {
+            if (self::darf($b, $recht, $name === 'offen-erwartet')) {
                 $reiter[] = ['href' => $href, 'label' => $label, 'aktiv' => $name === $vorlage];
             }
         }
@@ -158,8 +156,17 @@ final readonly class UebersichtController
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $entsperrt,
             'reiter' => $reiter,
+            // Where a receipt opens: the review page for who may edit, else
+            // the read-only inbox entry, else nowhere.
+            'belegPfad' => $b->darf(Permission::DocumentEdit) ? '/app/belege/pruefen/' : ($b->darf(Permission::InboxView) ? '/app/posteingang/' : null),
             ...$daten,
         ], Area::App));
+    }
+
+    /** The expected receipts span every cost center and period (E-26): only without a scope. */
+    private static function darf(Berechtigungen $b, Permission $recht, bool $ohneScope): bool
+    {
+        return $b->darf($recht) && (!$ohneScope || $b->zugriffsbereich($recht)->istUnbeschraenkt());
     }
 
     private function berechtigungen(): Berechtigungen

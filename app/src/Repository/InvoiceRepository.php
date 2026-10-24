@@ -285,10 +285,12 @@ final readonly class InvoiceRepository
      * $weg, a payment status out of $status, the document not rejected,
      * within $bereich (receipt date and cost center). Due date first (none
      * last), then receipt date. The submission is joined for the
-     * reimbursement list; `altbestand` says the receipt is older than
-     * Migration 037 - every receipt then became `konto`/`offen`, also cash
-     * receipts from the archive (E-27, E-37). No schema_version row for 37
-     * (cannot happen after migrate) counts as "not older".
+     * reimbursement list; `altbestand` says the receipt was captured and
+     * last saved before Migration 037 - every receipt then became
+     * `konto`/`offen`, also cash receipts from the archive (E-27, E-37).
+     * Saving it once in the review page (Zahlungsweg checked) ends that.
+     * No schema_version row for 37 (cannot happen after migrate) counts as
+     * "not older".
      *
      * @param list<PaymentStatus> $status
      *
@@ -302,7 +304,7 @@ final readonly class InvoiceRepository
         [$scope, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
         $stmt = $this->pdo->prepare(
             'SELECT i.*, s.id AS submission_id, s.dek_sealed AS submission_dek_sealed, s.payload_enc AS submission_payload_enc,
-                    COALESCE(i.created_at < (SELECT sv.applied_at FROM schema_version sv WHERE sv.version = ?), 0) AS altbestand
+                    COALESCE(GREATEST(i.created_at, i.updated_at) < (SELECT sv.applied_at FROM schema_version sv WHERE sv.version = ?), 0) AS altbestand
              FROM invoice i JOIN document d ON d.id = i.document_id
              LEFT JOIN submission s ON s.id = d.submission_id
              WHERE i.payment_kind = ? AND i.payment_status IN (' . implode(', ', array_fill(0, count($status), '?')) . ')

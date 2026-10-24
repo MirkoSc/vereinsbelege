@@ -181,7 +181,7 @@ final class UebersichtFlowTest extends DatabaseTestCase
     {
         $neu = $this->beleg(1000);
         $alt = $this->beleg(2000);
-        $this->pdo()->prepare("UPDATE invoice SET created_at = '2020-01-01 00:00:00' WHERE id = ?")->execute([$alt]);
+        $this->pdo()->prepare("UPDATE invoice SET created_at = '2020-01-01 00:00:00', updated_at = '2020-01-01 00:00:00' WHERE id = ?")->execute([$alt]);
 
         $body = $this->get('/app/offen/rechnungen')->body;
         self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($neu) . '"', $body);
@@ -194,6 +194,12 @@ final class UebersichtFlowTest extends DatabaseTestCase
         self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($alt) . '"', $altbestand);
         self::assertStringNotContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($neu) . '"', $altbestand);
         self::assertStringContainsString('bevor es den Abgleich gab', $altbestand);
+
+        // Saved again in the review page after the matching came: no longer old.
+        $this->pdo()->prepare('UPDATE invoice SET updated_at = ? WHERE id = ?')->execute([new \DateTimeImmutable('+1 minute')->format('Y-m-d H:i:s'), $alt]);
+        $wieder = $this->get('/app/offen/rechnungen')->body;
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($alt) . '"', $wieder);
+        self::assertStringNotContainsString('vor Einführung des Abgleichs', $wieder);
     }
 
     // ---------------------------------------------------- reimbursements
@@ -272,8 +278,9 @@ final class UebersichtFlowTest extends DatabaseTestCase
         new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$jugend]);
 
         $body = $this->get('/app/offen/rechnungen')->body;
-        self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($eigen) . '"', $body);
-        self::assertStringNotContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($fremd) . '"', $body);
+        self::assertStringContainsString('href="/app/posteingang/' . $this->dokumentVon($eigen) . '"', $body, 'without document.edit the receipt opens read-only in the inbox');
+        self::assertStringNotContainsString('/app/belege/pruefen/', $body);
+        self::assertStringNotContainsString('href="/app/posteingang/' . $this->dokumentVon($fremd) . '"', $body);
         self::assertStringNotContainsString('20,00 EUR', $body);
         self::assertStringNotContainsString('/app/offen/buchungen', $body, 'no tab for a list it may not open');
         self::assertStringNotContainsString('/app/offen/erwartet', $body);
@@ -479,7 +486,6 @@ final class UebersichtFlowTest extends DatabaseTestCase
                 new SessionVault(),
                 new Uebersichten(
                     new InvoiceRepository($pdo),
-                    $lieferanten,
                     $this->lieferanten(),
                     $this->zuordnung(),
                     new Buchungen($pdo, new BankTransactionRepository($pdo), $this->konten(), $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),

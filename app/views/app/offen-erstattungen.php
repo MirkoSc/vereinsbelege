@@ -9,6 +9,7 @@
  * @var bool $entsperrt
  * @var list<\App\Service\Bank\Erstattungsempfaenger> $empfaenger
  * @var int $unlesbar
+ * @var string|null $belegPfad
  */
 
 use App\Service\Processing\Betrag;
@@ -54,7 +55,11 @@ use App\Service\Processing\Betrag;
                         <?php foreach ($g->posten as $p): ?>
                             <tr>
                                 <td>
-                                    <a href="/app/belege/pruefen/<?= e((string) $p->record->documentId) ?>"><?= e($p->lieferant !== '' ? $p->lieferant : 'ohne Lieferant') ?></a>
+                                    <?php if ($belegPfad !== null): ?>
+                                        <a href="<?= e($belegPfad . $p->record->documentId) ?>"><?= e($p->lieferant !== '' ? $p->lieferant : 'ohne Lieferant') ?></a>
+                                    <?php else: ?>
+                                        <?= e($p->lieferant !== '' ? $p->lieferant : 'ohne Lieferant') ?>
+                                    <?php endif; ?>
                                     <br><span class="gedaempft"><?= e(trim(($p->nummer !== '' ? $p->nummer . ' · ' : '') . 'vom ' . $p->record->invoiceDate->format('d.m.Y'))) ?></span>
                                     <?php if ($p->zweck !== ''): ?>
                                         <br><span class="gedaempft"><?= e($p->zweck) ?></span>
