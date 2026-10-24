@@ -47,4 +47,9 @@ final readonly class RechnungsIndexpflege implements Indexpflege
 
         $this->rotation->setzeSpalte('invoice', 'id', $id, 'number_bi', $neu);
     }
+
+    public function verwerfen(int $id): void
+    {
+        $this->rotation->setzeSpalte('invoice', 'id', $id, 'number_bi', null);
+    }
 }

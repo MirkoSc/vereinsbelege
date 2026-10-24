@@ -63,7 +63,15 @@ final readonly class VaultRotationController
     {
         $this->session->start();
         $ring = $this->ring($request);
-        $stand = $this->rotation->stand($this->fortschritt());
+        try {
+            $stand = $this->rotation->stand($this->fortschritt());
+        } catch (RotationException $e) {
+            return Response::html($this->view->render('error', [
+                'title' => 'Schlüsselrotation',
+                'message' => $e->getMessage(),
+                'startseite' => '/admin/update',
+            ], Area::Admin), 409);
+        }
 
         $schluessel = null;
         if ($stand->laeuft && !$stand->schluesselBestaetigt && $ring !== null) {
@@ -177,6 +185,33 @@ final readonly class VaultRotationController
         $_SESSION[self::FORTSCHRITT] = $fortschritt;
 
         return Response::json($stand->toArray());
+    }
+
+    /**
+     * Abandons a rotation before its new key is confirmed - needs no key,
+     * so it is also the way out for an admin who lost the session ring.
+     */
+    public function abbrechen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->zurueck('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
+        }
+        try {
+            $alt = $this->rotation->abbrechen((int) $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        } catch (RotationException $e) {
+            return $this->zurueck($e->getMessage(), FlashArt::Fehler);
+        }
+        unset($_SESSION[self::FORTSCHRITT]);
+        $this->benachrichtigen('Der begonnene Wechsel des Tresor-Schlüssels wurde abgebrochen. Es gilt weiter der bisherige Schlüssel.');
+        $this->session->flash('Die Schlüsselrotation ist abgebrochen. Es gilt weiter der bisherige Schlüssel.', FlashArt::Ok);
+
+        $antwort = Response::redirect('/admin/tresor/rotation');
+        $ring = $this->ring($request);
+
+        return $ring !== null && $ring->canOpen($alt)
+            ? $antwort->withCookie(Cookie::vaultKey($this->sessionVault->store($ring->generation($alt)), Request::httpsFromGlobals()))
+            : $antwort;
     }
 
     public function abschliessen(Request $request): ResponseInterface

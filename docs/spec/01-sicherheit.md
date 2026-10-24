@@ -333,17 +333,24 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   dann, wenn mehr als eine Generation kein `retired_at` hat.
   `recovery_confirmed_at` hält fest, dass der Wiederherstellungsschlüssel
   einer Generation bestätigt wurde (Bestand und Installer: gesetzt).
-- **Starten** (eine Transaktion): Generation N+1 entsteht; jede Freigabe von N
-  wird zusätzlich an dasselbe `U_pub` für N+1 versiegelt – `box_seal` braucht
-  kein Passwort, niemand muss sich dafür anmelden. Ab sofort ist N+1 die
-  aktuelle Generation: alles Neue (auch die öffentliche Einreichung) wird an
-  N+1 versiegelt. Die Sitzung des Admins hält danach einen **Schlüsselbund**
-  (`App\Service\Crypto\Vault` mit N als `previous`, in `SessionVault` unter
-  demselben `K_s`); `openDataKey()` wählt die Generation nach dem
-  Versionsbyte, `sealDataKey()`/`blindIndex()` nehmen immer die neueste.
+- **Starten** (eine Transaktion): Generation N+1 entsteht **vorgemerkt**
+  (`recovery_confirmed_at` NULL); jede Freigabe von N wird zusätzlich an
+  dasselbe `U_pub` für N+1 versiegelt – `box_seal` braucht kein Passwort,
+  niemand muss sich dafür anmelden; der ursprüngliche Freigebende bleibt
+  vermerkt. `VaultRepository::current()` liefert nur Generationen mit
+  bestätigtem Papierschlüssel: bis zur Bestätigung wird **nichts** an N+1
+  versiegelt (auch nicht von der öffentlichen Einreichung). Die Sitzung des
+  Admins hält einen **Schlüsselbund** (`App\Service\Crypto\Vault` mit N als
+  `previous`, in `SessionVault` unter demselben `K_s`); `openDataKey()`
+  wählt die Generation nach dem Versionsbyte.
 - **Bestätigen**: der neue Wiederherstellungsschlüssel wird angezeigt (aus dem
   Bund berechnet, solange unbestätigt – ein geschlossener Tab verliert ihn
-  nicht), die letzte Gruppe wird eingetippt wie im Installer.
+  nicht), die letzte Gruppe wird eingetippt wie im Installer. Erst danach
+  schaltet `current()` auf N+1 und das Umschlüsseln ist erlaubt (serverseitig
+  geprüft). **Vorher** lässt sich die Rotation folgenlos abbrechen
+  (`abbrechen()`: Freigaben und Zeile von N+1 gelöscht, kein Schlüssel nötig);
+  danach geht es nur noch vorwärts – dann gibt es für beide Generationen einen
+  Papierschlüssel.
 - **Umschlüsseln**: je Schritt ~10 s; jede Zeile in eigener Transaktion
   gesperrt (`FOR UPDATE`), erneut geprüft, DEK mit N geöffnet, an N+1
   versiegelt. Nur `dek_sealed` wird neu geschrieben – die Daten selbst nicht.
@@ -358,9 +365,15 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   `bank_account.iban_bi`, `bank_transaction.counterparty_bi` und `.dedup_bi`
   (Laufnummer über den alten Schlüssel wiedergefunden, sonst die nächste unter
   beiden Schlüsseln freie). `document.content_bi` wird geleert und vom Job
-  `detect_duplicate` neu berechnet; `bank_import.source_bi` wird geleert
-  (nur Vorschlag des Kontos beim nächsten Auszug). Ein Test prüft, dass jede
-  `_bi`-Spalte eine Pflege hat (Ausnahme `user.email_bi`, Server-Schlüssel).
+  `detect_duplicate` neu berechnet. Scheitert ein Index-Handler an den
+  Daten einer Zeile (kein Datenbankfehler), wird die Zeile trotzdem neu
+  versiegelt und ihre Indexe geleert (`Indexpflege::verwerfen()`) – die
+  Kette bleibt nie an einer Zeile hängen. `bank_import.source_bi` (Tabelle
+  ohne eigenes `dek_sealed`) wird beim Abschluss in einem Zug geleert
+  (`Indexpflegen::ZU_LEEREN`; nur Kontovorschlag beim nächsten Auszug). Ein
+  Test prüft, dass jede `_bi`-Spalte eine Pflege hat (Ausnahme
+  `user.email_bi`, Server-Schlüssel) und jeder Zeilen-Handler zu einer Tabelle
+  mit `dek_sealed` gehört.
 - **Abschließen** nur, wenn bestätigt und keine Zeile mehr übrig ist, die N
   öffnet (Zeilen, die schon vorher nicht zu öffnen waren, werden gezählt und
   protokolliert, halten aber nicht auf): Freigaben von N gelöscht,
@@ -368,11 +381,20 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   Sitzung übernimmt den neuen Wert und behält nur N+1.
 - **Während der Rotation** sperrt `App\Http\LoginGuard` `/app` und `/admin`
   (HTML 503, JSON 409; Konten mit `admin.vault_grant` werden zur Rotation
-  geleitet); offen bleiben die Rotation und `/app/sicherheit`. Eine Anmeldung
-  öffnet beide Freigaben (neueste Pflicht, ältere best effort).
+  geleitet). Offen bleiben die Rotation, `/app/sicherheit` und die Auswege:
+  `/admin/wiederherstellen`, `/admin/update`, `/admin/wartung`,
+  `/admin/backups`. Eine Anmeldung öffnet beide Freigaben (neueste Pflicht,
+  ältere best effort).
+- **Passwort vergessen mitten in der Rotation** (der Reset löscht alle
+  Freigaben des Kontos): `/admin/wiederherstellen` nimmt den Papierschlüssel
+  **jeder aktiven** Generation an und erteilt die Freigabe für genau diese;
+  nacheinander eingegeben, hält die Sitzung beide (Bund), die nächste
+  Anmeldung ebenso. Vor der Bestätigung genügt der alte Schlüssel und
+  „Abbrechen“.
 - **Wiederherstellungsschlüssel**: der alte öffnet nach dem Abschluss nichts
   Neues mehr und wird als „abgelöst“ erkannt (`RecoveryKeyProblem::Abgeloest`)
-  – er bleibt aber für Backups von vor der Rotation nötig (06 §2) und ist
+  – während der Rotation öffnet er noch die alte Generation – er bleibt
+  aber für Backups von vor der Rotation nötig (06 §2) und ist
   deshalb weiter aufzubewahren.
 - **Rest-Exposure**: Die DEKs selbst bleiben dieselben (kein Neu-Verschlüsseln
   aller Felder und Blobs, E-32). Wer vor der Rotation den alten `VK_priv`

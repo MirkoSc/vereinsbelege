@@ -787,6 +787,7 @@ return static function (
     $post('/admin/tresor/rotation/bestaetigen', $freigaben, static fn(Request $r) => $tresorRotation()->bestaetigen($r));
     $post('/admin/tresor/rotation/schritt', $freigaben->alsApi(), static fn(Request $r) => $tresorRotation()->schritt($r));
     $post('/admin/tresor/rotation/abschliessen', $freigaben, static fn(Request $r) => $tresorRotation()->abschliessen($r));
+    $post('/admin/tresor/rotation/abbrechen', $freigaben, static fn(Request $r) => $tresorRotation()->abbrechen($r));
 
     // Vault recovery with the paper recovery key (M3-9, issue #22,
     // docs/spec/01-sicherheit.md section 2 "Letzter Admin hat Passwort

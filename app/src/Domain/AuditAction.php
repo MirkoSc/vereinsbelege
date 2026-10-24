@@ -57,6 +57,7 @@ enum AuditAction: string
     case TresorRotationGestartet = 'tresor.rotation_gestartet';
     case TresorRotationSchluesselBestaetigt = 'tresor.rotation_schluessel_bestaetigt';
     case TresorRotationAbgeschlossen = 'tresor.rotation_abgeschlossen';
+    case TresorRotationAbgebrochen = 'tresor.rotation_abgebrochen';
 
     case RolleAngelegt = 'rolle.angelegt';
     case RolleGeaendert = 'rolle.geaendert';
@@ -203,6 +204,7 @@ enum AuditAction: string
             self::TresorRotationGestartet => 'Tresor-Schlüsselrotation gestartet',
             self::TresorRotationSchluesselBestaetigt => 'Neuer Wiederherstellungsschlüssel bestätigt',
             self::TresorRotationAbgeschlossen => 'Tresor-Schlüsselrotation abgeschlossen',
+            self::TresorRotationAbgebrochen => 'Tresor-Schlüsselrotation abgebrochen',
             self::RolleAngelegt => 'Rolle angelegt',
             self::RolleGeaendert => 'Rolle geändert',
             self::RolleGeloescht => 'Rolle gelöscht',
@@ -302,7 +304,7 @@ enum AuditAction: string
             self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen,
             self::ZugangNeuVerknuepft => 'user',
             self::TresorRotationGestartet, self::TresorRotationSchluesselBestaetigt,
-            self::TresorRotationAbgeschlossen => 'vault',
+            self::TresorRotationAbgeschlossen, self::TresorRotationAbgebrochen => 'vault',
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',

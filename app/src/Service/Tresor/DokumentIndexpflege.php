@@ -51,4 +51,9 @@ final readonly class DokumentIndexpflege implements Indexpflege
             $this->jobs->enqueue(Duplikatindex::JOB_TYP, JobExecutor::Session, self::REF_TYPE, $id, now: $now);
         }
     }
+
+    public function verwerfen(int $id): void
+    {
+        $this->rotation->setzeSpalte($this->tabelle(), 'id', $id, 'content_bi', null);
+    }
 }

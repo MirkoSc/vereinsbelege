@@ -632,9 +632,18 @@ Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage
 - **Audit-Log:** `dek_sealed` bleibt (Hash-Kette), der neue Schlüssel steht in
   `dek_resealed`; mit dem alten Schlüssel bleiben die Audit-Details von vor
   der Rotation lesbar.
-- **Während der Rotation sind `/app` und `/admin` gesperrt** (außer Rotation
-  und eigener Sicherheit), die öffentliche Einreichung läuft weiter. Kein
-  „Abbrechen“: die Kette geht nur vorwärts, jeder Schritt ist wiederholbar.
+- **Neue Generation erst nach Bestätigung des Papierschlüssels in Gebrauch**
+  (bis dahin „vorgemerkt“, nichts wird an sie versiegelt, Umschlüsseln
+  gesperrt); bis dahin ist **Abbrechen** ohne Folgen möglich, danach geht
+  die Kette nur vorwärts.
+- **Während der Rotation sind `/app` und `/admin` gesperrt** – außer
+  Rotation, eigener Sicherheit und den Auswegen Wiederherstellung, Update,
+  Wartung, Backups; die öffentliche Einreichung läuft weiter.
+  Wiederherstellung nimmt den Papierschlüssel jeder aktiven Generation an
+  (Passwort-Reset mitten in der Rotation). Passwort-Resets werden während der
+  Rotation nicht gesperrt (das sperrte Vergessliche ganz aus).
+- **Index-Handler-Fehler** an einer Zeile leeren deren Indexe statt die Kette
+  anzuhalten.
 - **Blind Indexes** werden neu berechnet; `document.content_bi` (müsste alle
   Dateien lesen) und `bank_import.source_bi` (müsste alle Auszüge parsen)
   werden geleert – der Inhaltsindex entsteht per Job neu, der Kontovorschlag

@@ -114,19 +114,35 @@ $zahl = static fn(int $n): string => number_format($n, 0, ',', '.');
         <div class="karte nicht-drucken" id="rotation" data-csrf="<?= e($csrf) ?>">
             <h3>2. Daten umschlüsseln</h3>
             <p id="rotation-stand" aria-live="polite">
-                <?php if ($stand->offen() === 0): ?>
+                <?php if (!$stand->schluesselBestaetigt): ?>
+                    Erst nach der Bestätigung des neuen Wiederherstellungsschlüssels möglich – bis dahin wird nichts
+                    an den neuen Schlüssel versiegelt.
+                <?php elseif ($stand->offen() === 0): ?>
                     Alle Datenschlüssel sind umgestellt.
                 <?php else: ?>
                     Noch <?= e($zahl($stand->offen())) ?> Datensätze mit dem alten Schlüssel.
                 <?php endif; ?>
             </p>
             <p class="knopfreihe">
-                <button type="button" id="rotation-start" class="knopf"<?= $stand->umgeschluesselt() || !$ringVollstaendig ? ' hidden' : '' ?>>
+                <button type="button" id="rotation-start" class="knopf"<?= $stand->umgeschluesselt() || !$ringVollstaendig || !$stand->schluesselBestaetigt ? ' hidden' : '' ?>>
                     Umschlüsseln starten
                 </button>
             </p>
             <p id="rotation-fehler" class="hinweis hinweis-fehler" hidden></p>
         </div>
+
+        <?php if (!$stand->schluesselBestaetigt): ?>
+            <form method="post" action="/admin/tresor/rotation/abbrechen" class="formular nicht-drucken">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <p class="gedaempft">
+                    Solange der neue Schlüssel nicht bestätigt ist, lässt sich der Wechsel ohne Folgen abbrechen –
+                    es gilt dann weiter der bisherige Schlüssel.
+                </p>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf knopf-still">Schlüsselwechsel abbrechen</button>
+                </p>
+            </form>
+        <?php endif; ?>
 
         <div class="karte nicht-drucken">
             <h3>3. Abschließen</h3>

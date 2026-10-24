@@ -28,11 +28,24 @@ final readonly class VaultRepository
     }
 
     /**
-     * The newest generation, or null when no vault has been set up yet.
+     * The generation everything new is sealed to: the newest one whose
+     * recovery key is confirmed - or null when no vault has been set up yet.
+     *
+     * A key rotation's new generation stays out of this until its printed
+     * recovery key is confirmed (issue #90): before that, nothing may depend
+     * on a key that exists only in the grants - a password reset of the only
+     * holder would take it, and everything sealed to it, with it.
      */
     public function current(): ?Vault
     {
-        $stmt = $this->pdo->query('SELECT version, public_key FROM vault ORDER BY version DESC LIMIT 1');
+        try {
+            $stmt = $this->pdo->query(
+                'SELECT version, public_key FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
+            );
+        } catch (\PDOException) {
+            // Before migration 039 (update between 'switch' and 'migrate').
+            $stmt = $this->pdo->query('SELECT version, public_key FROM vault ORDER BY version DESC LIMIT 1');
+        }
         $row = $stmt === false ? false : $stmt->fetch(\PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             return null;
@@ -41,15 +54,25 @@ final readonly class VaultRepository
         return Vault::locked((string) $row['public_key'], (int) $row['version']);
     }
 
+    /**
+     * @param bool $schluesselBestaetigt false only for the new generation of a
+     *        key rotation, which waits for its recovery key (issue #90). The
+     *        installer's first generation counts as confirmed: the
+     *        installation cannot finish without the confirmation, and
+     *        "Neu beginnen" deletes the row otherwise.
+     */
     public function insert(
         string $publicKey,
         int $version = Vault::FIRST_VERSION,
         ?\DateTimeImmutable $now = null,
+        bool $schluesselBestaetigt = true,
     ): void {
-        $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at) VALUES (?, ?, ?)');
+        $zeit = ($now ?? new \DateTimeImmutable())->format(self::FORMAT);
+        $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?)');
         $stmt->bindValue(1, $version, \PDO::PARAM_INT);
         $stmt->bindValue(2, $publicKey, \PDO::PARAM_LOB);
-        $stmt->bindValue(3, ($now ?? new \DateTimeImmutable())->format(self::FORMAT));
+        $stmt->bindValue(3, $zeit);
+        $stmt->bindValue(4, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
         $stmt->execute();
     }
 

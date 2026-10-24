@@ -86,7 +86,7 @@ final readonly class Schluesselrotation
 
         $alt = $aktiv[count($aktiv) - 2];
         $offen = [];
-        foreach ($this->rotation->tabellen() as $tabelle => $_) {
+        foreach ($this->tabellen() as $tabelle => $_) {
             $anzahl = $this->rotation->anzahl($tabelle, $alt->version);
             if ($anzahl > 0) {
                 $offen[$tabelle] = $anzahl;
@@ -130,10 +130,15 @@ final readonly class Schluesselrotation
             throw new RotationException('Die Anzahl möglicher Tresor-Generationen ist ausgeschöpft.');
         }
 
+        // Fail before anything changes when the schema has a table the
+        // chain could not re-seal.
+        $this->tabellen();
         $neu = Vault::create($alt->version + 1);
         $this->pdo->beginTransaction();
         try {
-            $this->vaults->insert($neu->publicKey(), $neu->version, $now);
+            // Not confirmed yet: VaultRepository::current() stays on N, so
+            // nothing is sealed to N+1 before its paper key exists.
+            $this->vaults->insert($neu->publicKey(), $neu->version, $now, schluesselBestaetigt: false);
             // Read under lock, inside the transaction: a grant of N that
             // commits meanwhile waits and is caught by abschliessen().
             $inhaber = $this->grants->holdersOf($alt->version, sperren: true);
@@ -221,6 +226,11 @@ final readonly class Schluesselrotation
     public function umschluesseln(Vault $ring, array $fortschritt, \DateTimeImmutable $now, float $budget = 10.0): array
     {
         [$alt] = $this->pruefeRing($ring);
+        if ($this->neueGeneration()->recoveryConfirmedAt === null) {
+            // Until the new paper key is confirmed, N+1 exists only in the
+            // grants; nothing may be moved onto it yet.
+            throw new RotationException('Bitte zuerst den neuen Wiederherstellungsschlüssel bestätigen.');
+        }
         $ende = microtime(true) + $budget;
         $cursor = $fortschritt['cursor'] ?? [];
         $defekt = (int) ($fortschritt['defekt'] ?? 0);
@@ -229,7 +239,7 @@ final readonly class Schluesselrotation
         // gets anything done would leave the browser looping.
         $erledigt = 0;
 
-        foreach ($this->rotation->tabellen() as $tabelle => $pk) {
+        foreach ($this->tabellen() as $tabelle => $pk) {
             while (true) {
                 if ($erledigt > 0 && microtime(true) >= $ende) {
                     $durchlaufen = false;
@@ -267,6 +277,38 @@ final readonly class Schluesselrotation
     }
 
     /**
+     * Abandons a rotation whose new recovery key is not confirmed yet - the
+     * way out when the key cannot be printed, or its only holder lost the
+     * password. Nothing is sealed to N+1 before the confirmation
+     * (VaultRepository::current()), so dropping it loses nothing. Needs no
+     * key: only rows are deleted.
+     *
+     * @throws RotationException when no rotation runs or it is confirmed
+     */
+    public function abbrechen(int $userId, string $ip, \DateTimeImmutable $now): int
+    {
+        $neu = $this->neueGeneration();
+        if ($neu->recoveryConfirmedAt !== null) {
+            throw new RotationException('Nach der Bestätigung des neuen Schlüssels lässt sich die Rotation nicht mehr abbrechen.');
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $this->grants->deleteVersion($neu->version);
+            $this->vaults->delete($neu->version);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+
+            throw $e;
+        }
+
+        $this->audit->record(AuditAction::TresorRotationAbgebrochen, $userId, $ip, $neu->version, now: $now);
+
+        return $neu->version - 1;
+    }
+
+    /**
      * The last step: the old generation goes.
      *
      * @return array{tresor: Vault, defekt: array<string, int>} the ring
@@ -288,7 +330,7 @@ final readonly class Schluesselrotation
             // checked here, under lock and in the same transaction that
             // retires the key, not taken from the session's memory.
             $defekt = [];
-            foreach ($this->rotation->tabellen() as $tabelle => $pk) {
+            foreach ($this->tabellen() as $tabelle => $pk) {
                 $nach = 0;
                 while (($ids = $this->rotation->naechste($tabelle, $pk, $alt, $nach, self::BATCH)) !== []) {
                     foreach ($ids as $id) {
@@ -319,6 +361,12 @@ final readonly class Schluesselrotation
                 }
             }
 
+            // Blind indexes in tables without a sealed key of their own
+            // (Indexpflegen::ZU_LEEREN) are cleared once, here.
+            foreach (Indexpflegen::ZU_LEEREN as $spalte) {
+                [$tabelle, $name] = explode('.', $spalte, 2);
+                $this->rotation->leereSpalte($tabelle, $name);
+            }
             $this->grants->deleteVersion($alt);
             $this->vaults->retire($alt, $now);
             $this->users->bumpSessionEpochAll();
@@ -341,9 +389,32 @@ final readonly class Schluesselrotation
      * One row: lock, re-check, open with the old key, seal with the new one,
      * recompute its blind indexes - all or nothing.
      *
+     * A blind index handler that fails on the row's data (anything but a
+     * database error) must not stop the chain - the step would fail again
+     * and again, and with it the only way to finish. The row is then
+     * re-sealed with its indexes cleared instead (Indexpflege::verwerfen()),
+     * the same treatment damaged data gets.
+     *
      * @return bool false when the row's data key does not open (damaged)
      */
     private function zeile(Vault $ring, string $tabelle, string $pk, int $id, int $alt, \DateTimeImmutable $now): bool
+    {
+        try {
+            return $this->zeileVersuch($ring, $tabelle, $pk, $id, $alt, $now, indexNeu: true);
+        } catch (\PDOException $e) {
+            throw $e;
+        } catch (\Throwable) {
+            try {
+                return $this->zeileVersuch($ring, $tabelle, $pk, $id, $alt, $now, indexNeu: false);
+            } catch (\PDOException $e) {
+                throw $e;
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+    }
+
+    private function zeileVersuch(Vault $ring, string $tabelle, string $pk, int $id, int $alt, \DateTimeImmutable $now, bool $indexNeu): bool
     {
         $this->pdo->beginTransaction();
         try {
@@ -364,7 +435,12 @@ final readonly class Schluesselrotation
             }
             unset($zeile['__dek']);
 
-            ($this->indexpflegen[$tabelle] ?? null)?->pflege($id, $zeile, $ring, $alt, $now);
+            $handler = $this->indexpflegen[$tabelle] ?? null;
+            if ($indexNeu) {
+                $handler?->pflege($id, $zeile, $ring, $alt, $now);
+            } else {
+                $handler?->verwerfen($id);
+            }
             $this->rotation->schreibe($tabelle, $pk, $id, $ring->sealDataKey($dek));
             $this->pdo->commit();
 
@@ -375,6 +451,25 @@ final readonly class Schluesselrotation
             }
 
             throw $e;
+        }
+    }
+
+    /**
+     * The tables to re-seal; a schema the rotation cannot handle (a table
+     * with a sealed key but no single-column primary key) stops it with a
+     * message instead of a stack trace - fixed by an update, which stays
+     * reachable during a rotation.
+     *
+     * @return array<string, string>
+     *
+     * @throws RotationException
+     */
+    private function tabellen(): array
+    {
+        try {
+            return $this->rotation->tabellen();
+        } catch (\LogicException $e) {
+            throw new RotationException('Das Datenbankschema enthält eine Tabelle, die die Schlüsselrotation nicht umschlüsseln kann. Bitte ein Update einspielen. (' . $e->getMessage() . ')');
         }
     }
 

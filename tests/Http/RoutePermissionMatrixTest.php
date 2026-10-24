@@ -518,6 +518,12 @@ final class RoutePermissionMatrixTest extends TestCase
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/admin/tresor/rotation')));
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Post, '/admin/tresor/rotation/schritt')));
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/app/sicherheit')));
+        // The ways out stay open: recovery, update, maintenance, backups, abandoning.
+        foreach (['/admin/wiederherstellen', '/admin/update', '/admin/backups'] as $ausgang) {
+            self::assertSame(self::ERREICHT, $this->aufrufen($router, HttpMethod::Get, $ausgang)->body, $ausgang);
+        }
+        self::assertSame(self::ERREICHT, $this->aufrufen($router, HttpMethod::Post, '/admin/wartung/aufheben')->body);
+        self::assertSame(self::ERREICHT, $this->aufrufen($router, HttpMethod::Post, '/admin/tresor/rotation/abbrechen')->body);
         $umgeleitet = $this->aufrufen($router, HttpMethod::Get, '/app/posteingang');
         self::assertNotSame(self::ERREICHT, $umgeleitet->body);
         self::assertSame(302, $umgeleitet->status);

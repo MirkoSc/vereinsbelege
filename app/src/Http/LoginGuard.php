@@ -176,12 +176,30 @@ final readonly class LoginGuard
         return null;
     }
 
+    /**
+     * Besides the rotation and the account's own security pages, the ways
+     * out stay open: recovery with a paper key (the only way back after a
+     * password reset), update and maintenance (the way to fix a broken
+     * release without FTP), backups (ciphertext only).
+     */
+    private const array WAEHREND_ROTATION_OFFEN = [
+        self::ROTATION_SEITE,
+        '/app/sicherheit',
+        '/admin/wiederherstellen',
+        '/admin/update',
+        '/admin/wartung',
+        '/admin/backups',
+    ];
+
     private static function waehrendRotationOffen(string $pfad): bool
     {
-        return $pfad === self::ROTATION_SEITE
-            || str_starts_with($pfad, self::ROTATION_SEITE . '/')
-            || $pfad === '/app/sicherheit'
-            || str_starts_with($pfad, '/app/sicherheit/');
+        foreach (self::WAEHREND_ROTATION_OFFEN as $offen) {
+            if ($pfad === $offen || str_starts_with($pfad, $offen . '/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function rotationSperre(bool $api, Berechtigungen $berechtigungen): ResponseInterface

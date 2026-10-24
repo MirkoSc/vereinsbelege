@@ -40,4 +40,11 @@ interface Indexpflege
      * @param Vault $tresor the key ring: newest generation plus $alteVersion
      */
     public function pflege(int $id, array $zeile, Vault $tresor, int $alteVersion, \DateTimeImmutable $now): void;
+
+    /**
+     * Clears the row's blind indexes instead - when pflege() failed on the
+     * row's data. An index under the retired key would never match again;
+     * no index is the honest state.
+     */
+    public function verwerfen(int $id): void;
 }

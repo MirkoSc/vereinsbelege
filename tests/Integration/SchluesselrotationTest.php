@@ -20,6 +20,7 @@ use App\Domain\SupplierRole;
 use App\Installer\FirstAdminSetup;
 use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
+use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
@@ -34,6 +35,7 @@ use App\Repository\VaultRepository;
 use App\Repository\VaultRotationRepository;
 use App\Service\Account\LoginService;
 use App\Service\Account\PasswordHasher;
+use App\Service\Account\UserAdministration;
 use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\BankAccountService;
@@ -82,6 +84,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
     private const string KONTO_IBAN = 'DE02120300000000202051';
     private const string GEGEN_IBAN = 'DE44500105175407324931';
     private const string GELERNTE_IBAN = 'DE75512108001245126199';
+
+    /** For the stand-in handler of one test (anonymous classes cannot capture). */
+    public static ?\PDO $pdoFuerHandler = null;
 
     private ServerCrypto $crypto;
     private Vault $alt;
@@ -145,9 +150,14 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
         self::assertSame(2, $ring->version);
         self::assertSame([1], $ring->previousVersions());
-        self::assertSame(2, new VaultRepository($this->pdo())->current()?->version, 'Neues wird ab jetzt an Generation 2 versiegelt.');
         self::assertTrue(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertSame(2, Vault::sealedVersion(new VaultRepository($this->pdo())->current()->sealDataKey(DataKey::generate())));
+        self::assertSame(1, new VaultRepository($this->pdo())->current()?->version, 'Vor der Bestätigung wird nichts an Generation 2 versiegelt.');
+        try {
+            $rotation->umschluesseln($ring, [], new \DateTimeImmutable());
+            self::fail('Umschlüsseln vor der Bestätigung des neuen Papierschlüssels.');
+        } catch (RotationException) {
+            self::assertSame(0, (new VaultRotationRepository($this->pdo()))->anzahl('invoice', 2));
+        }
         self::assertCount(2, new VaultGrantRepository($this->pdo())->holdersOf(2), 'Beide Konten haben eine Freigabe der neuen Generation.');
 
         // Not finished before the key is confirmed and everything re-sealed.
@@ -156,7 +166,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $neuerSchluessel = $rotation->neuerWiederherstellungsschluessel($ring);
         self::assertFalse(hash_equals($this->alterSchluessel->formatted(), $neuerSchluessel->formatted()));
         self::assertTrue($rotation->bestaetigen($ring, strtolower($neuerSchluessel->lastGroup()), $this->adminId, self::IP, new \DateTimeImmutable()));
+        self::assertSame(2, new VaultRepository($this->pdo())->current()?->version, 'Ab der Bestätigung wird an Generation 2 versiegelt.');
         $this->assertAbschlussVerweigert($rotation, $ring);
+        self::assertNotNull($this->zeile('bank_import', $d['import'])['source_bi'], 'Erst der Abschluss leert source_bi.');
 
         // One row per step: the chain really is many short requests.
         $schritte = $this->umschluesseln($rotation, $ring, budget: 0.0);
@@ -197,6 +209,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $d = $this->bestand($this->alt);
         $rotation = $this->rotation();
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        $this->bestaetigen($rotation, $ring);
 
         // A few steps, then the session is gone: the progress it remembered
         // is lost, and the next login (password only) builds the ring again.
@@ -211,8 +224,8 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $kasse = $this->anmelden('kasse@example.org');
         self::assertSame([1], $kasse?->previousVersions());
 
-        // A step that dies in the middle of a row (here: a blind index
-        // handler throws) changes nothing of that row.
+        // A step that dies in the middle of a row (here: the database fails
+        // inside a blind index handler) changes nothing of that row.
         $kaputt = $this->rotation([...Indexpflegen::alle($this->pdo()), 'supplier' => new class implements Indexpflege {
             public function tabelle(): string
             {
@@ -226,7 +239,12 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
             public function pflege(int $id, array $zeile, Vault $tresor, int $alteVersion, \DateTimeImmutable $now): void
             {
-                throw new \DomainException('Abbruch mitten in der Zeile');
+                throw new \PDOException('Abbruch mitten in der Zeile');
+            }
+
+            public function verwerfen(int $id): void
+            {
+                throw new \LogicException('not reached');
             }
         }]);
         $vorher = $this->zeile('supplier', $d['lieferant']);
@@ -236,7 +254,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
             for ($i = 0; $i < 200; $i++) {
                 $kaputt->umschluesseln($login, [], new \DateTimeImmutable(), 0.0);
             }
-        } catch (\DomainException $e) {
+        } catch (\PDOException $e) {
             $abgebrochen = $e->getMessage() === 'Abbruch mitten in der Zeile';
         }
         self::assertTrue($abgebrochen, 'Der Schritt hätte abbrechen müssen.');
@@ -247,7 +265,6 @@ final class SchluesselrotationTest extends DatabaseTestCase
         // Data stays readable in the meantime, old rows and new alike.
         self::assertSame(self::KONTO_IBAN, new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->finde($login, $d['konto'])?->data->iban);
 
-        $this->bestaetigen($rotation, $login);
         $this->umschluesseln($rotation, $login, budget: 0.0);
         $neu = $rotation->abschliessen($login, $this->adminId, self::IP, new \DateTimeImmutable())['tresor'];
 
@@ -279,6 +296,116 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
         self::assertSame(['document' => 1], $ergebnis['defekt']);
         self::assertSame(1, Vault::sealedVersion((string) $this->zeile('document', $kaputt)['dek_sealed']), 'Unverändert gelassen.');
+    }
+
+    /**
+     * Before the new paper key is confirmed, the rotation can be dropped
+     * without any key: nothing was sealed to the new generation.
+     */
+    public function testVorDerBestaetigungLaesstSichDieRotationFolgenlosAbbrechen(): void
+    {
+        $d = $this->bestand($this->alt);
+        $rotation = $this->rotation();
+        $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        // The public submission keeps sealing - to the old, confirmed key.
+        self::assertSame(1, Vault::sealedVersion(new VaultRepository($this->pdo())->current()?->sealDataKey(DataKey::generate()) ?? ''));
+
+        self::assertSame(1, $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable()));
+
+        self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
+        self::assertNull(new VaultRepository($this->pdo())->generationOf(2));
+        self::assertSame([], new VaultGrantRepository($this->pdo())->holdersOf(2));
+        self::assertSame('Sportbedarf Müller GmbH', $this->supplierService()->finde($this->alt, $d['lieferant'])?->data->name);
+        // ... and a new rotation can start again.
+        $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        $this->bestaetigen($rotation, $ring);
+        $this->expectException(RotationException::class);
+        $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable());
+    }
+
+    /**
+     * The only admin forgets the password in the middle of a confirmed
+     * rotation: the reset deletes every grant. Both paper keys, entered one
+     * after the other, give the account both generations back, and the
+     * rotation finishes without loss.
+     */
+    public function testNachEinemPasswortResetMittenInDerRotationHelfenBeidePapierschluessel(): void
+    {
+        $d = $this->bestand($this->alt);
+        $rotation = $this->rotation();
+        $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        $neuerSchluessel = $rotation->neuerWiederherstellungsschluessel($ring);
+        $this->bestaetigen($rotation, $ring);
+        for ($i = 0; $i < 4; $i++) {
+            $rotation->umschluesseln($ring, [], new \DateTimeImmutable(), 0.0);
+        }
+
+        // What a reset does to the grants (App\Service\Account\PasswordReset).
+        new VaultGrantRepository($this->pdo())->deleteForUser($this->adminId);
+        new VaultGrantRepository($this->pdo())->deleteForUser($this->kassiererId);
+        self::assertNull($this->anmelden(self::ADMIN), 'Ohne Freigabe kein Tresor.');
+
+        $recovery = new VaultRecovery(
+            new VaultRepository($this->pdo()),
+            new VaultGrantRepository($this->pdo()),
+            new UserAdministration($this->pdo(), $this->crypto),
+            new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::LOGIN_WINDOW_SECONDS),
+        );
+        self::assertTrue($recovery->rotationLaeuft());
+        $alt = $recovery->wiederherstellen($this->adminId, $this->alterSchluessel->formatted());
+        self::assertTrue($alt->istErfolg(), (string) $alt->fehler);
+        self::assertSame(1, $alt->vault?->version);
+        $neu = $recovery->wiederherstellen($this->adminId, $neuerSchluessel->formatted());
+        self::assertTrue($neu->istErfolg(), (string) $neu->fehler);
+        self::assertSame(2, $neu->vault?->version);
+
+        // The next login holds the ring again and finishes the rotation.
+        $wieder = $this->anmelden(self::ADMIN);
+        self::assertSame(2, $wieder?->version);
+        self::assertSame([1], $wieder?->previousVersions());
+        $this->umschluesseln($rotation, $wieder);
+        $ergebnis = $rotation->abschliessen($wieder, $this->adminId, self::IP, new \DateTimeImmutable());
+        $this->assertAllesUnterNeuemSchluessel($ergebnis['tresor'], $d);
+    }
+
+    /**
+     * A blind index handler that fails on a row's data (not the database)
+     * must not stop the chain: the row is re-sealed, its indexes cleared.
+     */
+    public function testEinFehlerInDerIndexpflegeHaeltDieKetteNichtAuf(): void
+    {
+        $d = $this->bestand($this->alt);
+        $rotation = $this->rotation([...Indexpflegen::alle($this->pdo()), 'invoice' => new class implements Indexpflege {
+            public function tabelle(): string
+            {
+                return 'invoice';
+            }
+
+            public function spalten(): array
+            {
+                return [];
+            }
+
+            public function pflege(int $id, array $zeile, Vault $tresor, int $alteVersion, \DateTimeImmutable $now): void
+            {
+                throw new \ValueError('unerwartete Daten');
+            }
+
+            public function verwerfen(int $id): void
+            {
+                new VaultRotationRepository(SchluesselrotationTest::$pdoFuerHandler ?? throw new \LogicException())->setzeSpalte('invoice', 'id', $id, 'number_bi', null);
+            }
+        }]);
+        self::$pdoFuerHandler = $this->pdo();
+        $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        $this->bestaetigen($rotation, $ring);
+        $this->umschluesseln($rotation, $ring, budget: 0.0);
+        $ergebnis = $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable());
+
+        self::assertSame([], $ergebnis['defekt']);
+        $rechnung = $this->zeile('invoice', $d['rechnung']);
+        self::assertSame(2, Vault::sealedVersion((string) $rechnung['dek_sealed']));
+        self::assertNull($rechnung['number_bi'], 'Index verworfen statt Kette abgebrochen.');
     }
 
     public function testEinZweiterStartUndEinVeralteterSitzungstresorWerdenAbgelehnt(): void
@@ -356,7 +483,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
      */
     public function testJederBlindIndexHatEinePflegeImSchluesselwechsel(): void
     {
-        $gepflegt = [];
+        $gepflegt = Indexpflegen::ZU_LEEREN;
         foreach (Indexpflegen::alle($this->pdo()) as $handler) {
             array_push($gepflegt, ...$handler->spalten());
         }
@@ -373,6 +500,16 @@ final class SchluesselrotationTest extends DatabaseTestCase
                 in_array($spalte, $gepflegt, true) || in_array($spalte, $serverSchluessel, true),
                 $spalte . ' ist ein Blind Index ohne Pflege in App\Service\Tresor\Indexpflegen.',
             );
+        }
+
+        // Every row handler belongs to a table the chain visits; the others
+        // are cleared at the end (Indexpflegen::ZU_LEEREN).
+        $tabellen = new VaultRotationRepository($this->pdo())->tabellen();
+        foreach (Indexpflegen::alle($this->pdo()) as $tabelle => $handler) {
+            self::assertArrayHasKey($tabelle, $tabellen, $tabelle . ' hat kein dek_sealed - die Pflege liefe nie.');
+        }
+        foreach (Indexpflegen::ZU_LEEREN as $spalte) {
+            self::assertArrayNotHasKey(explode('.', $spalte)[0], $tabellen);
         }
 
         // ... and every table with a sealed data key takes part.
@@ -423,6 +560,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $b1 = $this->buchung($tresor, $konto, 1);
         $bx = $this->buchung($tresor, $konto, null);
 
+        $auszug = $this->blobService()->storeString('Kontoauszug', new BlobMeta('text/plain', 'auszug.sta'), $tresor, BlobStorage::Db)->id;
+        $import = new BankImportRepository($this->pdo())->insert($konto, 'mt940', $auszug, random_bytes(32), null, null, $this->adminId, $now);
+
         $blob = $this->blobService()->storeString('Originalbeleg', new BlobMeta('application/pdf', 'beleg.pdf'), $tresor, BlobStorage::Db)->id;
         $dokument = new DocumentRepository($this->pdo())->insert(DocumentSource::Intern, null, [$blob], $tresor->sealDataKey(DataKey::generate()), $now);
         new DocumentRepository($this->pdo())->setzeContentBi($dokument, random_bytes(32));
@@ -444,7 +584,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
         return [
             'audit' => $audit->id, 'lieferant' => $lieferant, 'konto' => $konto, 'b0' => $b0, 'b1' => $b1, 'bx' => $bx,
-            'blob' => $blob, 'dokument' => $dokument, 'rechnung' => $rechnung,
+            'blob' => $blob, 'dokument' => $dokument, 'rechnung' => $rechnung, 'import' => $import,
         ];
     }
 
@@ -537,6 +677,8 @@ final class SchluesselrotationTest extends DatabaseTestCase
             'Ohne passende Laufnummer: die nächste freie.',
         );
         self::assertSame(-2500, Buchungen::entschluesseln($neu, new BankTransactionRepository($this->pdo())->find($d['bx']) ?? self::fail())->amount);
+
+        self::assertNull($this->zeile('bank_import', $d['import'])['source_bi'], 'source_bi wird beim Abschluss geleert.');
 
         // The content index is computed again by the job queue.
         self::assertNull($this->zeile('document', $d['dokument'])['content_bi']);

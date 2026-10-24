@@ -9,6 +9,7 @@ use App\Repository\VaultRepository;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\RecoveryKeyException;
 use App\Service\Crypto\RecoveryKeyProblem;
+use App\Service\Crypto\Vault;
 use App\Service\RateLimiter;
 
 /**
@@ -68,7 +69,16 @@ final readonly class VaultRecovery
         }
 
         try {
-            $tresor = RecoveryKey::parse($eingabe)->openVault($aktuell->publicKey(), $aktuell->version);
+            $schluessel = RecoveryKey::parse($eingabe);
+            // During a key rotation (issue #90) the paper key of either active
+            // generation restores access to that generation - the old one
+            // still opens what is not re-sealed yet, the new one what is.
+            foreach ($this->vaults->active() as $generation) {
+                if (hash_equals($generation->publicKey, $schluessel->publicKey())) {
+                    $aktuell = Vault::locked($generation->publicKey, $generation->version);
+                }
+            }
+            $tresor = $schluessel->openVault($aktuell->publicKey(), $aktuell->version);
         } catch (RecoveryKeyException $e) {
             $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
             $problem = self::problemFuer($e, $eingabe, $this->vaults);
@@ -78,7 +88,7 @@ final readonly class VaultRecovery
 
         $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
 
-        $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($aktuell->version, $now), true);
+        $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($tresor->version, $now), true);
         if (!$bereitsFreigegeben) {
             try {
                 $this->verwaltung->freigeben($userId, $tresor, $userId, $now);
@@ -88,6 +98,12 @@ final readonly class VaultRecovery
         }
 
         return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben);
+    }
+
+    /** Whether a vault key rotation runs (issue #90) - then two paper keys may be needed. */
+    public function rotationLaeuft(): bool
+    {
+        return $this->vaults->rotationInProgress();
     }
 
     /**

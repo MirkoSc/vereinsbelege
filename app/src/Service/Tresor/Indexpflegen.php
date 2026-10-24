@@ -27,6 +27,18 @@ use App\Service\MasterData\SupplierService;
 final class Indexpflegen
 {
     /**
+     * Blind indexes in tables WITHOUT a sealed key of their own: the
+     * row-by-row chain never visits them, the rotation's last step clears
+     * them in one go.
+     *   - `bank_import.source_bi`: the account line of an imported statement,
+     *     only used to suggest the account for the next file of the same
+     *     source; recomputing means parsing every stored file. Effect: the
+     *     first statement after a rotation is matched by the account's IBAN
+     *     (recomputed) or picked by hand once.
+     */
+    public const array ZU_LEEREN = ['bank_import.source_bi'];
+
+    /**
      * @return array<string, Indexpflege> table => handler
      */
     public static function alle(\PDO $pdo): array
@@ -39,7 +51,6 @@ final class Indexpflegen
             new KontoIndexpflege(new BankAccountService($pdo, new BankAccountRepository($pdo)), $rotation),
             new BuchungsIndexpflege(new BankTransactionRepository($pdo), $rotation),
             new DokumentIndexpflege(new JobRepository($pdo), $rotation),
-            new KontoauszugIndexpflege($rotation),
         ];
 
         $alle = [];

@@ -46,4 +46,9 @@ final readonly class KontoIndexpflege implements Indexpflege
 
         $this->rotation->setzeSpalte('bank_account', 'id', $id, 'iban_bi', $neu);
     }
+
+    public function verwerfen(int $id): void
+    {
+        $this->rotation->setzeSpalte('bank_account', 'id', $id, 'iban_bi', null);
+    }
 }

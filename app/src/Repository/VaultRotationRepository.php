@@ -161,6 +161,15 @@ final readonly class VaultRotationRepository
     }
 
     /**
+     * Clears a blind index column in every row - for a table without a
+     * sealed key of its own, which the row-by-row chain never visits.
+     */
+    public function leereSpalte(string $tabelle, string $spalte): void
+    {
+        $this->pdo->exec(sprintf('UPDATE `%s` SET `%s` = NULL', self::pruefe($tabelle), self::pruefe($spalte)));
+    }
+
+    /**
      * Whether a value of a unique-per-account blind index is taken - for the
      * duplicate key of a booking, whose running number has to stay free.
      *

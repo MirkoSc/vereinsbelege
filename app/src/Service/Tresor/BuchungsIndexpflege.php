@@ -74,6 +74,12 @@ final readonly class BuchungsIndexpflege implements Indexpflege
         }
     }
 
+    public function verwerfen(int $id): void
+    {
+        $this->rotation->setzeSpalte($this->tabelle(), 'id', $id, 'counterparty_bi', null);
+        $this->rotation->setzeSpalte($this->tabelle(), 'id', $id, 'dedup_bi', null);
+    }
+
     private function dedup(Vault $tresor, int $alteVersion, int $kontoId, string $gespeichert, \App\Domain\BankTransaction $b): string
     {
         $alt = $tresor->blindIndexFor($alteVersion);
