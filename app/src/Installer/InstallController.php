@@ -378,8 +378,11 @@ final readonly class InstallController
                 $start = (int) $_SESSION['install_restore']['dump_offset'];
 
                 // A step that is still marked running broke off hard (time
-                // limit, lost process): its last statement may have run
-                // without its boundary being kept. The mark is set for this
+                // limit or a fatal error - PHP still writes the session
+                // then): its last statement may have run without its
+                // boundary being kept. A killed process writes no session
+                // at all; that case stays a restore from the start (E-34).
+                // The mark is set for this
                 // step and cleared when it ends - also with an error, since
                 // then no statement is left half-confirmed.
                 $abgebrochen = ($_SESSION['install_restore']['schritt_laeuft'] ?? false) === true;

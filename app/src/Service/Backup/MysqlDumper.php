@@ -252,6 +252,12 @@ final readonly class MysqlDumper
     private function auswahl(string $table, array $schluessel, array $binary, ?array $nach): array
     {
         if ($schluessel === []) {
+            if ($nach !== null) {
+                // The key vanished between two steps: the whole table again
+                // would repeat the rows already written.
+                throw new \RuntimeException('Der Stand des Datenbank-Dumps passt nicht zur Tabelle.');
+            }
+
             return [sprintf('SELECT * FROM `%s`', $table), []];
         }
 

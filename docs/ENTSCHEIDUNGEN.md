@@ -589,19 +589,31 @@ erklärte dritte Ausnahme von CLAUDE.md §1. Getroffen ohne Rückfrage:
   (Tabellenkopf oder 100 Zeilen), mindestens ein Teil. Eine Portion
   `file_blob_chunk` ist bis zu ~50 MiB Hex – gelesen ungepuffert und in
   INSERTs zu 512 KiB geschrieben, der Speicher bleibt klein.
-- **Direkt in den ZIP-Eintrag, kein zweiter Durchgang:** jeder Schritt
-  hängt seinen Teil als Deflate-Strom mit Sync-Flush an den offenen Eintrag
-  `dump.sql` an, der CRC läuft als serialisierter `HashContext` im Stand
-  mit. Verworfen: erst eine Dump-Datei über viele Schritte, dann packen –
-  das Packen von Gigabytes wäre wieder ein langer Request bzw. bräuchte
-  dieselbe Mechanik, und der Platz würde doppelt belegt.
+- **In den offenen ZIP-Eintrag, kein Pack-Durchgang am Ende:** jeder
+  Schritt schreibt seinen Teil (≤ Budget + eine Portion) in eine
+  Arbeitsdatei und hängt ihn gleich als Deflate-Strom mit Sync-Flush an den
+  offenen Eintrag `dump.sql` an; der CRC läuft als serialisierter
+  `HashContext` im Stand mit. Verworfen: erst eine Dump-Datei über viele
+  Schritte, dann packen – das Packen von Gigabytes wäre wieder ein langer
+  Request, und der Platz würde doppelt belegt. (Die kleine Arbeitsdatei je
+  Schritt ließe sich durch direktes Packen sparen – bewusst einfach
+  gehalten.)
+- **Speicher-Umzug wartet auf das Backup:** `move()`/`cleanUp()` lehnen ab,
+  solange eine Erstellung läuft – sonst könnte ein Beleg, der zwischen dem
+  Dump von `file_blob` und `file_blob_chunk` umzieht, im Backup fehlen und
+  die Kette trotzdem „erstellt“ melden.
 - **Format unverändert:** die Teile ergeben byte-gleich dieselbe Datei wie
   `dump()` am Stück (dieselben Anweisungen, Zeilen jetzt nach
   Primärschlüssel sortiert); Restore (#120) und Installer bleiben gleich.
 - **Update-Kette nutzt dieselbe Kette** (ohne Dateien von Backend `fs`,
-  ohne `config.php`), ein Aufruf bis 5 s, Antwort `weiter`, die Seite ruft
-  den Schritt erneut auf. Eine Erstellung von der Admin-Seite blockiert den
-  Update-Schritt (Fehler, wiederholbar) statt parallel zu laufen.
+  ohne `config.php`), ein Aufruf beginnt bis 5 s lang Schritte, Antwort
+  `weiter`, die Seite ruft den Schritt erneut auf. Eine Erstellung von der
+  Admin-Seite blockiert den Update-Schritt (Fehler, wiederholbar) statt
+  parallel zu laufen; die Kette des Updates erscheint umgekehrt auf
+  `/admin/backups` als laufend und lässt sich dort abbrechen (Ausweg, wenn
+  sie dauerhaft scheitert). Ist die Kette fertig, aber die Antwort an die
+  Update-Seite verloren gegangen, startet eine Wiederholung ein neues
+  Backup (doppelte Arbeit, kein Datenverlust).
 - **Härtung des Einspielens (aus dem Review von #206):** Markierung
   „Schritt läuft“ in der Installer-Session; nach hartem Abbruch gelten
   1062/1050 nur bei der ersten Anweisung des nächsten Schritts als schon

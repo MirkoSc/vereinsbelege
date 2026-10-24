@@ -266,8 +266,13 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
     in einem Teil wie vor #208. Kein konsistenter Schnappschuss: wer während
     der Kette schreibt, kann zwischen Tabellen bzw. Portionen einen anderen
     Stand sehen (vorher genauso, nur über einen kürzeren Zeitraum; Hinweis
-    in E-34). Die Seite zeigt den Fortschritt als Zeilenzahl
-    (`dump_zeilen`).
+    in E-34). Damit dabei keine Belege fehlen, **verschiebt der
+    Speicher-Umzug nichts, solange eine Erstellung läuft**
+    (`StorageSwitchService::move()`/`cleanUp()` → Fehler „Gerade wird ein
+    Backup erstellt …“, Prüfen bleibt erlaubt). Die Seite zeigt den
+    Fortschritt als Zeilenzahl (`dump_zeilen`). Jeder Schritt schreibt
+    seinen Teil zuerst in eine Arbeitsdatei `erstellung_<id>.dump.part`
+    (Backup-Verzeichnis, nach dem Schritt gelöscht) und packt ihn dann.
   - Download `GET /admin/backups/{name}`: nur über `BackupService::path()`
     (Muster + Datei im Backup-Verzeichnis, sonst 404), gestreamt per
     `StreamResponse` in Stücken zu 1 MiB, Zeitlimit je Stück neu gesetzt
@@ -293,8 +298,9 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   kaputtgehen kann dabei das Schema, und genau das holt der Dump zurück.
   Der `backup`-Schritt nutzt dieselbe Schrittkette wie die Admin-Seite
   (`BackupErstellung::starten(mitBlobs: false, zweck: 'update')`, #208):
-  ein Aufruf führt Schritte aus, solange
-  `UpdateService::BACKUP_SEKUNDEN` (5 s) nicht um sind, und antwortet mit
+  ein Aufruf beginnt Schritte, solange `UpdateService::BACKUP_SEKUNDEN`
+  (5 s) nicht um sind (der letzte läuft mit seinem eigenen Budget zu Ende,
+  ein Aufruf dauert also höchstens 5 s + ein Schritt), und antwortet mit
   `weiter: true`, solange die Kette nicht fertig ist; der Schritt bleibt
   dann offen (`abgeschlossener_schritt` unverändert), `public/js/update.js`
   ruft ihn erneut auf. Mit Backend `db` (Belege als Zeilen im Dump) sind

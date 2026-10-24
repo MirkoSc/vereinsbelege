@@ -33,9 +33,10 @@ final class UpdateService
     public const array STEPS = ['check', 'download', 'extract', 'backup', 'switch', 'migrate', 'finish'];
 
     /**
-     * A call of the backup step starts no further part after this many
-     * seconds; one part (BackupErstellung::DUMP_SEKUNDEN) still fits into
-     * max_execution_time = 30.
+     * A call of the backup step starts no further chain step after this
+     * many seconds. The step already running finishes on its own budget
+     * (BackupErstellung::DUMP_SEKUNDEN plus one portion), so a call lasts
+     * at most this plus one step - inside max_execution_time = 30.
      */
     public const float BACKUP_SEKUNDEN = 5.0;
 
