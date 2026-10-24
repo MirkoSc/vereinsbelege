@@ -454,7 +454,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         ], new \DateTimeImmutable()));
         self::assertSame('teilweise', $this->buchung($manuell)['doc_status'], 'the choice changes the need, not what is allocated');
         self::assertSame(0, (int) $this->buchung($manuell)['doc_required']);
-        foreach ([['betrag' => '50,00'], ['richtung' => 'einnahme']] as $abweichend) {
+        foreach ([['betrag' => '50,00'], ['richtung' => 'einnahme', 'kategorie' => '']] as $abweichend) {
             try {
                 $buchungen->aendern($this->tresor, $buchung, [
                     'konto' => (string) $kasse, 'datum' => '2026-03-20', 'betrag' => '100,00', 'richtung' => 'ausgabe',
