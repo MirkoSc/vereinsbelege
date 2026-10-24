@@ -33,7 +33,7 @@ use App\Service\Processing\Betrag;
 $betrag = static fn(int $cent): string => e(Betrag::format($cent)) . ' €';
 $belegMarke = static fn(BankTransactionDocStatus $s): string => match ($s) {
     BankTransactionDocStatus::Fehlt => 'marke marke-warnung',
-    BankTransactionDocStatus::Zugeordnet => 'marke marke-ok',
+    BankTransactionDocStatus::Zugeordnet, BankTransactionDocStatus::Teilweise => 'marke marke-ok',
     BankTransactionDocStatus::NichtNoetig => 'marke',
 };
 $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';

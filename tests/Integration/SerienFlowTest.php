@@ -61,6 +61,7 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\KiAuslesungFabrik;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 
 /**
@@ -229,7 +230,7 @@ final class SerienFlowTest extends DatabaseTestCase
         // Back to review and saved with the other supplier.
         $documents = new DocumentRepository($this->pdo());
         $this->pdo()->prepare("UPDATE document SET status = 'in_pruefung' WHERE id = ?")->execute([$dritter]);
-        $felder = [...array_fill_keys(Pruefung::feldnamen(), ''), 'richtung' => 'ausgabe', 'belegart' => 'rechnung', 'datum' => '2026-03-02', 'brutto' => '450,00', 'waehrung' => 'EUR', 'lieferant' => (string) $andere];
+        $felder = [...array_fill_keys(Pruefung::feldnamen(), ''), 'richtung' => 'ausgabe', 'belegart' => 'rechnung', 'datum' => '2026-03-02', 'brutto' => '450,00', 'waehrung' => 'EUR', 'zahlungsweg' => 'konto', 'lieferant' => (string) $andere];
         $this->pruefung()->speichern($documents->find($dritter) ?? self::fail(), $this->tresor, $felder, true, false, $this->userId, '127.0.0.1', new \DateTimeImmutable());
         $this->allesAbarbeiten();
 
@@ -354,6 +355,43 @@ final class SerienFlowTest extends DatabaseTestCase
         self::assertCount(4, $this->mitglieder($serie->id));
     }
 
+    public function testTheOverviewShowsFiguresAndMarksAMissingReceiptOverdue(): void
+    {
+        $this->monatlich(3);
+        $this->allesAbarbeiten();
+        $serie = $this->serien()[0];
+
+        // A suggestion has no due date to miss yet.
+        $vorschlag = $this->get('/app/serien')->body;
+        self::assertStringContainsString('Wiederkehrende Kosten', $vorschlag);
+        self::assertStringNotContainsString('marke-fehler', $vorschlag);
+
+        $this->post('/app/serien/' . $serie->id, [...$this->felder(), 'belege' => array_map(strval(...), $this->mitglieder($serie->id))]);
+        $neu = $this->geprueft('2026-04-03', '470,00');
+        $this->allesAbarbeiten();
+
+        // Next expected 2026-05-03 plus 7 days is long past: overdue.
+        $liste = $this->get('/app/serien');
+        self::assertSame(200, $liste->status);
+        self::assertStringContainsString('<span class="marke marke-fehler">überfällig</span>', $liste->body);
+        self::assertStringContainsString('1 Serie ist überfällig', $liste->body);
+        self::assertStringContainsString('href="/app/serien/' . $serie->id . '"', $liste->body, 'jump to the series');
+        self::assertStringContainsString('href="/app/belege/pruefen/' . $neu . '">Beleg vom 03.04.2026', $liste->body, 'jump to the newest receipt');
+        self::assertStringContainsString('470,00 EUR', $liste->body, 'last amount');
+        self::assertStringContainsString('5.640,00 EUR', $liste->body, 'yearly projection');
+        self::assertStringContainsString('+4,4 %', $liste->body, 'trend since the oldest receipt');
+        self::assertStringContainsString('Ausgaben pro Jahr (Hochrechnung):', $liste->body);
+
+        // A series without a fixed rhythm has no due date and no projection.
+        $this->post('/app/serien/' . $serie->id, [
+            ...$this->felder(['periode' => 'unregelmaessig', 'naechste' => '', 'betrag' => '470,00']),
+            'belege' => array_map(strval(...), $this->mitglieder($serie->id)),
+        ]);
+        $unregelmaessig = $this->get('/app/serien')->body;
+        self::assertStringNotContainsString('marke-fehler', $unregelmaessig);
+        self::assertStringNotContainsString('pro Jahr (Hochrechnung)', $unregelmaessig);
+    }
+
     public function testADismissedSuggestionIsNotProposedAgain(): void
     {
         $this->monatlich(3);
@@ -473,6 +511,7 @@ final class SerienFlowTest extends DatabaseTestCase
             'datum' => $datum,
             'brutto' => $brutto,
             'waehrung' => 'EUR',
+            'zahlungsweg' => 'konto',
             'lieferant' => (string) ($lieferant ?? $this->miete),
         ];
         $this->pruefung()->speichern($documents->find($id) ?? self::fail(), $this->tresor, $felder, true, false, $this->userId, '127.0.0.1', new \DateTimeImmutable());
@@ -624,6 +663,7 @@ final class SerienFlowTest extends DatabaseTestCase
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
             KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
             new JobRepository($pdo),
+            ZuordnungFabrik::bauen($pdo, $this->audit),
         );
     }
 

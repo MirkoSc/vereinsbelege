@@ -20,6 +20,7 @@ use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
 use App\Domain\Supplier;
 use App\Domain\SupplierKeyKind;
+use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -31,6 +32,7 @@ use App\Repository\SupplierRepository;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -40,6 +42,7 @@ use App\Service\Document\KiAuslesung;
 use App\Service\Document\KiAuszug;
 use App\Service\Document\LieferantenAufloesung;
 use App\Service\Document\Texterkennung;
+use App\Service\Inbox\EinreichungsDaten;
 use App\Service\Inbox\Posteingang;
 use App\Service\MasterData\Aufloesung;
 use App\Service\MasterData\AufloesungsArt;
@@ -130,6 +133,7 @@ final readonly class Pruefung
         private Buchungsregeln $regeln,
         private LieferantenAufloesung $lieferantenAufloesung,
         private JobRepository $jobs,
+        private Zuordnung $zuordnung,
     ) {
     }
 
@@ -268,6 +272,7 @@ final readonly class Pruefung
         $felder = array_fill_keys(self::feldnamen(), '');
         $felder['belegart'] = InvoiceType::Rechnung->value;
         $felder['richtung'] = InvoiceDirection::Ausgabe->value;
+        $felder['zahlungsweg'] = Zahlungsweg::Konto->value;
         $felder['waehrung'] = 'EUR';
         $felder['kostenstelle'] = $document->costCenterId === null ? '' : (string) $document->costCenterId;
         if ($beleg === null) {
@@ -283,6 +288,7 @@ final readonly class Pruefung
             ...$felder,
             'belegart' => $r->docType->value,
             'richtung' => $r->direction->value,
+            'zahlungsweg' => $r->paymentKind->value,
             'datum' => $datum($r->invoiceDate),
             'faellig' => $datum($r->dueDate),
             'leistung_von' => $datum($r->serviceFrom),
@@ -303,6 +309,27 @@ final readonly class Pruefung
         foreach (array_values($d->taxes) as $i => $steuer) {
             $felder['steuer_satz_' . ($i + 1)] = str_replace('.', ',', $steuer['rate']);
             $felder['steuer_betrag_' . ($i + 1)] = Betrag::format($steuer['amount']);
+        }
+
+        return $felder;
+    }
+
+    /**
+     * The Zahlungsweg a submission implies (M10-1, issue #65): what the
+     * person asked about the money - reimbursement by transfer, cash
+     * received, paid by the club - prefills the field of a receipt not yet
+     * captured. Nothing for a document without a submission or one whose
+     * payload cannot be opened.
+     *
+     * @param array<string, string> $felder
+     *
+     * @return array<string, string>
+     */
+    public function zahlungswegVorbelegen(array $felder, InboxItem $item, Vault $vault): array
+    {
+        $art = EinreichungsDaten::entschluesseln($item, $vault)?->erstattung;
+        if ($art !== null) {
+            $felder['zahlungsweg'] = Zahlungsweg::ausErstattungsart($art)->value;
         }
 
         return $felder;
@@ -748,7 +775,7 @@ final readonly class Pruefung
      */
     public static function feldnamen(): array
     {
-        $namen = ['richtung', 'belegart', 'datum', 'nummer', 'brutto', 'waehrung', 'netto'];
+        $namen = ['richtung', 'belegart', 'zahlungsweg', 'datum', 'nummer', 'brutto', 'waehrung', 'netto'];
         for ($i = 1; $i <= self::STEUERN_MAX; $i++) {
             $namen[] = 'steuer_satz_' . $i;
             $namen[] = 'steuer_betrag_' . $i;
@@ -797,6 +824,9 @@ final readonly class Pruefung
         $vorherDaten = $vorher === null ? null : self::entschluesseln($vault, $vorher);
         [$struktur, $daten, $warnungen] = $this->pruefe($felder, $document, $vorher);
         $neuerLieferant = $this->neuerLieferant($felder, $struktur, $darfLieferantAnlegen);
+        if ($vorher !== null) {
+            $this->pruefeGegenZuordnungen($vault, $vorher, $struktur, $daten);
+        }
 
         $lieferantAngelegt = false;
         if ($neuerLieferant !== null) {
@@ -826,9 +856,19 @@ final readonly class Pruefung
             } else {
                 // The row keeps its data key, like a supplier does.
                 $invoiceId = $vorher->id;
+                // Checked again under the row lock Zuordnung::zuordnen()
+                // takes too: an allocation made since the first check counts.
+                $gesperrt = $this->invoices->find($invoiceId, sperren: true)
+                    ?? throw new InvoiceRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
+                $this->pruefeGegenZuordnungen($vault, $gesperrt, $struktur, $daten);
                 $key = $vault->openDataKey($vorher->dekSealed);
                 if ($geaendert !== []) {
                     $this->invoices->update($invoiceId, $struktur, self::verschluesseln($key, $invoiceId, $daten), $numberBi, $userId, $now);
+                }
+                // The payment status is derived from Zahlungsweg and gross
+                // amount (M10-1, issue #65): a change of either moves it.
+                if (in_array('payment_kind', $geaendert, true) || in_array('gross', $geaendert, true)) {
+                    $this->zuordnung->belegNeuBerechnen($vault, $invoiceId);
                 }
             }
 
@@ -923,6 +963,31 @@ final readonly class Pruefung
     }
 
     /**
+     * A receipt with allocations (M10-1, issue #65) keeps what they rely
+     * on: the Zahlungsweg must still expect bookings, the direction decides
+     * which bookings fit, and the gross amount cannot fall below what is
+     * already allocated. Releasing the allocations first lifts all three.
+     *
+     * @throws InvoiceRuleViolation
+     */
+    private function pruefeGegenZuordnungen(Vault $vault, InvoiceRecord $vorher, InvoiceStructure $struktur, InvoiceData $daten): void
+    {
+        if (!$this->zuordnung->hatZuordnungen($vorher->id)) {
+            return;
+        }
+        if (!$struktur->paymentKind->erwartetBuchung()) {
+            throw new InvoiceRuleViolation('Dem Beleg sind Buchungen zugeordnet – dieser Zahlungsweg ist erst möglich, wenn die Zuordnungen gelöst sind.', 'zahlungsweg');
+        }
+        $gutschriftWechselt = ($struktur->docType === InvoiceType::Gutschrift) !== ($vorher->docType === InvoiceType::Gutschrift);
+        if ($struktur->direction !== $vorher->direction || $gutschriftWechselt) {
+            throw new InvoiceRuleViolation('Dem Beleg sind Buchungen zugeordnet – Richtung und Belegart lassen sich erst ändern, wenn die Zuordnungen gelöst sind.', 'richtung');
+        }
+        if ($daten->gross < $this->zuordnung->zahlungsstand($vault, $vorher)->zugeordnet) {
+            throw new InvoiceRuleViolation('Dem Beleg ist bereits mehr zugeordnet als dieser Bruttobetrag – erst die Zuordnungen lösen.', 'brutto');
+        }
+    }
+
+    /**
      * @throws InvoiceRuleViolation
      */
     private function wechsle(int $id, DocumentStatus $von, DocumentStatus $nach, ?int $userId, \DateTimeImmutable $now): void
@@ -947,6 +1012,8 @@ final readonly class Pruefung
             ?? throw new InvoiceRuleViolation('Bitte wählen, ob es eine Ausgabe oder eine Einnahme ist.', 'richtung');
         $art = InvoiceType::tryFrom($feld('belegart'))
             ?? throw new InvoiceRuleViolation('Bitte die Belegart wählen.', 'belegart');
+        $zahlungsweg = Zahlungsweg::tryFrom($feld('zahlungsweg'))
+            ?? throw new InvoiceRuleViolation('Bitte den Zahlungsweg wählen.', 'zahlungsweg');
 
         $datum = self::datum($feld('datum'), 'datum', 'Das Belegdatum')
             ?? throw new InvoiceRuleViolation('Bitte das Belegdatum angeben.', 'datum');
@@ -964,6 +1031,11 @@ final readonly class Pruefung
             throw new InvoiceRuleViolation('Bitte den Bruttobetrag angeben.', 'brutto');
         }
         $brutto = self::betrag($feld('brutto'), 'brutto', 'Den Bruttobetrag');
+        // A booking settles a positive amount (M10-1): a receipt of 0 € or
+        // less could never be paid and would stay open for good.
+        if ($brutto <= 0 && $zahlungsweg->erwartetBuchung()) {
+            throw new InvoiceRuleViolation('Bei diesem Zahlungsweg muss der Bruttobetrag größer als 0 sein. Gutschriften als positiven Betrag mit Belegart „Gutschrift“ erfassen, Belege über 0 € mit Zahlungsweg „kein Zahlungsbezug“.', 'brutto');
+        }
         $netto = $feld('netto') === '' ? null : self::betrag($feld('netto'), 'netto', 'Den Nettobetrag');
 
         $steuern = [];
@@ -1004,6 +1076,7 @@ final readonly class Pruefung
             serviceTo: $bis,
             categoryId: $this->kategorie($feld('kategorie'), $richtung, $vorher?->categoryId),
             costCenterId: $this->kostenstelle($feld('kostenstelle'), [$vorher?->costCenterId, $document->costCenterId]),
+            paymentKind: $zahlungsweg,
         );
 
         $warnungen = [];
@@ -1179,6 +1252,7 @@ final readonly class Pruefung
             serviceTo: $struktur->serviceTo,
             categoryId: $struktur->categoryId,
             costCenterId: $struktur->costCenterId,
+            paymentKind: $struktur->paymentKind,
         );
     }
 

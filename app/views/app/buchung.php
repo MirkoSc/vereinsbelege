@@ -212,7 +212,7 @@ if (!$neu) {
                     <tr>
                         <th scope="row">Beleg</th>
                         <td data-label="Beleg">
-                            <span class="marke<?= $buchung->docStatus === BankTransactionDocStatus::Fehlt ? ' marke-warnung' : ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet ? ' marke-ok' : '') ?>"><?= e($buchung->docStatus->label()) ?></span><?= $herkunft($buchung->docSource) ?>
+                            <span class="marke<?= $buchung->docStatus === BankTransactionDocStatus::Fehlt ? ' marke-warnung' : ($buchung->docStatus->hatBeleg() ? ' marke-ok' : '') ?>"><?= e($buchung->docStatus->label()) ?></span><?= $herkunft($buchung->docSource) ?>
                         </td>
                     </tr>
                     <tr><th scope="row">Herkunft</th><td data-label="Herkunft"><?= e($buchung->source->label()) ?></td></tr>
@@ -248,7 +248,7 @@ if (!$neu) {
                     <option value="<?= e(Buchungen::BELEG_NICHT_NOETIG) ?>"<?= ($einordnung['beleg'] ?? '') === Buchungen::BELEG_NICHT_NOETIG ? ' selected' : '' ?>>kein Beleg nötig</option>
                 </select>
             </label>
-            <?php if ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet): ?>
+            <?php if ($buchung->docStatus->hatBeleg()): ?>
                 <p class="feld-hilfe">Ein Beleg ist zugeordnet – das bleibt so, egal was hier steht.</p>
             <?php endif; ?>
 
@@ -275,7 +275,7 @@ if (!$neu) {
 
         <?php if ($bearbeitbar): ?>
             <h3>Buchung löschen</h3>
-            <?php if ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet): ?>
+            <?php if ($buchung->docStatus->hatBeleg()): ?>
                 <p class="gedaempft">Der Buchung ist ein Beleg zugeordnet – sie lässt sich deshalb nicht löschen.</p>
             <?php else: ?>
                 <form method="post" action="/app/buchungen/<?= e((string) $buchung->id) ?>/loeschen" class="formular">

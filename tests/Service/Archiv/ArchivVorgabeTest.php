@@ -91,8 +91,9 @@ final class ArchivVorgabeTest extends TestCase
         $gelesen = [...self::LEER, 'datum' => '2026-02-03', 'lieferant' => '3'];
         $vorgabe = new ArchivVorgabe(pfad: 'a.pdf', lieferantId: 3, datum: new \DateTimeImmutable('2026-02-03'), kasse: true, hinweise: ['vom Pfad']);
 
-        ['hinweise' => $hinweise] = $vorgabe->ueberlagern(self::LEER, $gelesen, 'E-Rechnung');
+        ['felder' => $felder, 'hinweise' => $hinweise] = $vorgabe->ueberlagern(self::LEER, $gelesen, 'E-Rechnung');
 
-        self::assertSame(['Aus dem Archiv-Import: „a.pdf“.', 'Archiv: Ordner „Kasse“ – bar bezahlt.', 'vom Pfad'], $hinweise);
+        self::assertSame(['Aus dem Archiv-Import: „a.pdf“.', 'Archiv: Ordner „Kasse“ – bar bezahlt, Zahlungsweg vorbelegt.', 'vom Pfad'], $hinweise);
+        self::assertSame('bar', $felder['zahlungsweg'], 'the Kasse folder prefills the Zahlungsweg (M10-1)');
     }
 }

@@ -1512,8 +1512,9 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
   „Buchung ohne Beleg".
 
 **Stand M8-1** (issue #57, Migration 036, E-26): Erkennung, Vorschlag,
-Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
-„überfällig" folgt mit M8-2 (#58), Serien aus Bankbuchungen später.
+Bestätigen/Ändern/Verwerfen. **M8-2** (issue #58, E-33): Übersicht mit
+Jahreshochrechnung/Trend/„überfällig" (unten „Übersicht"). Serien aus
+Bankbuchungen später.
 - *Auslöser:* Jeder Beleg, der in der Prüfansicht „Geprüft“ wird, reiht
   den Session-Job `detect_recurring` ein (`Serien::einreihen()`). Gezählt
   werden nur geprüfte bzw. festgeschriebene Belege
@@ -1564,6 +1565,32 @@ Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
   `serie.verworfen` (Details: Status vorher).
 - *Nie* wird `invoice` geschrieben; Beträge/Namen nur verschlüsselt
   (`recurring_series.data_enc`), `job.state` leer.
+- *Übersicht* (M8-2, `/app/serien`, Titel „Wiederkehrende Kosten“, Recht
+  und Scope wie oben, keine Migration): zuerst die bestätigten Serien, dann
+  die Vorschläge, je Serie Rhythmus, erwarteter Betrag, letzter geprüfter
+  Beleg (Betrag, Datum, Link in die Prüfansicht), Jahreshochrechnung, Trend,
+  nächste Fälligkeit; die Bezeichnung führt zur Serie. Berechnet rein in PHP
+  (`App\Service\Invoice\SerienKennzahlen`, ohne DB); entschlüsselt werden
+  nur die Belege, die die Kennzahlen brauchen (nach Klartext-Datum
+  ausgewählt: der neueste, der Vergleichsbeleg), ein nicht lesbarer Beleg
+  wird übersprungen statt die Seite abzubrechen:
+  - *Jahreshochrechnung* = erwarteter Betrag × Belege pro Jahr (12/4/2/1);
+    „unregelmäßig“ hat keine. Darüber die Summe je Richtung und Währung
+    über die bestätigten Serien („Ausgaben pro Jahr“).
+  - *Trend* = letzter Betrag gegen den neuesten Beleg der Serie, der
+    mindestens 335 Tage älter ist (≈ Vorjahr), sonst gegen den ältesten; nur
+    Belege in der Währung der Serie mit Betrag > 0 (ist der neueste eine
+    Gutschrift oder in anderer Währung: kein Trend), in Zehntelprozent
+    gerundet, ab zwei Belegen.
+  - *Fälligkeit* nur für bestätigte Serien mit nächster Fälligkeit:
+    „fällig“ ab dem Tag bis einschließlich Fälligkeit + `tolerance_days`,
+    danach **„überfällig“** (Marke, Hinweis mit Anzahl über der Tabelle).
+    Maßgeblich sind nur geprüfte Belege – ein Beleg, der noch im Posteingang
+    liegt, beendet „überfällig“ erst mit dem Prüfen (dann verknüpft ihn die
+    Serie und rechnet `next_expected` weiter). Vorschläge und verworfene
+    Serien sind nie überfällig.
+  - Keine Mail und kein Cron: „überfällig“ entsteht beim Anzeigen (der Cron
+    kann ohne Tresor nichts entschlüsseln, CLAUDE.md §4).
 
 ## 10. Volltextsuche (Session-Index)
 
@@ -1825,7 +1852,13 @@ zweiter Lauf aktualisiert, festgeschriebene zählen und bleiben unverändert,
 Lieferanten getrennt, Toleranz-Setting, Migration 036, Liste/Formular/
 Bestätigen mit Audit nur Feldnamen, bestätigte Serie übernimmt den nächsten
 Beleg, Verwerfen ohne erneuten Vorschlag, Validierung je Feld, Tresor/CSRF,
-Zusammenführen; `RoutePermissionMatrixTest`);
+Zusammenführen; `RoutePermissionMatrixTest`; M8-2: `SerienKennzahlenTest`:
+Jahreshochrechnung je Rhythmus, keine bei „unregelmäßig“, Trend gegen ≈
+Vorjahr bzw. ältesten Beleg, keiner bei einem Beleg/anderer Währung,
+„überfällig“ erst nach der Toleranz, nur bestätigte Serien mit Fälligkeit,
+nur benötigte Belege entschlüsselt, unlesbarer übersprungen, Summen;
+`SerienFlowTest`: Übersicht mit „überfällig“, Links zu Serie und Beleg,
+letzter Betrag, Hochrechnung, Trend, Vorschlag nie überfällig);
 Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der
 Stückelung, Seitenreihenfolge zählt, kein reiner SHA-256, anderer Tresor anders,
 gesperrter Tresor wirft; `DuplikatindexJobTest`: beide Speicher-Backends, ein

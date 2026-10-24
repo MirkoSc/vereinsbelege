@@ -302,6 +302,51 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
   bestätigter Beleg ist keine Prüfung seiner Stammdaten.
 
+## E-27 ✅ Allocation-Modell: Zahlungsweg am Beleg, materialisiert abgeleitete Status (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-1 (issue #65), 02 „Fachdaten“, 04 §5, 05 §2/§3*
+
+- **Abgeleitet, aber gespeichert:** `invoice.payment_status` und
+  `bank_transaction.doc_status` (`teilweise`/`zugeordnet`) sind reine
+  Funktionen der Allocation-Summen und werden von genau einem Service
+  (`App\Service\Bank\Zuordnung`) nach jeder Änderung neu geschrieben –
+  niemand setzt sie von Hand, kein Formular zeigt sie editierbar. Gespeichert
+  werden sie trotzdem, weil die Beträge verschlüsselt sind: Die Listen von
+  M10-5 (unbezahlt, fällig, offene Erstattungen, Buchungen ohne Beleg)
+  müssen in SQL filtern und blättern können, ohne jeden Beleg zu
+  entschlüsseln. Das ist dieselbe Stelle, an der M9-6 schon `zugeordnet`
+  vorgesehen hat.
+- **Zahlungsweg als Klartext-Strukturfeld** (`payment_kind`): `konto`,
+  `erstattung`, `bar`, `keine`. Nur die ersten beiden erwarten Buchungen.
+  `bar` = „bar bezahlt ohne Kassenbuchung“ ist **immer bezahlt** (der Beleg
+  ist der Zahlungsnachweis) – so landen Archiv-Belege aus dem Ordner
+  `Kasse` nicht dauerhaft in „unbezahlt“. Wer Kassenbons mit dem Kassenbuch
+  (manuelle Kassenbuchungen, M9-5) abgleichen will, wählt `konto`.
+  **Offen für Mirko:** ob „Bar erhalten“ aus der Einreichung besser `konto`
+  (Kassenbuchung erwartet) als `bar` wäre; ob ein Backfill für vor M10-1
+  erfasste Archiv-Belege (alle `konto`/`offen`) nötig ist – ein
+  Session-Job könnte `kasse` aus dem `vorgabe`-Artefakt nachziehen.
+- **Teilbeträge positiv, Richtung passt:** Der Betrag einer Zuordnung ist
+  der Teil des Belegbruttos, den die Buchung ausgleicht – nie negativ. Eine
+  Gutschrift wird von einer Buchung der **Gegenrichtung** ausgeglichen
+  (Rückzahlung); „Gutschrift gegen Rechnung“ heißt: Rechnung mit
+  Differenzgrund `gutschrift` abschließen, Gutschrift selbst `keine`.
+  Verworfen: negative Allocation-Beträge (eine Gutschrift „im“ Betrag einer
+  Sammelüberweisung) – sie hätten jede Summenprüfung und M10-2/M10-3
+  verkompliziert.
+- **Skonto als Differenzgrund am Beleg** (`difference_reason`), nicht als
+  eigene Allocation-Zeile ohne Buchung: Der Rest ist Brutto − zugeordnet
+  und wird berechnet, nicht gespeichert. Gründe: `skonto`, `gutschrift`,
+  `sonstiges`.
+- **Festgeschriebene Belege** nehmen Zuordnungen an; die Festschreibung
+  schützt den Inhalt des Belegs, nicht seinen Zahlungsverlauf.
+- **Export:** „Referenz“ = Verwendungszweck der ausgleichenden Buchungen
+  (die E-Rechnungs-/SEPA-Referenz `eref` wird derzeit nicht in den
+  Buchungs-Klartext gehoben). **Offen für Mirko:** ob „Referenz“ eher die
+  Buchungs-ID oder `eref` sein soll; ob „bezahlt am“ auch bei teilbezahlt
+  (Datum der letzten Rate) gefüllt werden soll.
+- **Umbuchungen eigene Konten (M10-6)** brauchen keine Allocation: Das sind
+  Buchung↔Buchung-Paare; vorgesehen ist eine eigene Verknüpfung plus ein
+  `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
@@ -345,6 +390,27 @@ Die Spec (03 §9) nennt nur die Eckwerte. Umgesetzt (Details 03 §9 „Stand M8-
 - **Noch nicht:** Serien aus Bankbuchungen (Mandatsreferenz), Übersicht mit
   Jahreshochrechnung/Trend/„überfällig“ (M8-2, #58), Hinweis auf die Serie in
   der Prüfansicht.
+
+## E-33 ❓ Übersicht „Wiederkehrende Kosten“: Kennzahlen und „überfällig“
+*M8-2 (issue #58) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht“):
+- **Keine neue Seite**, sondern `/app/serien` erweitert (Titel „Wiederkehrende
+  Kosten“, bestätigte Serien vor den Vorschlägen); Recht und „nur ohne Scope“
+  wie E-26. Keine Migration.
+- **Jahreshochrechnung** = erwarteter Betrag × Belege pro Jahr, nicht die
+  Summe der letzten zwölf Monate (die wäre bei neuen Serien zu klein);
+  „unregelmäßig“ bekommt keine. Summe je Richtung und Währung.
+- **Trend** gegen den Beleg etwa ein Jahr davor (≥ 335 Tage), sonst gegen den
+  ältesten der Serie – eine Prozentzahl, kein Diagramm.
+- **„Überfällig“** = heute nach nächster Fälligkeit + Toleranz, nur bei
+  bestätigten Serien; dazwischen „fällig“. Es zählen nur **geprüfte** Belege
+  (wie E-26) – ein noch ungeprüfter Beleg im Posteingang hebt die Markierung
+  nicht auf. Verworfen: Posteingang mitzählen (dort ist der Betrag noch nicht
+  bestätigt und der Lieferant oft noch offen).
+- **Nur Anzeige:** keine Mail, kein Hinweis auf der Startseite/Navigation,
+  kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
+  wäre ein Folge-Issue.
 
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*

@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace App\Service\Export;
 
 use App\Domain\Blob;
+use App\Domain\InvoiceRecord;
 use App\Domain\Supplier;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\SettingRepository;
+use App\Service\Bank\Zahlungsangaben;
+use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
@@ -42,8 +45,10 @@ use App\Support\FileLogger;
  * the store is left out before the first byte - in index.csv it reads
  * "(Datei fehlt)" - so one lost file never breaks the whole ZIP.
  *
- * "bezahlt am", "Konto", "Referenz" and `{kasse}` stay empty until receipts
- * are matched to payments (M10-1, issue #65).
+ * "bezahlt am", "Konto", "Referenz" and `{kasse}` come from the receipt's
+ * allocations once it is settled (M10-1, issue #65, App\Service\Bank\
+ * Zuordnung::zahlungsangaben()); a receipt paid in cash without a cash-book
+ * entry only sets `{kasse}`.
  */
 final readonly class ZipExport
 {
@@ -87,6 +92,7 @@ final readonly class ZipExport
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
         private SettingRepository $settings,
+        private Zuordnung $zuordnung,
         private ?FileLogger $logger = null,
         private int $sekundenJeDatei = 0,
     ) {
@@ -96,8 +102,11 @@ final readonly class ZipExport
      * @param int|null $lauf the documents of this export run instead of the
      *        filter's "nur noch nicht exportierte" (issue #179/M12-4,
      *        InvoiceRepository::exportListe())
+     * @param Zugriffsbereich|null $buchungsbereich the scope of `bank.view` -
+     *        "bezahlt am", "Konto" and "Referenz" come from bookings in it;
+     *        null without that right: the columns stay empty
      */
-    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault, ?int $lauf = null): ExportPlan
+    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault, ?int $lauf = null, ?Zugriffsbereich $buchungsbereich = null): ExportPlan
     {
         $muster = ExportEinstellungen::fromSettings($this->settings)->muster;
         $wurzel = ExportEinstellungen::wurzelordner($filter->von, $filter->bis);
@@ -124,10 +133,14 @@ final readonly class ZipExport
         $fehlend = 0;
         $documentIds = [];
 
-        foreach ($this->belege->exportListe($filter, $bereich, $lauf) as $beleg) {
+        $belege = $this->belege->exportListe($filter, $bereich, $lauf);
+        $zahlungen = $this->zuordnung->zahlungsangaben($vault, array_map(static fn(ExportBeleg $b): InvoiceRecord => $b->invoice, $belege), $buchungsbereich);
+
+        foreach ($belege as $beleg) {
             $documentIds[] = $beleg->invoice->documentId;
             $invoice = $beleg->invoice;
             $daten = Pruefung::entschluesseln($vault, $invoice);
+            $zahlung = $zahlungen[$invoice->id] ?? new Zahlungsangaben();
 
             $lieferant = null;
             if ($invoice->supplierId !== null) {
@@ -146,9 +159,7 @@ final readonly class ZipExport
                 nr: $daten->invoiceNumber,
                 betragCent: $daten->gross,
                 waehrung: $daten->currency,
-                // Paid in cash is known once receipts are matched to
-                // payments (M10-1, issue #65).
-                kasse: false,
+                kasse: $zahlung->kasse,
             ));
             $vorne = ExportStatus::ungeprueft($beleg->status) ? [self::ORDNER_WIEDERVORLAGE] : [];
 
@@ -189,9 +200,9 @@ final readonly class ZipExport
                 Csv::text($kategorie ?? ''),
                 Csv::text($invoice->costCenterId === null ? '' : ($kostenstellen[$invoice->costCenterId] ?? '')),
                 $beleg->status->bezeichnung(),
-                '',
-                '',
-                '',
+                $zahlung->bezahltAm?->format('d.m.Y') ?? '',
+                Csv::text(implode(' | ', $zahlung->konten)),
+                Csv::text(implode(' | ', $zahlung->referenzen)),
                 // "|" cannot occur in a name (App\Service\Export\Dateiname).
                 // The formula guard holds here too: a path that begins with
                 // "-" or "+" (a pattern starting with {betrag}) gets the

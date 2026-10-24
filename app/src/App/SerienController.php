@@ -18,6 +18,7 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\SerienAnsicht;
+use App\Service\Invoice\SerienKennzahlen;
 use App\Service\Invoice\Serien;
 use App\Service\Processing\Betrag;
 use App\View\Area;
@@ -26,8 +27,10 @@ use App\View\View;
 
 /**
  * Recurring invoices /app/serien (M8-1, issue #57, docs/spec/
- * 03-erfassung-und-ki.md section 9): the suggestions the `detect_recurring`
- * job found and the confirmed series; one series' page to confirm a
+ * 03-erfassung-und-ki.md section 9): the overview "Wiederkehrende Kosten"
+ * (issue #58/M8-2) - the suggestions the `detect_recurring` job found and
+ * the confirmed series with newest receipt, yearly projection, trend and
+ * the "überfällig" mark; one series' page to confirm a
  * suggestion (rhythm, expected amount, next date, tolerance, label,
  * contract reference, which receipts belong to it), change a confirmed one
  * or dismiss either.
@@ -60,14 +63,16 @@ final readonly class SerienController
             return $this->eingeschraenkt();
         }
         $tresor = $this->tresor($request);
-        $liste = $tresor === null ? [] : $this->serien->liste($tresor);
+        $liste = $tresor === null ? [] : $this->serien->liste($tresor, new \DateTimeImmutable());
+        $bestaetigt = array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt));
 
         return Response::html($this->view->render('app/serien', [
-            'title' => 'Wiederkehrende Rechnungen',
+            'title' => 'Wiederkehrende Kosten',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
             'vorschlaege' => array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Vorgeschlagen)),
-            'bestaetigt' => array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt)),
+            'bestaetigt' => $bestaetigt,
+            'summen' => SerienKennzahlen::summen($bestaetigt),
         ], Area::App));
     }
 
