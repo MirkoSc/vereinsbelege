@@ -347,6 +347,46 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - **Umbuchungen eigene Konten (M10-6)** brauchen keine Allocation: Das sind
   Buchung↔Buchung-Paare; vorgesehen ist eine eigene Verknüpfung plus ein
   `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
+## E-36 ✅ Erstattungen: Einreicher-IBAN ohne gespeicherten Index, begrenzte Kombinationssuche (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-3 (issue #67), 04 §5*
+
+- **Keine Migration, kein neuer Index:** Die IBAN des Einreichers steht nur
+  in der versiegelten Einreichung (`submission.payload_enc`). Statt einen
+  Blind Index am Beleg zu speichern (müsste in einer Session nachgezogen
+  und bei jeder Änderung gepflegt werden), wird sie bei der Suche in der
+  Session entschlüsselt und als Blind Index mit demselben Zweck wie
+  `bank_transaction.counterparty_bi` (`bank_transaction.counterparty`)
+  verglichen. Von der Buchung aus werden dafür die offenen Erstattungen
+  gelesen (höchstens 500, ältester Beleg zuerst – ein Verein hat ein paar
+  Dutzend); vom Beleg aus findet SQL die Buchungen direkt über
+  `counterparty_bi`. **Offen für Mirko:** Reicht das bei sehr vielen offenen
+  Erstattungen nicht mehr, ist ein gespeicherter Index am Beleg die
+  Erweiterung.
+- **Nur „Erstattung per Überweisung“ mit gültiger IBAN** zählt; ein Beleg
+  mit Zahlungsweg `erstattung`, dessen Einreichung bar oder ohne IBAN war,
+  wird nur manuell zugeordnet (M10-4). Die IBAN ist nicht in der
+  Prüfansicht änderbar – maßgeblich ist, was der Einreicher angegeben hat.
+- **Kombinationssuche exakt und begrenzt:** Teilmengensumme über die
+  *offenen* Beträge (Brutto − zugeordnet), Ziel = noch nicht zugeordneter
+  Betrag der Buchung, **genau** gleich (keine Toleranz). Grenzen: 6 Belege
+  je Kombination (Spec), die 20 ältesten Kandidaten, 20 000 Rechenschritte
+  (deterministischer Ersatz für ein Zeitlimit, wenige Millisekunden),
+  5 Treffer; kleinere Kombinationen zuerst. Schneidet eine Grenze ab, sagt
+  die Seite das.
+- **Nie automatisch:** Die Kombination wird immer von einem Menschen
+  übernommen (`vorschlag_bestaetigt`, `rule_trace` `erstattung_iban: 60`
+  aus der Punktetabelle plus Zahl der Belege, `score` leer). Die
+  automatische Zuordnung ab 85 Punkten bleibt M10-2 vorbehalten.
+- **Eine Transaktion für die ganze Kombination:** `Zuordnung::zuordnen()`
+  läuft dafür in einer offenen Transaktion des Aufrufers mit (kleine,
+  additive Änderung); jeder Beleg wird mit seinem vollen offenen Betrag
+  ausgeglichen. Sperren Dokumente → Belege → Buchung, jeweils aufsteigend.
+- **Recht `matching.edit`** für Seite und Zuordnen; dessen Zugriffsbereich
+  gilt für Buchung (Buchungsdatum) und Belege (Belegdatum, Kostenstelle).
+  **Offen für Mirko:** ob die Seite später in die Abgleich-Oberfläche
+  (M10-4) wandert; ob eine Teilerstattung (Überweisung kleiner als die
+  Belegsumme) vorgeschlagen werden soll.
+
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,

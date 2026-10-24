@@ -517,6 +517,48 @@ Zuordnungen, Betrag nur als Chiffrat, Audit ohne Betrag, Export-Spalten und
 `{kasse}`), `PruefungFlowTest` (Zahlungsweg-Feld, Vorbelegung aus Archiv
 und Einreichung).
 
+#### Stand M10-3: Erstattungen – Einreicher-IBAN und Kombinationssuche (issue #67, E-36)
+
+- **Verknüpfung über die IBAN des Einreichers** (`App\Service\Bank\Erstattungen`):
+  Kandidaten sind Belege mit Zahlungsweg `erstattung` und Status
+  `erstattung_offen`/`teilbezahlt`, deren Dokument nicht abgelehnt ist und
+  deren Einreichung „Erstattung per Überweisung“ mit gültiger IBAN angibt.
+  Die IBAN wird in der Session aus der versiegelten Einreichung gelesen und
+  als Blind Index (Zweck `bank_transaction.counterparty`) mit der
+  Gegenseite der Buchung verglichen; vom Beleg aus
+  (`buchungenFuerBeleg()`) findet SQL ausgehende Buchungen mit
+  `counterparty_bi` und Beleg-Status `fehlt`/`teilweise`. Keine Migration.
+- **Kombinationssuche** (`App\Service\Bank\Kombinationssuche`, rein):
+  Teilmengen der offenen Beträge, deren Summe **genau** dem noch nicht
+  zugeordneten Betrag der Buchung entspricht – höchstens 6 Belege, die 20
+  ältesten Kandidaten, 20 000 Rechenschritte, 5 Treffer, kleinere
+  Kombinationen zuerst. Das Ergebnis sagt, ob eine Grenze abgeschnitten
+  hat. Ein einzelner passender Beleg ist der 1:1-Fall derselben Suche.
+- **Seite** `/app/buchungen/{id}/erstattung` (`matching.edit`, verlinkt von
+  einer ausgehenden Buchung mit Gegen-IBAN, der noch ein Beleg fehlt):
+  Buchung, Vorschläge mit je einem Knopf „Diese Belege zuordnen“, darunter
+  alle offenen Erstattungen dieser IBAN. Das Formular trägt nur Beleg-IDs.
+- **Zuordnen** schreibt ausschließlich über `Zuordnung` – alle Belege der
+  Kombination in **einer** Transaktion, jeder mit seinem vollen offenen
+  Betrag, Methode `vorschlag_bestaetigt`, `rule_trace`
+  `{erstattung_iban: 60, belege: n}`. Unter den Sperren (Dokumente → Belege
+  → Buchung) wird neu geprüft: offene Erstattung im Zugriffsbereich,
+  Gegen-IBAN = Einreicher-IBAN je Beleg, Summe = offener Betrag der Buchung,
+  1–6 Belege. Sonst `BankRuleViolation`, nichts geschrieben.
+- **Zugriffsbereich** von `matching.edit`: Buchungsdatum für die Buchung
+  (ein Kostenstellen-Scope sieht keine), Belegdatum und Kostenstelle für
+  die Belege. Ohne entsperrten Tresor zeigt und schreibt die Seite nichts.
+- **Audit:** je Beleg `zuordnung.angelegt` (wie M10-1) – nie Betrag, IBAN
+  oder Name.
+
+**Pflicht-Tests M10-3:** `KombinationssucheTest` (exakt, mehrere Belege,
+keine Lösung, höchstens 6, Kandidaten-, Schritt- und Treffergrenze),
+`ErstattungFlowTest` (Sammelerstattung findet und schreibt die Kombination,
+fremde IBAN nicht, Beleg-Seite über den Blind Index, nur offene
+Erstattungen per Überweisung, Hinweise bei Einnahme/ohne IBAN, teilweise
+zugeordnete Buchung, Ablehnung schreibt nichts, Zugriffsbereich, Seite),
+`RoutePermissionMatrixTest` (`matching.edit`).
+
 ### Punktebewertung (Parameter als Settings, Startwerte)
 | Signal | Punkte |
 |---|---|

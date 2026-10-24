@@ -76,6 +76,10 @@ final readonly class Zuordnung
      *
      * @return int the id of the new `allocation` row
      *
+     * Runs in its own transaction - or in the caller's, when one is open
+     * (several receipts settled by one booking at once, App\Service\Bank\
+     * Erstattungen, M10-3): then the caller commits or rolls back.
+     *
      * @throws BankRuleViolation
      */
     public function zuordnen(
@@ -94,7 +98,10 @@ final readonly class Zuordnung
             throw new BankRuleViolation('Der zugeordnete Betrag muss größer als null sein.', 'betrag');
         }
 
-        $this->pdo->beginTransaction();
+        $eigene = !$this->pdo->inTransaction();
+        if ($eigene) {
+            $this->pdo->beginTransaction();
+        }
         try {
             // Document first, then receipt - the order the review page and
             // the duplicate check lock in.
@@ -144,9 +151,11 @@ final readonly class Zuordnung
                 'method' => $methode->value,
                 'score' => $score,
             ], $now);
-            $this->pdo->commit();
+            if ($eigene) {
+                $this->pdo->commit();
+            }
         } catch (\Throwable $e) {
-            if ($this->pdo->inTransaction()) {
+            if ($eigene && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
 

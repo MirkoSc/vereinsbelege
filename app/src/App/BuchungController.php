@@ -400,6 +400,7 @@ final readonly class BuchungController
             'flash' => $this->session->pullFlash(),
             'bearbeitbar' => $darfBuchen && ($buchung === null || $buchung->istManuell()),
             'darfBuchen' => $darfBuchen,
+            'darfAbgleichen' => $this->berechtigungen()->darf(Permission::MatchingEdit),
             // New bookings go to active accounts only; a booking keeps the
             // account it has even once that is deactivated.
             'kontoAuswahl' => array_values(array_filter(

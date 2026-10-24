@@ -24,6 +24,7 @@
  * @var string|null $fehlerFeld
  * @var bool $bearbeitbar the form is shown (bank.book and a manual or new booking)
  * @var bool $darfBuchen holds `bank.book`
+ * @var bool $darfAbgleichen holds `matching.edit` - the link to the reimbursements (M10-3)
  * @var list<\App\Domain\BankAccount> $kontoAuswahl active accounts, plus the booking's own
  * @var array<int, \App\Domain\BankAccount> $konten every account by id
  * @var list<\App\Domain\Category> $kategorieAuswahl active categories, plus the booking's own
@@ -221,6 +222,17 @@ if (!$neu) {
         </div>
     <?php endif; ?>
 </section>
+
+<?php if (!$neu && ($darfAbgleichen ?? false) && $buchung->direction === BankTransactionDirection::Ausgabe
+    && $buchung->counterpartyIban !== '' && in_array($buchung->docStatus, [BankTransactionDocStatus::Fehlt, BankTransactionDocStatus::Teilweise], true)): ?>
+    <section class="schmal">
+        <h3>Erstattung</h3>
+        <p class="gedaempft">Ist das eine Erstattung an ein Mitglied? Offene Erstattungen mit dieser IBAN – auch mehrere Belege in einer Überweisung – lassen sich hier zuordnen.</p>
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/buchungen/<?= e((string) $buchung->id) ?>/erstattung">Erstattungen suchen</a>
+        </p>
+    </section>
+<?php endif; ?>
 
 <?php if (!$neu && $darfBuchen && !$buchung->istManuell()): ?>
     <section class="schmal">

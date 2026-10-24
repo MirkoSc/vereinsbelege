@@ -45,11 +45,20 @@ final readonly class EinreichungsDaten
             return null;
         }
 
+        return self::oeffnen($item->document->submissionId, $item->submissionDekSealed, $item->payloadEnc, $vault);
+    }
+
+    /**
+     * The same from the raw `submission` columns - for readers that have no
+     * inbox item at hand (the reimbursement matching, M10-3, issue #67).
+     */
+    public static function oeffnen(int $submissionId, string $dekSealed, string $payloadEnc, Vault $vault): ?self
+    {
         try {
             $json = FieldCipher::decrypt(
-                $vault->openDataKey($item->submissionDekSealed),
-                $item->payloadEnc,
-                new FieldContext(self::TABLE, $item->document->submissionId, self::COLUMN),
+                $vault->openDataKey($dekSealed),
+                $payloadEnc,
+                new FieldContext(self::TABLE, $submissionId, self::COLUMN),
             );
             $payload = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
         } catch (CryptoException | \JsonException) {

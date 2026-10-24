@@ -375,6 +375,12 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Finanzen, HttpMethod::Post, '/app/buchungen/7/loeschen', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/app/buchungen/neu', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/buchungen', false],
+            // Reimbursements (M10-3): `matching.edit` - Finanzen and Admin only.
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/buchungen/7/erstattung', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/buchungen/7/erstattung', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/buchungen/7/erstattung', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/buchungen/7/erstattung', false],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/buchungen/7/erstattung', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/buchungen/7', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/buchungen/7/loeschen', false],
             // ZIP export (M12-2): export.zip on the user side - the board,
@@ -669,7 +675,9 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             // The backups page (issue #112), optional.
             $stellvertreter,
-            // The recurring series pages (issue #57/M8-1), optional and last.
+            // The recurring series pages (issue #57/M8-1), optional.
+            $stellvertreter,
+            // The reimbursement page (issue #67/M10-3), optional and last.
             $stellvertreter,
         );
 
