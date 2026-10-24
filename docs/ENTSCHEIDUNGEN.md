@@ -173,3 +173,25 @@ Die 9 Fotos für diese Messung liegen **nicht** in diesem Repository (CLAUDE.md
 Beträge, Lieferanten und teils Namen/Adressen. Auswertung lief einmalig
 lokal in der Bearbeitungssession; weder die Fotos noch daraus erzeugte
 Bilder wurden committet.
+
+## E-10 Nachtrag: HEIC (Issue #147) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+HEIC/HEIF wird serverseitig als Original zugelassen (Magic Bytes, nicht
+Endung/MIME); das im Browser erzeugte JPEG ist die aufbereitete Fassung.
+E-10 (Original bleibt immer erhalten) gilt damit unverändert, statt dass das
+konvertierte JPEG zum „Original" wird. Konvertierung nur mit Browser-eigenen
+Dekodern; keine WASM-Bibliothek, weil sie `'wasm-unsafe-eval'` in der CSP
+bräuchte. Wo der Browser HEIC nicht lesen kann, wird die Seite vor dem Upload
+abgelehnt (bisherige Fehlermeldung plus iPhone-Tipp); ein HEIC-Original wird
+nur zusammen mit dem im Browser erzeugten JPEG angenommen. Im Archiv-Import
+wird HEIC übersprungen. Details: Spec 03 §1 „HEIC".
+
+## M7-8 KI-Protokoll: Umfang (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+- Protokolliert werden die Aufrufe des `ai_extract`-Jobs (inkl. Reparatur und
+  Fallback), nicht der „Verbindung testen“-Probe.
+- Die Tabelle `ai_call_log` ist Klartext (Betriebsdaten ohne Belegbezug – auch
+  keine Beleg-ID), damit sie ohne Tresor lesbar ist; Anbieter und Modell werden
+  kopiert, damit die Historie ein gelöschtes Profil überlebt.
+- Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
+  Bereinigung, kein Filter/Export.

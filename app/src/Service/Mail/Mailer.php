@@ -280,7 +280,7 @@ final readonly class Mailer
             $mail->id,
             $errorClass,
             $endgueltig ? MailStatus::Fehler : MailStatus::Offen,
-            $now->modify(sprintf('+%d seconds', $wartesekunden)),
+            $now->setTimestamp($now->getTimestamp() + $wartesekunden),
             $now,
         );
     }

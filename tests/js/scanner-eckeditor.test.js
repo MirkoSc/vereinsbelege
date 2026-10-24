@@ -118,6 +118,12 @@ test('eckeVerschieben accepts a valid move', () => {
     assert.deepEqual(verschoben.slice(1), ecken.slice(1), 'the other 3 corners are untouched');
 });
 
+test('tastaturSchritt converts the screen-pixel step to image pixels via the display scale', () => {
+    // A 4000 px photo shown 400 px wide (skala 0.1): one screen pixel is 10 image pixels.
+    assert.deepEqual(tastaturSchritt('ArrowRight', false, 0.1), { dx: 10, dy: 0 });
+    assert.deepEqual(tastaturSchritt('ArrowUp', true, 0.1), { dx: 0, dy: -100 });
+});
+
 test('tastaturSchritt maps arrow keys to a 1px/10px step', () => {
     assert.deepEqual(tastaturSchritt('ArrowUp', false), { dx: 0, dy: -1 });
     assert.deepEqual(tastaturSchritt('ArrowDown', false), { dx: 0, dy: 1 });

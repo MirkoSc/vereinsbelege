@@ -125,12 +125,16 @@ function eckeVerschieben(ecken, index, punkt, breite, hoehe) {
 
 /**
  * Arrow-key nudging for a corner handle (a `<button>`, keyboard-reachable
- * like every other control): 1 image pixel per press, 10 with Shift held -
+ * like every other control): 1 screen pixel per press, 10 with Shift held -
  * `null` for any other key, so the caller's keydown handler only calls
  * `eckeVerschieben()` for keys that actually mean "move".
+ *
+ * The step is returned in whole IMAGE pixels: a phone photo (~4000 px) is shown
+ * scaled down, so one image pixel would move the handle by a fraction of a
+ * screen pixel. `skala` (display px per image px, default 1) converts.
  */
-function tastaturSchritt(taste, gross) {
-    const schritt = gross ? 10 : 1;
+function tastaturSchritt(taste, gross, skala) {
+    const schritt = Math.max(1, Math.round((gross ? 10 : 1) / (skala > 0 ? skala : 1)));
 
     switch (taste) {
         case 'ArrowUp':
@@ -428,7 +432,7 @@ function eckEditorBinden(wurzel, quelle, ecken) {
         griff.addEventListener('pointercancel', ziehenBeenden);
 
         griff.addEventListener('keydown', (ereignis) => {
-            const schritt = tastaturSchritt(ereignis.key, ereignis.shiftKey);
+            const schritt = tastaturSchritt(ereignis.key, ereignis.shiftKey, skala);
             if (schritt === null) {
                 return;
             }

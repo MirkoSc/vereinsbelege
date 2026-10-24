@@ -475,9 +475,6 @@ function initErfassen() {
     }
 
     function dateiPruefen(datei) {
-        if (erfassenHilfen.istHeic(datei)) {
-            return 'HEIC-Bilder werden nicht unterstützt. Bitte als JPEG oder PNG wählen, oder das Foto direkt aufnehmen.';
-        }
         if (datei.size > maxDateiBytes) {
             return 'Die Datei ist zu groß (höchstens ' + maxDateiMb + ' MB je Datei).';
         }
@@ -503,7 +500,8 @@ function initErfassen() {
         }
 
         zeigeUploadFehler('');
-        const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0;
+        const heic = erfassenHilfen.istHeic(datei);
+        const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0 && !heic;
         const scanbar = typeof istScanbar === 'function' && istScanbar(datei);
         const seite = {
             id: 'seite-' + naechsteId++,
@@ -522,13 +520,14 @@ function initErfassen() {
         renderSeiten(belegId);
 
         warteschlange = warteschlange.then(async function () {
-            if (kannScan && scanbar) {
+            if (kannScan && (scanbar || heic)) {
                 seite.status = 'scan';
                 renderSeiten(belegId);
             }
             try {
                 const ergebnis = await seiteVerarbeiten(datei, {
                     kann: kannScan,
+                    heicWandeln: typeof heicZuJpeg === 'function' ? heicZuJpeg : undefined,
                     aufbereiten: automatischAufbereiten,
                     hochladen: function (teil) {
                         if (seite.status === 'scan') {
@@ -543,13 +542,19 @@ function initErfassen() {
                 seite.blobId = ergebnis.blobId;
                 seite.aufbereitetId = ergebnis.aufbereitetId;
                 seite.serverFallback = ergebnis.serverFallback;
+                if (ergebnis.scanDatei !== null) {
+                    seite.datei = ergebnis.scanDatei;
+                }
                 if (ergebnis.aufbereitet !== null) {
                     vorschauFreigeben(seite);
                     seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
                 }
             } catch (fehler) {
                 seite.status = 'fehler';
-                seite.fehler = fehler.message;
+                seite.fehler = fehler.heic ? 'HEIC nicht lesbar' : fehler.message;
+                if (fehler.heic) {
+                    zeigeUploadFehler(fehler.message);
+                }
             }
             renderSeiten(belegId);
         });

@@ -165,6 +165,26 @@ function nichtMaximaUnterdrueckung(betrag, richtung, breite, hoehe) {
 }
 
 /**
+ * The edge threshold: the percentile of the suppressed magnitudes. A noise-
+ * free image (screenshot, generated graphic) has an exactly flat background,
+ * so almost every suppressed magnitude is 0 and so is the percentile - then
+ * nothing would pass `> schwelle` (or, with a plain `> 0`, every faint blur
+ * tail would). In that degenerate case a fraction of the strongest edge
+ * stands in. Photos always carry sensor noise and never take this branch.
+ */
+function kantenSchwelle(unterdrueckt, p) {
+    const prozentil = perzentil(unterdrueckt, p);
+    let hoechster = 0;
+    for (let i = 0; i < unterdrueckt.length; i++) {
+        if (unterdrueckt[i] > hoechster) {
+            hoechster = unterdrueckt[i];
+        }
+    }
+
+    return prozentil <= hoechster * 1e-6 ? hoechster * 0.1 : prozentil;
+}
+
+/**
  * Binary edge map: blur, Sobel, non-maximum suppression, then a single
  * threshold derived from the image itself (a percentile of the suppressed
  * magnitudes) rather than a fixed value - receipt photos vary too much in
@@ -178,7 +198,7 @@ function kantenKarte(grau, breite, hoehe, optionen) {
     const { betrag, richtung } = sobel(geglaettet, breite, hoehe);
     const unterdrueckt = nichtMaximaUnterdrueckung(betrag, richtung, breite, hoehe);
 
-    const schwelle = perzentil(unterdrueckt, perzentilSchwelle);
+    const schwelle = kantenSchwelle(unterdrueckt, perzentilSchwelle);
     const ausgabe = new Uint8ClampedArray(breite * hoehe);
     if (schwelle > 0) {
         for (let i = 0; i < ausgabe.length; i++) {
