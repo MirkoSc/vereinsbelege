@@ -1376,7 +1376,7 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
 
 **Stand issue #94** (ohne Migration): `/app/suche` findet Belege über ihren
 erkannten Text, ohne dass ein durchsuchbarer Index dauerhaft auf dem Server
-liegt (CLAUDE.md §5, E-22).
+liegt (CLAUDE.md §5, E-24).
 
 - *Kein dauerhafter Index:* weder Klartext noch Wort-HMACs (Blind Indexes je
   Wort) in DB oder Dateien – beides verriete einem Datenbank- oder

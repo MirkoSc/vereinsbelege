@@ -179,7 +179,7 @@ gespeichert. Offen für Mirko: ob Regeln nur für Belege bzw. nur für
 Buchungen gelten können sollen, und ob die Herkunft am gespeicherten Beleg
 festgehalten werden soll (bräuchte eine Migration).
 
-## E-22 ❓ Volltextsuche nur mit Session-Index
+## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
 später Worker-OCR) legt **keinen dauerhaften Index** an – weder Klartext
