@@ -1409,11 +1409,15 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     Liste, sonst Hinweis. USt-ID/Steuernummer werden nicht gelernt.
   - *Eindeutigkeit* (`SupplierService::lernbar()`): eine IBAN oder
     Gläubiger-ID, die schon bei einem **anderen** Lieferanten liegt, wird
-    nicht gelernt; die Seite nennt ihn („bitte zusammenführen“).
+    nicht gelernt, ebenso kein Name, der Name oder Alias eines anderen ist
+    (Stufe 4 würde für ihn mehrdeutig); die Seite nennt ihn („bitte
+    zusammenführen“).
   - *Anzeige vor dem Speichern:* unter der Lieferanten-Auswahl ein
     Ankreuzfeld „Neue Merkmale beim Lieferanten „…“ ergänzen“,
     **vorausgewählt**, mit der Liste der Werte und den Hinweisen; dazu das
-    versteckte Feld `lieferant_lernen_fuer` (ID). Angeboten nur, wenn der
+    versteckten Felder `lieferant_lernen_fuer` (ID) und
+    `lieferant_lernen_stand` (Fingerabdruck des gezeigten Plans, HMAC mit
+    Tresor-Schlüssel, `Merkmale::fingerabdruck()`). Angeboten nur, wenn der
     Beleg noch nicht gespeichert ist, der Lieferant aus KI/E-Rechnung/
     Auflösung gewählt wurde (nicht aus der Archiv-Vorgabe) und die Person
     `supplier.manage` hat. `pruefansicht.js` blendet es aus, sobald ein
@@ -1424,11 +1428,17 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     ein durch einen anderen ersetzter Vorschlag lernt nichts. Nach dem
     Commit des Belegs in **eigener** Transaktion
     (`SupplierService::merkmaleErgaenzen()`): Zeile `FOR UPDATE`, neu
-    entschlüsselt und neu geplant, unter dem Zeilen-DEK neu verschlüsselt,
-    `supplier_key` neu geschrieben, Eindeutigkeit erneut geprüft;
-    `needs_review` bleibt. Audit `lieferant.geaendert` (Entität Lieferant)
-    mit `{felder, beleg}` – nur Feldnamen und Beleg-ID. Ein inzwischen
-    vergebener Schlüssel verwirft nur das Lernen (Hinweis), nicht den Beleg.
+    entschlüsselt und neu geplant (Schlüssel anderer Lieferanten mit
+    `FOR UPDATE` gelesen, damit zwei Speichervorgänge nicht dieselbe IBAN
+    zwei Lieferanten beibringen) – gelernt wird nur, wenn der Plan noch
+    **genau** dem gezeigten entspricht (Fingerabdruck) –, unter dem
+    Zeilen-DEK neu verschlüsselt, `supplier_key` neu geschrieben,
+    Eindeutigkeit erneut geprüft; `needs_review` bleibt. Audit
+    `lieferant.geaendert` (Entität Lieferant) mit `{felder, beleg}` – nur
+    Feldnamen wie beim Formular (`iban`, `aliases`, `creditor_id`,
+    `mandate_refs`) und Beleg-ID. Ein geänderter Plan oder ein verlorenes
+    Sperren (Deadlock/Timeout) verwirft nur das Lernen (Hinweis), nicht den
+    Beleg.
     Die Meldung nennt nur Feldbezeichnungen („Beim Lieferanten ergänzt: IBAN.“).
   - *Unberührt:* festgeschriebene Belege (Speichern ist dort gesperrt) und
     zusammengeführte Lieferanten (weder wählbar noch lernbar).
@@ -1632,8 +1642,8 @@ M7-6b: `LieferantenMerkmaleTest`: neue IBAN/Alias, Bekanntes und Ungültiges
 nicht, Gläubiger-ID nur wenn leer samt Mandat, volle Listen; `PruefungFlowTest`:
 Ankreuzfeld vorausgewählt, Lernen samt `supplier_key` und Audit nur mit
 Feldnamen, nächster Beleg in Stufe 2, ersetzter Vorschlag/abgewählt/ohne
-`supplier.manage`/späteres Speichern lernt nichts, IBAN eines anderen
-Lieferanten genannt und nicht gelernt, abgelehntes Speichern zeigt das Angebot
+`supplier.manage`/späteres Speichern/geänderter Plan lernt nichts, IBAN bzw.
+Name eines anderen Lieferanten genannt und nicht gelernt, abgelehntes Speichern zeigt das Angebot
 wieder, zusammengeführter Lieferant unberührt; `pruefansicht.test.js`);
 Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);

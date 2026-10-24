@@ -236,9 +236,12 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   nur mit dieser Gläubiger-ID. **Nicht** USt-ID/Steuernummer (finden den
   Lieferanten schon in Stufe 1, wenn vorhanden; eine abweichende wäre eher ein
   Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …).
-- **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten → nicht lernen,
-  die Seite nennt ihn; volle Listen (20) → nicht lernen, Hinweis. Der Beleg
-  wird immer gespeichert; das Lernen läuft danach in eigener Transaktion.
+- **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten, oder ein Name,
+  der Name/Alias eines anderen ist → nicht lernen, die Seite nennt ihn; volle
+  Listen (20) → nicht lernen, Hinweis. Der Beleg wird immer gespeichert; das
+  Lernen läuft danach in eigener Transaktion und nur, wenn der Plan noch
+  genau dem gezeigten entspricht – sonst gar nichts (mit Hinweis), denn die
+  Person hat etwas anderes bestätigt.
 - `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
   bestätigter Beleg ist keine Prüfung seiner Stammdaten.
 

@@ -326,6 +326,7 @@ final readonly class PruefungController
         $fuer = $request->post['lieferant_lernen_fuer'] ?? '';
         $lernenFuer = is_string($fuer) && ctype_digit($fuer) ? (int) $fuer : null;
         $lernenAn = ($request->post['lieferant_lernen'] ?? '') === '1';
+        $stand = $request->post['lieferant_lernen_stand'] ?? '';
         try {
             $ergebnis = $this->pruefung->speichern(
                 $eintrag->document,
@@ -337,6 +338,7 @@ final readonly class PruefungController
                 $request->ip,
                 new \DateTimeImmutable(),
                 $lernenAn ? $lernenFuer : null,
+                is_string($stand) ? $stand : '',
             );
         } catch (InvoiceRuleViolation $e) {
             // Shown again as it was, ticked or not - planned anew.
@@ -359,7 +361,7 @@ final readonly class PruefungController
         }
         $warnungen = $ergebnis->warnungen;
         if ($ergebnis->nichtGelernt) {
-            $warnungen[] = 'Die neuen Merkmale wurden nicht beim Lieferanten ergänzt – eine Kennung ist inzwischen bei einem anderen Lieferanten hinterlegt.';
+            $warnungen[] = 'Die neuen Merkmale wurden nicht beim Lieferanten ergänzt – sie haben sich seit dem Anzeigen geändert. Bitte unter „Lieferanten“ prüfen.';
         }
         // After "Geprüft, nächster" the page with the duplicate notice is
         // gone - the message on the next page has to carry it (issue #40).
@@ -635,7 +637,9 @@ final readonly class PruefungController
             'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(regelName: $this->berechtigungen()->darf(Permission::BankView)),
             'lieferantHinweis' => $lieferantHinweis,
             'lieferantPruefen' => $lieferantPruefen,
-            'lernen' => $bearbeitbar ? $lernen : null,
+            'lernen' => $bearbeitbar && $lernen !== null && $tresor !== null
+                ? [...$lernen, 'stand' => $lernen['merkmale']->fingerabdruck($tresor->blindIndex())]
+                : null,
             'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
             'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],

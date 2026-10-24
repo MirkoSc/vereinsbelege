@@ -139,6 +139,9 @@ function initLernen(formular) {
     }
 
     lieferant.addEventListener('change', anwenden);
+    // Changing the direction may clear the choice without a change event
+    // (filtereAuswahl()); initRichtung's listener runs first.
+    formular.querySelectorAll('input[name="richtung"]').forEach((knopf) => knopf.addEventListener('change', anwenden));
     anwenden();
 }
 

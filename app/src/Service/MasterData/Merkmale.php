@@ -15,10 +15,13 @@ use App\Domain\SupplierData;
  * SupplierService::merkmaleErgaenzen().
  *
  * $hinweise say what was left out and why - with values, for the review
- * page only, never for a log, a flash message or the audit.
+ * page only, never for a log, a flash message or the audit. $konflikt: a
+ * value was left out because another supplier holds it (ohne()).
  */
 final readonly class Merkmale
 {
+    private const string ZWECK = 'supplier.lernen';
+
     /**
      * @param list<string> $hinweise
      */
@@ -28,6 +31,7 @@ final readonly class Merkmale
         public ?string $creditorId = null,
         public ?string $mandateRef = null,
         public array $hinweise = [],
+        public bool $konflikt = false,
     ) {
     }
 
@@ -45,7 +49,7 @@ final readonly class Merkmale
     {
         return array_keys(array_filter([
             'aliases' => $this->alias !== null,
-            'ibans' => $this->iban !== null,
+            'iban' => $this->iban !== null,
             'creditor_id' => $this->creditorId !== null,
             'mandate_refs' => $this->mandateRef !== null,
         ]));
@@ -60,7 +64,7 @@ final readonly class Merkmale
     {
         return array_values(array_map(static fn(string $feld): string => match ($feld) {
             'aliases' => 'Name als Alias',
-            'ibans' => 'IBAN',
+            'iban' => 'IBAN',
             'creditor_id' => 'Gläubiger-ID',
             'mandate_refs' => 'Mandatsreferenz',
             default => $feld,
@@ -91,17 +95,33 @@ final readonly class Merkmale
         return $zeilen;
     }
 
-    /** Without the value of $feld (`felder()` key), with $hinweis added - a conflict found later. */
+    /**
+     * Without the value of $feld (`felder()` key), with $hinweis added -
+     * another supplier holds it.
+     */
     public function ohne(string $feld, string $hinweis): self
     {
         return new self(
-            iban: $feld === 'ibans' ? null : $this->iban,
+            iban: $feld === 'iban' ? null : $this->iban,
             alias: $feld === 'aliases' ? null : $this->alias,
             creditorId: $feld === 'creditor_id' ? null : $this->creditorId,
             // A mandate reference only makes sense with its creditor id.
             mandateRef: in_array($feld, ['mandate_refs', 'creditor_id'], true) ? null : $this->mandateRef,
             hinweise: [...$this->hinweise, $hinweis],
+            konflikt: true,
         );
+    }
+
+    /**
+     * What the page showed, keyed by the vault (no plaintext, not
+     * guessable): saving learns only if the plan is still the same.
+     */
+    public function fingerabdruck(\App\Service\Crypto\BlindIndex $index): string
+    {
+        return bin2hex($index->forValue(self::ZWECK, json_encode(
+            [$this->iban, $this->alias, $this->creditorId, $this->mandateRef],
+            JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        )));
     }
 
     /** $daten with the new values added. */

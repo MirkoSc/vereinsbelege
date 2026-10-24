@@ -34,7 +34,7 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertSame('SH Beispiel', $merkmale->alias, 'spaces collapsed');
         self::assertNull($merkmale->creditorId);
         self::assertNull($merkmale->mandateRef);
-        self::assertSame(['aliases', 'ibans'], $merkmale->felder());
+        self::assertSame(['aliases', 'iban'], $merkmale->felder(), 'the payload keys');
         self::assertSame(['Name als Alias', 'IBAN'], $merkmale->bezeichnungen());
         self::assertSame(['IBAN DE02 1203 0000 0000 2020 51', 'Name „SH Beispiel“ als Alias'], $merkmale->beschreibung());
         self::assertSame([], $merkmale->hinweise);
@@ -134,5 +134,18 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertNull($merkmale->creditorId);
         self::assertNull($merkmale->mandateRef);
         self::assertSame(['vergeben'], $merkmale->hinweise);
+        self::assertTrue($merkmale->konflikt);
+    }
+
+    public function testTooLongValuesAreLeftOutAndSaySo(): void
+    {
+        $merkmale = LieferantenMerkmale::neue(
+            new SupplierData(name: 'Stadtwerke Musterstadt', creditorId: self::GLAEUBIGER),
+            ['name' => str_repeat('x', SupplierService::NAME_MAX + 1), 'creditor_id' => self::GLAEUBIGER],
+            str_repeat('M', SupplierService::MANDAT_MAX + 1),
+        );
+
+        self::assertTrue($merkmale->leer());
+        self::assertCount(2, $merkmale->hinweise);
     }
 }

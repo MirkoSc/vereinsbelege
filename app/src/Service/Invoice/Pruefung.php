@@ -767,6 +767,8 @@ final readonly class Pruefung
      * @param ?int $lernenFuer the supplier the page offered to teach and the
      *        person left ticked - learnt only if the receipt is saved for the
      *        first time with exactly that supplier
+     * @param string $lernenStand Merkmale::fingerabdruck() of what the page
+     *        showed - learnt only if that is still the plan
      *
      * @throws InvoiceRuleViolation
      */
@@ -780,6 +782,7 @@ final readonly class Pruefung
         string $ip,
         \DateTimeImmutable $now,
         ?int $lernenFuer = null,
+        string $lernenStand = '',
     ): PruefErgebnis {
         if ($document->status === DocumentStatus::Festgeschrieben) {
             throw new InvoiceRuleViolation('Dieser Beleg ist festgeschrieben und lässt sich nicht ändern. Zum Korrigieren zuerst die Festschreibung aufheben.');
@@ -870,7 +873,7 @@ final readonly class Pruefung
             if ($partner !== []) {
                 $this->pdo->beginTransaction();
                 try {
-                    $merkmale = $this->lieferanten->merkmaleErgaenzen($vault, $lernenFuer, $partner, $mandat, $now);
+                    $merkmale = $this->lieferanten->merkmaleErgaenzen($vault, $lernenFuer, $partner, $mandat, $lernenStand, $now);
                     if ($merkmale !== null) {
                         // Field names only, like every supplier change.
                         $this->audit->record(AuditAction::LieferantGeaendert, $userId, $ip, $lernenFuer, ['felder' => $merkmale->felder(), 'beleg' => $document->id], $now);
@@ -878,8 +881,19 @@ final readonly class Pruefung
                     }
                     $this->pdo->commit();
                 } catch (SupplierRuleViolation) {
-                    // Another supplier got the IBAN or creditor id meanwhile.
+                    // The plan changed since the page was shown.
                     $this->pdo->rollBack();
+                    $nichtGelernt = true;
+                } catch (\PDOException $e) {
+                    // A parallel save of the same supplier or key won the
+                    // locks (deadlock, lock wait timeout): the receipt is
+                    // saved, only the learning is lost - not worth an error.
+                    if ($this->pdo->inTransaction()) {
+                        $this->pdo->rollBack();
+                    }
+                    if (!in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213], true)) {
+                        throw $e;
+                    }
                     $nichtGelernt = true;
                 } catch (\Throwable $e) {
                     if ($this->pdo->inTransaction()) {

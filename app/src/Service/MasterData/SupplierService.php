@@ -55,6 +55,9 @@ final readonly class SupplierService
     /** Per multi-value field: aliases, IBANs, mandate references. */
     public const int LIST_MAX = 20;
 
+    /** A SEPA mandate reference, at most 35 characters. */
+    public const int MANDAT_MAX = 35;
+
     /** A SEPA creditor id, after SupplierKeys::kennung(). */
     public const string GLAEUBIGER_ID_MUSTER = '/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/';
 
@@ -326,28 +329,36 @@ final readonly class SupplierService
      * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
      * LieferantenMerkmale::neue(), minus an IBAN or creditor id that
      * already belongs to another supplier - learning it would make two
-     * suppliers out of one key; they are merged instead. The hint names
-     * that supplier, for the review page only.
+     * suppliers out of one key; they are merged instead - and minus a name
+     * that is another supplier's name or alias: it would make step 4 of the
+     * resolution ambiguous for that one. The hint names the other supplier,
+     * for the review page only. $sperren reads those keys with `FOR UPDATE`
+     * (gap locks included), so two saves cannot teach one IBAN to two
+     * suppliers at the same moment.
      *
      * @param array<mixed> $partner `extract-v1` `supplier`
      */
-    public function lernbar(Vault $vault, Supplier $lieferant, array $partner, string $mandat): Merkmale
+    public function lernbar(Vault $vault, Supplier $lieferant, array $partner, string $mandat, bool $sperren = false): Merkmale
     {
         $merkmale = LieferantenMerkmale::neue($lieferant->data, $partner, $mandat);
         $index = $vault->blindIndex();
-        foreach ([['ibans', SupplierKeyKind::Iban, $merkmale->iban], ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId]] as [$feld, $kind, $wert]) {
+        $pruefen = [
+            ['iban', SupplierKeyKind::Iban, $merkmale->iban],
+            ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId],
+            ['aliases', SupplierKeyKind::Name, $merkmale->alias === null ? null : SupplierKeys::name($merkmale->alias)],
+        ];
+        foreach ($pruefen as [$feld, $kind, $wert]) {
             if ($wert === null) {
                 continue;
             }
-            $andere = $this->lieferanten->idsWithKey($kind, $index->forValue($kind->purpose(), $wert), $lieferant->id);
-            if ($andere !== []) {
-                $anderer = $this->finde($vault, $andere[0]);
-                $merkmale = $merkmale->ohne($feld, sprintf(
-                    'Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.',
-                    $kind->label(),
-                    $anderer?->data->name ?? '?',
-                ));
+            $andere = $this->lieferanten->idsWithKey($kind, $index->forValue($kind->purpose(), $wert), $lieferant->id, $sperren);
+            if ($andere === []) {
+                continue;
             }
+            $anderer = $this->finde($vault, $andere[0])?->data->name ?? '?';
+            $merkmale = $merkmale->ohne($feld, $kind === SupplierKeyKind::Name
+                ? sprintf('Der Name „%s“ gehört bereits zum Lieferanten „%s“ – nicht als Alias übernommen. Ist es derselbe, bitte zusammenführen.', $merkmale->alias, $anderer)
+                : sprintf('Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.', $kind->label(), $anderer));
         }
 
         return $merkmale;
@@ -356,19 +367,22 @@ final readonly class SupplierService
     /**
      * Adds what a confirmed receipt taught (issue #201/M7-6b) to supplier
      * $id: under a row lock, decrypted again and planned again with
-     * lernbar() - not what the page showed a while ago -, re-encrypted
-     * under the row's data key, `supplier_key` rewritten. `needs_review`
-     * stays: a receipt is no review of the supplier. Opens no transaction
-     * of its own; the caller writes the audit entry in it.
+     * lernbar() - and only if that is still exactly what the page showed
+     * ($fingerabdruck, Merkmale::fingerabdruck()) -, re-encrypted under the
+     * row's data key, `supplier_key` rewritten. `needs_review` stays: a
+     * receipt is no review of the supplier. Opens no transaction of its
+     * own; the caller writes the audit entry in it.
      *
-     * Null when there is nothing to learn: the supplier is gone, merged
-     * away or knows it all already.
+     * Null when there is nothing to learn: the supplier is gone or merged
+     * away.
      *
      * @param array<mixed> $partner `extract-v1` `supplier`
      *
-     * @throws SupplierRuleViolation an id that another supplier got in the meantime
+     * @throws SupplierRuleViolation the plan changed since the page was
+     *         shown (another supplier got a value, the receipt was read
+     *         again) - nothing is learnt then
      */
-    public function merkmaleErgaenzen(Vault $vault, int $id, array $partner, string $mandat, \DateTimeImmutable $now): ?Merkmale
+    public function merkmaleErgaenzen(Vault $vault, int $id, array $partner, string $mandat, string $fingerabdruck, \DateTimeImmutable $now): ?Merkmale
     {
         if (!$this->pdo->inTransaction()) {
             throw new \LogicException('merkmaleErgaenzen() runs inside the caller\'s transaction.');
@@ -379,7 +393,10 @@ final readonly class SupplierService
             return null;
         }
         $lieferant = $this->entschluesseln($vault, $record);
-        $merkmale = $this->lernbar($vault, $lieferant, $partner, $mandat);
+        $merkmale = $this->lernbar($vault, $lieferant, $partner, $mandat, sperren: true);
+        if (!hash_equals($merkmale->fingerabdruck($vault->blindIndex()), $fingerabdruck)) {
+            throw new SupplierRuleViolation('Die Merkmale haben sich seit dem Anzeigen der Seite geändert.');
+        }
         if ($merkmale->leer()) {
             return null;
         }
@@ -576,7 +593,7 @@ final readonly class SupplierService
 
         $mandate = [];
         foreach (self::zeilen($felder['mandate_refs'] ?? '', 'Mandatsreferenzen') as $mandat) {
-            self::laenge($mandat, 35, 'Eine Mandatsreferenz');
+            self::laenge($mandat, self::MANDAT_MAX, 'Eine Mandatsreferenz');
             $mandate[SupplierKeys::kennung($mandat)] ??= $mandat;
         }
 

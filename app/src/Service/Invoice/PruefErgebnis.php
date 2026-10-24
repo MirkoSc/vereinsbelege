@@ -11,8 +11,8 @@ namespace App\Service\Invoice;
  *        check), German, without any value of the receipt
  * @param list<string> $gelernt what the receipt taught its supplier (issue
  *        #201/M7-6b) - German labels ("IBAN"), no values
- * @param bool $nichtGelernt learning was refused: an id belongs to another
- *        supplier since the page was shown
+ * @param bool $nichtGelernt learning was refused: the plan changed since
+ *        the page was shown, or a parallel save won the locks
  */
 final readonly class PruefErgebnis
 {

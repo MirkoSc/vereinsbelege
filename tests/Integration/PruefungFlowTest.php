@@ -1633,7 +1633,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('<li>IBAN DE89 3704 0044 0532 0130 00</li>', $seite);
         self::assertStringContainsString('<li>Name „Sporthaus Beispeil“ als Alias</li>', $seite);
 
-        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant));
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
         self::assertSame(302, $antwort->status);
 
         $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
@@ -1647,7 +1647,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $lieferant), null, 10);
         self::assertSame([AuditAction::LieferantGeaendert->value], array_map(static fn(AuditEntry $e): string => $e->action, $zeilen));
-        self::assertSame(['felder' => ['aliases', 'ibans'], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor), 'field names only');
+        self::assertSame(['felder' => ['aliases', 'iban'], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor), 'field names only');
         self::assertStringNotContainsString('Beispeil', $this->rohTabelle('supplier'));
         self::assertStringNotContainsString('Beispeil', $this->rohTabelle('audit_log'));
 
@@ -1670,7 +1670,8 @@ final class PruefungFlowTest extends DatabaseTestCase
         $id = $this->beleg();
         $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
 
-        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($vorschlag), 'lieferant' => (string) $anderer]);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($vorschlag, $stand), 'lieferant' => (string) $anderer]);
 
         self::assertSame($anderer, (int) $this->rechnung($id)['supplier_id']);
         foreach ([$vorschlag, $anderer] as $lieferant) {
@@ -1688,7 +1689,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $id = $this->beleg();
         $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
 
-        $felder = $this->lernFelder($lieferant);
+        $felder = $this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body));
         unset($felder['lieferant_lernen']);
         $this->post('/app/belege/pruefen/' . $id, $felder);
 
@@ -1702,7 +1703,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $id = $this->beleg();
         $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
 
-        $felder = [...$this->lernFelder($lieferant), 'brutto' => ''];
+        $felder = [...$this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body)), 'brutto' => ''];
         unset($felder['lieferant_lernen']);
         $antwort = $this->post('/app/belege/pruefen/' . $id, $felder);
 
@@ -1725,11 +1726,42 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('<li>IBAN', $seite);
         self::assertStringContainsString('<li>Name „Sporthaus Beispiel GmbH“ als Alias</li>', $seite);
 
-        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant));
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
 
         $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
         self::assertSame(['Sporthaus Beispiel GmbH'], $daten?->aliases);
         self::assertSame([], $daten->ibans, 'an IBAN belongs to one supplier only');
+    }
+
+    public function testAPlanChangedSinceThePageWasShownTeachesNothing(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        // Meanwhile someone gives the receipt's IBAN to another supplier.
+        $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $stand));
+
+        self::assertSame(302, $antwort->status);
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id'], 'the receipt is saved all the same');
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases, 'not even the alias - the person confirmed something else');
+        self::assertStringContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+    }
+
+    public function testANameOfAnotherSupplierIsNotLearntAsAnAlias(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'SH Beispiel', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertStringContainsString('Der Name „Sporthaus Beispiel GmbH“ gehört bereits zum Lieferanten „Sporthaus Beispiel“ – nicht als Alias übernommen.', $seite);
+        self::assertStringNotContainsString('als Alias</li>', $seite);
+        self::assertStringContainsString('<li>IBAN DE89 3704 0044 0532 0130 00</li>', $seite);
     }
 
     public function testLearningNeedsSupplierManage(): void
@@ -1745,7 +1777,7 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         self::assertStringNotContainsString('name="lieferant_lernen"', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
 
-        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant));
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, 'erraten'));
         self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id']);
         self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
     }
@@ -1755,11 +1787,12 @@ final class PruefungFlowTest extends DatabaseTestCase
         $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
         $id = $this->beleg();
         $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
-        $erst = $this->lernFelder($lieferant);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        $erst = $this->lernFelder($lieferant, $stand);
         unset($erst['lieferant_lernen']);
         $this->post('/app/belege/pruefen/' . $id, $erst);
 
-        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant), 'aktion' => 'geprueft']);
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $stand), 'aktion' => 'geprueft']);
 
         self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
         self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
@@ -1773,7 +1806,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $vorher = $this->rohTabelle('supplier');
 
         $this->pdo()->beginTransaction();
-        $merkmale = $this->supplierService()->merkmaleErgaenzen($this->tresor, $quelle, ['name' => 'Ganz neu', 'iban' => self::IBAN], '', new \DateTimeImmutable());
+        $merkmale = $this->supplierService()->merkmaleErgaenzen($this->tresor, $quelle, ['name' => 'Ganz neu', 'iban' => self::IBAN], '', '', new \DateTimeImmutable());
         $this->pdo()->commit();
 
         self::assertNull($merkmale);
@@ -1783,18 +1816,27 @@ final class PruefungFlowTest extends DatabaseTestCase
 
     /**
      * The valid form saved ("Speichern") with $lieferant chosen and the
-     * offer to teach it ticked, as the page sends it.
+     * offer to teach it ticked, as the page sends it ($stand: lernStand()).
      *
      * @return array<string, string>
      */
-    private function lernFelder(int $lieferant): array
+    private function lernFelder(int $lieferant, string $stand): array
     {
         return $this->felder([
             'lieferant' => (string) $lieferant,
             'lieferant_lernen' => '1',
             'lieferant_lernen_fuer' => (string) $lieferant,
+            'lieferant_lernen_stand' => $stand,
             'aktion' => 'speichern',
         ]);
+    }
+
+    /** The fingerprint of what the page offers to teach. */
+    private function lernStand(string $seite): string
+    {
+        self::assertSame(1, preg_match('/name="lieferant_lernen_stand" value="([0-9a-f]{64})"/', $seite, $treffer), 'the page offers to teach');
+
+        return $treffer[1];
     }
 
     private function kiEinrichten(): void

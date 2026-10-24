@@ -25,8 +25,8 @@ use App\Domain\SupplierData;
  *   the one learnt now) - without it, it says nothing about who collects.
  * - At most SupplierService::LIST_MAX per list, like the form.
  *
- * Whether an IBAN or creditor id belongs to another supplier needs the
- * blind indexes - SupplierService::lernbar() checks that on top.
+ * Whether an IBAN, creditor id or the name belongs to another supplier
+ * needs the blind indexes - SupplierService::lernbar() checks that on top.
  */
 final class LieferantenMerkmale
 {
@@ -55,7 +55,10 @@ final class LieferantenMerkmale
         $alias = trim((string) preg_replace('/\s+/u', ' ', $wert('name')));
         $normal = SupplierKeys::name($alias);
         $bekannt = array_map(SupplierKeys::name(...), [$lieferant->name, ...$lieferant->aliases]);
-        if ($normal === '' || in_array($normal, $bekannt, true) || mb_strlen($alias) > SupplierService::NAME_MAX) {
+        if ($normal === '' || in_array($normal, $bekannt, true)) {
+            $alias = null;
+        } elseif (mb_strlen($alias) > SupplierService::NAME_MAX) {
+            $hinweise[] = sprintf('Der Name des Belegs ist länger als %d Zeichen – nicht als Alias übernommen.', SupplierService::NAME_MAX);
             $alias = null;
         } elseif (count($lieferant->aliases) >= SupplierService::LIST_MAX) {
             $hinweise[] = $voll('Aliasse');
@@ -78,9 +81,11 @@ final class LieferantenMerkmale
 
         $mandat = trim($mandat);
         $neuesMandat = null;
-        if ($mandat !== '' && $glaeubiger !== '' && mb_strlen($mandat) <= 35
+        if ($mandat !== '' && $glaeubiger !== ''
             && !in_array(SupplierKeys::kennung($mandat), array_map(SupplierKeys::kennung(...), $lieferant->mandateRefs), true)) {
-            if (count($lieferant->mandateRefs) >= SupplierService::LIST_MAX) {
+            if (mb_strlen($mandat) > SupplierService::MANDAT_MAX) {
+                $hinweise[] = sprintf('Die Mandatsreferenz des Belegs ist länger als %d Zeichen – nicht übernommen.', SupplierService::MANDAT_MAX);
+            } elseif (count($lieferant->mandateRefs) >= SupplierService::LIST_MAX) {
                 $hinweise[] = $voll('Mandatsreferenzen');
             } else {
                 $neuesMandat = $mandat;
