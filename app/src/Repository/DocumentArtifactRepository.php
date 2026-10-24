@@ -61,7 +61,7 @@ final readonly class DocumentArtifactRepository
 
     /**
      * Kind prefix of an artifact the worker announced but has not committed
-     * yet (issue #52/M7b-2, migrations/040_worker_grant.sql). Every reader
+     * yet (issue #52/M7b-2, migrations/039_worker_grant.sql). Every reader
      * asks for a concrete kind, so such a row stays invisible until
      * festschreiben() drops the prefix - and it still has its id, which the
      * worker needs for the AAD of `data_enc`.

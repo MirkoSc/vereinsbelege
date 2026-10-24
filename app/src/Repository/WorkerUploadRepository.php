@@ -7,7 +7,7 @@ namespace App\Repository;
 use App\Domain\WorkerUpload;
 
 /**
- * The table `worker_upload` (issue #52/M7b-2, migration 040): artifact
+ * The table `worker_upload` (issue #52/M7b-2, migration 039): artifact
  * uploads the worker announced and has not committed yet. Shape data only;
  * the ciphertext waits in shared/var/tmp (App\Service\Upload\UploadService).
  */
