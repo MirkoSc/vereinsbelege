@@ -20,10 +20,42 @@ $schritt = $schritt ?? '';
     <?php endif; ?>
 
     <?php if (($fertig ?? false) === true): ?>
-        <p class="hinweis hinweis-ok">
-            Installation abgeschlossen. Datenbank, erster Admin und Tresor sind angelegt, die Konfiguration
-            liegt in <code>shared/config.php</code>.
-        </p>
+        <?php if (($restore ?? false) === true): ?>
+            <p class="hinweis hinweis-ok">
+                Wiederherstellung abgeschlossen. Das Backup ist eingespielt, die Konfiguration liegt in
+                <code>shared/config.php</code>.
+            </p>
+        <?php else: ?>
+            <p class="hinweis hinweis-ok">
+                Installation abgeschlossen. Datenbank, erster Admin und Tresor sind angelegt, die Konfiguration
+                liegt in <code>shared/config.php</code>.
+            </p>
+        <?php endif; ?>
+        <?php if (is_array($zugangVerknuepft ?? null)): ?>
+            <div class="hinweis hinweis-warnung">
+                <p>
+                    <strong>Das Konto <?= e($zugangVerknuepft['email']) ?> ist neu verknüpft.</strong>
+                    Anmeldung mit dieser Adresse und dem bisherigen Passwort<?= $zugangVerknuepft['mfaZurueckgesetzt'] ? '; der zweite Faktor wird beim ersten Anmelden neu eingerichtet, die Authenticator-App ist gelöscht' : '' ?>.
+                    <?= $zugangVerknuepft['freigabeErteilt'] ? 'Der Tresor ist für das Konto freigegeben.' : '' ?>
+                </p>
+                <p>Weil das Backup keinen Server-Schlüssel enthielt, gilt für die übrigen Betriebsdaten:</p>
+                <ul>
+                    <li>
+                        <?php if ($zugangVerknuepft['unlesbareKonten'] === 0): ?>
+                            Es gibt keine weiteren Benutzerkonten.
+                        <?php else: ?>
+                            <?= e((string) $zugangVerknuepft['unlesbareKonten']) ?>
+                            <?= $zugangVerknuepft['unlesbareKonten'] === 1 ? 'weiteres Benutzerkonto hat' : 'weitere Benutzerkonten haben' ?>
+                            eine unlesbare E-Mail-Adresse und können sich nicht anmelden, bis unter
+                            <em>Verwaltung → Benutzer</em> die Adresse neu eingetragen ist. Eingerichtete
+                            Authenticator-Apps dieser Konten funktionieren nicht mehr.
+                        <?php endif; ?>
+                    </li>
+                    <li>API-Schlüssel der KI-Anbieter und das SMTP-Passwort müssen neu eingetragen werden.</li>
+                    <li>Noch nicht versendete Mails aus der Warteschlange sind verloren.</li>
+                </ul>
+            </div>
+        <?php endif; ?>
         <?php if (($setupUebrig ?? false) === true): ?>
             <p class="hinweis hinweis-warnung">
                 <strong>Bitte noch von Hand erledigen:</strong> <code>setup.php</code> konnte nicht
@@ -100,6 +132,89 @@ $schritt = $schritt ?? '';
             </form>
         </div>
 
+    <?php elseif ($schritt === 'zugang'): ?>
+        <div class="karte">
+            <h3>Zugang zur wiederhergestellten Installation</h3>
+            <div class="hinweis hinweis-warnung">
+                <p>
+                    <strong>Das Backup ist eingespielt, enthielt aber keinen Server-Schlüssel</strong>
+                    (<code>config.php</code>). Mit einem neuen Schlüssel findet die Anmeldung kein Konto mehr:
+                    die E-Mail-Adressen, Namen und Authenticator-Geheimnisse aller Benutzer sind damit
+                    verschlüsselt. Ohne einen der beiden Wege unten kann sich danach <strong>niemand</strong>
+                    anmelden.
+                </p>
+            </div>
+
+            <?php foreach (['csrf', 'db'] as $feld): ?>
+                <?php if (isset($errors[$feld])): ?>
+                    <p class="hinweis hinweis-fehler" role="alert"><?= e($errors[$feld]) ?></p>
+                <?php endif; ?>
+            <?php endforeach; ?>
+
+            <h4>Weg 1: Server-Schlüssel der alten Installation</h4>
+            <p>
+                Liegt die <code>shared/config.php</code> der alten Installation noch vor (getrennt gesicherte
+                Kopie), übernimmt der Installer deren Schlüssel; alle Konten bleiben dann wie zuvor.
+            </p>
+            <?php if (isset($errors['server_key'])): ?>
+                <p class="hinweis hinweis-fehler" role="alert"><?= e($errors['server_key']) ?></p>
+            <?php endif; ?>
+            <form method="post" action="/install/serverschluessel" enctype="multipart/form-data">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label for="config-datei">config.php hochladen
+                    <input type="file" id="config-datei" name="config" accept=".php,text/plain,application/x-php">
+                </label>
+                <label for="server-key">… oder den Wert von <code>server_key</code> eintragen
+                    <input type="text" id="server-key" name="server_key" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="feld-hilfe">
+                    Der Schlüssel wird nur übernommen, wenn sich damit ein Benutzerkonto des Backups lesen
+                    lässt. Die Datei wird nicht ausgeführt, nur gelesen.
+                </p>
+                <p><button type="submit" class="knopf knopf-primaer">Schlüssel übernehmen und abschließen</button></p>
+            </form>
+
+            <h4>Weg 2: Admin-Konto mit dem Wiederherstellungsschlüssel neu verknüpfen</h4>
+            <p>
+                Der ausgedruckte Wiederherstellungsschlüssel des Vereins (sieben Gruppen) weist die Berechtigung
+                nach; das <strong>bisherige Passwort</strong> bestimmt, welches Admin-Konto gemeint ist. Das Konto
+                bekommt die eingegebene Adresse und den Namen neu, eine eingerichtete Authenticator-App wird
+                zurückgesetzt. Die Adressen der übrigen Benutzer trägt der Admin danach unter
+                <em>Verwaltung → Benutzer</em> neu ein.
+            </p>
+            <?php if (isset($errors['zugang'])): ?>
+                <p class="hinweis hinweis-fehler" role="alert"><?= e($errors['zugang']) ?></p>
+            <?php endif; ?>
+            <form method="post" action="/install/zugang">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label for="zugang-schluessel">Wiederherstellungsschlüssel
+                    <input type="text" id="zugang-schluessel" name="schluessel" autocomplete="off"
+                        autocapitalize="characters" spellcheck="false" required>
+                </label>
+                <label for="zugang-email">E-Mail-Adresse des Admin-Kontos
+                    <input type="email" id="zugang-email" name="admin_email" autocomplete="username"
+                        value="<?= e($values['admin_email'] ?? '') ?>" required>
+                </label>
+                <label for="zugang-name">Name
+                    <input type="text" id="zugang-name" name="admin_name" autocomplete="name"
+                        value="<?= e($values['admin_name'] ?? '') ?>" required>
+                </label>
+                <label for="zugang-password">Bisheriges Passwort
+                    <input type="password" id="zugang-password" name="admin_password" autocomplete="current-password" required>
+                </label>
+                <p><button type="submit" class="knopf knopf-primaer">Konto verknüpfen und abschließen</button></p>
+            </form>
+
+            <form method="post" action="/install/neu">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <p><button type="submit" class="knopf knopf-gefahr">Neu beginnen</button></p>
+                <p class="feld-hilfe">
+                    Zurück zum Formular, etwa um ein anderes Backup einzuspielen. Die bereits eingespielten
+                    Daten bleiben in der Datenbank, bis das nächste Backup sie ersetzt.
+                </p>
+            </form>
+        </div>
+
     <?php elseif (($restore ?? false) === true): ?>
         <div id="wiederherstellung" data-csrf="<?= e($csrf) ?>">
             <p>
@@ -112,18 +227,26 @@ $schritt = $schritt ?? '';
                     übernommen, damit verschlüsselte Betriebsdaten lesbar bleiben.
                 </p>
             <?php else: ?>
-                <p class="hinweis hinweis-warnung">
-                    Das Backup enthält keinen Server-Schlüssel. Es wird ein neuer erzeugt;
-                    mit dem alten Schlüssel verschlüsselte Betriebsdaten (Mail-Adressen, API-Schlüssel)
-                    sind dann nicht mehr lesbar.
-                </p>
+                <div class="hinweis hinweis-warnung">
+                    <p>
+                        <strong>Das Backup enthält keinen Server-Schlüssel.</strong> Damit sind die E-Mail-Adressen,
+                        Namen und Authenticator-Geheimnisse aller Benutzer verschlüsselt – mit einem neuen Schlüssel
+                        könnte sich niemand anmelden.
+                    </p>
+                    <p>
+                        Nach dem Einspielen folgt deshalb ein weiterer Schritt: entweder die getrennt gesicherte
+                        <code>config.php</code> der alten Installation hochladen, oder ein Admin-Konto mit dem
+                        Wiederherstellungsschlüssel und dem bisherigen Passwort neu verknüpfen. API-Schlüssel der
+                        KI-Anbieter und das SMTP-Passwort sind in beiden Fällen nur mit dem alten Schlüssel lesbar.
+                    </p>
+                </div>
             <?php endif; ?>
 
             <p id="wiederherstellung-status" role="status">Starte …</p>
             <progress id="wiederherstellung-fortschritt" max="100" value="0"></progress>
             <p id="wiederherstellung-fehler" class="hinweis hinweis-fehler" role="alert" hidden></p>
             <p id="wiederherstellung-fertig" hidden>
-                <a class="knopf knopf-primaer" href="/">Zur Startseite</a>
+                <a class="knopf knopf-primaer" id="wiederherstellung-weiter" href="/">Zur Startseite</a>
             </p>
         </div>
     <?php else: ?>
@@ -166,9 +289,12 @@ $schritt = $schritt ?? '';
                             <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
                     </label>
                     <p class="feld-hilfe">
-                        Das ZIP stammt aus der Update-Kette oder von <code>bin/backup.php</code>. Enthält es
-                        die <code>config.php</code>, wird der Server-Schlüssel übernommen; Benutzer und
-                        Tresor kommen dann aus dem Backup, das Formular unten entfällt.
+                        Das ZIP stammt aus der Update-Kette oder von <code>bin/backup.php</code>. Benutzer und
+                        Tresor kommen aus dem Backup, das Formular „Erster Zugang“ entfällt. Enthält das ZIP
+                        die <code>config.php</code>, wird der Server-Schlüssel übernommen. <strong>Enthält es
+                        keine</strong> (Standard), braucht es nach dem Einspielen die getrennt gesicherte
+                        <code>config.php</code> oder den Wiederherstellungsschlüssel samt Admin-Passwort –
+                        sonst kann sich niemand anmelden.
                     </p>
                 </div>
             </fieldset>

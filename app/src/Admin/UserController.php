@@ -14,11 +14,14 @@ use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\AuthTokenRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\MfaBackupCodeRepository;
+use App\Repository\MfaTotpRepository;
 use App\Repository\RoleRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
+use App\Service\Account\MfaMethod;
 use App\Service\Account\RoleRuleViolation;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
@@ -66,6 +69,9 @@ final readonly class UserController
         private ServerCrypto $crypto,
         private FreigabeBenachrichtigung $freigabeHinweis,
         private AuditLog $audit,
+        /** Both only for the authenticator reset that goes with a re-entered address (issue #154). */
+        private MfaTotpRepository $totp,
+        private MfaBackupCodeRepository $backupCodes,
         private ?FileLogger $logger = null,
     ) {
     }
@@ -78,10 +84,13 @@ final readonly class UserController
 
         $zeilen = [];
         foreach ($this->users->all() as $user) {
+            // Null = ciphertext under a server key that is gone (restore
+            // without config.php, issue #154): the row shows "nicht lesbar"
+            // and the form lets the admin re-enter the address.
             $zeilen[] = [
                 'id' => $user->id,
-                'name' => $this->crypto->decrypt($user->displayNameEnc),
-                'email' => $this->crypto->decrypt($user->emailEnc),
+                'name' => $this->crypto->decryptOrNull($user->displayNameEnc) ?? $user->platzhalterName(),
+                'email' => $this->crypto->decryptOrNull($user->emailEnc),
                 'rollen' => array_map(static fn(Role $r): string => $r->name, $this->rollen->forUser($user->id)),
                 'status' => self::status($user, $jetzt, $this->tokens->hasUsable($user->id, Invitation::TYP, $jetzt)),
                 'tresor' => self::tresor($user, isset($ausstehend[$user->id]), $jetzt),
@@ -153,16 +162,17 @@ final readonly class UserController
         }
 
         $scope = $this->zugriff->scope($user->id);
+        $email = $this->crypto->decryptOrNull($user->emailEnc);
 
         return $this->formular($user, [
-            'name' => $this->crypto->decrypt($user->displayNameEnc),
-            'email' => $this->crypto->decrypt($user->emailEnc),
+            'name' => $this->crypto->decryptOrNull($user->displayNameEnc) ?? '',
+            'email' => $email ?? '',
             'rollen' => array_map(static fn(Role $r): int => $r->id, $this->rollen->forUser($user->id)),
             'kostenstellen' => $this->zugriff->costCenters($user->id),
             'von' => $scope['von']?->format('Y-m-d') ?? '',
             'bis' => $scope['bis']?->format('Y-m-d') ?? '',
             'ablauf' => $user->expiresAt?->format('Y-m-d') ?? '',
-        ]);
+        ], emailNeuSetzen: $email === null);
     }
 
     /**
@@ -180,17 +190,49 @@ final readonly class UserController
             return $this->nichtGefunden();
         }
 
-        $eingabe = [...self::eingabeAus($request), 'email' => $this->crypto->decrypt($user->emailEnc)];
+        // The address is not editable - except when the stored one does not
+        // open anymore (restore without the old server key, issue #154):
+        // then the form carries a new one and this is the one place that
+        // writes it, together with the blind index the login searches.
+        $gespeicherteEmail = $this->crypto->decryptOrNull($user->emailEnc);
+        $emailNeuSetzen = $gespeicherteEmail === null;
+        $eingabe = self::eingabeAus($request);
+        if (!$emailNeuSetzen) {
+            $eingabe['email'] = $gespeicherteEmail;
+        }
         try {
             [$von, $bis, $ablauf] = self::daten($eingabe);
             if ($eingabe['rollen'] === []) {
                 throw new UserRuleViolation('Bitte mindestens eine Rolle wählen.');
             }
             $name = Invitation::pruefeName($eingabe['name']);
+            if ($emailNeuSetzen) {
+                $email = Invitation::pruefeEmail($eingabe['email']);
+                $emailBi = $this->crypto->blindIndex()->forValue('user.email', $email);
+                $vorhanden = $this->users->findByEmailBlindIndex($emailBi);
+                if ($vorhanden !== null && $vorhanden->id !== $id) {
+                    throw new UserRuleViolation('Für diese E-Mail-Adresse gibt es bereits einen Benutzer.');
+                }
+            }
             $this->zuweisung->zuweisen($id, $eingabe['rollen'], $eingabe['kostenstellen'], $von, $bis, $ablauf);
             $this->verwaltung->umbenennen($id, $name);
+            if ($emailNeuSetzen) {
+                $this->users->updateEmail($id, $this->crypto->encrypt($email), $emailBi);
+                // An authenticator secret that is ciphertext under the same
+                // lost key would fail the login at the second factor forever:
+                // same reset as App\Installer\RestoreAccess::relink(), the
+                // next login sets the second factor up again. A secret that
+                // still opens stays - the second factor is never dropped by
+                // an admin merely re-entering an address.
+                $geheimnis = $user->mfaMethod === MfaMethod::Totp ? $this->totp->forUser($id) : null;
+                if ($geheimnis !== null && $this->crypto->decryptOrNull($geheimnis->secretEnc) === null) {
+                    $this->totp->delete($id);
+                    $this->backupCodes->deleteAllForUser($id);
+                    $this->users->updateMfaMethod($id, null);
+                }
+            }
         } catch (UserRuleViolation | RoleRuleViolation $e) {
-            return $this->formular($user, $eingabe, $e->getMessage(), 422);
+            return $this->formular($user, $eingabe, $e->getMessage(), 422, emailNeuSetzen: $emailNeuSetzen);
         }
 
         $this->audit->record(
@@ -200,10 +242,14 @@ final readonly class UserController
             $id,
             [
                 ...self::zugriffDetails($eingabe['rollen'], $eingabe['kostenstellen'], $von, $bis, $ablauf),
-                'name_geaendert' => $name !== $this->crypto->decrypt($user->displayNameEnc),
+                'name_geaendert' => $name !== $this->crypto->decryptOrNull($user->displayNameEnc),
+                'email_neu_gesetzt' => $emailNeuSetzen,
             ],
         );
-        $this->session->flash(sprintf('Benutzer „%s“ gespeichert.', $name));
+        $this->session->flash(sprintf(
+            $emailNeuSetzen ? 'Benutzer „%s“ gespeichert, die E-Mail-Adresse ist neu gesetzt – die Anmeldung ist wieder möglich.' : 'Benutzer „%s“ gespeichert.',
+            $name,
+        ));
 
         return Response::redirect('/admin/benutzer/' . $id);
     }
@@ -229,9 +275,10 @@ final readonly class UserController
         }
 
         $this->audit->record(AuditAction::BenutzerGesperrt, $this->session->userId(), $request->ip, $id);
-        if ($user?->status === UserStatus::Aktiv) {
+        $email = $user === null ? null : $this->crypto->decryptOrNull($user->emailEnc);
+        if ($user?->status === UserStatus::Aktiv && $email !== null) {
             $this->mailer->sendeSicherheitshinweis(
-                $this->crypto->decrypt($user->emailEnc),
+                $email,
                 'Ihr Zugang wurde von der Vereinsverwaltung gesperrt. Die Freigabe für den Tresor ist damit entzogen.',
             );
         }
@@ -282,6 +329,12 @@ final readonly class UserController
         }
 
         $user = $this->users->findById($id);
+        $email = $user === null ? null : $this->crypto->decryptOrNull($user->emailEnc);
+        if ($user !== null && $email === null) {
+            $this->session->flash('Die E-Mail-Adresse dieses Kontos ist nicht lesbar. Bitte zuerst oben eine Adresse eintragen und speichern.', FlashArt::Fehler);
+
+            return Response::redirect('/admin/benutzer/' . $id);
+        }
         try {
             $token = $this->einladung->erneutSenden($id);
         } catch (UserRuleViolation $e) {
@@ -289,10 +342,10 @@ final readonly class UserController
 
             return Response::redirect('/admin/benutzer/' . $id);
         }
-        assert($user !== null);
+        assert($user !== null && $email !== null);
 
         $this->audit->record(AuditAction::EinladungErneut, $this->session->userId(), $request->ip, $id);
-        $this->einladungSenden($request, $this->crypto->decrypt($user->emailEnc), $token, 'Neue Einladung');
+        $this->einladungSenden($request, $email, $token, 'Neue Einladung');
 
         return Response::redirect('/admin/benutzer/' . $id);
     }
@@ -339,14 +392,15 @@ final readonly class UserController
     /**
      * @param array{name: string, email: string, rollen: list<int>, kostenstellen: list<int>, von: string, bis: string, ablauf: string} $eingabe
      */
-    private function formular(?User $user, array $eingabe, ?string $fehler = null, int $status = 200): ResponseInterface
+    private function formular(?User $user, array $eingabe, ?string $fehler = null, int $status = 200, bool $emailNeuSetzen = false): ResponseInterface
     {
         $jetzt = new \DateTimeImmutable();
 
         return Response::html($this->view->render('admin/benutzer-form', [
-            'title' => $user === null ? 'Benutzer einladen' : 'Benutzer ' . $eingabe['name'],
+            'title' => $user === null ? 'Benutzer einladen' : 'Benutzer ' . ($eingabe['name'] !== '' ? $eingabe['name'] : $user->platzhalterName()),
             'user' => $user,
             'eingabe' => $eingabe,
+            'emailNeuSetzen' => $emailNeuSetzen,
             'fehler' => $fehler,
             'flash' => $this->session->pullFlash(),
             'alleRollen' => $this->rollen->all(),

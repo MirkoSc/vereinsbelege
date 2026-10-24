@@ -43,6 +43,17 @@ final readonly class User
     }
 
     /**
+     * What a row is called while its name is ciphertext under a lost server
+     * key (restore without config.php, issue #154): the id is the only
+     * readable handle it has. Used wherever ServerCrypto::decryptOrNull()
+     * came back empty.
+     */
+    public function platzhalterName(): string
+    {
+        return 'Benutzer #' . $this->id;
+    }
+
+    /**
      * Whether a second factor is actually usable, not merely required
      * (docs/spec/01-sicherheit.md section 3, issue #17): `mfa_required`
      * defaults to true for every account from the moment it is created
