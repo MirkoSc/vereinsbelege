@@ -30,6 +30,11 @@ final class ResponseSendTest extends TestCase
 
     protected function setUp(): void
     {
+        // The dev container disables proc_open (like the host); CI runs this.
+        if (!function_exists('proc_open')) {
+            self::markTestSkipped('proc_open is not available (disable_functions).');
+        }
+
         $this->sessionDir = sys_get_temp_dir() . '/response-send-' . bin2hex(random_bytes(6));
         mkdir($this->sessionDir, 0700);
 
@@ -50,6 +55,9 @@ final class ResponseSendTest extends TestCase
 
     protected function tearDown(): void
     {
+        if ($this->sessionDir === '') {
+            return; // setUp skipped before creating anything
+        }
         if (is_resource($this->server)) {
             proc_terminate($this->server);
             proc_close($this->server);

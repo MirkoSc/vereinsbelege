@@ -171,6 +171,27 @@ test('kantenErkennen finds the corners of a perspective-skewed bright sheet on a
     assert.ok(abweichung <= 0.03, `Abweichung ${(abweichung * 100).toFixed(1)}% > 3% der Diagonale`);
 });
 
+test('kantenErkennen finds the corners of a perfectly noise-free sheet on a smooth dark background', () => {
+    // Screenshots and generated graphics have no sensor noise: nearly every
+    // gradient is exactly 0, which used to collapse the percentile threshold.
+    const breite = 300;
+    const hoehe = 400;
+    const bild = leinwand(breite, hoehe, 40);
+    const ecken = [
+        { x: 50, y: 40 },
+        { x: 250, y: 40 },
+        { x: 250, y: 360 },
+        { x: 50, y: 360 },
+    ];
+    viereckFuellen(bild, ecken, 240, () => 0.5, 0);
+
+    const gefunden = kantenErkennen(bild);
+
+    assert.notEqual(gefunden, null);
+    const abweichung = groessteAbweichungAnteil(gefunden, ecken, breite, hoehe);
+    assert.ok(abweichung <= 0.03, `Abweichung ${(abweichung * 100).toFixed(1)}% > 3% der Diagonale`);
+});
+
 test('kantenErkennen returns null for a blank, featureless image', () => {
     const bild = leinwand(200, 260, 128);
     assert.equal(kantenErkennen(bild), null);
