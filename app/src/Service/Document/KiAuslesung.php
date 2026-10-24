@@ -14,6 +14,7 @@ use App\Domain\JobExecutor;
 use App\Domain\OcrStatus;
 use App\Domain\Permission;
 use App\Domain\Zugriffsbereich;
+use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -121,6 +122,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         private AiProviderRepository $anbieter,
         private KiAbfrage $abfrage,
         private Auslesung $auslesung,
+        private AiCallLogRepository $protokoll,
         private SupplierAufloesung $lieferanten,
     ) {
     }
@@ -209,6 +211,9 @@ final readonly class KiAuslesung implements ExternerJobHandler
                 'extraktion' => $vorschlag?->extraktion,
                 'hinweise' => $vorschlag->hinweise ?? [],
             ]);
+            // After the attempt is stored: a request that dies in between
+            // asks again from the stored attempt and logs nothing twice.
+            $this->protokoll->insert($versuch->aufruf, $now);
         }
 
         return $this->weiter($document, $job, $n, $vault, $now);
@@ -426,13 +431,14 @@ final readonly class KiAuslesung implements ExternerJobHandler
                 }
                 continue;
             }
-            if ($mime !== MagicBytes::JPEG && $mime !== MagicBytes::PNG) {
+            if ($mime !== MagicBytes::JPEG && $mime !== MagicBytes::PNG && $mime !== MagicBytes::HEIC) {
                 continue;
             }
             $verarbeitet = $document->processedBlobId($index);
             if ($verarbeitet !== null && $this->mimeType($verarbeitet, $vault) === MagicBytes::JPEG) {
                 $quellen[] = [$verarbeitet, false];
-            } else {
+            } elseif ($mime !== MagicBytes::HEIC) {
+                // A HEIC original without a JPEG is no input for the model.
                 $quellen[] = [$originalId, $mime === MagicBytes::PNG];
             }
         }

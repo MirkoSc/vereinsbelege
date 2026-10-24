@@ -8,8 +8,7 @@ Mobile-first, eine Seite, kein Login. Ablauf:
    - „Foto aufnehmen": Live-Kamera (`getUserMedia`, Rückkamera) mit
      Rahmen-Overlay; Fallback `<input type="file" accept="image/*"
      capture="environment">` (iOS/ältere Browser).
-   - „Bild wählen" (JPEG/PNG; HEIC wird im Browser, wenn möglich, konvertiert,
-     sonst verständliche Fehlermeldung).
+   - „Bild wählen" (JPEG/PNG; HEIC/HEIF, seit #147: siehe „HEIC" unten).
    - „PDF oder E-Rechnung wählen" (PDF, ZUGFeRD/Factur-X-PDF oder
      XRechnung als XML-Datei, seit M7-4 – Abschnitt 3).
    - Mehrere Seiten pro Beleg: „Weitere Seite hinzufügen", Reihenfolge per
@@ -149,6 +148,32 @@ Bedienung:
   Karte „Seite fotografieren“.
 - Der Posteingang zeigt die aufbereitete Fassung mit „Original öffnen“
   (`Posteingang::seiten()`, `Document::blobIds()` enthält beide).
+
+### HEIC (Issue #147, vorläufig)
+
+- **Server:** `MagicBytes` erkennt HEIC/HEIF am `ftyp`-Kopf (Hauptmarke
+  `heic`, `heix`, `hevc`, `hevx`, `heim`, `heis`, `hevm`, `hevs`; bei `mif1`/
+  `msf1` nur mit HEVC-Marke unter den kompatiblen Marken – so bleiben AVIF
+  und MP4 abgelehnt). Endung und MIME-Typ des Browsers zählen nicht.
+- **E-10 bleibt:** Das HEIC ist das **Original**, das im Browser erzeugte
+  JPEG die **aufbereitete Fassung**. Der Server liest nie HEIC (GD kann es
+  nicht), deshalb nimmt der Client ein HEIC **nur zusammen mit dem JPEG**
+  an. Absicherung auf dem Server: `pdf_erzeugen` scheitert bei einem
+  HEIC-Original ohne aufbereitete Fassung mit verständlichem Hinweis, die
+  KI-Auslesung überspringt die Seite (die Blob-Metadaten der öffentlichen
+  Einreichung sind versiegelt, eine Prüfung beim Absenden ist dort nicht
+  möglich). Im **Archiv-Import** wird HEIC übersprungen („HEIC wird im
+  Archiv-Import nicht unterstützt – bitte als JPEG/PDF beilegen“).
+- **Browser:** Nur eigene Dekoder (`createImageBitmap`, Safari kann HEIC),
+  keine Bibliothek: ein WASM-Dekoder bräuchte `'wasm-unsafe-eval'` in der
+  CSP (CLAUDE.md §4). Die Fähigkeitsprüfung ist der Versuch selbst –
+  schlägt er fehl (Chrome/Firefox), wird die Seite **vor dem Upload
+  abgelehnt** mit der bisherigen Fehlermeldung (`HEIC_HINWEIS`, ergänzt um
+  den iPhone-Tipp Einstellungen › Kamera › Formate › „Maximale
+  Kompatibilität“). Das JPEG (Qualität 0,95) läuft durch dieselbe
+  Scanner-Pipeline wie JPEG/PNG; scheitert der Scanner, ist das
+  umgewandelte JPEG selbst die aufbereitete Fassung. „Zuschneiden"
+  arbeitet auf dem JPEG.
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -327,6 +352,57 @@ der **Server-Fallback** in `pdf_erzeugen` (Abschnitt 3):
 
 Kein Entzerren, keine adaptive Schwelle – das bleibt dem Browser. Eine
 A4-Seite braucht so in PHP unter 1 s.
+
+### Live-Kantenerkennung im Kamerabild (issue #146)
+
+Der Kameradialog (`public/js/scanner/kamera.js`,
+`app/views/partials/kamera-dialog.php`) zeigt zusätzlich zum A4-Rahmen das
+**live erkannte Viereck** über dem Video. Reine, mit `node --test`
+geprüfte Funktionen (`tests/js/kamera.test.js`):
+
+- **Drosselung:** `kantenErkennen()` (M5-2, unverändert) läuft auf einer
+  auf `LIVE_BREITE` = 320 px Breite (lange Kante höchstens 500 px, die
+  Arbeitsgröße von `kantenErkennen`) verkleinerten Kopie des Frames
+  (`vorschauGroesse`, nie hochskaliert). Nächster Start frühestens nach
+  `LIVE_INTERVALL_MS` = 400 ms, und danach mindestens so lange Pause, wie
+  die Erkennung selbst brauchte (`naechsteErkennungIn`) – auf einem
+  langsamen Handy bleibt der Hauptthread so höchstens zur Hälfte belegt.
+  Keine Erkennung bei verstecktem Tab, ungeladenem Frame oder laufender
+  Aufnahme. Ein Fehler in der Erkennung gilt als „nichts gefunden“.
+- **Stabilität:** `liveFortschreiben` – „stabil“ sind
+  `LIVE_STABIL_ANZAHL` = 3 aufeinanderfolgende Treffer, von denen sich
+  **jedes Paar** um höchstens `LIVE_STABIL_TOLERANZ` = 2 % der
+  Bilddiagonale unterscheidet (`eckenAbweichung`, größte Eckverschiebung) –
+  paarweise, damit langsames Wandern nicht als Stillhalten gilt. Ein
+  Fehlschlag oder ein geänderter Frame (Drehen des Handys) beginnt von vorn.
+- **Overlay:** ein `<svg class="kamera-overlay">` über dem ganzen Video
+  mit einem `<polygon>`; die Punkte setzt `overlayPunkte` als **Attribut**
+  (kleiner Frame → Videopixel → Elementpixel unter `object-fit: contain`,
+  `anzeigeAbbildung`), kein Inline-Style, kein Inline-Skript (CSP).
+  Gestrichelt gelb, solange das Viereck wandert, durchgezogen grün, sobald
+  es stabil ist; dazu die Statuszeile „Beleg erkannt.“ (`role=status`,
+  `liveHinweis`).
+- **Auslösen:** manuell immer möglich, auch ohne Viereck. Automatisches
+  Auslösen ist ein Ankreuzfeld im Dialog (E-20), **standardmäßig aus**, gilt bis zum
+  Neuladen der Seite (nicht gespeichert, `autocomplete="off"`); angekreuzt
+  löst die erste stabile Erkennung aus. Nach einem Klick auf „Kamera-App
+  verwenden“ (dessen Dateiauswahl offen sein kann) löst der Dialog nicht
+  mehr selbst aus, nach einer gescheiterten Aufnahme erst wieder, wenn das
+  Viereck einmal verloren war (keine Wiederholungsschleife).
+- **Startecken:** beim Auslösen gehen die Ecken nur eines **stabilen**
+  Vierecks (`startEckenAusLive`, auf Videopixel hochgerechnet und
+  geklemmt) mit dem Foto mit: `eckenVormerken(datei, ecken)` in
+  `scanner.js` (eine `WeakMap` am `File`-Objekt, nichts verlässt die
+  Seite). `scannerOeffnen()`/`automatischAufbereiten()` erkennen zuerst
+  wie bisher auf dem aufgenommenen Foto selbst (genau dieser Frame, feiner
+  als die Vorschau); nur wenn das nichts findet, nehmen sie die vorgemerkten
+  Live-Ecken statt Standardrahmen bzw. ganzem Bild (`erkannteEcken`). Im
+  Normalfall stimmen beide überein. Das ganze Kamerabild bleibt das
+  Original (E-10).
+
+Der Nutzen hängt an der Trefferquote der Kantenerkennung (E-03, #142).
+Prüfung auf einem echten Mittelklasse-Handy (ruckelt das Video? wie oft
+„Beleg erkannt“?) steht noch aus.
 
 ## 3. PDF-Erzeugung und PDF-Eingang
 
@@ -667,7 +743,8 @@ in einem Lauf ab, nicht eines je Datei.
   Uploads hoch (Abschnitt 1).
 
 **Pflicht-Tests (Upload):** `MagicBytesTest` (die erlaubten Typen inkl.
-XRechnung CII/UBL mit BOM und ohne Prolog, ZIP/ELF/HTML/Text/GIF/HEIC/leer/
+XRechnung CII/UBL mit BOM und ohne Prolog, HEIC (`heic`/`heix`, `mif1` mit
+HEVC-Marke), ZIP/ELF/HTML/Text/GIF/AVIF/MP4/abgeschnittener ftyp-Kopf/leer/
 zu kurz abgelehnt, PDF-Kopf mit Versatz abgelehnt, HTML/SVG/beliebiges XML/
 XML mit DOCTYPE/ZUGFeRD 1.0 abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
 Übertragung abgelehnt, Limit selbst erlaubt, zu langer Chunk abgelehnt und
@@ -702,7 +779,7 @@ aktivem Worker-Modul.
 5. `resolve_supplier` (Abschnitt 7; seit issue #48/M7-6
    `App\Service\Document\LieferantenAufloesung`, eingereiht von `ai_extract`,
    sobald es einen Beleg mit gültigem Ergebnis auf `ausgewertet` setzt, und per
-   Migration 032 für schon ausgewertete Belege) – immer `session`
+   Migration 034 für schon ausgewertete Belege) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
 7. `detect_recurring` (Abschnitt 9) – `session`
 8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
@@ -982,6 +1059,23 @@ das Fallback-Profil.
   Ausweich-Aufruf; `KiErgebnis::meldung()` hängt „Das Fallback-Profil wurde
   verwendet.“ an.
 
+**Umsetzung (M7-8, issue #50, Migration 034):** das **KI-Protokoll**.
+- *Daten:* `ai_call_log` (Betriebsdaten im Klartext, kein Tresor): Zeitpunkt,
+  Anbieter (ID + kopierter Name/Modell), Prompt-Version, Reparatur/Fallback,
+  Status (`KiAufrufStatus`, das „Ergebnis“), Tokens, Dauer, HTTP-Status –
+  **nie** Anfrage, Antwort oder ein Wert vom Beleg (die Rohantwort bleibt
+  verschlüsselt im `extraction`-Artefakt). `KiAuslesung::nachAufruf()` schreibt
+  die Zeile über `AiCallLogRepository`, *nachdem* der Versuch gespeichert ist
+  (ein wiederholter Schritt protokolliert nichts doppelt). „Verbindung testen“
+  protokolliert weiterhin nichts.
+- *Ansicht:* `GET /admin/ki-protokoll` (`admin.settings`, Seite im
+  `KiAnbieterController`, Nav-Eintrag „KI-Protokoll“): je Anbieter eine Karte
+  mit Summen der letzten 30 Tage (Aufrufe, gültig/Fehler, Tokens,
+  Ø-Dauer) und den neuesten 25 Aufrufen. Aufrufe gelöschter Profile erscheinen
+  unter ihrem kopierten Namen mit dem Zusatz „(Profil gelöscht)“.
+- *Offen/vorläufig:* keine automatische Bereinigung alter Zeilen (ein Verein
+  erzeugt wenige tausend Zeilen im Jahr).
+
 ### Auslese-Schema (Prompt-Version `extract-v1`)
 
 ```json
@@ -1236,7 +1330,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     in der Prüfansicht. Nicht mit sich selbst, nicht in einen bereits
     zusammengeführten.
 
-- **Stand M7-6** (issue #48, Migration 032; vorläufige Details E-19): Job
+- **Stand M7-6** (issue #48, Migration 034; vorläufige Details E-21): Job
   `resolve_supplier` (`App\Service\Document\LieferantenAufloesung`, Recht
   `document.edit`, Executor `session`), Stufen in
   `App\Service\MasterData\SupplierAufloesung::aufloesen()`:
@@ -1290,7 +1384,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     `needs_review = 0`, Audit `lieferant.geprueft` (nur beim ersten Mal).
     Speichern des Formulars gilt ebenfalls als geprüft (geänderte Felder dann
     inkl. `needs_review`); Zusammenführen lässt das Flag des Ziels.
-  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-19).
+  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-21).
 
 ## 8. Kategorisierung
 
@@ -1323,7 +1417,10 @@ Farbmodus-Anwendung je Modus); Scanner-Einbau (`tests/js/scanner.test.js`:
 Fähigkeitsprüfung, Startecken, Upload-Reihenfolge Original → Fassung, Abbruch
 ohne Upload, Fallback nur mit Original; `tests/js/kamera.test.js`:
 Verfügbarkeit nur im sicheren Kontext, Rahmen A4 innerhalb des Videos,
-Fehlertexte); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
+Fehlertexte; Live-Erkennung #146: Drosselung, Vorschaugröße, Stabilität
+über 3 Frames inkl. Fehlschlag/Wandern, Startecken nur aus stabilem
+Viereck, Overlay-Abbildung unter `object-fit: contain`; `scanner.test.js`:
+vorgemerkte Startecken je Datei); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
 dunkles Foto nicht schwarz, lange Kante gedeckelt, EXIF-Drehung,
 PNG-Transparenz, Pixel-Obergrenze); Original + aufbereitete Fassung
 (`PdfErzeugungTest`: Fassung unverändert eingebettet, Originale
@@ -1430,7 +1527,7 @@ Anlage, Stufe 6 mit `created_via = ki`/`needs_review`, Schlüsseln, Audit ohne
 Benutzer und ohne Klartext, unbrauchbare Werte weggelassen, ohne Lieferant
 nichts, zweiter Lauf legt nicht doppelt an, wiederholter Schritt, übernommener
 Beleg, gescheiterte KI, Archiv-Vorgabe, E-Rechnung über KI, Vorauswahl im
-Prompt bzw. ohne Text keine, Migration 032; `LieferantenAehnlichkeitTest`;
+Prompt bzw. ohne Text keine, Migration 034; `LieferantenAehnlichkeitTest`;
 `LieferantenKandidatenTest`; `KiAusleseTest`: Vorauswahl höchstens 10 Namen,
 als Daten, Marken entschärft; `PruefungFlowTest`: Treffer gewählt mit Stufe,
 Vorschlag gelb, Neuanlage mit Link, Rolle passt nicht, Verkäufer der

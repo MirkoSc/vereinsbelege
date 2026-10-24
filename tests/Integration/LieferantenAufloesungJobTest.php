@@ -468,7 +468,7 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         $this->beleg(status: DocumentStatus::InPruefung, ohneJob: true);
         $this->pdo()->exec("DELETE FROM job");
 
-        $this->pdo()->exec((string) file_get_contents($this->migrationsDir() . '/032_resolve_supplier.sql'));
+        $this->pdo()->exec((string) file_get_contents($this->migrationsDir() . '/034_resolve_supplier.sql'));
 
         self::assertSame(
             [['resolve_supplier', 'document', $ausgewertet, 'session', 'offen']],

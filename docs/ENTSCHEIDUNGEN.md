@@ -119,7 +119,33 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
-## E-19 ❓ Lieferanten-Auflösung: Schwelle, Vorschlag, Rollen
+## E-19 ✅ Argon2id-Profil MODERATE für die Tresor-Umhüllung
+*Betrifft: M2/M3 (issue #100) – **vorläufig, autonom getroffen – Bestätigung
+durch Mirko offen***
+
+Neue Umhüllungen des Benutzer-Privatkeys verwenden Argon2id MODERATE
+(3 Durchläufe, 256 MiB) statt INTERACTIVE (2 Durchläufe, 64 MiB): auf dem
+Zielhost 309–321 ms je Anmeldung, für einen Angreifer mit DB-Dump der
+sechsfache Aufwand je Rateversuch. Parameter und Algorithmus stehen je
+Benutzer in `user_key` (`kdf_ops`, `kdf_mem`, `kdf_alg`); ältere Konten
+öffnen mit ihren eigenen Werten und werden bei der nächsten Anmeldung
+angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
+auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
+Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
+
+## E-20 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
+Der Kameradialog zeigt das live erkannte Viereck und „Beleg erkannt.“, löst
+aber **ab Werk nicht selbst aus** – ein Ankreuzfeld im Dialog schaltet das
+ein; es gilt bis zum Neuladen der Seite (nicht gespeichert). Grund: die Trefferquote der
+Kantenerkennung ist noch nicht belegt (E-03, #142); ein Fehlauslösen auf
+eine Tischkante wäre ärgerlicher als ein Tipp auf „Auslösen“. Eckwerte:
+Erkennung höchstens alle 400 ms auf 320 px Breite, „stabil“ = 3
+aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
+überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
+getestet wurde (Standard „an“? Einstellung merken?).
+
+## E-21 ❓ Lieferanten-Auflösung: Schwelle, Vorschlag, Rollen
 *M7-6 (issue #48) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
 
 Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
@@ -206,3 +232,25 @@ Die 9 Fotos für diese Messung liegen **nicht** in diesem Repository (CLAUDE.md
 Beträge, Lieferanten und teils Namen/Adressen. Auswertung lief einmalig
 lokal in der Bearbeitungssession; weder die Fotos noch daraus erzeugte
 Bilder wurden committet.
+
+## E-10 Nachtrag: HEIC (Issue #147) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+HEIC/HEIF wird serverseitig als Original zugelassen (Magic Bytes, nicht
+Endung/MIME); das im Browser erzeugte JPEG ist die aufbereitete Fassung.
+E-10 (Original bleibt immer erhalten) gilt damit unverändert, statt dass das
+konvertierte JPEG zum „Original" wird. Konvertierung nur mit Browser-eigenen
+Dekodern; keine WASM-Bibliothek, weil sie `'wasm-unsafe-eval'` in der CSP
+bräuchte. Wo der Browser HEIC nicht lesen kann, wird die Seite vor dem Upload
+abgelehnt (bisherige Fehlermeldung plus iPhone-Tipp); ein HEIC-Original wird
+nur zusammen mit dem im Browser erzeugten JPEG angenommen. Im Archiv-Import
+wird HEIC übersprungen. Details: Spec 03 §1 „HEIC".
+
+## M7-8 KI-Protokoll: Umfang (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+- Protokolliert werden die Aufrufe des `ai_extract`-Jobs (inkl. Reparatur und
+  Fallback), nicht der „Verbindung testen“-Probe.
+- Die Tabelle `ai_call_log` ist Klartext (Betriebsdaten ohne Belegbezug – auch
+  keine Beleg-ID), damit sie ohne Tresor lesbar ist; Anbieter und Modell werden
+  kopiert, damit die Historie ein gelöschtes Profil überlebt.
+- Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
+  Bereinigung, kein Filter/Export.

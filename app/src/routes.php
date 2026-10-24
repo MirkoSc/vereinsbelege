@@ -751,6 +751,7 @@ return static function (
     // live in App\Service\Ki\KiAnbieterService. The API key is server-key
     // ciphertext, no vault needed.
     $get('/admin/ki-anbieter', $einstellungen, static fn(Request $r) => $kiAnbieter()->liste($r));
+    $get('/admin/ki-protokoll', $einstellungen, static fn(Request $r) => $kiAnbieter()->protokoll($r));
     $get('/admin/ki-anbieter/neu', $einstellungen, static fn(Request $r) => $kiAnbieter()->neu($r));
     $post('/admin/ki-anbieter', $einstellungen, static fn(Request $r) => $kiAnbieter()->anlegen($r));
     $get('/admin/ki-anbieter/{id:\d+}', $einstellungen, static fn(Request $r, array $params) => $kiAnbieter()->bearbeiten($r, $params));

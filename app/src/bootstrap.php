@@ -51,6 +51,7 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Http\Zugriff;
 use App\Installer\InstallController;
+use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
@@ -531,6 +532,7 @@ $kiAuslesungFor = static function (\PDO $pdo) use ($paths, $serverCrypto): KiAus
         new AiProviderRepository($pdo, $serverCrypto),
         new KiAbfrage(new OpenAiCompatibleClient(new CurlChatHttp(), $prompts), $prompts),
         new Auslesung($prompts),
+        new AiCallLogRepository($pdo),
         new SupplierAufloesung(new SupplierRepository($pdo), new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo))),
     );
 };
@@ -761,6 +763,7 @@ $kiAnbieter = static function () use ($connections, $view, $serverCrypto, $audit
         new KiAnbieterService($repository),
         new Verbindungstest(new CurlChatHttp()),
         $auditFor($pdo),
+        new AiCallLogRepository($pdo),
     );
 };
 
