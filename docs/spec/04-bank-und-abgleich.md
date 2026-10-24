@@ -551,7 +551,7 @@ und Einreichung).
 - Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto)
   werden automatisch erkannt und paarweise verknüpft.
 
-### Stand M10-6: Umbuchungen eigene Konten (issue #70, Migration 040, E-38)
+### Stand M10-6: Umbuchungen eigene Konten (issue #70, Migration 039, E-38)
 
 - **Paar** (`transfer`, `App\Service\Bank\Umbuchungen`): Ausgabe auf dem
   abgebenden ↔ Einnahme auf dem empfangenden eigenen Konto (Bank oder

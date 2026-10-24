@@ -13,7 +13,7 @@ use App\Domain\UmbuchungMethode;
 use App\Domain\Zugriffsbereich;
 
 /**
- * Transfers between own accounts (migrations/040_transfer.sql, M10-6,
+ * Transfers between own accounts (migrations/039_transfer.sql, M10-6,
  * issue #70, docs/spec/04-bank-und-abgleich.md section 5 "Stand M10-6"):
  * the `transfer` table, and the few statements on `bank_transaction` that
  * only a transfer writes (`doc_source = umbuchung`) or needs (the bookings
