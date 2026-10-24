@@ -68,11 +68,20 @@ final readonly class VaultRepository
         bool $schluesselBestaetigt = true,
     ): void {
         $zeit = ($now ?? new \DateTimeImmutable())->format(self::FORMAT);
-        $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?)');
+        try {
+            $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?)');
+            $stmt->bindValue(4, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
+        } catch (\PDOException $e) {
+            // A schema before migration 039 (an installation that migrates in
+            // steps): no rotation exists there, the column comes with it.
+            if (!$schluesselBestaetigt || !str_contains($e->getMessage(), 'recovery_confirmed_at')) {
+                throw $e;
+            }
+            $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at) VALUES (?, ?, ?)');
+        }
         $stmt->bindValue(1, $version, \PDO::PARAM_INT);
         $stmt->bindValue(2, $publicKey, \PDO::PARAM_LOB);
         $stmt->bindValue(3, $zeit);
-        $stmt->bindValue(4, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
         $stmt->execute();
     }
 
