@@ -19,6 +19,8 @@ final readonly class Request
      * @param array<string, string> $headers lowercase header names
      * @param array<string, mixed> $files as in $_FILES
      * @param array<string, string> $cookies as in $_COOKIE
+     * @param ?string $rawBody the body as received; null = read it from
+     *        php://input on demand (body())
      */
     public function __construct(
         public HttpMethod $method,
@@ -29,6 +31,7 @@ final readonly class Request
         public string $ip = '',
         public array $files = [],
         public array $cookies = [],
+        public ?string $rawBody = null,
     ) {
     }
 
@@ -42,9 +45,11 @@ final readonly class Request
 
         // htmx and fetch() send JSON bodies; expose them like form fields
         $post = $_POST;
+        $raw = null;
         $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
         if (str_contains($contentType, 'application/json')) {
             $raw = file_get_contents('php://input');
+            $raw = is_string($raw) ? $raw : '';
             $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
             if (is_array($decoded)) {
                 $post = $decoded;
@@ -60,6 +65,7 @@ final readonly class Request
             ip: (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
             files: $_FILES,
             cookies: array_filter($_COOKIE, is_string(...)),
+            rawBody: $raw,
         );
     }
 
@@ -108,6 +114,22 @@ final readonly class Request
         }
 
         return (self::httpsFromGlobals() ? 'https://' : 'http://') . $host;
+    }
+
+    /**
+     * The raw request body - what the worker API's HMAC signature covers
+     * (App\Service\Worker\WorkerAuth, issue #51/M7b-1). A JSON body was
+     * already read by fromGlobals(); anything else is read here, only when
+     * asked, so a chunk upload is not copied into memory for nothing.
+     */
+    public function body(): string
+    {
+        if ($this->rawBody !== null) {
+            return $this->rawBody;
+        }
+        $raw = file_get_contents('php://input');
+
+        return is_string($raw) ? $raw : '';
     }
 
     public function header(string $name): ?string

@@ -91,6 +91,7 @@ enum Area: string
                 new NavItem('Tresor', '/admin/tresor', recht: Permission::AdminVaultGrant),
                 new NavItem('KI-Anbieter', '/admin/ki-anbieter', recht: Permission::AdminSettings),
                 new NavItem('KI-Protokoll', '/admin/ki-protokoll', recht: Permission::AdminSettings),
+                new NavItem('Worker', '/admin/worker', recht: Permission::AdminSettings),
                 new NavItem('Kostenstellen', '/admin/kostenstellen', recht: Permission::AdminSettings),
                 new NavItem('Einreichung', '/admin/einreichung', recht: Permission::AdminSettings),
                 new NavItem('Export', '/admin/export', recht: Permission::AdminSettings),

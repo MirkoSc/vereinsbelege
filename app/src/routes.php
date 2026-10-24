@@ -17,11 +17,13 @@ use App\Admin\ExportSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
+use App\Admin\WorkerController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
 use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
+use App\Api\WorkerApiController;
 use App\App\AccountController;
 use App\App\ArchivImportController;
 use App\App\AuditController;
@@ -43,13 +45,16 @@ use App\App\SucheController;
 use App\App\SupplierController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
+use App\Domain\Worker;
 use App\Http\HttpMethod;
 use App\Http\LoginGuard;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
 use App\Http\Zugriff;
+use App\Http\ZugriffArt;
 use App\PublicPages\EinreichungController;
+use App\Service\Worker\WorkerAuth;
 use App\View\Area;
 use App\View\ScannerSkripte;
 use App\View\View;
@@ -225,23 +230,35 @@ return static function (
     ?\Closure $nextcloudAdmin = null,
     ?\Closure $backups = null,
     ?\Closure $serien = null,
+    ?\Closure $workerAuth = null,
+    ?\Closure $workerApi = null,
+    ?\Closure $workerAdmin = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
     $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
+    // Not wired = closed: a worker route answers with an error, never
+    // without its signature check.
+    $workerAuth ??= static fn(): never => throw new \LogicException('The worker signature check is not wired into this route table.');
+    $workerApi ??= static fn(): never => throw new \LogicException('The worker API is not wired into this route table.');
+    $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
     // guard is built once per request and only where a protected route was
     // actually matched: pruefe() returns a wrapper, it runs nothing yet.
-    $route = static function (HttpMethod $methode, string $muster, Zugriff $zugriff, \Closure $handler) use ($router, $guard): void {
+    // A worker route's handler gets the authenticated worker as third
+    // argument - it cannot be reached without a valid signature.
+    $route = static function (HttpMethod $methode, string $muster, Zugriff $zugriff, \Closure $handler) use ($router, $guard, $workerAuth): void {
         $router->add(
             $methode,
             $muster,
             $zugriff,
-            $zugriff->brauchtAnmeldung()
-                ? static fn(Request $r, array $p = []) => $guard()->pruefe($zugriff, $handler)($r, $p)
-                : $handler,
+            match (true) {
+                $zugriff->art === ZugriffArt::Worker => static fn(Request $r, array $p = []) => $workerAuth()->ausfuehren($r, $p, $handler),
+                $zugriff->brauchtAnmeldung() => static fn(Request $r, array $p = []) => $guard()->pruefe($zugriff, $handler)($r, $p),
+                default => $handler,
+            },
         );
     };
     $get = static fn(string $muster, Zugriff $zugriff, \Closure $handler) => $route(HttpMethod::Get, $muster, $zugriff, $handler);
@@ -353,6 +370,24 @@ return static function (
     // cron_token from shared/config.php is the only credential, compared with
     // hash_equals. The cron never decrypts (CLAUDE.md section 4).
     $get('/cron', Zugriff::cron(), static fn(Request $r) => $cron()->run($r));
+
+    // The optional worker's API (issue #51/M7b-1, docs/spec/07-worker.md
+    // sections 4 and 5). The worker only calls out - polling, no inbound
+    // connection. No session and no CSRF: `pair` is public, its one-time
+    // pairing code is the credential (15 minutes, stored as an HMAC, rate
+    // limited per IP and in total - App\Service\Worker\WorkerKopplung).
+    // Every other route is `Zugriff::worker()`: HMAC-SHA256 over method,
+    // path, timestamp, nonce and body hash, +-5 minutes, nonce replay
+    // protection, failure limit per IP, request limit per worker
+    // (App\Service\Worker\WorkerAuth); claims, completes and fails need a
+    // confirmed (`aktiv`) worker.
+    $post('/api/worker/pair', $oeffentlich->alsApi(), static fn(Request $r) => $workerApi()->pair($r));
+    $worker = Zugriff::worker()->alsApi();
+    $post('/api/worker/heartbeat', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->heartbeat($r, $w));
+    $post('/api/worker/jobs/claim', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->claim($r, $w));
+    $post('/api/worker/jobs/{id:\d+}/extend', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->extend($r, $p, $w));
+    $post('/api/worker/jobs/{id:\d+}/complete', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->complete($r, $p, $w));
+    $post('/api/worker/jobs/{id:\d+}/fail', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->fail($r, $p, $w));
 
     // Chunk upload (03 section 4, issue #11). Files arrive in 2 MiB pieces so
     // that no request runs long and the hoster's upload limit stops mattering.
@@ -801,6 +836,15 @@ return static function (
     // `admin.settings` ("KI", 01 section 4). CSRF on all writes; the rules
     // live in App\Service\Ki\KiAnbieterService. The API key is server-key
     // ciphertext, no vault needed.
+    // The optional worker, pairing part (issue #51/M7b-1, 07 section 4):
+    // pairing code, fingerprint confirmation, unpairing. Permission:
+    // `admin.settings`, the same right as the AI providers. CSRF on all
+    // writes; the code is shown once and never stored in plaintext.
+    $get('/admin/worker', $einstellungen, static fn(Request $r) => $workerAdmin()->page($r));
+    $post('/admin/worker/koppeln', $einstellungen, static fn(Request $r) => $workerAdmin()->koppeln($r));
+    $post('/admin/worker/{id:\d+}/bestaetigen', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->bestaetigen($r, $params));
+    $post('/admin/worker/{id:\d+}/entkoppeln', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->entkoppeln($r, $params));
+
     $get('/admin/ki-anbieter', $einstellungen, static fn(Request $r) => $kiAnbieter()->liste($r));
     $get('/admin/ki-protokoll', $einstellungen, static fn(Request $r) => $kiAnbieter()->protokoll($r));
     $get('/admin/ki-anbieter/neu', $einstellungen, static fn(Request $r) => $kiAnbieter()->neu($r));

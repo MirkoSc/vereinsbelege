@@ -412,6 +412,48 @@ Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht
   kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
   wäre ein Folge-Issue.
 
+## E-28 ❓ Worker-Kopplung: Zugangsschlüssel verschlüsselt statt als Hash, Protokoll-Details
+*M7b-1 (issue #51), 07 §4–5 – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+- **Zugangsschlüssel serverschlüssel-verschlüsselt, nicht als Hash:** 07 §4
+  sagte „auf dem Webhoster nur als Hash“ – eine HMAC-Signatur lässt sich
+  aber nur mit dem Schlüssel selbst prüfen, ein Hash davon wäre
+  gleichwertig zum Schlüssel. Gespeichert wird er deshalb mit dem
+  Server-Schlüssel verschlüsselt (`worker.secret_enc`, wie die API-Keys der
+  KI-Anbieter); ein DB-Dump oder DB-Backup allein reicht nicht. Beim
+  Entkoppeln wird er gelöscht.
+- **Kopplungscode:** 8 Zeichen Crockford-Base32 (ohne I/L/O/U, 40 Bit),
+  Anzeige `ABCD-EFGH`, 15 min, einmal verwendbar; gespeichert nur als HMAC
+  unter einem aus dem Server-Schlüssel abgeleiteten Schlüssel. Ein neuer
+  Code ersetzt den alten. Raten ist begrenzt: 10 Fehlversuche je IP und 50
+  insgesamt je 15 min. Codes gibt es nur, solange kein Worker gekoppelt ist
+  (v1: einer) – zum Tausch erst entkoppeln.
+- **Bestätigung:** Bis der Admin den Fingerabdruck (SHA-256 von `W_pub`,
+  angezeigt als 8 × 4 Hex-Zeichen) bestätigt hat, darf der Worker nur
+  Heartbeats senden, keine Jobs beanspruchen.
+- **Signatur:** `METHODE|PFAD|ZEIT|NONCE|hex(SHA-256(Body))`, Header
+  `Authorization: Worker <id>` bzw. `X-Worker-Authorization` (hat Vorrang;
+  falls der Hoster `Authorization` an FastCGI nicht durchreicht oder die
+  Seite hinter HTTP-Basic liegt), `X-Worker-Timestamp`,
+  `X-Worker-Nonce`, `X-Worker-Signature`. Query-Strings sind auf Worker-
+  Routen verboten (sie wären unsigniert). Fehlversuche: 30 je IP/15 min;
+  Anfragen: 300 je Worker/min. Uhrabweichung wird nicht als Fehlversuch
+  gezählt, die Antwort nennt die Serverzeit.
+- **Jobs:** Ein Claim vergibt je Job eine eigene Sperre (`w<id>-<zufall>`),
+  die `complete`/`fail` mitschicken; ein `fail` gibt den Job bis zum 3.
+  Versuch wieder frei (`endgueltig` beendet sofort); als Fehler wird nur ein
+  Bezeichner gespeichert, nie ein Text. Entkoppeln gibt gehaltene Jobs
+  sofort frei.
+- **Admin-Recht:** `admin.settings` (wie KI-Anbieter).
+- **Kopplungs-Gesamtlimit:** Wer die öffentliche Route mit falschen Codes
+  flutet, kann das Koppeln für 15 min blockieren (Verfügbarkeit gegen
+  Ratesicherheit bei vielen IPs – bewusst zugunsten der Sicherheit).
+
+Offen für Mirko: ob „Hash“ in 07 §4 eine bewusste Vorgabe war (dann
+bräuchte es ein asymmetrisches Signaturverfahren, z. B. Ed25519 mit
+`W_sign_pub` statt HMAC); ob der Tausch eines Workers ohne vorheriges
+Entkoppeln möglich sein soll.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
