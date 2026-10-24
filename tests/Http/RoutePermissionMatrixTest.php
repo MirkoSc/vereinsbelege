@@ -291,6 +291,16 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/belege/pruefen/7/datei/3', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/belege/pruefen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7', false],
+            // Recurring series (issue #57/M8-1): `document.edit` like the review page.
+            [SystemRole::Admin, HttpMethod::Get, '/app/serien', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/serien', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/serien/3', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/serien/3', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/serien/3/verwerfen', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/serien', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/serien/3', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/serien/3', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/serien/3/verwerfen', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
             [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
@@ -657,7 +667,9 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             // The Nextcloud settings (issue #95), optional.
             $stellvertreter,
-            // The backups page (issue #112), optional and last.
+            // The backups page (issue #112), optional.
+            $stellvertreter,
+            // The recurring series pages (issue #57/M8-1), optional and last.
             $stellvertreter,
         );
 

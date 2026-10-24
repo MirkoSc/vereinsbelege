@@ -26,6 +26,7 @@ use App\Repository\CostCenterRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\JobRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditLog;
@@ -128,6 +129,7 @@ final readonly class Pruefung
         private KiAuslesung $kiAuslesung,
         private Buchungsregeln $regeln,
         private LieferantenAufloesung $lieferantenAufloesung,
+        private JobRepository $jobs,
     ) {
     }
 
@@ -850,6 +852,8 @@ final readonly class Pruefung
                 $this->wechsle($document->id, DocumentStatus::InPruefung, DocumentStatus::Geprueft, $userId, $now);
                 $this->invoices->setzeGeprueft($invoiceId, $userId, $now);
                 $this->audit->record(AuditAction::BelegGeprueft, $userId, $ip, $document->id, [], $now);
+                // Series detection (issue #57/M8-1) looks at every checked receipt.
+                Serien::einreihen($this->jobs, $document->id, $now);
             }
 
             $this->pdo->commit();
