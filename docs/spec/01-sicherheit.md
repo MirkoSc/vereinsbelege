@@ -38,7 +38,12 @@ Blind Index: HMAC-SHA256(BIK, normalisierter Wert), BIK = KDF(VK_priv, "blind-in
 Server-Schlüssel (`shared/config.php`, 32 Byte, bei Installation erzeugt):
 `secretbox` für Betriebsdaten: `user.email_enc`, `mail_queue.*_enc`,
 `ai_provider.api_key_enc`, `totp_secret_enc`. Login-Lookup über
-`user.email_bi = HMAC(Server-Schlüssel, lowercase(email))`.
+`user.email_bi = HMAC(Server-Schlüssel, lowercase(email))`. Folge: Ein
+Backup **ohne** `config.php` (der Standard) ist nach dem Einspielen erst
+wieder betretbar, wenn der alte Schlüssel nachgereicht oder ein Admin-Konto
+im Installer per Wiederherstellungsschlüssel + Passwort neu verknüpft ist
+(06 §2 „Restore ohne Server-Schlüssel“, issue #154); `config.php` gehört
+deshalb getrennt gesichert neben den Wiederherstellungsschlüssel.
 
 ### Speicherformate (`App\Service\Crypto`)
 
@@ -246,6 +251,14 @@ gespeicherten Werten und werden bei der nächsten Anmeldung angehoben.
   Sitzung, deren Wert abweicht. Reset und Ändern erhöhen ihn; beim Ändern
   übernimmt die eigene Sitzung den neuen Wert (`Session::adoptEpoch()`, mit
   neuer Session-ID).
+- **Installation aus einem Backup ohne Server-Schlüssel**: der Installer
+  verlangt nach dem Einspielen den alten Schlüssel (getrennt gesicherte
+  `config.php`) oder Wiederherstellungsschlüssel + bisheriges Passwort eines
+  Kontos mit `admin.users` und verknüpft dieses Konto unter dem neuen Schlüssel
+  neu (06 §2, `App\Installer\RestoreAccess`). Der Wiederherstellungsschlüssel
+  bekommt damit keine neue Befugnis – er enthält `VK_priv` und öffnet ohnehin
+  alles; das Passwort bindet den Schritt an ein bestehendes Konto, dessen
+  Schlüsselpaar und Freigabe unverändert bleiben.
 - **Letzter Admin hat Passwort vergessen**: Wiederherstellung im Installer-
   ähnlichen Flow `/admin/wiederherstellen` mit Wiederherstellungsschlüssel.
   Umgesetzt mit M3-9 (issue #22): Recht `admin.vault_grant` wie

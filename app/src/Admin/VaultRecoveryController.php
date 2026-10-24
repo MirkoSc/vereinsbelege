@@ -130,8 +130,14 @@ final readonly class VaultRecoveryController
     private function benachrichtigen(): void
     {
         foreach ($this->verwaltung->freigeber() as $admin) {
+            $email = $this->crypto->decryptOrNull($admin->emailEnc);
+            if ($email === null) {
+                // Restore without the old server key (issue #154): nothing
+                // to send to until the address is re-entered.
+                continue;
+            }
             $this->mailer->sendeSicherheitshinweis(
-                $this->crypto->decrypt($admin->emailEnc),
+                $email,
                 'Der Tresor wurde mit dem Wiederherstellungsschlüssel des Vereins entsperrt.',
             );
         }

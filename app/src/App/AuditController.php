@@ -152,7 +152,8 @@ final readonly class AuditController
     {
         $namen = [];
         foreach ($this->users->all() as $user) {
-            $namen[$user->id] = $this->crypto->decrypt($user->displayNameEnc);
+            // Unreadable after a restore without the old server key (issue #154).
+            $namen[$user->id] = $this->crypto->decryptOrNull($user->displayNameEnc) ?? $user->platzhalterName();
         }
 
         return $namen;

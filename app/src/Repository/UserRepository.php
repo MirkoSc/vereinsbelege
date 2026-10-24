@@ -166,6 +166,22 @@ final readonly class UserRepository
         $stmt->execute([$status->value, $id]);
     }
 
+    /**
+     * A new address, both forms at once: `email_enc` and the blind index the
+     * login searches on - server-key ciphertext like at insert(). Written
+     * after a restore without the old server key (issue #154), when the
+     * installer re-links an admin and an admin then re-enters the other
+     * users' addresses; nothing else changes an address.
+     */
+    public function updateEmail(int $id, string $emailEnc, string $emailBi): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE `user` SET email_enc = ?, email_bi = ? WHERE id = ?');
+        $stmt->bindValue(1, $emailEnc, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $emailBi, \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
     /** $displayNameEnc is server-key ciphertext, like at insert(). */
     public function updateDisplayName(int $id, string $displayNameEnc): void
     {

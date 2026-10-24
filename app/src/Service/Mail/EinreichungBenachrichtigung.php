@@ -51,8 +51,13 @@ final readonly class EinreichungBenachrichtigung
             if ($user->id === $ausser) {
                 continue;
             }
+            // Unreadable after a restore without the old server key (issue #154).
+            $email = $this->crypto->decryptOrNull($user->emailEnc);
+            if ($email === null) {
+                continue;
+            }
             $this->mailer->reiheNeueEinreichungEin(
-                $this->crypto->decrypt($user->emailEnc),
+                $email,
                 $referenz,
                 $basis === null ? null : $basis . '/app/posteingang/' . $documentId,
                 $now,

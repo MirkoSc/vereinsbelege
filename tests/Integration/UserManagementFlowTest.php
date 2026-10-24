@@ -47,6 +47,7 @@ use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
+use App\Service\Account\MfaMethod;
 use App\Service\Account\MfaService;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
@@ -593,6 +594,134 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertStringContainsString('href="/admin/benutzer"', $liste->body, 'Der Navigationseintrag ist live.');
     }
 
+    /**
+     * Issue #154: after a restore without the old server key, an account's
+     * address and name are ciphertext nobody can open. The list says so
+     * instead of failing, the form offers to set a new address, and with it
+     * the account can log in again (password and key pair were never
+     * touched). A readable address stays what it is - the form cannot
+     * change it.
+     */
+    public function testEineUnlesbareAdresseWirdAngezeigtUndKannNeuGesetztWerden(): void
+    {
+        $id = $this->aktiverBenutzer(self::NEU, SystemRole::Finanzen);
+        $fremd = new ServerCrypto(str_repeat('f', ServerCrypto::KEY_BYTES));
+        $stmt = $this->pdo()->prepare('UPDATE `user` SET email_enc = ?, email_bi = ?, display_name_enc = ? WHERE id = ?');
+        $stmt->bindValue(1, $fremd->encrypt(self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $fremd->blindIndex()->forValue('user.email', self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $fremd->encrypt('Karl Kasse'), \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
+
+        $liste = $this->alsAdmin($admin, fn() => $this->dispatch($this->get('/admin/benutzer')));
+        self::assertSame(200, $liste->status);
+        self::assertStringContainsString('nicht lesbar', $liste->body);
+        self::assertStringContainsString('Benutzer #' . $id, $liste->body);
+        self::assertStringNotContainsString(self::NEU, $liste->body);
+
+        $formular = $this->alsAdmin($admin, fn() => $this->dispatch($this->get('/admin/benutzer/' . $id)));
+        self::assertSame(200, $formular->status);
+        self::assertStringContainsString('E-Mail-Adresse neu setzen', $formular->body);
+        self::assertStringContainsString('name="email"', $formular->body);
+
+        // The admin's own address is taken.
+        $doppelt = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => self::ADMIN,
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+        self::assertSame(422, $doppelt->status);
+        self::assertStringContainsString('bereits einen Benutzer', $doppelt->body);
+
+        // The account also had an authenticator app - its secret is under the
+        // lost key as well.
+        new MfaTotpRepository($this->pdo())->put($id, $fremd->encrypt('JBSWY3DPEHPK3PXP'));
+        new MfaTotpRepository($this->pdo())->confirm($id);
+        new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
+
+        // An invalid address does not touch anything, the authenticator included.
+        $ungueltig = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'keine-adresse',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+        self::assertSame(422, $ungueltig->status);
+        self::assertNotNull(new MfaTotpRepository($this->pdo())->forUser($id));
+
+        $gespeichert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'karl.neu@example.org',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+        self::assertSame(302, $gespeichert->status);
+        self::assertNull(new MfaTotpRepository($this->pdo())->forUser($id), 'the authenticator under the lost key is reset');
+        self::assertNull(new UserRepository($this->pdo())->findById($id)?->mfaMethod);
+        self::assertSame($id, $this->idVon('karl.neu@example.org'), 'the login index finds the account under the current key');
+        $zeile = new UserRepository($this->pdo())->findById($id);
+        self::assertNotNull($zeile);
+        self::assertSame('karl.neu@example.org', $this->crypto->decrypt($zeile->emailEnc));
+        self::assertSame('Karl Kasse', $this->crypto->decrypt($zeile->displayNameEnc));
+
+        $eintraege = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'user', entityId: $id), null, 10);
+        self::assertSame(AuditAction::BenutzerGeaendert->value, $eintraege[0]->action);
+        $details = new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $this->crypto)
+            ->details($eintraege[0], $this->tresorVon($admin));
+        self::assertTrue($details['email_neu_gesetzt'] ?? null);
+
+        // ... and the account is back: same password, same key pair.
+        $login = $this->anmelden('karl.neu@example.org', self::NEU_PW);
+        $_SESSION = $login['session'];
+        self::assertSame(200, $this->dispatch($this->get('/app'))->status);
+
+        // Once readable, the address is no longer the form's to change.
+        $ignoriert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'noch.einer@example.org',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+        self::assertSame(302, $ignoriert->status);
+        self::assertSame($id, $this->idVon('karl.neu@example.org'));
+        self::assertNull(new UserRepository($this->pdo())->findByEmailBlindIndex($this->crypto->blindIndex()->forValue('user.email', 'noch.einer@example.org')));
+    }
+
+    /**
+     * The authenticator is only reset when its secret is ciphertext under the
+     * lost key. A secret that still opens under the current key (set up after
+     * the key change) stays: re-entering an address never drops a usable
+     * second factor.
+     */
+    public function testEinLesbaresTotpGeheimnisBleibtBeimNeusetzenDerAdresseErhalten(): void
+    {
+        $id = $this->aktiverBenutzer(self::NEU, SystemRole::Finanzen);
+        $fremd = new ServerCrypto(str_repeat('f', ServerCrypto::KEY_BYTES));
+        $stmt = $this->pdo()->prepare('UPDATE `user` SET email_enc = ?, email_bi = ?, display_name_enc = ? WHERE id = ?');
+        $stmt->bindValue(1, $fremd->encrypt(self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $fremd->blindIndex()->forValue('user.email', self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $fremd->encrypt('Karl Kasse'), \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        // ... but the authenticator secret is under the CURRENT key.
+        new MfaTotpRepository($this->pdo())->put($id, $this->crypto->encrypt('JBSWY3DPEHPK3PXP'));
+        new MfaTotpRepository($this->pdo())->confirm($id);
+        new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
+
+        $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
+        $gespeichert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'karl.neu@example.org',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+
+        self::assertSame(302, $gespeichert->status);
+        self::assertSame($id, $this->idVon('karl.neu@example.org'));
+        $geheimnis = new MfaTotpRepository($this->pdo())->forUser($id);
+        self::assertNotNull($geheimnis, 'a usable authenticator is kept');
+        self::assertSame('JBSWY3DPEHPK3PXP', $this->crypto->decrypt($geheimnis->secretEnc));
+        self::assertSame(MfaMethod::Totp, new UserRepository($this->pdo())->findById($id)?->mfaMethod);
+    }
+
     public function testEinUnbekannterBenutzerIst404(): void
     {
         $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
@@ -960,6 +1089,8 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $crypto,
             $this->freigabeHinweis(),
             $audit,
+            new MfaTotpRepository($pdo),
+            new MfaBackupCodeRepository($pdo),
         );
         $tresor = fn(): VaultGrantController => new VaultGrantController(
             $view,
@@ -1019,6 +1150,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $tresor,
             $unerreichbar,
             $einladung,
+            $unerreichbar,
             $unerreichbar,
             $unerreichbar,
             $unerreichbar,
