@@ -104,8 +104,10 @@ use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Repository\WorkerGrantRepository;
 use App\Repository\WorkerNonceRepository;
 use App\Repository\WorkerRepository;
+use App\Repository\WorkerUploadRepository;
 use App\Repository\VaultRotationRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
@@ -151,7 +153,10 @@ use App\Service\Cron\SuchindexCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Cron\WorkerCleanupTask;
+use App\Service\Worker\WorkerArtefakte;
 use App\Service\Worker\WorkerAuth;
+use App\Service\Worker\WorkerFreigaben;
+use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\KiAuslesung;
@@ -404,8 +409,39 @@ $updates = static fn(): UpdateController => new UpdateController(
     $auditFor($connections->pdo()),
 );
 
+// Issue #52/M7b-2: worker grants and the worker's artifact upload. The
+// waiting ciphertext of an upload lies next to the browser uploads in
+// shared/var/tmp (ciphertext only), in its own folder with its own limit.
+$workerArtefakteFor = static function (\PDO $pdo) use ($paths): WorkerArtefakte {
+    $blobs = new BlobRepository($pdo);
+
+    return new WorkerArtefakte(
+        new DocumentArtifactRepository($pdo),
+        new WorkerUploadRepository($pdo),
+        new UploadService($paths->uploadDir() . '/worker', UploadService::CHUNK_BYTES, WorkerArtefakte::BLOB_MAX_BYTES),
+        new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+        new VaultRepository($pdo),
+        new JobRepository($pdo),
+        new SettingRepository($pdo),
+    );
+};
+$workerFreigabenFor = static function (\PDO $pdo) use ($workerArtefakteFor): WorkerFreigaben {
+    $vaults = new VaultRepository($pdo);
+
+    return new WorkerFreigaben(
+        new WorkerRepository($pdo),
+        new WorkerGrantRepository($pdo),
+        new WorkerUploadRepository($pdo),
+        new JobRepository($pdo),
+        new BlobRepository($pdo),
+        $vaults,
+        // No new grants from a session while a vault key rotation runs (issue #90).
+        $vaults->rotationInProgress(...),
+        $workerArtefakteFor($pdo),
+    );
+};
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $workerFreigabenFor): CronRunner {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -446,8 +482,10 @@ $cron = static fn(): CronController => new CronController($config, static functi
             // Issue #94: full-text indexes of sessions that ended without
             // a logout.
             new SuchindexCleanupTask(new SuchindexSpeicher($paths->suchindexDir())),
-            // M7b-1: worker nonces past their replay window, old pairing codes.
-            new WorkerCleanupTask(new WorkerNonceRepository($pdo), new WorkerRepository($pdo)),
+            // M7b-1: worker nonces past their replay window, old pairing codes;
+            // M7b-2: worker grants past their deadline or without a waiting
+            // worker job, uploads never committed.
+            new WorkerCleanupTask(new WorkerNonceRepository($pdo), new WorkerRepository($pdo), $workerFreigabenFor($pdo)),
         ],
         logger: $logger,
     );
@@ -1540,11 +1578,25 @@ $workerKopplungFor = static fn(\PDO $pdo): WorkerKopplung => new WorkerKopplung(
     $serverCrypto,
     new RateLimiter(new RateLimitRepository($pdo), WorkerKopplung::FEHLER_FENSTER_SEKUNDEN),
     $auditFor($pdo),
+    $workerFreigabenFor($pdo),
 );
-$workerApi = static function () use ($connections, $workerKopplungFor): WorkerApiController {
+$workerApi = static function () use ($connections, $workerKopplungFor, $workerFreigabenFor, $workerArtefakteFor, $serverCrypto, $paths): WorkerApiController {
     $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
 
-    return new WorkerApiController($workerKopplungFor($pdo), new WorkerRepository($pdo), new JobRepository($pdo));
+    return new WorkerApiController(
+        $workerKopplungFor($pdo),
+        new WorkerRepository($pdo),
+        new JobRepository($pdo),
+        new WorkerGrantRepository($pdo),
+        $workerFreigabenFor($pdo),
+        $workerArtefakteFor($pdo),
+        new WorkerKonfiguration(new WorkerRepository($pdo), new AiProviderRepository($pdo, $serverCrypto), $serverCrypto),
+        new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+        new VaultRepository($pdo),
+        new CategoryRepository($pdo),
+        new CostCenterRepository($pdo),
+    );
 };
 $workerAdmin = static function () use ($connections, $view, $workerKopplungFor): WorkerController {
     $pdo = $connections->pdo();
