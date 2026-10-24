@@ -82,7 +82,13 @@ final readonly class AbgleichController
             return $this->csrfFailure();
         }
 
-        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], filter: AbgleichFilter::aus([], self::felder($request)));
+        $filter = AbgleichFilter::aus([], self::felder($request));
+        // Only structure: into the URL, so the view can be reloaded and linked.
+        if (!$filter->vertraulich()) {
+            return Response::redirect($filter->url());
+        }
+
+        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], filter: $filter);
     }
 
     public function zuordnen(Request $request): ResponseInterface

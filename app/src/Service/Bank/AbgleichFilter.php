@@ -140,14 +140,18 @@ final readonly class AbgleichFilter
         return false;
     }
 
-    /** Whether one of the texts contains the search text (case-insensitive). */
+    /** Whether one of the texts contains the search text (case-insensitive, spaces aside). */
     public function passtZurSuche(string ...$felder): bool
     {
         if ($this->suche === '') {
             return true;
         }
+        // Spaces do not count, so a grouped IBAN finds the stored one.
+        $kompakt = preg_replace('/\s+/u', '', $this->suche) ?? $this->suche;
         foreach ($felder as $feld) {
-            if (mb_stripos($feld, $this->suche) !== false) {
+            if (mb_stripos($feld, $this->suche) !== false
+                || ($kompakt !== '' && mb_stripos(preg_replace('/\s+/u', '', $feld) ?? $feld, $kompakt) !== false)
+            ) {
                 return true;
             }
         }

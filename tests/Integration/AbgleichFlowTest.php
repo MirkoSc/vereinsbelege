@@ -418,6 +418,8 @@ final class AbgleichFlowTest extends DatabaseTestCase
         self::assertSame('L-1', $liste->belege[0]->daten->invoiceNumber, 'oldest first');
         self::assertSame([$fehlt], array_map(static fn($b): int => $b->buchung->id, $liste->buchungen), 'only bookings missing a receipt');
         self::assertCount(1, $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(seiteBelege: 2))->belege);
+        $hinter = $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(seiteBelege: 9));
+        self::assertSame([2, 1], [$hinter->seiteBelege, count($hinter->belege)], 'a page past the end shows the last one');
 
         $gefiltert = $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(betrag: 1003));
         self::assertSame(['L-3'], array_map(static fn($b): string => $b->daten->invoiceNumber, $gefiltert->belege));

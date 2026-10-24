@@ -21,7 +21,9 @@ final readonly class MatchRejectionRepository
     public function verwerfen(int $invoiceId, int $transactionId, ?int $userId, \DateTimeImmutable $now): bool
     {
         $stmt = $this->pdo->prepare(
-            'INSERT IGNORE INTO match_rejection (invoice_id, transaction_id, created_by, created_at) VALUES (?, ?, ?, ?)',
+            // Only the duplicate is ignored - a vanished receipt or booking (FK) still fails.
+            'INSERT INTO match_rejection (invoice_id, transaction_id, created_by, created_at) VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE id = id',
         );
         $stmt->bindValue(1, $invoiceId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $transactionId, \PDO::PARAM_INT);

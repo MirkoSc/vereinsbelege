@@ -678,7 +678,9 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   Zeitraum, gewählter Beleg und Seiten stehen in der URL; **Betrag und
   Suche sind Vereinsdaten** und kommen nur per `POST /app/abgleich/filter`
   (die Seite wird direkt gezeigt, Blättern sendet sie per Formular erneut,
-  nach einer Aktion entfallen sie). Mit Betrag/Suche wird die ganze
+  nach einer Aktion entfallen sie; ohne Betrag/Suche leitet der Filter auf
+  die URL mit Konto/Zeitraum um). Eine Seite hinter der letzten zeigt die
+  letzte (Listen schrumpfen nach dem Zuordnen). Mit Betrag/Suche wird die ganze
   Kandidatenmenge einer Seite entschlüsselt, sonst nur die Seite.
 - **Gewählter Beleg** (`?beleg=ID`, im Zugriffsbereich – Belegdatum und
   Kostenstelle): Brutto, zugeordnet, offen, Zahlungsstatus; die
@@ -688,7 +690,7 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   nur wenn ein Teil zugeordnet ist und ein Rest fehlt) bzw. „Differenz
   wieder öffnen“; solange er eine Buchung annimmt, die **passenden
   Buchungen**: alle offenen Buchungen seiner Richtung und Währung im
-  Zugriffsbereich (ohne Umbuchungen), nach Punkten (M10-2) sortiert,
+  Zugriffsbereich, nach Punkten (M10-2) sortiert,
   verworfene Paare zuletzt und markiert, die besten 20 (mehr über die
   Filter). Je Buchung ein Betragsfeld, vorbelegt mit `min(offen Beleg,
   offen Buchung)` – kleiner eingetragen ist es eine **Teilzuordnung**
@@ -696,7 +698,7 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   „Als Vorschlag verwerfen“, ein verworfenes „Wieder vorschlagen“.
 - **Von Hand zuordnen** (`POST /app/abgleich/zuordnen`, Felder beleg,
   buchung, betrag in Euro): beide Seiten müssen Kandidaten im
-  Zugriffsbereich sein; geschrieben über `Zuordnung::zuordnen()` mit
+  Zugriffsbereich sein, gleiche Währung; geschrieben über `Zuordnung::zuordnen()` mit
   Methode `manuell`, `score`/`rule_trace` der Bewertung (falls bewertbar)
   zur Nachvollziehbarkeit. Alle Grenzen (≤ offen auf beiden Seiten,
   Richtung, Zahlungsweg, Umbuchung) prüft `Zuordnung` unter den Sperren.
@@ -716,6 +718,10 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   `bank.book`) auf `/app/buchungen/{id}`; bei einer Ausgabe mit
   Gegen-IBAN zusätzlich „Erstattung?“ auf `/app/buchungen/{id}/erstattung`
   (M10-3).
+- **Umbuchungen** (`doc_source = umbuchung`, M10-6) sind für den ganzen
+  Abgleich keine Kandidaten mehr – auch die eingehende Hälfte, die als
+  Einnahme mit „kein Beleg nötig“ bisher bewertet und erst von `Zuordnung`
+  abgelehnt wurde (`BankTransactionRepository::abgleichKandidaten()`).
 - **Mobil** (360 px): alles Karten und umbrechende Formulare, kein
   Tabellen-Scrollen; zwei Spalten erst ab 64rem.
 - **Audit:** Zuordnen/Lösen/Differenz wie M10-1 (`zuordnung.angelegt` mit

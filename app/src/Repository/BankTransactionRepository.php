@@ -371,12 +371,14 @@ final readonly class BankTransactionRepository
         }
         [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
         $sql = "SELECT t.* FROM bank_transaction t
-                WHERE {$bedingung} AND t.doc_status <> ? AND NOT (t.doc_status = ? AND t.direction = ?)";
+                WHERE {$bedingung} AND t.doc_status <> ? AND NOT (t.doc_status = ? AND t.direction = ?) AND t.doc_source <> ?";
         array_push(
             $parameter,
             BankTransactionDocStatus::Zugeordnet->value,
             BankTransactionDocStatus::NichtNoetig->value,
             BankTransactionDirection::Ausgabe->value,
+            // A transfer between own accounts takes no receipt (M10-6) - also its incoming half.
+            BankTransactionSetBy::Umbuchung->value,
         );
         if ($richtungen !== null) {
             $sql .= sprintf(' AND t.direction IN (%s)', implode(',', array_fill(0, count($richtungen), '?')));

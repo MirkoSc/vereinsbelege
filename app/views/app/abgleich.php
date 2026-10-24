@@ -374,7 +374,7 @@ $weitere = [
                         <strong><?= e($b->lieferant !== '' ? $b->lieferant : 'Beleg ohne Lieferant') ?></strong>
                         <?php if ($b->record->paymentStatus->value === 'teilbezahlt'): ?><span class="marke">teilbezahlt</span><?php endif; ?><br>
                         <?= $b->daten->invoiceNumber !== '' ? 'Nr. ' . e($b->daten->invoiceNumber) . ', ' : '' ?><?= $datum($b->record->invoiceDate) ?>,
-                        <?= $b->record->direction->value === 'einnahme' ? 'Einnahme' : 'Ausgabe' ?><br>
+                        <?= e($b->record->direction->label()) ?><br>
                         brutto <?= $betrag($b->daten->gross) ?><?= $b->offen !== $b->daten->gross ? ', offen ' . $betrag($b->offen) : '' ?>
                     </p>
                     <p class="knopfreihe">
@@ -382,7 +382,7 @@ $weitere = [
                     </p>
                 </div>
             <?php endforeach; ?>
-            <?= $blaettern('seite_belege', $filter->seiteBelege, $liste->belegeGesamt) ?>
+            <?= $blaettern('seite_belege', $liste->seiteBelege, $liste->belegeGesamt) ?>
         </div>
         <div>
             <h4>Buchungen ohne Beleg (<?= e((string) $liste->buchungenGesamt) ?>)</h4>
@@ -406,7 +406,7 @@ $weitere = [
                     </p>
                 </div>
             <?php endforeach; ?>
-            <?= $blaettern('seite_buchungen', $filter->seiteBuchungen, $liste->buchungenGesamt) ?>
+            <?= $blaettern('seite_buchungen', $liste->seiteBuchungen, $liste->buchungenGesamt) ?>
             <p class="feld-hilfe">
                 „Kein Beleg nötig“, Regeln und Umbuchungen zwischen eigenen Konten stehen an der Buchung.
             </p>

@@ -63,6 +63,7 @@ final class AbgleichFilterTest extends TestCase
         self::assertFalse($f->passtZumBetrag(4999));
         self::assertTrue($f->passtZurSuche('', 'Getränke MÜLLER'));
         self::assertFalse($f->passtZurSuche('Stadtwerke'));
+        self::assertTrue(new AbgleichFilter(suche: 'DE89 3704 0044')->passtZurSuche('DE89370400440532013000'), 'a grouped IBAN');
         self::assertTrue(new AbgleichFilter()->passtZumBetrag(1));
     }
 }

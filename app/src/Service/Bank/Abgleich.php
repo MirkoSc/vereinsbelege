@@ -9,7 +9,6 @@ use App\Domain\BankTransactionDirection;
 use App\Domain\BankAccount;
 use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionRecord;
-use App\Domain\BankTransactionSetBy;
 use App\Domain\Belegstand;
 use App\Domain\Differenzgrund;
 use App\Domain\InvoiceData;
@@ -205,10 +204,12 @@ final readonly class Abgleich
                     && $f->passtZurSuche($b->lieferant, $b->daten->invoiceNumber, $b->daten->purposeShort),
             ));
             $belegeGesamt = count($belege);
-            $belege = array_slice($belege, ($f->seiteBelege - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE);
+            $seiteBelege = self::seite($f->seiteBelege, $belegeGesamt);
+            $belege = array_slice($belege, ($seiteBelege - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE);
         } else {
             $belegeGesamt = count($belegRecords);
-            $belege = $this->belegeAnzeigen($vault, array_slice($belegRecords, ($f->seiteBelege - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE));
+            $seiteBelege = self::seite($f->seiteBelege, $belegeGesamt);
+            $belege = $this->belegeAnzeigen($vault, array_slice($belegRecords, ($seiteBelege - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE));
         }
 
         $buchungRecords = [];
@@ -223,13 +224,21 @@ final readonly class Abgleich
                     && $f->passtZurSuche($b->buchung->counterpartyName, $b->buchung->counterpartyIban, $b->buchung->purpose),
             ));
             $buchungenGesamt = count($buchungen);
-            $buchungen = array_slice($buchungen, ($f->seiteBuchungen - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE);
+            $seiteBuchungen = self::seite($f->seiteBuchungen, $buchungenGesamt);
+            $buchungen = array_slice($buchungen, ($seiteBuchungen - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE);
         } else {
             $buchungenGesamt = count($buchungRecords);
-            $buchungen = $this->buchungenAnzeigen($vault, array_slice($buchungRecords, ($f->seiteBuchungen - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE));
+            $seiteBuchungen = self::seite($f->seiteBuchungen, $buchungenGesamt);
+            $buchungen = $this->buchungenAnzeigen($vault, array_slice($buchungRecords, ($seiteBuchungen - 1) * AbgleichFilter::SEITE, AbgleichFilter::SEITE));
         }
 
-        return new AbgleichAnzeige\Liste($belege, $belegeGesamt, $buchungen, $buchungenGesamt);
+        return new AbgleichAnzeige\Liste($belege, $belegeGesamt, $seiteBelege, $buchungen, $buchungenGesamt, $seiteBuchungen);
+    }
+
+    /** The page asked for, at most the last one - a list shrinks after a write. */
+    private static function seite(int $gewuenscht, int $gesamt): int
+    {
+        return max(1, min($gewuenscht, (int) ceil($gesamt / AbgleichFilter::SEITE)));
     }
 
     /**
@@ -243,25 +252,26 @@ final readonly class Abgleich
         if ($record === null) {
             return null;
         }
-        $beleg = $this->belegeAnzeigen($vault, [$record])[0];
-        $stand = $this->zuordnung->zahlungsstand($vault, $record);
-
+        // Decrypted once; the allocations give the sum for the payment state.
+        [$eingabe, , $daten, $lieferant] = $this->belegeLaden($vault, [$record])[0];
+        $beleg = new AbgleichAnzeige\Beleg($record, $daten, $lieferant, $eingabe->offen);
         $zuordnungen = [];
+        $zugeordnet = 0;
         foreach ($this->zuordnung->fuerBeleg($vault, $invoiceId) as $z) {
+            $zugeordnet += $z->amount;
             $buchung = $this->buchungImBereich($bereich, $z->transactionId);
             $zuordnungen[] = new AbgleichAnzeige\ZuordnungZeile($z, $buchung === null ? null : Buchungen::entschluesseln($vault, $buchung));
         }
+        $stand = new Zahlungsstand($record->paymentKind, $daten->gross, $zugeordnet, $record->differenceReason);
 
         $nimmtAn = $this->belege->abgleichKandidaten($bereich, [$invoiceId]) !== [];
         $kandidaten = [];
         if ($nimmtAn && $stand->offen() > 0) {
             $parameter = $this->parameter();
-            $eingabe = $this->belegeLaden($vault, [$record])[0][0];
             $verworfen = $this->verworfen->paare([$invoiceId]);
             $records = array_values(array_filter(
                 $this->buchungen->abgleichKandidaten($bereich, null, null, [$eingabe->buchungsrichtung]),
-                static fn(BankTransactionRecord $r): bool => $r->docSource !== BankTransactionSetBy::Umbuchung
-                    && ($f->kontoId === null || $r->accountId === $f->kontoId)
+                static fn(BankTransactionRecord $r): bool => ($f->kontoId === null || $r->accountId === $f->kontoId)
                     && $f->imZeitraum($r->bookingDate),
             ));
             foreach ($this->buchungenLaden($vault, $records) as [$b, $buchung]) {
@@ -321,6 +331,9 @@ final readonly class Abgleich
         $buchung = $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten($bereich, null, [$transactionId]))[0][0] ?? null;
         if ($buchung === null) {
             throw new BankRuleViolation('Diese Buchung nimmt keinen Beleg mehr an oder liegt außerhalb Ihres Bereichs.');
+        }
+        if (strtoupper($beleg->waehrung) !== strtoupper($buchung->waehrung)) {
+            throw new BankRuleViolation('Beleg und Buchung haben verschiedene Währungen und lassen sich nicht einander zuordnen.');
         }
         $bewertung = Punktebewertung::bewerten($beleg, $buchung, $this->parameter());
 
