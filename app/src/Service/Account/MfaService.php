@@ -136,7 +136,7 @@ final readonly class MfaService
         $this->emailCodes->put(
             $userId,
             $this->hash('mfa.email_code', $userId, $code),
-            $now->modify(sprintf('+%d seconds', self::EMAIL_CODE_TTL_SECONDS)),
+            $now->setTimestamp($now->getTimestamp() + self::EMAIL_CODE_TTL_SECONDS),
             $now,
         );
 
