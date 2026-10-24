@@ -100,6 +100,18 @@ final readonly class VaultRecovery
         return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben);
     }
 
+    /** Whether $tresor is a generation still in use (not retired, not foreign). */
+    public function istAktiv(Vault $tresor): bool
+    {
+        foreach ($this->vaults->active() as $generation) {
+            if ($generation->version === $tresor->version && hash_equals($generation->publicKey, $tresor->publicKey())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** Whether a vault key rotation runs (issue #90) - then two paper keys may be needed. */
     public function rotationLaeuft(): bool
     {

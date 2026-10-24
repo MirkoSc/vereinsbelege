@@ -46,5 +46,5 @@ interface Indexpflege
      * row's data. An index under the retired key would never match again;
      * no index is the honest state.
      */
-    public function verwerfen(int $id): void;
+    public function verwerfen(int $id, \DateTimeImmutable $now): void;
 }

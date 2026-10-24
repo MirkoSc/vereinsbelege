@@ -41,8 +41,22 @@ final readonly class DokumentIndexpflege implements Indexpflege
 
     public function pflege(int $id, array $zeile, Vault $tresor, int $alteVersion, \DateTimeImmutable $now): void
     {
+        $this->neuBerechnenLassen($id, $zeile['content_bi'] !== null, $now);
+    }
+
+    public function verwerfen(int $id, \DateTimeImmutable $now): void
+    {
+        $this->neuBerechnenLassen($id, true, $now);
+    }
+
+    /**
+     * Sends a pending job back to its first step and, when the row had an
+     * index, clears it and makes sure a job will compute it again.
+     */
+    private function neuBerechnenLassen(int $id, bool $hatteIndex, \DateTimeImmutable $now): void
+    {
         $this->jobs->setzeZurueck(Duplikatindex::JOB_TYP, self::REF_TYPE, $id, $now);
-        if ($zeile['content_bi'] === null) {
+        if (!$hatteIndex) {
             return;
         }
 
@@ -50,10 +64,5 @@ final readonly class DokumentIndexpflege implements Indexpflege
         if (!$this->jobs->offenFuer([Duplikatindex::JOB_TYP], self::REF_TYPE, $id)) {
             $this->jobs->enqueue(Duplikatindex::JOB_TYP, JobExecutor::Session, self::REF_TYPE, $id, now: $now);
         }
-    }
-
-    public function verwerfen(int $id): void
-    {
-        $this->rotation->setzeSpalte($this->tabelle(), 'id', $id, 'content_bi', null);
     }
 }

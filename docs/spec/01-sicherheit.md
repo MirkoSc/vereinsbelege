@@ -348,7 +348,11 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   nicht), die letzte Gruppe wird eingetippt wie im Installer. Erst danach
   schaltet `current()` auf N+1 und das Umschlüsseln ist erlaubt (serverseitig
   geprüft). **Vorher** lässt sich die Rotation folgenlos abbrechen
-  (`abbrechen()`: Freigaben und Zeile von N+1 gelöscht, kein Schlüssel nötig);
+  (`abbrechen()`, kein Schlüssel nötig, unter Zeilensperre gegen eine
+  gleichzeitige Bestätigung: Freigaben von N+1 gelöscht, N+1 als
+  `retired_at` zurückgezogen – die Nummer wird nie wieder vergeben –, alle
+  Sitzungen beendet, denn eine zwischendurch angemeldete hielte N+1 als
+  neuesten Schlüssel);
   danach geht es nur noch vorwärts – dann gibt es für beide Generationen einen
   Papierschlüssel.
 - **Umschlüsseln**: je Schritt ~10 s; jede Zeile in eigener Transaktion
@@ -367,8 +371,11 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   beiden Schlüsseln freie). `document.content_bi` wird geleert und vom Job
   `detect_duplicate` neu berechnet. Scheitert ein Index-Handler an den
   Daten einer Zeile (kein Datenbankfehler), wird die Zeile trotzdem neu
-  versiegelt und ihre Indexe geleert (`Indexpflege::verwerfen()`) – die
-  Kette bleibt nie an einer Zeile hängen. `bank_import.source_bi` (Tabelle
+  versiegelt und ihre Indexe geleert (`Indexpflege::verwerfen()`) – auch bei
+  einer Unique-Kollision des neuen Index (SQLSTATE 23000); andere
+  Datenbankfehler lassen den Schritt scheitern und wiederholen. Verworfene
+  Indexe werden gezählt, auf der Seite genannt und im Audit-Eintrag des
+  Abschlusses festgehalten – die Kette bleibt nie an einer Zeile hängen. `bank_import.source_bi` (Tabelle
   ohne eigenes `dek_sealed`) wird beim Abschluss in einem Zug geleert
   (`Indexpflegen::ZU_LEEREN`; nur Kontovorschlag beim nächsten Auszug). Ein
   Test prüft, dass jede `_bi`-Spalte eine Pflege hat (Ausnahme

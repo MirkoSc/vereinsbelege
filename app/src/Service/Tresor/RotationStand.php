@@ -22,6 +22,8 @@ final readonly class RotationStand
         public array $offenJeTabelle = [],
         public int $defekt = 0,
         public bool $durchlaufen = false,
+        /** Rows re-sealed with their blind indexes cleared (Indexpflege::verwerfen()). */
+        public int $indexeVerworfen = 0,
     ) {
     }
 
@@ -56,6 +58,7 @@ final readonly class RotationStand
             'schluesselBestaetigt' => $this->schluesselBestaetigt,
             'offen' => $this->offen(),
             'defekt' => $this->defekt,
+            'indexeVerworfen' => $this->indexeVerworfen,
             'umgeschluesselt' => $this->umgeschluesselt(),
             'kannAbschliessen' => $this->kannAbschliessen(),
         ];

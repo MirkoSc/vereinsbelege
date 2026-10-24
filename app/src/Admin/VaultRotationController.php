@@ -203,6 +203,10 @@ final readonly class VaultRotationController
             return $this->zurueck($e->getMessage(), FlashArt::Fehler);
         }
         unset($_SESSION[self::FORTSCHRITT]);
+        // Every session ended (a ring holding the abandoned key must not
+        // seal with it) - this one carries on with the old key alone.
+        $userId = (int) $this->session->userId();
+        $this->session->adoptEpoch($this->users->findById($userId)?->sessionEpoch ?? 0);
         $this->benachrichtigen('Der begonnene Wechsel des Tresor-Schlüssels wurde abgebrochen. Es gilt weiter der bisherige Schlüssel.');
         $this->session->flash('Die Schlüsselrotation ist abgebrochen. Es gilt weiter der bisherige Schlüssel.', FlashArt::Ok);
 
@@ -227,7 +231,7 @@ final readonly class VaultRotationController
 
         $userId = (int) $this->session->userId();
         try {
-            $ergebnis = $this->rotation->abschliessen($ring, $userId, $request->ip, new \DateTimeImmutable());
+            $ergebnis = $this->rotation->abschliessen($ring, $userId, $request->ip, new \DateTimeImmutable(), $this->fortschritt()['verworfen'] ?? 0);
         } catch (RotationException $e) {
             return $this->zurueck($e->getMessage(), FlashArt::Fehler);
         }
@@ -264,7 +268,7 @@ final readonly class VaultRotationController
     }
 
     /**
-     * @return array{cursor?: array<string, int>, defekt?: int, durchlaufen?: bool}
+     * @return array{cursor?: array<string, int>, defekt?: int, durchlaufen?: bool, verworfen?: int}
      */
     private function fortschritt(): array
     {
@@ -283,6 +287,7 @@ final readonly class VaultRotationController
             'cursor' => $cursor,
             'defekt' => is_int($wert['defekt'] ?? null) ? $wert['defekt'] : 0,
             'durchlaufen' => ($wert['durchlaufen'] ?? false) === true,
+            'verworfen' => is_int($wert['verworfen'] ?? null) ? $wert['verworfen'] : 0,
         ];
     }
 

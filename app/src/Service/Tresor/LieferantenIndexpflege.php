@@ -49,7 +49,7 @@ final readonly class LieferantenIndexpflege implements Indexpflege
         $this->lieferanten->replaceKeys($id, $keys);
     }
 
-    public function verwerfen(int $id): void
+    public function verwerfen(int $id, \DateTimeImmutable $now): void
     {
         $this->lieferanten->replaceKeys($id, []);
     }

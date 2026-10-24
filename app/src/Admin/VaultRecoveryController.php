@@ -86,13 +86,12 @@ final readonly class VaultRecoveryController
         assert($vault !== null);
         // During a key rotation (issue #90) the two paper keys can be entered
         // one after the other: the session keeps both generations as a ring.
+        // Only a generation still in use joins: a ring left over from an
+        // abandoned rotation must never become the sealing key.
         $bisher = $this->entsperrterTresor($request);
-        if ($bisher !== null && $bisher->version !== $vault->version) {
-            try {
-                $vault = $bisher->version > $vault->version ? $bisher->withPrevious($vault) : $vault->withPrevious($bisher);
-            } catch (CryptoException) {
-                // Not two generations of one ring - keep the one just opened.
-            }
+        if ($bisher !== null && $bisher->version !== $vault->version && $this->recovery->istAktiv($bisher)) {
+            $bisher = $bisher->withoutPrevious();
+            $vault = $bisher->version > $vault->version ? $bisher->withPrevious($vault) : $vault->withPrevious($bisher);
         }
 
         $this->audit->record(AuditAction::TresorWiederhergestellt, $userId, $request->ip, $userId, [

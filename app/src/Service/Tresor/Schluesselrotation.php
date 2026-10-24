@@ -22,14 +22,17 @@ use App\Service\Crypto\VaultGrant;
  * one, as an idempotent chain of short requests driven by the admin's
  * browser (CLAUDE.md section 1).
  *
- *   starten()       one transaction: generation N+1, and every grant of N
- *                   sealed to the same user's public key under N+1 as well -
- *                   box_seal needs no password, so nobody has to log in for
- *                   it. From this moment everything new is sealed to N+1
- *                   (VaultRepository::current() is the newest generation),
- *                   the public submission included.
+ *   starten()       one transaction: generation N+1, PENDING, and every
+ *                   grant of N sealed to the same user's public key under
+ *                   N+1 as well - box_seal needs no password, so nobody has
+ *                   to log in for it. VaultRepository::current() stays on N
+ *                   until the new paper key is confirmed.
  *   bestaetigen()   the admin types back the last group of the NEW recovery
  *                   key - proof it was written down, as in the installer.
+ *                   Only from here on is N+1 in use (current(), the public
+ *                   submission included) and re-sealing allowed.
+ *   abbrechen()     before the confirmation only: N+1 is retired unused,
+ *                   its grants deleted, every session ended.
  *   umschluesseln() one step: re-seals the data keys (`dek_sealed`) of a
  *                   batch of rows from N to N+1 and recomputes their blind
  *                   indexes, row by row, each row in its own transaction.
@@ -53,6 +56,10 @@ final readonly class Schluesselrotation
     /** Rows per query; each is its own short transaction. */
     private const int BATCH = 50;
 
+    private const int OK = 0;
+    private const int DEFEKT = 1;
+    private const int VERWORFEN = 2;
+
     /**
      * @param array<string, Indexpflege> $indexpflegen table => handler (Indexpflegen::alle())
      */
@@ -70,7 +77,7 @@ final readonly class Schluesselrotation
     /**
      * The current state, counted fresh.
      *
-     * @param array{defekt?: int, durchlaufen?: bool} $fortschritt what the
+     * @param array{defekt?: int, durchlaufen?: bool, verworfen?: int} $fortschritt what the
      *        session remembers of earlier steps
      */
     public function stand(array $fortschritt = []): RotationStand
@@ -101,6 +108,7 @@ final readonly class Schluesselrotation
             $offen,
             (int) ($fortschritt['defekt'] ?? 0),
             (bool) ($fortschritt['durchlaufen'] ?? false),
+            (int) ($fortschritt['verworfen'] ?? 0),
         );
     }
 
@@ -126,14 +134,17 @@ final readonly class Schluesselrotation
         if (!$sitzung->isUnlocked() || $sitzung->version !== $alt->version || !hash_equals($alt->publicKey, $sitzung->publicKey())) {
             throw new RotationException('Ihr Tresor ist in dieser Sitzung nicht entsperrt. Bitte neu anmelden.');
         }
-        if ($alt->version >= Vault::MAX_VERSION) {
+        // Above every generation ever created: an abandoned one keeps its
+        // number, so a version byte never names two different keys.
+        $naechste = max(array_map(static fn(VaultGeneration $g): int => $g->version, $this->vaults->all())) + 1;
+        if ($naechste > Vault::MAX_VERSION) {
             throw new RotationException('Die Anzahl möglicher Tresor-Generationen ist ausgeschöpft.');
         }
 
         // Fail before anything changes when the schema has a table the
         // chain could not re-seal.
         $this->tabellen();
-        $neu = Vault::create($alt->version + 1);
+        $neu = Vault::create($naechste);
         $this->pdo->beginTransaction();
         try {
             // Not confirmed yet: VaultRepository::current() stays on N, so
@@ -214,12 +225,12 @@ final readonly class Schluesselrotation
      * used. Safe to repeat and to run from two tabs - every row is locked,
      * re-checked and written in its own transaction.
      *
-     * @param array{cursor?: array<string, int>, defekt?: int, durchlaufen?: bool} $fortschritt
+     * @param array{cursor?: array<string, int>, defekt?: int, durchlaufen?: bool, verworfen?: int} $fortschritt
      *        the session's memory of earlier steps (where each table stands,
      *        rows that do not open) - losing it only means starting the scan
      *        over, never doing a row twice
      *
-     * @return array{0: RotationStand, 1: array{cursor: array<string, int>, defekt: int, durchlaufen: bool}}
+     * @return array{0: RotationStand, 1: array{cursor: array<string, int>, defekt: int, durchlaufen: bool, verworfen: int}}
      *
      * @throws RotationException
      */
@@ -234,6 +245,7 @@ final readonly class Schluesselrotation
         $ende = microtime(true) + $budget;
         $cursor = $fortschritt['cursor'] ?? [];
         $defekt = (int) ($fortschritt['defekt'] ?? 0);
+        $verworfen = (int) ($fortschritt['verworfen'] ?? 0);
         $durchlaufen = true;
         // At least one row per step, whatever the budget: a step that never
         // gets anything done would leave the browser looping.
@@ -250,9 +262,11 @@ final readonly class Schluesselrotation
                     break;
                 }
                 foreach ($ids as $id) {
-                    if (!$this->zeile($ring, $tabelle, $pk, $id, $alt, $now)) {
-                        $defekt++;
-                    }
+                    match ($this->zeile($ring, $tabelle, $pk, $id, $alt, $now)) {
+                        self::DEFEKT => $defekt++,
+                        self::VERWORFEN => $verworfen++,
+                        default => null,
+                    };
                     $cursor[$tabelle] = $id;
                     $erledigt++;
                     if (microtime(true) >= $ende) {
@@ -263,13 +277,13 @@ final readonly class Schluesselrotation
             }
         }
 
-        $fortschritt = ['cursor' => $cursor, 'defekt' => $defekt, 'durchlaufen' => $durchlaufen];
+        $fortschritt = ['cursor' => $cursor, 'defekt' => $defekt, 'durchlaufen' => $durchlaufen, 'verworfen' => $verworfen];
         $stand = $this->stand($fortschritt);
         // A full pass, yet more is open than failed: rows appeared behind a
         // cursor (written by a request that started before the rotation).
         // Scan again from the start.
         if ($durchlaufen && $stand->offen() > $defekt) {
-            $fortschritt = ['cursor' => [], 'defekt' => 0, 'durchlaufen' => false];
+            $fortschritt = ['cursor' => [], 'defekt' => 0, 'durchlaufen' => false, 'verworfen' => $verworfen];
             $stand = $this->stand($fortschritt);
         }
 
@@ -288,14 +302,21 @@ final readonly class Schluesselrotation
     public function abbrechen(int $userId, string $ip, \DateTimeImmutable $now): int
     {
         $neu = $this->neueGeneration();
-        if ($neu->recoveryConfirmedAt !== null) {
-            throw new RotationException('Nach der Bestätigung des neuen Schlüssels lässt sich die Rotation nicht mehr abbrechen.');
-        }
+        $alt = $this->vaults->active()[0]->version;
 
         $this->pdo->beginTransaction();
         try {
+            // Under lock: a confirmation committing at the same moment
+            // either waits for this or makes it refuse - never both.
+            if (!$this->vaults->sperreUnbestaetigt($neu->version)) {
+                throw new RotationException('Nach der Bestätigung des neuen Schlüssels lässt sich die Rotation nicht mehr abbrechen.');
+            }
             $this->grants->deleteVersion($neu->version);
-            $this->vaults->delete($neu->version);
+            // Retired, not deleted: the number is never handed out again.
+            $this->vaults->retire($neu->version, $now);
+            // A session that logged in meanwhile holds N+1 as its newest
+            // key and would seal with it - every session ends.
+            $this->users->bumpSessionEpochAll();
             $this->pdo->commit();
         } catch (\Throwable $e) {
             $this->pdo->rollBack();
@@ -305,7 +326,7 @@ final readonly class Schluesselrotation
 
         $this->audit->record(AuditAction::TresorRotationAbgebrochen, $userId, $ip, $neu->version, now: $now);
 
-        return $neu->version - 1;
+        return $alt;
     }
 
     /**
@@ -317,7 +338,7 @@ final readonly class Schluesselrotation
      * @throws RotationException when the key is not confirmed or rows that
      *         the old key opens are still left
      */
-    public function abschliessen(Vault $ring, int $userId, string $ip, \DateTimeImmutable $now): array
+    public function abschliessen(Vault $ring, int $userId, string $ip, \DateTimeImmutable $now, int $indexeVerworfen = 0): array
     {
         [$alt, $neu] = $this->pruefeRing($ring);
         if ($this->neueGeneration()->recoveryConfirmedAt === null) {
@@ -380,6 +401,7 @@ final readonly class Schluesselrotation
         $this->audit->record(AuditAction::TresorRotationAbgeschlossen, $userId, $ip, $neu, [
             'alte_version' => $alt,
             'unlesbar' => $defekt,
+            'indexe_verworfen' => $indexeVerworfen,
         ], $now);
 
         return ['tresor' => $ring->withoutPrevious(), 'defekt' => $defekt];
@@ -395,23 +417,29 @@ final readonly class Schluesselrotation
      * re-sealed with its indexes cleared instead (Indexpflege::verwerfen()),
      * the same treatment damaged data gets.
      *
-     * @return bool false when the row's data key does not open (damaged)
+     * @return int self::OK, self::VERWORFEN (re-sealed, indexes cleared) or
+     *             self::DEFEKT (the data key does not open)
      */
-    private function zeile(Vault $ring, string $tabelle, string $pk, int $id, int $alt, \DateTimeImmutable $now): bool
+    private function zeile(Vault $ring, string $tabelle, string $pk, int $id, int $alt, \DateTimeImmutable $now): int
     {
-        try {
-            return $this->zeileVersuch($ring, $tabelle, $pk, $id, $alt, $now, indexNeu: true);
-        } catch (\PDOException $e) {
-            throw $e;
-        } catch (\Throwable) {
+        foreach ([true, false] as $indexNeu) {
             try {
-                return $this->zeileVersuch($ring, $tabelle, $pk, $id, $alt, $now, indexNeu: false);
-            } catch (\PDOException $e) {
-                throw $e;
-            } catch (\Throwable) {
-                return false;
+                return $this->zeileVersuch($ring, $tabelle, $pk, $id, $alt, $now, $indexNeu)
+                    ? ($indexNeu ? self::OK : self::VERWORFEN)
+                    : self::DEFEKT;
+            } catch (\Throwable $e) {
+                // A database fault (connection, lock wait) is not the row's
+                // fault: the step fails and is repeated. A unique-key clash
+                // of a recomputed index (SQLSTATE 23000) is the data's.
+                if ($e instanceof \PDOException && (string) $e->getCode() !== '23000') {
+                    throw $e;
+                }
             }
         }
+
+        // Even clearing the indexes failed: the row keeps its old seal and
+        // is counted; abschliessen() refuses while it still opens.
+        return self::DEFEKT;
     }
 
     private function zeileVersuch(Vault $ring, string $tabelle, string $pk, int $id, int $alt, \DateTimeImmutable $now, bool $indexNeu): bool
@@ -439,7 +467,7 @@ final readonly class Schluesselrotation
             if ($indexNeu) {
                 $handler?->pflege($id, $zeile, $ring, $alt, $now);
             } else {
-                $handler?->verwerfen($id);
+                $handler?->verwerfen($id, $now);
             }
             $this->rotation->schreibe($tabelle, $pk, $id, $ring->sealDataKey($dek));
             $this->pdo->commit();

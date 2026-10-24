@@ -10,11 +10,9 @@ use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\SettingRepository;
-use App\Repository\VaultRepository;
 use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\RecoveryKey;
-use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
@@ -269,15 +267,6 @@ final readonly class InstallController
 
         /** @var array<string, string> $dbValues */
         $dbValues = $stand['db'];
-        // The generation's key is confirmed (migration 039, issue #90): a
-        // later key rotation can only finish once ITS key is, and this
-        // records the same fact for the first one.
-        // Nothing depends on it for the first generation, so a database
-        // hiccup here must not stop the installation.
-        try {
-            new VaultRepository($this->connect($dbValues))->confirmRecovery((int) ($stand['vault_version'] ?? Vault::FIRST_VERSION), new \DateTimeImmutable());
-        } catch (\PDOException) {
-        }
         ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
 
         unset($_SESSION['install_admin']);

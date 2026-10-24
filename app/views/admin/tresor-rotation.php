@@ -128,6 +128,12 @@ $zahl = static fn(int $n): string => number_format($n, 0, ',', '.');
                     Umschlüsseln starten
                 </button>
             </p>
+            <?php if ($stand->indexeVerworfen > 0): ?>
+                <p class="hinweis hinweis-warnung">
+                    Bei <?= e($zahl($stand->indexeVerworfen)) ?> Datensätzen ließen sich die Suchschlüssel nicht neu
+                    berechnen; sie wurden geleert (Duplikat- und IBAN-Erkennung fehlt dort). Das steht auch im Audit-Log.
+                </p>
+            <?php endif; ?>
             <p id="rotation-fehler" class="hinweis hinweis-fehler" hidden></p>
         </div>
 

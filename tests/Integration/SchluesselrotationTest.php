@@ -242,7 +242,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
                 throw new \PDOException('Abbruch mitten in der Zeile');
             }
 
-            public function verwerfen(int $id): void
+            public function verwerfen(int $id, \DateTimeImmutable $now): void
             {
                 throw new \LogicException('not reached');
             }
@@ -313,11 +313,13 @@ final class SchluesselrotationTest extends DatabaseTestCase
         self::assertSame(1, $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable()));
 
         self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertNull(new VaultRepository($this->pdo())->generationOf(2));
+        self::assertNotNull(new VaultRepository($this->pdo())->generationOf(2)?->retiredAt, 'Zurückgezogen, nicht gelöscht.');
         self::assertSame([], new VaultGrantRepository($this->pdo())->holdersOf(2));
+        self::assertSame(1, new UserRepository($this->pdo())->findById($this->kassiererId)?->sessionEpoch, 'Alle Sitzungen enden.');
         self::assertSame('Sportbedarf Müller GmbH', $this->supplierService()->finde($this->alt, $d['lieferant'])?->data->name);
-        // ... and a new rotation can start again.
+        // ... and a new rotation can start again - with a fresh number.
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        self::assertSame(3, $ring->version);
         $this->bestaetigen($rotation, $ring);
         $this->expectException(RotationException::class);
         $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable());
@@ -391,21 +393,47 @@ final class SchluesselrotationTest extends DatabaseTestCase
                 throw new \ValueError('unerwartete Daten');
             }
 
-            public function verwerfen(int $id): void
+            public function verwerfen(int $id, \DateTimeImmutable $now): void
             {
                 new VaultRotationRepository(SchluesselrotationTest::$pdoFuerHandler ?? throw new \LogicException())->setzeSpalte('invoice', 'id', $id, 'number_bi', null);
+            }
+        }, 'bank_account' => new class implements Indexpflege {
+            public function tabelle(): string
+            {
+                return 'bank_account';
+            }
+
+            public function spalten(): array
+            {
+                return [];
+            }
+
+            public function pflege(int $id, array $zeile, Vault $tresor, int $alteVersion, \DateTimeImmutable $now): void
+            {
+                // What a recomputed index that collides with a unique key raises.
+                throw new \PDOException('Duplicate entry', 23000);
+            }
+
+            public function verwerfen(int $id, \DateTimeImmutable $now): void
+            {
+                new VaultRotationRepository(SchluesselrotationTest::$pdoFuerHandler ?? throw new \LogicException())->setzeSpalte('bank_account', 'id', $id, 'iban_bi', null);
             }
         }]);
         self::$pdoFuerHandler = $this->pdo();
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
         $this->bestaetigen($rotation, $ring);
-        $this->umschluesseln($rotation, $ring, budget: 0.0);
-        $ergebnis = $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable());
+        $fortschritt = [];
+        do {
+            [$stand, $fortschritt] = $rotation->umschluesseln($ring, $fortschritt, new \DateTimeImmutable(), 0.0);
+        } while (!$stand->umgeschluesselt());
+        self::assertSame(2, $stand->indexeVerworfen, 'Gezählt, nicht verschwiegen.');
+        $ergebnis = $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable(), $stand->indexeVerworfen);
 
         self::assertSame([], $ergebnis['defekt']);
         $rechnung = $this->zeile('invoice', $d['rechnung']);
         self::assertSame(2, Vault::sealedVersion((string) $rechnung['dek_sealed']));
         self::assertNull($rechnung['number_bi'], 'Index verworfen statt Kette abgebrochen.');
+        self::assertNull($this->zeile('bank_account', $d['konto'])['iban_bi'], 'Eine Unique-Kollision hält die Kette ebenso wenig auf.');
     }
 
     public function testEinZweiterStartUndEinVeralteterSitzungstresorWerdenAbgelehnt(): void

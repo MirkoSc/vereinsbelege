@@ -160,14 +160,30 @@ final readonly class VaultRepository
     public function confirmRecovery(int $version, \DateTimeImmutable $now): void
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE vault SET recovery_confirmed_at = ? WHERE version = ? AND recovery_confirmed_at IS NULL',
+            'UPDATE vault SET recovery_confirmed_at = ? WHERE version = ? AND recovery_confirmed_at IS NULL AND retired_at IS NULL',
         );
         $stmt->execute([$now->format(self::FORMAT), $version]);
     }
 
     /**
-     * The generation is replaced. Never deleted: the row carries the foreign
-     * keys of history and recognises the paper key of an old backup.
+     * Locks the generation's row for the caller's transaction; true while its
+     * recovery key is still unconfirmed (a rotation may be abandoned only
+     * then - issue #90).
+     */
+    public function sperreUnbestaetigt(int $version): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT recovery_confirmed_at FROM vault WHERE version = ? AND retired_at IS NULL FOR UPDATE');
+        $stmt->execute([$version]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        return is_array($row) && $row['recovery_confirmed_at'] === null;
+    }
+
+    /**
+     * The generation is replaced - or, for an abandoned rotation, never came
+     * into use. Never deleted: the row carries the foreign keys of history,
+     * recognises the paper key of an old backup, and keeps its version
+     * number from being handed out again.
      */
     public function retire(int $version, \DateTimeImmutable $now): void
     {
