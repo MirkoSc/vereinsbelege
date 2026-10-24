@@ -457,7 +457,11 @@ function hc_group_crypto(): array
         version_compare(SODIUM_LIBRARY_VERSION, '1.0.18', '>=') ? HC_STATUS_OK : HC_STATUS_WARN,
     );
 
-    $memoryLimit = hc_parse_bytes((string) ini_get('memory_limit'));
+    // No memory_limit check here: libsodium allocates the Argon2 memory
+    // itself, outside PHP's memory manager, so memory_limit neither counts
+    // nor stops it - only the host's RAM does (issue #100,
+    // docs/spec/01-sicherheit.md section 2). Running out shows up as an
+    // exception below, which is the honest result.
     $profiles = [
         'interactive' => [
             'label' => 'sodium_crypto_pwhash INTERACTIVE',
@@ -466,26 +470,15 @@ function hc_group_crypto(): array
             'budget' => 1000,
         ],
         'moderate' => [
-            'label' => 'sodium_crypto_pwhash MODERATE',
+            // The profile of the vault wrapping since issue #100: derived
+            // once per login, so it has to stay well inside a request.
+            'label' => 'sodium_crypto_pwhash MODERATE (Tresor-Umhüllung)',
             'ops' => SODIUM_CRYPTO_PWHASH_OPSLIMIT_MODERATE,
             'mem' => SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE,
-            'budget' => 3000,
+            'budget' => 1000,
         ],
     ];
     foreach ($profiles as $key => $profile) {
-        $needed = $profile['mem'] + 32 * HC_MIB;
-        if ($memoryLimit !== null && $memoryLimit >= 0 && $memoryLimit < $needed) {
-            $rows[] = hc_row(
-                'pwhash_' . $key,
-                $profile['label'],
-                'übersprungen',
-                '< ' . $profile['budget'] . ' ms',
-                HC_STATUS_SKIP,
-                'memory_limit ' . hc_format_bytes($memoryLimit) . ' liegt unter den benötigten '
-                    . hc_format_bytes($needed) . '.',
-            );
-            continue;
-        }
         try {
             $start = hrtime(true);
             sodium_crypto_pwhash(

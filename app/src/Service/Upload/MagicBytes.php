@@ -18,8 +18,9 @@ use App\Service\Processing\ERechnung\ERechnungLeser;
  * signatures are less code than the detour (CLAUDE.md section 1 - no command
  * line tools, no native dependencies).
  *
- * Allowed are exactly the types the capture accepts: JPEG, PNG, PDF
- * (section 1 of the same spec; HEIC is converted in the browser) and, since
+ * Allowed are exactly the types the capture accepts: JPEG, PNG, PDF, HEIC
+ * (section 1 of the same spec; HEIC is kept as the original - decision E-10 -
+ * while the browser converts it to the JPEG that is worked with) and, since
  * issue #46/M7-4, the XML of an e-invoice (XRechnung). XML has no signature
  * of its own - any `<` would do - so for XML the root element is the
  * evidence: only an EN 16931 invoice or credit note (CII or UBL) passes
@@ -31,6 +32,7 @@ final class MagicBytes
     public const string JPEG = 'image/jpeg';
     public const string PNG = 'image/png';
     public const string PDF = 'application/pdf';
+    public const string HEIC = 'image/heic';
     public const string XML = 'application/xml';
 
     /**
@@ -42,7 +44,7 @@ final class MagicBytes
 
     /**
      * The MIME type of the file starting with these bytes, or null when it is
-     * none of the four. A short string is simply not a match - a file that
+     * none of the five. A short string is simply not a match - a file that
      * does not even have a signature's worth of bytes is not one of ours.
      */
     public static function detect(string $head): ?string
@@ -64,6 +66,10 @@ final class MagicBytes
             return self::PDF;
         }
 
+        if (self::istHeic($head)) {
+            return self::HEIC;
+        }
+
         // An optional byte order mark and whitespace, then markup - and the
         // markup has to be an e-invoice.
         if (preg_match('/^(?:\xEF\xBB\xBF)?\s*</', $head) === 1 && ERechnungLeser::wurzel($head) !== null) {
@@ -71,5 +77,35 @@ final class MagicBytes
         }
 
         return null;
+    }
+
+    /**
+     * HEIC/HEIF: an ISO base media file whose `ftyp` box names an HEVC image
+     * brand. `mif1`/`msf1` alone also cover AVIF and other codecs, so those
+     * only count when a compatible brand says HEVC. The extension and the
+     * MIME type are not looked at.
+     */
+    private static function istHeic(string $head): bool
+    {
+        if (strlen($head) < 16 || substr($head, 4, 4) !== 'ftyp') {
+            return false;
+        }
+
+        $groesse = unpack('N', $head, 0)[1];
+        $ende = min($groesse >= 16 ? $groesse : 16, strlen($head));
+        $hauptmarke = substr($head, 8, 4);
+        // Major brand, minor version (4 bytes), then the compatible brands.
+        $marken = [$hauptmarke];
+        for ($i = 16; $i + 4 <= $ende; $i += 4) {
+            $marken[] = substr($head, $i, 4);
+        }
+
+        $hevc = ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs'];
+        if (in_array($hauptmarke, $hevc, true)) {
+            return true;
+        }
+
+        return in_array($hauptmarke, ['mif1', 'msf1'], true)
+            && array_intersect($marken, $hevc) !== [];
     }
 }

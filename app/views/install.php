@@ -31,8 +31,8 @@ $schritt = $schritt ?? '';
             </p>
         <?php endif; ?>
         <p>
-            Die Fachbereiche kommen mit den nächsten Meilensteinen. Bis dahin gibt es die Startseite,
-            die Anmeldung und die Update-Seite.
+            Als Nächstes in der Anwendung anmelden und unter „Admin“ den Systemcheck, die
+            Mail-Einstellungen und die KI-Anbieter einrichten.
         </p>
         <p><a class="knopf knopf-primaer" href="/">Zur Startseite</a></p>
 

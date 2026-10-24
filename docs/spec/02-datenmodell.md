@@ -18,7 +18,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_role` | user_id, role_id – PK beide; Rolle `ON DELETE RESTRICT` (Migration 010, M3-6) | – |
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher"; Migration 010, M3-6) | – |
 | `user_scope` | user_id PK, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten, Grenzen inklusive; Migration 010, M3-6) | – |
-| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
+| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, kdf_alg (Migration 006, M3-2; `kdf_alg` seit Migration 033, issue #100) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at, created_at (Migration 008, M3-4) | S |
@@ -57,9 +57,12 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login
   (`App\Service\Account\LoginService`): den Hash nur dann neu, wenn
   `password_needs_rehash()` angehobene Kostenfaktoren meldet – der Klartext
-  liegt in genau diesem Moment ohnehin vor. `user_key` bleibt dabei
-  unberührt: das KEK-Salt ist bewusst vom Passwort-Hash getrennt (01 §3),
-  die Umhüllung wird erst beim echten Passwortwechsel erneuert (M3-5). Seit
+  liegt in genau diesem Moment ohnehin vor. `user_key` schreibt der Login
+  nur, wenn die Umhüllung ein schwächeres Argon2id-Profil trägt als das
+  aktuelle (issue #100, 01 §2 „Argon2id-Profil der Umhüllung"): dasselbe
+  Schlüsselpaar, frisches Salt, per Compare-and-Swap
+  (`UserKeyRepository::replaceWrapping()`); das KEK-Salt bleibt dabei
+  bewusst vom Passwort-Hash getrennt (01 §3). Seit
   M3-4 (issue #17) ist „Passwort stimmt" nicht mehr dasselbe wie „Anmeldung
   abgeschlossen" – `last_login_at` wird deshalb nicht mehr in `attempt()`
   gesetzt, sondern in `LoginService::registerSuccess()`, das
@@ -99,6 +102,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `setting` | name (PK), value, updated_at – nur nicht-sensible Einstellungen; `name` statt `key`, weil KEY in MySQL/MariaDB reserviert ist. Erster Eintrag: `update_kanal` (M1-2); Cron (M1-5): `cron_lock_until` (Sperre, Ablaufzeitpunkt), `cron_letztes_aufraeumen`, `cron_aufraeum_intervall_s`; Speicher (M2-3): `speicher_backend` (`fs`/`db`); Mail (M3-1, 06 §3): `mail_transport` (`smtp`/`php_mail`), `mail_smtp_host`, `mail_smtp_port`, `mail_smtp_sicherheit` (`implizit`/`starttls`/`keine`), `mail_smtp_benutzer`, `mail_smtp_passwort_enc` (Base64 von `ServerCrypto::encrypt()` – die einzige Spalte hier, die kein Klartext ist), `mail_absender`, `mail_antwort_an`, `mail_vereinsname`; Anmeldung (M3-3, 01 §2): `session_idle_timeout_s` (Vorgabe 1800), `session_absolute_timeout_s` (Vorgabe 43200) – ohne Zeile gilt die Vorgabe, ein unbrauchbarer Wert ebenso; zweiter Faktor (M3-4, 01 §3): `mfa_geraet_merken_tage` (Vorgabe 30, dieselbe Fallback-Regel); Links in Mails (M3-5, 01 §3): `oeffentliche_url` (leer = Host der Anfrage nur bei Absender-Domain); öffentliche Einreichung (M4-3, issue #25, 01 §5): `einreichung_pausiert` (`0`/`1`), `einreichung_limit_ip_stunde` (Vorgabe 10), `einreichung_limit_gesamt_stunde` (Vorgabe 60), `einreichung_max_seiten` (Vorgabe 20), `einreichung_max_datei_mb` (Vorgabe 10, gedeckelt auf `UploadService::MAX_FILE_BYTES`), `einreichung_max_einreichung_mb` (Vorgabe 50) – dieselbe Fallback-Regel wie oben; ZIP-Export (M12-1, issue #75, 05 §2): `export_pfad_muster` (Vorgabe `{lieferant}/{jahr}/{monatsname}/{lieferant} {datum}.pdf`, ein ungültiger Wert fällt ebenfalls auf die Vorgabe zurück); Buchungen (M9-6, issue #64, 04 §5, E-17): `buchung_einnahme_beleg_noetig` (`0`/`1`, Vorgabe `0` – jeder andere Wert gilt als Vorgabe; `App\Service\Bank\BelegStandard`) | – (außer `mail_smtp_passwort_enc`: S) |
 | `mail_queue` | to_enc, subject_enc, body_enc, status (`offen`/`laeuft`/`gesendet`/`fehler`), attempts, next_try_at, last_error – keine eigene Sperrspalte: ein Claim setzt `laeuft` und schiebt `next_try_at` als Platzhalter vor, bis der Versuch den echten Termin schreibt (06 §3) | S |
 | `ai_provider` | name (eindeutig), base_url (nur `https://`, ohne `/chat/completions`), api_key_enc (`ServerCrypto::encrypt()`, NULL = kein Key → Profil wird nicht genutzt), model, caps JSON (`vision`, `json_schema`, `max_images`, `max_tokens`), timeout_s, active, is_default (genau eine Zeile; nicht löschbar), is_fallback (höchstens eine Zeile, nie zugleich `is_default` – CHECK; das optionale Fallback-Profil des KI-Clients, nur aktiv + mit Key; Migration 030, M7-2b, issue #180), created_at, updated_at – Migration 024 (M7-1, issue #41) legt die Vorlage „OpenAI“ als Standard ohne Key an | S (api_key) |
+| `ai_call_log` | called_at, provider_id NULL (FK → `ai_provider`, `ON DELETE SET NULL`), provider_name, model (Kopien, damit die Historie ein gelöschtes/umbenanntes Profil überlebt), prompt_version, is_repair, is_fallback, status (`KiAufrufStatus`), prompt_tokens, answer_tokens, total_tokens, duration_ms, http_status – ein Eintrag je KI-Aufruf des `ai_extract`-Jobs; Betriebsdaten ohne Anfrage-/Antworttext (die Rohantwort bleibt verschlüsselt am Beleg) – Migration 032 (M7-8, issue #50) | – |
 | `job` | typ, ref_type, ref_id, executor (`session`/`browser`/`worker`), status (`offen`/`laeuft`/`fertig`/`fehler`/`uebersprungen`), step, state JSON, attempts, last_error, locked_by, locked_until, created_at, updated_at (M1-5; `executor`/`status` als VARCHAR, die PHP-Enums sind maßgeblich; `last_error` nur die Exception-Klasse; seit M7-5 hält ein wartender Job – `offen`, ohne `locked_by` – in `locked_until`, ab wann er wieder beansprucht wird, 06 §4) | – (state ohne Klartext-Fachdaten) |
 | `worker` | name, public_key, key_fingerprint, secret_hash, status (`gekoppelt`/`aktiv`/`gesperrt`), protocol_version, app_version, capabilities JSON, last_heartbeat_at, config_sealed (an W_pub), config_version | – |
 | `worker_pairing` | code_hash, expires_at, used_at | – |
