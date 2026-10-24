@@ -63,6 +63,30 @@ Der Worker erhält **nie** den Tresor-Private-Key.
 - Temporäre Klartextdateien auf dem Worker liegen ausschließlich in einem
   `tmpfs` (RAM), werden nach jedem Job gelöscht; kein Klartext auf der
   SD-Karte.
+- **Stand M7b-2 (issue #52, Migration 040, E-39):** `worker_grant` je Blob
+  (worker_id, document_id, blob_id, `sealed_dek` = `crypto_box_seal(DEK,
+  W_pub)`, expires_at = +3 Tage) und `worker_context` je Dokument
+  (`{freitext, kostenstelle_hinweis}` an `W_pub`). Erteilt von
+  `App\Service\Worker\WorkerFreigaben`: `ausSession(InboxItem, Vault)`
+  („an den Worker übergeben“ – alle Blobs aus `Document::blobIds()`, nur
+  für den aktiven, bestätigten Worker; **verweigert während einer
+  Tresor-Rotation** (#90) und mit einem Tresor, der nicht die aktuelle
+  Generation ist) sowie `beiAnlage()`/`kontextBeiAnlage()` für frisch
+  erzeugte DEKs ohne Geheimnis (Einhängen in Einreichung und Routing: #53).
+  Ein Grant öffnet einen Blob nur, solange derselbe Worker einen laufenden,
+  nicht abgelaufenen Job desselben Dokuments hält. Gelöscht werden Grants
+  und Kontext, sobald nach `complete`, endgültigem `fail` oder erschöpften
+  Versuchen kein Worker-Job des Dokuments mehr wartet oder läuft; beim
+  Entkoppeln alle des Workers; der Cron (`worker_aufraeumen`) nach
+  `expires_at` und verwaiste nach 15 min. Umschläge und Formprüfungen in
+  `App\Service\Worker\WorkerKrypto` (ohne HTTP/DB, auch für
+  `bin/worker.php`, #54). Ergebnisse: siehe §5 „Stand M7b-2“.
+  KI-Zugangsdaten: beim Heartbeat eines aktiven Workers versiegelt
+  `App\Service\Worker\WorkerKonfiguration` die aktiven Anbieter-Profile
+  (`{format: "worker-config-v1", ki_anbieter: [{id, name, base_url, model,
+  faehigkeiten, timeout_s, standard, fallback, api_key}]}`) an `W_pub`,
+  wenn sich ein HMAC darüber (`worker.config_hash`) geändert hat, und
+  erhöht `config_version`.
 
 ### KI-Zugangsdaten
 Konfiguriert wird **nur im Admin des Webhosters** (eine Stelle). Bei
@@ -112,8 +136,8 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   Grenzen: 30 Fehlversuche je IP/15 min (429), 300 Anfragen je Worker/min;
   Kopplung 10 Fehlversuche je IP und 50 insgesamt je 15 min. Nonces räumt
   der Cron (`worker_aufraeumen`) nach 11 min, abgelaufene Codes nach einem
-  Tag. Grants löschen (#52) und Rückkehr zum Browser-Weg (#53) hängen sich
-  an `WorkerKopplung::entkoppeln()`.
+  Tag. Grants löschen (#52, umgesetzt) und Rückkehr zum Browser-Weg (#53)
+  hängen sich an `WorkerKopplung::entkoppeln()`.
 
 ## 5. Protokoll (Webhoster-API `/api/worker/*`)
 
@@ -122,9 +146,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 | `POST /pair` | Kopplung (nur mit gültigem Code) |
 | `POST /heartbeat` | Version, Protokollversion, Fähigkeiten (`ocr`, `render`, `ai`), freie Ressourcen; Antwort: versiegelte Konfiguration falls geändert, Anzahl wartender Jobs |
 | `POST /jobs/claim` | bis zu N Jobs übernehmen (setzt `locked_until`, z. B. 30 min) |
-| `GET /blobs/{id}` | Chiffrat streamen + an den Worker versiegelter DEK (nur mit gültigem Grant für einen beanspruchten Job) |
+| `GET /blobs/{id}` | Chiffrat streamen + an den Worker versiegelter DEK (nur mit gültigem Grant für einen beanspruchten Job desselben Dokuments) |
 | `GET /jobs/{id}/context` | Worker-Kontext + nicht-sensible Stammdaten für den Prompt (Kategorien mit `ai_hint`, Kostenstellen, Settings) |
-| `POST /jobs/{id}/artifacts` | Ergebnis-Upload (Chunk-Upload wie 03 §4), bereits an `VK_pub` verschlüsselt |
+| `POST /jobs/{id}/artifacts` (+ `…/{a}/chunks/{n}`, `…/{a}/commit`) | Ergebnis-Upload (Chunk-Upload wie 03 §4), bereits an `VK_pub` verschlüsselt |
 | `POST /jobs/{id}/complete` / `/fail` | Abschluss bzw. Fehler mit Meldung (ohne Klartext-Inhalte) |
 
 - Polling-Intervall: 60 s ohne Arbeit, sofort weiter, solange Jobs warten.
@@ -137,7 +161,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   verlängern, für lange OCR/KI-Läufe), `jobs/{id}/complete`,
   `jobs/{id}/fail`
   (`App\Api\WorkerApiController`, JSON, Fehler als `{fehler, meldung}`);
-  `blobs`, `context`, `artifacts` folgen mit #52. Protokollversion 1
+  `blobs`, `context`, `artifacts` siehe „Stand M7b-2“. Protokollversion 1
   (`WorkerProtokoll::VERSION`); inkompatibel → 409 `protokoll` „Worker-Update
   nötig“ – bei `pair` ohne den Code zu verbrauchen, beim Heartbeat wird die
   Version trotzdem gespeichert (Admin-Anzeige) und Claims werden abgelehnt.
@@ -148,7 +172,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     → `{status, server_zeit, poll_sekunden, wartend, config}` (`wartend` =
     jetzt beanspruchbare Jobs, nicht die gerade bearbeiteten); `config` =
     `{version, versiegelt}` nur, wenn `worker.config_version` neuer ist
-    (befüllt von Folge-Issues). Freie Ressourcen werden noch nicht
+    (KI-Zugangsdaten, seit #52, §3). Freie Ressourcen werden noch nicht
     ausgewertet.
   - `jobs/claim` `{max ≤ 5}` → `{jobs: [{id, typ, ref_type, ref_id, step,
     versuch, lock, gesperrt_bis}]}`, nur `executor = worker` und nur Typen
@@ -165,6 +189,46 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     Klassennamen mit `\`; sonst `WorkerFehler`),
     nie Text; ohne `endgueltig` geht der Job bis zum 3. Versuch zurück auf
     `offen`.
+
+- **Stand M7b-2 (issue #52, E-39):**
+  - `GET /blobs/{id}` → Chiffrat als Stream, Header `X-Worker-Dek`
+    (Base64, Grant an `W_pub`), `X-Blob-Header` (Base64, secretstream-Header),
+    `X-Blob-Groesse` (Klartext-Bytes). Nur mit Grant dieses Workers **und**
+    einem laufenden, nicht abgelaufenen Claim auf einen Job desselben
+    Dokuments, sonst einheitlich 403 `kein_grant`.
+  - `GET /jobs/{id}/context` (nur für einen gehaltenen Job, sonst 404) →
+    `{job, dokument: {id, blobs[], kontext (Base64|null)}, tresor:
+    {version, public_key}, artefakte[] (erlaubte Kinds), stammdaten:
+    {kategorien[{id, name, richtung, ki_hinweis}], kostenstellen[{id,
+    name}]}}`. `tresor` = aktuelle Generation (`vault.current()`); daran
+    versiegelt der Worker seine Ergebnisse.
+  - Ergebnis-Upload in drei Schritten, weil das AAD von `data_enc` die
+    Zeilen-ID enthält:
+    1. `POST /jobs/{id}/artifacts` `{lock, versuch, kind, seq, dek_sealed,
+       groesse, header?, sha256?}` (Binärwerte Base64; `header` und
+       `sha256` (hex des Chiffrats) nur für Blob-Kinds) → 201 `{status:
+       "offen", artefakt_id, aad, chunks, chunk_bytes, fehlend[]}` bzw.
+       200 `{status: "vorhanden"}`. Legt die `document_artifact`-Zeile mit
+       Kind-Präfix `~` an (für Leser unsichtbar) und `worker_upload`.
+       Geprüft: Sperre, `versuch` = aktuelle `attempts`, Kind je Job-Typ
+       (`render_pages` → `page_image`; `ocr` → `pdfa`, `text`;
+       `image_cleanup` → `pdfa`; `ai_extract` → `extraction`),
+       `dek_sealed` = 81 Byte mit Versionsbyte der aktuellen
+       Tresor-Generation, Header-Format, Größe (Blob ≤ 64 MiB, `data_enc`
+       ≤ 4 MiB), höchstens 10 offene Uploads je Worker.
+    2. `POST /jobs/{id}/artifacts/{a}/chunks/{n}` – Rohkörper = Chiffrat
+       (je 2 MiB), Ablage in `shared/var/tmp/upload/worker/` (nur
+       Chiffrat). Ohne Sperre im Request; gebunden an Worker, Job und
+       Versuch der Anmeldung, der Job muss noch gehalten sein.
+    3. `POST /jobs/{id}/artifacts/{a}/commit` `{lock}` → Länge (und bei
+       Blobs SHA-256) geprüft, Blob per `BlobService::storeCipher()` bzw.
+       `data_enc` gesetzt und Kind-Präfix entfernt – in **einer**
+       Anweisung; Wiederholung → `vorhanden`.
+  - Blob-Artefakte haben kein `meta_enc` (AAD mit Blob-ID); das Kind sagt,
+    was es ist. Ein nicht festgeschriebener Upload verfällt mit dem Job
+    (`complete`/`fail`), beim Entkoppeln und per Cron nach einem Tag.
+  - Wer die Ergebnisse in den Ablauf übernimmt (z. B. ältere Läufe
+    ablöst, `ocr_status` setzt), ist Sache von #53/#54.
 
 ## 6. Routing auf dem Webhoster
 

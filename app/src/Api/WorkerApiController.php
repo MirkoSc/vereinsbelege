@@ -10,10 +10,22 @@ use App\Domain\JobStatus;
 use App\Domain\Worker;
 use App\Domain\WorkerFaehigkeit;
 use App\Domain\WorkerStatus;
+use App\Domain\Category;
 use App\Http\Request;
 use App\Http\Response;
+use App\Http\ResponseInterface;
+use App\Http\StreamResponse;
+use App\Repository\CategoryRepository;
+use App\Repository\CostCenterRepository;
 use App\Repository\JobRepository;
+use App\Repository\VaultRepository;
+use App\Repository\WorkerGrantRepository;
 use App\Repository\WorkerRepository;
+use App\Service\Storage\BlobService;
+use App\Service\Worker\WorkerArtefaktFehler;
+use App\Service\Worker\WorkerArtefakte;
+use App\Service\Worker\WorkerFreigaben;
+use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Worker\WorkerProtokoll;
 
@@ -27,10 +39,12 @@ use App\Service\Worker\WorkerProtokoll;
  * here only after App\Service\Worker\WorkerAuth verified the request
  * (app/src/routes.php wraps it), with the authenticated worker as argument.
  *
- * Blobs, context and artifact upload (issue #52) and the routing that puts
- * jobs on `executor = worker` (issue #53) build on this. Nothing here sends
- * or stores business data: job rows are ids and counters, error codes are
- * identifiers.
+ * Blobs, context and artifact upload (issue #52/M7b-2): the worker gets
+ * ciphertext plus data keys sealed to ITS key (worker_grant) and only for a
+ * document it holds a job on right now; it hands back ciphertext whose data
+ * keys it sealed to VK_pub. The routing that puts jobs on `executor =
+ * worker` is issue #53. Nothing here sends or stores business data in the
+ * clear: job rows are ids and counters, error codes are identifiers.
  */
 final readonly class WorkerApiController
 {
@@ -49,10 +63,21 @@ final readonly class WorkerApiController
     /** The JSON bodies of these routes are small; anything larger is refused unread. */
     private const int MAX_JSON_BYTES = 65536;
 
+    /** Largest body of one artifact chunk: the upload chunk size plus some slack. */
+    private const int MAX_CHUNK_BYTES = 2 * 1024 * 1024 + 4096;
+
     public function __construct(
         private WorkerKopplung $kopplung,
         private WorkerRepository $workers,
         private JobRepository $jobs,
+        private WorkerGrantRepository $grants,
+        private WorkerFreigaben $freigaben,
+        private WorkerArtefakte $artefakte,
+        private WorkerKonfiguration $konfiguration,
+        private BlobService $blobs,
+        private VaultRepository $vaults,
+        private CategoryRepository $kategorien,
+        private CostCenterRepository $kostenstellen,
     ) {
     }
 
@@ -124,6 +149,11 @@ final readonly class WorkerApiController
         }
 
         $aktiv = $worker->status === WorkerStatus::Aktiv;
+        if ($aktiv) {
+            // AI provider profiles incl. API keys, sealed to W_pub - anew
+            // only when something changed (07 section 3 "KI-Zugangsdaten").
+            $worker = $this->konfiguration->aktualisieren($worker);
+        }
         $typen = WorkerFaehigkeit::jobTypenFuer($faehigkeiten);
         $bekannt = self::zahl($daten, 'config_version');
 
@@ -162,6 +192,7 @@ final readonly class WorkerApiController
             }
             if ($job->attempts > self::MAX_VERSUCHE) {
                 $this->jobs->fail($job->id, 'WorkerVersucheErschoepft', $now, $lock);
+                $this->freigaben->nachJob($job);
 
                 continue;
             }
@@ -219,9 +250,12 @@ final readonly class WorkerApiController
             return Response::json(['status' => JobStatus::Fertig->value]);
         }
 
-        return $this->jobs->abschliessen($job->id, $lock)
-            ? Response::json(['status' => JobStatus::Fertig->value])
-            : self::sperreVerloren();
+        if (!$this->jobs->abschliessen($job->id, $lock)) {
+            return self::sperreVerloren();
+        }
+        $this->freigaben->nachJob($job);
+
+        return Response::json(['status' => JobStatus::Fertig->value]);
     }
 
     /**
@@ -247,14 +281,248 @@ final readonly class WorkerApiController
         $endgueltig = ($daten['endgueltig'] ?? false) === true || $job->attempts >= self::MAX_VERSUCHE;
 
         if ($endgueltig) {
-            return $this->jobs->fail($job->id, $code, null, $lock)
-                ? Response::json(['status' => JobStatus::Fehler->value])
-                : self::sperreVerloren();
+            if (!$this->jobs->fail($job->id, $code, null, $lock)) {
+                return self::sperreVerloren();
+            }
+            $this->freigaben->nachJob($job);
+
+            return Response::json(['status' => JobStatus::Fehler->value]);
         }
 
-        return $this->jobs->zurueckgebenMitFehler($job->id, $lock, $code)
-            ? Response::json(['status' => JobStatus::Offen->value])
-            : self::sperreVerloren();
+        if (!$this->jobs->zurueckgebenMitFehler($job->id, $lock, $code)) {
+            return self::sperreVerloren();
+        }
+        // The grants stay for the next attempt; this attempt's unfinished
+        // uploads cannot be committed any more (the attempt changes).
+        $this->freigaben->nachJob($job);
+
+        return Response::json(['status' => JobStatus::Offen->value]);
+    }
+
+    /**
+     * `GET /api/worker/blobs/{id}`: the ciphertext of a blob, with its data
+     * key sealed to this worker (header `X-Worker-Dek`) and the secretstream
+     * header (`X-Blob-Header`). Only with a grant for this worker AND a
+     * running claim of this worker on a job of the blob's document - one
+     * answer (403) for every other case, so nothing is learnt about blobs
+     * that are not one's own (07 section 5, Pflicht-Test).
+     *
+     * @param array<string, string> $params
+     */
+    public function blob(Request $request, array $params, Worker $worker): ResponseInterface
+    {
+        if (($sperre = self::nurAktiv($worker)) !== null) {
+            return $sperre;
+        }
+        $blobId = (int) ($params['id'] ?? 0);
+        $grant = $this->grants->grantFuerGehaltenenJob($worker->id, $blobId, $worker->lockPraefix(), new \DateTimeImmutable());
+        $blob = $grant === null ? null : $this->blobs->find($blobId);
+        if ($grant === null || $blob === null || !$blob->isComplete()) {
+            return self::fehler(403, 'kein_grant', 'Kein Zugriff auf diese Datei.');
+        }
+
+        return new StreamResponse($this->blobs->readCipher($blob), [
+            'Content-Type' => 'application/octet-stream',
+            'Cache-Control' => 'no-store',
+            'X-Worker-Dek' => base64_encode($grant['sealed_dek']),
+            'X-Blob-Header' => base64_encode($blob->header),
+            'X-Blob-Groesse' => (string) $blob->size,
+        ]);
+    }
+
+    /**
+     * `GET /api/worker/jobs/{id}/context`: what the worker needs for a job
+     * it holds - the blobs it may fetch, the AI context sealed to it, VK_pub
+     * to seal its results to, and non-sensitive master data for the prompt
+     * (categories with their AI hint, cost centers). No query string, no
+     * body: a running, unexpired claim of this worker is the credential.
+     *
+     * @param array<string, string> $params
+     */
+    public function context(Request $request, array $params, Worker $worker): Response
+    {
+        if (($sperre = self::nurAktiv($worker)) !== null) {
+            return $sperre;
+        }
+        $now = new \DateTimeImmutable();
+        $job = $this->jobs->find((int) ($params['id'] ?? 0));
+        if ($job === null || !self::haeltJob($job, $worker, $now)) {
+            return self::fehler(404, 'job_unbekannt', 'Kein Job dieses Workers.');
+        }
+        $tresor = $this->vaults->current();
+        if ($tresor === null) {
+            return self::fehler(409, 'kein_tresor', 'Der Tresor ist nicht eingerichtet.');
+        }
+
+        $dokument = null;
+        if ($job->refType === 'document' && $job->refId !== null) {
+            $kontext = $this->grants->kontextFuer($worker->id, $job->refId, $now);
+            $dokument = [
+                'id' => $job->refId,
+                'blobs' => $this->grants->blobIdsFuer($worker->id, $job->refId, $now),
+                'kontext' => $kontext === null ? null : base64_encode($kontext),
+            ];
+        }
+
+        return Response::json([
+            'job' => self::jobDaten($job, (string) $job->lockedBy),
+            'dokument' => $dokument,
+            'tresor' => ['version' => $tresor->version, 'public_key' => base64_encode($tresor->publicKey())],
+            'artefakte' => array_map(static fn($k): string => $k->value, WorkerArtefakte::erlaubteKinds($job->typ)),
+            'stammdaten' => [
+                'kategorien' => array_values(array_map(static fn(Category $k): array => [
+                    'id' => $k->id,
+                    'name' => $k->name,
+                    'richtung' => $k->direction->value,
+                    'ki_hinweis' => $k->aiHint,
+                ], array_filter($this->kategorien->all(), static fn(Category $k): bool => $k->active))),
+                'kostenstellen' => self::kostenstellenListe($this->kostenstellen->active()),
+            ],
+        ]);
+    }
+
+    /**
+     * `POST /api/worker/jobs/{id}/artifacts`: announces one result (JSON
+     * `{lock, versuch, kind, seq, dek_sealed, header?, groesse, sha256}`,
+     * binary values Base64, `sha256` hex of the ciphertext).
+     *
+     * @param array<string, string> $params
+     */
+    public function artefaktAnmelden(Request $request, array $params, Worker $worker): Response
+    {
+        $geprueft = $this->eigenerJob($request, $params, $worker);
+        if ($geprueft instanceof Response) {
+            return $geprueft;
+        }
+        [$job, , $daten] = $geprueft;
+        if ($job->status !== JobStatus::Laeuft) {
+            return self::sperreVerloren();
+        }
+        $header = self::text($daten, 'header');
+
+        try {
+            $antwort = $this->artefakte->anmelden(
+                $worker,
+                $job,
+                self::zahl($daten, 'versuch', -1),
+                self::text($daten, 'kind'),
+                self::zahl($daten, 'seq', -1),
+                (string) base64_decode(self::text($daten, 'dek_sealed'), true),
+                $header === '' ? null : (string) base64_decode($header, true),
+                self::zahl($daten, 'groesse'),
+                self::text($daten, 'sha256'),
+                new \DateTimeImmutable(),
+            );
+        } catch (WorkerArtefaktFehler $e) {
+            return self::artefaktFehler($e);
+        }
+
+        return Response::json($antwort, ($antwort['status'] ?? '') === 'offen' ? 201 : 200);
+    }
+
+    /**
+     * `POST /api/worker/jobs/{id}/artifacts/{artefakt}/chunks/{index}`: one
+     * piece of ciphertext as the raw body. No lock in the request (the body
+     * is the ciphertext): the upload is bound to worker, job and attempt
+     * from its announcement, and the job must still be this worker's
+     * running claim.
+     *
+     * @param array<string, string> $params
+     */
+    public function artefaktChunk(Request $request, array $params, Worker $worker): Response
+    {
+        $job = $this->gehaltenerJob($params, $worker);
+        if ($job instanceof Response) {
+            return $job;
+        }
+        $body = $request->body();
+        if (strlen($body) > self::MAX_CHUNK_BYTES) {
+            return self::fehler(413, 'zu_gross', 'Der Teil ist zu groß.');
+        }
+        $stream = fopen('php://memory', 'w+b');
+        if ($stream === false) {
+            throw new \RuntimeException('Cannot open a memory stream.');
+        }
+        fwrite($stream, $body);
+        rewind($stream);
+
+        try {
+            return Response::json($this->artefakte->chunk($worker, $job, (int) ($params['artefakt'] ?? 0), (int) ($params['index'] ?? -1), $stream));
+        } catch (WorkerArtefaktFehler $e) {
+            return self::artefaktFehler($e);
+        } finally {
+            fclose($stream);
+        }
+    }
+
+    /**
+     * `POST /api/worker/jobs/{id}/artifacts/{artefakt}/commit` `{lock}`.
+     *
+     * @param array<string, string> $params
+     */
+    public function artefaktFestschreiben(Request $request, array $params, Worker $worker): Response
+    {
+        $geprueft = $this->eigenerJob($request, $params, $worker);
+        if ($geprueft instanceof Response) {
+            return $geprueft;
+        }
+        [$job] = $geprueft;
+        if ($job->status !== JobStatus::Laeuft) {
+            return self::sperreVerloren();
+        }
+
+        try {
+            return Response::json($this->artefakte->festschreiben($worker, $job, (int) ($params['artefakt'] ?? 0)));
+        } catch (WorkerArtefaktFehler $e) {
+            return self::artefaktFehler($e);
+        }
+    }
+
+    /**
+     * The job of a chunk upload: a running, unexpired claim of this worker.
+     *
+     * @param array<string, string> $params
+     */
+    private function gehaltenerJob(array $params, Worker $worker): Job|Response
+    {
+        if (($sperre = self::nurAktiv($worker)) !== null) {
+            return $sperre;
+        }
+        $job = $this->jobs->find((int) ($params['id'] ?? 0));
+        if ($job === null || !self::haeltJob($job, $worker, new \DateTimeImmutable())) {
+            return self::fehler(404, 'job_unbekannt', 'Kein Job dieses Workers.');
+        }
+
+        return $job;
+    }
+
+    /** A running claim of this worker whose lock has not run out. */
+    private static function haeltJob(Job $job, Worker $worker, \DateTimeImmutable $now): bool
+    {
+        return $job->executor === JobExecutor::Worker
+            && $job->status === JobStatus::Laeuft
+            && str_starts_with($job->lockedBy ?? '', $worker->lockPraefix())
+            && $job->lockedUntil !== null && $job->lockedUntil > $now;
+    }
+
+    /**
+     * @param array<int, string> $kostenstellen
+     *
+     * @return list<array{id: int, name: string}>
+     */
+    private static function kostenstellenListe(array $kostenstellen): array
+    {
+        $liste = [];
+        foreach ($kostenstellen as $id => $name) {
+            $liste[] = ['id' => (int) $id, 'name' => (string) $name];
+        }
+
+        return $liste;
+    }
+
+    private static function artefaktFehler(WorkerArtefaktFehler $e): Response
+    {
+        return self::fehler($e->status, $e->fehler, 'Das Ergebnis wurde nicht angenommen.');
     }
 
     /**

@@ -50,6 +50,7 @@ final readonly class WorkerKopplung
         private ServerCrypto $crypto,
         private RateLimiter $fehlversuche,
         private AuditLog $audit,
+        private WorkerFreigaben $freigaben,
     ) {
     }
 
@@ -153,9 +154,10 @@ final readonly class WorkerKopplung
 
     /**
      * Unpairs: the access key is deleted and every job the worker holds is
-     * given back at once, so nothing waits for its lock to run out.
-     * Deleting its grants (issue #52) and routing its jobs back to the
-     * browser/session (issue #53) hook in here.
+     * given back at once, so nothing waits for its lock to run out. Its
+     * grants, contexts and unfinished uploads go as well (issue #52) -
+     * nothing sealed to its key stays. Routing its jobs back to the
+     * browser/session (issue #53) hooks in here.
      */
     public function entkoppeln(int $workerId, ?int $userId, string $ip, \DateTimeImmutable $now): bool
     {
@@ -164,6 +166,7 @@ final readonly class WorkerKopplung
             return false;
         }
         $this->jobs->freigebenFuerPraefix($worker->lockPraefix(), $now);
+        $this->freigaben->entkoppelt($workerId);
         $this->audit->record(AuditAction::WorkerEntkoppelt, $userId, $ip, $workerId, now: $now);
 
         return true;

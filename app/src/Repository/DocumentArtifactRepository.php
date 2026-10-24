@@ -60,6 +60,102 @@ final readonly class DocumentArtifactRepository
     }
 
     /**
+     * Kind prefix of an artifact the worker announced but has not committed
+     * yet (issue #52/M7b-2, migrations/040_worker_grant.sql). Every reader
+     * asks for a concrete kind, so such a row stays invisible until
+     * festschreiben() drops the prefix - and it still has its id, which the
+     * worker needs for the AAD of `data_enc`.
+     */
+    public const string PENDING = '~';
+
+    /**
+     * Reserves the row of a worker upload: kind with PENDING prefix, no
+     * payload yet. Null when the unique key (document, kind, job, seq) is
+     * taken - by the same announcement (a repeat) or a committed artifact.
+     */
+    public function reserviere(int $documentId, ArtifactKind $kind, int $seq, string $dekSealed, int $jobId, \DateTimeImmutable $now): ?int
+    {
+        try {
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO document_artifact
+                    (document_id, kind, seq, blob_id, dek_sealed, data_enc, producer, job_id, created_at)
+                 VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?)',
+            );
+            $stmt->execute([$documentId, self::PENDING . $kind->value, $seq, $dekSealed, JobExecutor::Worker->value, $jobId, $now->format(self::FORMAT)]);
+
+            return (int) $this->pdo->lastInsertId();
+        } catch (\PDOException $e) {
+            if ((int) ($e->errorInfo[1] ?? 0) === 1062) {
+                return null;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * The id of the reserved, not yet committed row of this upload.
+     */
+    public function reserviert(int $documentId, ArtifactKind $kind, int $jobId, int $seq): ?int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id FROM document_artifact WHERE document_id = ? AND kind = ? AND job_id = ? AND seq = ?',
+        );
+        $stmt->execute([$documentId, self::PENDING . $kind->value, $jobId, $seq]);
+        $id = $stmt->fetchColumn();
+
+        return $id === false ? null : (int) $id;
+    }
+
+    /**
+     * Commits a reserved worker upload: payload in, prefix off - one
+     * statement, so a reader sees either nothing or the whole artifact.
+     * False when the row is no longer a reservation of this kind.
+     */
+    public function festschreiben(int $id, ArtifactKind $kind, ?int $blobId, ?string $dataEnc): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE document_artifact SET kind = ?, blob_id = ?, data_enc = ? WHERE id = ? AND kind = ?',
+        );
+        $stmt->bindValue(1, $kind->value);
+        $stmt->bindValue(2, $blobId, $blobId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(3, $dataEnc, $dataEnc === null ? \PDO::PARAM_NULL : \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(5, self::PENDING . $kind->value);
+        $stmt->execute();
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * The raw row of a worker upload, reserved or committed - kind as
+     * stored (with or without PENDING), so a repeated commit can tell
+     * "already done" from "never announced".
+     *
+     * @return ?array{document_id: int, kind: string, job_id: ?int, dek_sealed: string}
+     */
+    public function rohzeile(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT document_id, kind, job_id, dek_sealed FROM document_artifact WHERE id = ?');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        return is_array($row) ? [
+            'document_id' => (int) $row['document_id'],
+            'kind' => (string) $row['kind'],
+            'job_id' => $row['job_id'] === null ? null : (int) $row['job_id'],
+            'dek_sealed' => (string) $row['dek_sealed'],
+        ] : null;
+    }
+
+    /** Drops a reservation (never a committed artifact). */
+    public function reservierungVerwerfen(int $id): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM document_artifact WHERE id = ? AND kind LIKE ?');
+        $stmt->execute([$id, self::PENDING . '%']);
+    }
+
+    /**
      * Whether this exact page of this exact rendering run is already
      * stored - the idempotency check a retried or duplicated upload needs
      * (App\Api\RasterungController).

@@ -9,17 +9,33 @@ use App\Domain\Worker;
 use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Http\Response;
+use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BlobRepository;
+use App\Repository\CategoryRepository;
+use App\Repository\CostCenterRepository;
+use App\Repository\DocumentArtifactRepository;
+use App\Repository\DocumentRepository;
 use App\Repository\JobRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\VaultRepository;
+use App\Repository\WorkerGrantRepository;
 use App\Repository\WorkerNonceRepository;
 use App\Repository\WorkerRepository;
+use App\Repository\WorkerUploadRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
+use App\Service\Storage\BlobService;
+use App\Service\Storage\DbBlobBackend;
+use App\Service\Storage\FsBlobBackend;
+use App\Service\Upload\UploadService;
+use App\Service\Worker\WorkerArtefakte;
 use App\Service\Worker\WorkerAuth;
+use App\Service\Worker\WorkerFreigaben;
+use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Worker\WorkerProtokoll;
 use App\Tests\Support\DatabaseTestCase;
@@ -38,6 +54,22 @@ abstract class WorkerTestCase extends DatabaseTestCase
     protected WorkerAuth $auth;
     protected WorkerApiController $api;
 
+    // Issue #52/M7b-2: grants, uploads, a vault and blob storage.
+    protected string $tmp = '';
+    protected Vault $vault;
+    protected WorkerGrantRepository $grants;
+    protected WorkerUploadRepository $uploads;
+    protected WorkerArtefakte $artefakte;
+    protected WorkerFreigaben $freigaben;
+    protected BlobService $blobService;
+    protected DocumentRepository $documents;
+    protected DocumentArtifactRepository $artifacts;
+    protected AiProviderRepository $anbieter;
+    protected bool $rotation = false;
+
+    /** The key pair of the worker koppeln() paired last - what stays on the worker. */
+    protected string $workerSchluesselpaar = '';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -46,12 +78,43 @@ abstract class WorkerTestCase extends DatabaseTestCase
         $this->crypto = new ServerCrypto(str_repeat('t', ServerCrypto::KEY_BYTES));
         $this->workers = new WorkerRepository($this->pdo());
         $this->jobs = new JobRepository($this->pdo());
+
+        $this->tmp = sys_get_temp_dir() . '/vb_worker_' . bin2hex(random_bytes(6));
+        mkdir($this->tmp . '/blobs', 0775, true);
+        $this->vault = Vault::create();
+        $vaults = new VaultRepository($this->pdo());
+        $vaults->insert($this->vault->publicKey(), $this->vault->version);
+        $blobs = new BlobRepository($this->pdo());
+        $this->blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($this->tmp . '/blobs'));
+        $this->documents = new DocumentRepository($this->pdo());
+        $this->artifacts = new DocumentArtifactRepository($this->pdo());
+        $this->grants = new WorkerGrantRepository($this->pdo());
+        $this->uploads = new WorkerUploadRepository($this->pdo());
+        $this->anbieter = new AiProviderRepository($this->pdo(), $this->crypto);
+        $this->artefakte = new WorkerArtefakte(
+            $this->artifacts,
+            $this->uploads,
+            new UploadService($this->tmp . '/upload', UploadService::CHUNK_BYTES, WorkerArtefakte::BLOB_MAX_BYTES),
+            $this->blobService,
+            $vaults,
+        );
+        $this->freigaben = new WorkerFreigaben(
+            $this->workers,
+            $this->grants,
+            $this->uploads,
+            $this->jobs,
+            $blobs,
+            $vaults,
+            fn(): bool => $this->rotation,
+            $this->artefakte,
+        );
         $this->kopplung = new WorkerKopplung(
             $this->workers,
             $this->jobs,
             $this->crypto,
             new RateLimiter(new RateLimitRepository($this->pdo()), WorkerKopplung::FEHLER_FENSTER_SEKUNDEN),
-            new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $this->crypto),
+            new AuditLog(new AuditLogRepository($this->pdo()), $vaults, $this->crypto),
+            $this->freigaben,
         );
         $this->auth = new WorkerAuth(
             $this->workers,
@@ -60,7 +123,41 @@ abstract class WorkerTestCase extends DatabaseTestCase
             new RateLimiter(new RateLimitRepository($this->pdo()), WorkerAuth::FEHLER_FENSTER_SEKUNDEN),
             new RateLimiter(new RateLimitRepository($this->pdo()), WorkerAuth::ANFRAGEN_FENSTER_SEKUNDEN),
         );
-        $this->api = new WorkerApiController($this->kopplung, $this->workers, $this->jobs);
+        $this->api = new WorkerApiController(
+            $this->kopplung,
+            $this->workers,
+            $this->jobs,
+            $this->grants,
+            $this->freigaben,
+            $this->artefakte,
+            new WorkerKonfiguration($this->workers, $this->anbieter, $this->crypto),
+            $this->blobService,
+            $vaults,
+            new CategoryRepository($this->pdo()),
+            new CostCenterRepository($this->pdo()),
+        );
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->tmp !== '') {
+            self::entferne($this->tmp);
+        }
+        parent::tearDown();
+    }
+
+    private static function entferne(string $pfad): void
+    {
+        if (is_dir($pfad) && !is_link($pfad)) {
+            foreach (scandir($pfad) ?: [] as $eintrag) {
+                if ($eintrag !== '.' && $eintrag !== '..') {
+                    self::entferne($pfad . '/' . $eintrag);
+                }
+            }
+            @rmdir($pfad);
+        } elseif (file_exists($pfad) || is_link($pfad)) {
+            @unlink($pfad);
+        }
     }
 
     /**
@@ -73,7 +170,8 @@ abstract class WorkerTestCase extends DatabaseTestCase
         $now = new \DateTimeImmutable();
         $code = $this->kopplung->codeErzeugen(null, '', $now);
         self::assertNotNull($code);
-        $ergebnis = $this->kopplung->koppeln($code, base64_encode(sodium_crypto_box_publickey(sodium_crypto_box_keypair())), 'Pi', WorkerProtokoll::VERSION, '1.0.0', '203.0.113.5', $now);
+        $this->workerSchluesselpaar = sodium_crypto_box_keypair();
+        $ergebnis = $this->kopplung->koppeln($code, base64_encode(sodium_crypto_box_publickey($this->workerSchluesselpaar)), 'Pi', WorkerProtokoll::VERSION, '1.0.0', '203.0.113.5', $now);
         self::assertTrue($ergebnis->istGekoppelt());
         if ($bestaetigen) {
             self::assertTrue($this->kopplung->bestaetigen((int) $ergebnis->workerId, null, '', $now));

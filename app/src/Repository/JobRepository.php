@@ -484,6 +484,19 @@ final readonly class JobRepository
     }
 
     /**
+     * Whether a worker job still waits or runs for this row - while one
+     * does, the worker grants of the document stay (issue #52/M7b-2,
+     * docs/spec/07-worker.md section 3).
+     */
+    public function wartetAufWorker(string $refType, int $refId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM job WHERE executor = ? AND ref_type = ? AND ref_id = ? AND status IN (?, ?) LIMIT 1');
+        $stmt->execute([JobExecutor::Worker->value, $refType, $refId, JobStatus::Offen->value, JobStatus::Laeuft->value]);
+
+        return $stmt->fetch() !== false;
+    }
+
+    /**
      * Housekeeping for the cron: removes jobs that are done and will not run
      * again. `fehler` stays - someone should look at it.
      */
