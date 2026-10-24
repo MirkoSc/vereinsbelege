@@ -115,7 +115,9 @@ zu erfinden.
   1. *Server-Schlüssel* (in `shared/config.php`, nie in der DB, nie im Backup
      der DB): nur für Betriebsdaten, die ohne angemeldeten Nutzer gebraucht
      werden (Mail-Adressen der Benutzer, Mail-Queue, API-Keys der
-     KI-Anbieter).
+     KI-Anbieter). Auch der Login-Index `user.email_bi` hängt daran – ein
+     Restore ohne `config.php` braucht deshalb den Zugangsschritt des
+     Installers (06 §2, E-19); `config.php` wird getrennt gesichert.
   2. *Tresor* (asymmetrisch, libsodium): **alle fachlichen Daten** (Belege,
      Bilder, OCR-Texte, Beträge, Lieferanten, IBANs, Buchungen,
      Einreicher-Daten). Schreiben geht ohne Geheimnis (Sealed Box an den

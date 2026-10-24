@@ -229,6 +229,9 @@ if (!is_file($configFile)) {
     $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
     $router->post('/install/neu', $offen, $installer->restart(...));
     $router->post('/install/wiederherstellen', $offen, $installer->restoreStep(...));
+    // The access step after a restore without server key (issue #154).
+    $router->post('/install/serverschluessel', $offen, $installer->serverKey(...));
+    $router->post('/install/zugang', $offen, $installer->access(...));
     // Registered last: the router takes the first matching route, and this
     // one matches everything.
     $router->get('/{rest:.*}', $offen, static fn(): \App\Http\Response => \App\Http\Response::redirect('/install'));
@@ -1217,7 +1220,9 @@ $guard = static fn(): LoginGuard => new LoginGuard(
             ? null
             : new SessionUser(
                 $user,
-                $serverCrypto->decrypt($user->displayNameEnc),
+                // A name under a lost server key (restore without config.php,
+                // issue #154) must not lock the one account that can fix it.
+                $serverCrypto->decryptOrNull($user->displayNameEnc) ?? 'Benutzer #' . $user->id,
                 new UserAccessRepository($connections->pdo())->berechtigungen($userId),
             );
     },

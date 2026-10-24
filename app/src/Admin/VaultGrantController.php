@@ -67,7 +67,9 @@ final readonly class VaultGrantController
         $konten = $this->users->all();
         $namen = [];
         foreach ($konten as $user) {
-            $namen[$user->id] = $this->crypto->decrypt($user->displayNameEnc);
+            // A name that does not open is ciphertext under a lost server key
+            // (restore without config.php, issue #154) - shown by its id.
+            $namen[$user->id] = $this->crypto->decryptOrNull($user->displayNameEnc) ?? 'Benutzer #' . $user->id;
         }
 
         $wartend = [];
@@ -76,7 +78,7 @@ final readonly class VaultGrantController
             $zeile = [
                 'id' => $user->id,
                 'name' => $namen[$user->id],
-                'email' => $this->crypto->decrypt($user->emailEnc),
+                'email' => $this->crypto->decryptOrNull($user->emailEnc) ?? '(nicht lesbar)',
             ];
             if (isset($ausstehend[$user->id])) {
                 $wartend[] = $zeile;
@@ -180,7 +182,10 @@ final readonly class VaultGrantController
 
     private function hinweis(User $user, string $ereignis): void
     {
-        $this->mailer->sendeSicherheitshinweis($this->crypto->decrypt($user->emailEnc), $ereignis);
+        $email = $this->crypto->decryptOrNull($user->emailEnc);
+        if ($email !== null) {
+            $this->mailer->sendeSicherheitshinweis($email, $ereignis);
+        }
     }
 
     private function csrfFailure(): ResponseInterface

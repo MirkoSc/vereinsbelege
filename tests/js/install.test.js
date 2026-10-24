@@ -69,3 +69,26 @@ test('an unknown mode is treated like a restore, not a fresh install', () => {
         backupVerdeckt: true,
     });
 });
+
+test('a finished restore without server key sends the page on to the access step', () => {
+    const { zielNachAbschluss } = require('../../public/js/install.js');
+    assert.equal(zielNachAbschluss({ fertig: true, weiter: '/install' }), '/install');
+    assert.equal(zielNachAbschluss({ fertig: true }), null, 'a complete restore stays on the page');
+    assert.equal(zielNachAbschluss({ fertig: false, weiter: '/install' }), null, 'only once the restore is through');
+    assert.equal(zielNachAbschluss(null), null);
+});
+
+test('the access-step destination is only ever a path on this host', () => {
+    const { zielNachAbschluss } = require('../../public/js/install.js');
+    assert.equal(zielNachAbschluss({ fertig: true, weiter: 'https://example.org/' }), null);
+    assert.equal(zielNachAbschluss({ fertig: true, weiter: '//example.org/install' }), null);
+    assert.equal(zielNachAbschluss({ fertig: true, weiter: '' }), null);
+    assert.equal(zielNachAbschluss({ fertig: true, weiter: 42 }), null);
+});
+
+test('the status line says where a key-less restore goes next', () => {
+    assert.equal(
+        statusText({ fertig: true, offset: 12, gesamt: 12, weiter: '/install' }),
+        'Fertig. Das Backup ist eingespielt – weiter zum Zugang …',
+    );
+});

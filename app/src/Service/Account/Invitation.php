@@ -85,12 +85,9 @@ final readonly class Invitation
         ?\DateTimeImmutable $now = null,
     ): array {
         $now ??= new \DateTimeImmutable();
-        $email = trim($email);
+        $email = self::pruefeEmail($email);
         $anzeigename = self::pruefeName($anzeigename);
 
-        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false || strlen($email) > 255) {
-            throw new UserRuleViolation('Bitte eine gültige E-Mail-Adresse angeben.');
-        }
         if ($roleIds === []) {
             throw new UserRuleViolation('Bitte mindestens eine Rolle wählen.');
         }
@@ -209,6 +206,23 @@ final readonly class Invitation
     public static function linkUngueltig(): string
     {
         return 'Dieser Einladungslink ist ungültig oder abgelaufen. Bitte bitten Sie die Vereinsverwaltung um eine neue Einladung.';
+    }
+
+    /**
+     * A plausible address that fits `user.email_enc` (255 bytes, RFC 5321).
+     * Shared with the one other writer of an address, the admin form that
+     * re-enters one after a restore without the old server key (issue #154).
+     *
+     * @throws UserRuleViolation
+     */
+    public static function pruefeEmail(string $email): string
+    {
+        $email = trim($email);
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false || strlen($email) > 255) {
+            throw new UserRuleViolation('Bitte eine gültige E-Mail-Adresse angeben.');
+        }
+
+        return $email;
     }
 
     /**

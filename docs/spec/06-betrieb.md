@@ -138,7 +138,16 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   Admin das ausdrücklich wählt (Hinweis: dann sind Betriebsdaten lesbar).
 - Restore als Schrittkette (Blobs in Teilen), Rotation 10.
 - Restore im Installer; danach Anmeldung mit bisherigem Konto (Grants
-  liegen in der DB) oder per Wiederherstellungsschlüssel.
+  liegen in der DB). **Ohne den alten Server-Schlüssel** ist das erst nach
+  dem Zugangsschritt des Installers möglich (unten, „Restore ohne
+  Server-Schlüssel“, issue #154): `user.email_bi` hängt am Server-Schlüssel,
+  mit einem neuen findet die Anmeldung kein Konto.
+- **Wichtig für den Betrieb:** `shared/config.php` gehört **getrennt
+  gesichert** zum Wiederherstellungsschlüssel (Ausdruck oder Kopie im
+  Vereinstresor bzw. beim zweiten Vorstandsmitglied). Das Standard-Backup
+  (Update-Kette, `bin/backup.php` ohne `--mit-config`) enthält sie bewusst
+  nicht; `bin/backup.php` warnt bei jedem solchen Backup auf STDERR, der
+  Installer warnt vor dem Einspielen.
 
 **Stand M2-6** (mit Blobs): `manifest.json` enthält `app_version`,
 `schema_version`, `erstellt_am`, `config_enthalten`, `blob_dateien` und
@@ -160,10 +169,19 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   Chunk-Tabelle scheitert.
 - *Erstellen:* `BackupService::create(mitConfig, mitBlobs)`; ohne Angabe
   **ohne** `config.php` und **mit** Blobs. Von Hand:
-  `php bin/backup.php [--mit-config] [--ohne-blobs]`. Eine **Admin-Seite mit
-  Download gibt es noch nicht**: bis zur Anmeldung (M3-3) wäre sie ein
-  offener Download des kompletten Dumps. Sie kommt mit M3, zusammen mit der
-  Wahl „config.php mitsichern“.
+  `php bin/backup.php [--mit-config] [--ohne-blobs]`; `--help` zeigt die
+  Optionen, eine unbekannte Option bricht mit Exit-Code 2 ab, statt
+  stillschweigend ein Backup anzulegen (`App\Service\Backup\BackupCliOptions`,
+  issue #155). Eine **Admin-Seite mit Download gibt es noch nicht**: bis zur
+  Anmeldung (M3-3) wäre sie ein offener Download des kompletten Dumps. Sie
+  kommt mit M3 (#112), zusammen mit der Wahl „config.php mitsichern“.
+- *Dateinamen:* `backup_YYYYMMDD_HHMMSS.zip`; fällt ein zweites Backup in
+  dieselbe Sekunde, heißt es `…_2.zip`, `…_3.zip` (höchstens
+  `BackupService::MAX_PER_SECOND`). Der Name wird vorab mit `fopen(…, 'x')`
+  atomar reserviert – zwei gleichzeitig gestartete Backups können sich nicht
+  überschreiben (issue #155). `path()` akzeptiert genau dieses Muster, `list()`
+  sortiert nach Namen absteigend (`_` sortiert hinter `.`, das spätere Backup
+  steht oben).
 - *Update-Kette:* sichert nie mit `config.php` und **nie mit Blobs**. Der
   `backup`-Schritt ist ein einzelner kurzer Request, ein Update fasst
   `shared/var/blobs/` gar nicht an, und kaputtgehen kann dabei das Schema –
@@ -188,10 +206,71 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   fremder Name) wird gezählt und verworfen. Das ZIP ist ein Upload.
 - *Server-Schlüssel:* Enthält das ZIP eine `config.php`, wird **nur** deren
   `server_key` übernommen – gelesen per regulärem Ausdruck, nie per
-  `include`, denn das ZIP ist ein Upload und dürfte sonst Code ausführen.
-  Fehlt die Datei oder ist der Schlüssel ungültig, erzeugt der Installer einen
-  neuen und die Seite weist darauf hin, dass damit verschlüsselte
-  Betriebsdaten nicht mehr lesbar sind.
+  `include`, denn das ZIP ist ein Upload und dürfte sonst Code ausführen
+  (`RestoreService::serverSchluesselAusConfig()`). Fehlt die Datei oder ist
+  der Schlüssel ungültig, folgt der Zugangsschritt (nächster Punkt).
+
+**Restore ohne Server-Schlüssel** (issue #154, E-19 in
+`docs/ENTSCHEIDUNGEN.md` – vorläufig, autonom getroffen). Mit einem frisch
+erzeugten Server-Schlüssel wären `user.email_enc`, `display_name_enc`,
+`mfa_totp.secret_enc` und vor allem der Login-Index `user.email_bi` aller
+Konten Chiffrat unter einem verlorenen Schlüssel: niemand könnte sich
+anmelden, und `/admin/wiederherstellen` setzt einen angemeldeten Admin
+voraus. Deshalb schreibt der Installer `config.php` in diesem Fall **nicht**
+am Ende der Schrittkette, sondern hält `$_SESSION['install_restore']` in der
+Phase `zugang` (`InstallController::PHASE_ZUGANG`), die Seite springt auf
+`/install` und zeigt den Zugangsschritt mit zwei Wegen
+(`App\Installer\RestoreAccess`):
+
+1. `POST /install/serverschluessel` – **alter Server-Schlüssel**: die
+   getrennt gesicherte `config.php` hochladen (gleicher regulärer Ausdruck,
+   nie ausgeführt) oder den `server_key` eintragen. Übernommen wird er nur,
+   wenn sich damit die Adresse mindestens eines Benutzerkontos
+   entschlüsseln lässt (`RestoreAccess::serverKeyFits()`) – ein vertippter
+   Schlüssel sperrt sonst genauso aus wie ein fehlender. Alle Konten bleiben
+   dann unverändert, nichts wird zurückgesetzt.
+2. `POST /install/zugang` – **Admin-Konto neu verknüpfen**:
+   Wiederherstellungsschlüssel + E-Mail-Adresse + Name + **bisheriges
+   Passwort**. Der Wiederherstellungsschlüssel (er enthält `VK_priv`, die
+   Wurzel aller fachlichen Daten – wer ihn hat, kann ohnehin alles lesen; der
+   Schritt gibt ihm keine Macht, die er nicht hatte) weist die Berechtigung
+   nach und muss zu `vault.public_key` des eingespielten Dumps passen. Das
+   Passwort bestimmt das Konto: unter allen anmeldefähigen Konten mit
+   `admin.users` dasjenige, dessen `password_hash` verifiziert (Argon2id je
+   Kandidat – ein Verein hat wenige Admins) – etwas anderes Lesbares gibt es
+   nicht. Danach in einer Transaktion: `email_enc`/`email_bi`/
+   `display_name_enc` neu unter dem **neuen** Server-Schlüssel (der im selben
+   Request erzeugt und nach `config.php` geschrieben wird), ein
+   `vault_grant` aus dem wiederhergestellten Tresor, falls das Konto keinen
+   hatte (wie `/admin/wiederherstellen`), TOTP-Geheimnis und Backup-Codes
+   gelöscht und `mfa_method` geleert (das Geheimnis ist Chiffrat unter dem
+   alten Schlüssel; `mfa_required` bleibt, der erste Login richtet den zweiten
+   Faktor neu ein; E-Mail-Codes funktionieren weiter), Audit-Eintrag
+   `tresor.zugang_neu_verknuepft` mit dem Konto als Handelndem. Falsche
+   Schlüssel oder Passwörter zählen je Client-IP gegen
+   `RateLimiter::LOGIN_LIMIT_PER_IP` (Zweck `install.zugang`).
+   Wiederherstellungsschlüssel und Passwort werden nur im Request verwendet,
+   in dem sie eingehen – nie in der Session, nie auf Platte.
+
+Was Weg 2 **nicht** repariert, sagt die Abschlussseite: die Adressen der
+übrigen Konten bleiben unlesbar (`ServerCrypto::decryptOrNull()`; Listen
+zeigen „nicht lesbar“ bzw. „Benutzer #id“, Mails an solche Konten entfallen),
+bis ein Admin unter `/admin/benutzer/<id>` eine neue Adresse einträgt – das
+Formular bietet das Feld genau dann an, wenn die gespeicherte Adresse nicht
+aufgeht (`UserRepository::updateEmail()`, Eindeutigkeit über den Blind
+Index, Audit-Detail `email_neu_gesetzt`). Passwort, Schlüsselpaar und
+Freigabe dieser Konten sind unberührt, ihre Authenticator-Apps nicht mehr
+gültig. API-Schlüssel der KI-Anbieter, SMTP-Passwort und die Mail-Warteschlange
+sind verloren (die Leser liefern dafür schon „nicht gesetzt“). Eine
+Rekonstruktion der Adressen aus Tresor-Daten gibt es nicht – sie liegen
+nirgends unter dem Tresor (Folge-Idee: eine an `VK_pub` versiegelte Kopie je
+Konto, dann könnte der Admin nach Weg 2 alle Adressen automatisch neu
+berechnen).
+
+„Neu beginnen“ (`POST /install/neu`) verwirft in der Phase `zugang` nur den
+Sitzungsstand; die eingespielten Tabellen bleiben, bis das nächste Backup sie
+ersetzt (eine frische Installation lehnt die Datenbank wegen des vorhandenen
+Tresors ab). `POST /install/wiederherstellen` antwortet in dieser Phase 409.
 - Fehlermeldungen des Einspielens nennen nur SQLSTATE und Fehlercode, nie den
   Text der Datenbank: der zitiert Teile der fehlgeschlagenen Anweisung, also
   Zeilendaten des Backups.
@@ -212,10 +291,26 @@ Blobs landen unter ihrem eigenen Namen, **nur** `blobs/<2 Hex>/<32 Hex>` wird
 geschrieben, Portionierung nach Byte-Budget, ZIP ohne Blobs braucht keine
 Blob-Phase);
 `UpdateChainTest` (`backup` direkt vor `switch`, ohne `config.php` und ohne
-Blobs, bei Fehler kein Umschalten); `InstallFlowTest` (Restore mit und ohne
+Blobs, bei Fehler kein Umschalten); `InstallFlowTest` (Restore mit
 Schlüssel im Backup, Restore **mit Blob-Dateien**, ZIP ohne Dump, Pfad ohne
-echten Upload, CSRF, Schritt ohne aktive Wiederherstellung);
-`tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen).
+echten Upload, CSRF, Schritt ohne aktive Wiederherstellung; **Restore ohne
+Schlüssel**: `config.php` wird nicht geschrieben, Zugangsschritt folgt;
+Neuverknüpfung mit Wiederherstellungsschlüssel + Passwort → Konto über den
+neuen Blind Index auffindbar, Adresse/Name lesbar, TOTP entfernt,
+Freigabe/Schlüsselpaar öffnen den Tresor weiter, Audit-Eintrag, Schlüssel
+und Passwort in keiner Spalte; Konto ohne Grant bekommt einen; falsches
+Passwort, fremder und vertippter Wiederherstellungsschlüssel → 422 ohne
+Schreiben; alter Server-Schlüssel wird nur übernommen, wenn er ein Konto
+öffnet, hochgeladene `config.php` wird nie ausgeführt und nur ihr Schlüssel
+übernommen; offener Zugangsschritt wird bei erneutem Absenden gezeigt,
+Schritt-Endpunkt 409, „Neu beginnen“ räumt auf; CSRF und 409 ohne
+Wiederherstellung); `BackupRestoreRoundtripTest` zusätzlich: zwei Backups in
+derselben Sekunde überschreiben sich nicht und sind beide in `list()`/`path()`,
+Begrenzung des Suffixes; `BackupCliOptionsTest` (`--help`, unbekannte Option
+abgelehnt); `UserManagementFlowTest` (unlesbare Adresse wird angezeigt,
+neu gesetzt, Anmeldung danach möglich, lesbare Adresse nicht änderbar);
+`tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen,
+Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
 
 ## 3. Mail
 

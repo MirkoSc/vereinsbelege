@@ -119,6 +119,57 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #154)*
+
+Befund: `user.email_bi` (Login-Index), `email_enc`, `display_name_enc` und
+TOTP-Geheimnisse hängen am Server-Schlüssel aus `config.php`. Das
+Standard-Backup enthält ihn bewusst nicht (E-01: Chiffrat darf den Server
+verlassen, der Schlüssel nicht). Nach dem Einspielen auf einem neuen Server
+konnte sich deshalb niemand mehr anmelden – auch nicht mit dem
+Wiederherstellungsschlüssel, der einen angemeldeten Admin voraussetzte.
+
+Gewählt (Kombination aus Weg 3 und Weg 1 des Issues, dazu ein Stück Weg 2):
+- **Weg 3, Warnen:** `bin/backup.php` warnt bei jedem Backup ohne
+  `--mit-config` auf STDERR; der Installer warnt vor dem Einspielen eines
+  Backups ohne Schlüssel unübersehbar; Spec 06 §2 verlangt, `config.php`
+  getrennt neben dem Wiederherstellungsschlüssel zu sichern.
+- **Weg 1, Neuverknüpfung:** Der Installer schreibt `config.php` ohne alten
+  Schlüssel nicht mehr still, sondern verlangt einen Zugangsschritt. Dort
+  verknüpft der Admin sein **bestehendes** Konto neu: Wiederherstellungs-
+  schlüssel (Berechtigung des Vereins; muss zum Tresor des Dumps passen)
+  **plus bisheriges Passwort** (bestimmt das Konto – Namen und Adressen sind
+  unlesbar, das Passwort ist das einzige Merkmal; Schlüsselpaar und Freigabe
+  bleiben so erhalten). Adresse und Name werden unter dem neuen Schlüssel
+  neu gesetzt, TOTP zurückgesetzt, ein fehlender Grant aus dem Tresor
+  erzeugt, alles auditiert. Der Wiederherstellungsschlüssel erhält dadurch
+  keine Befugnis, die er nicht hat: er enthält `VK_priv` und öffnet ohnehin
+  jede fachliche Zeile. Ohne ihn kommt niemand hinein – ein geleaktes
+  Backup allein führt weiterhin zu nichts.
+- **Weg 2, nur als Angebot:** Wer `config.php` getrennt gesichert hat, lädt
+  sie im selben Schritt hoch (oder trägt den Schlüssel ein); übernommen wird
+  sie nur, wenn sie ein Konto des Dumps entschlüsselt. Als **Zwang**
+  (Restore ohne alten Schlüssel ablehnen) verworfen: dann wäre ein Verein,
+  der nur Backup und Papierschlüssel hat, endgültig ausgesperrt – genau das
+  Szenario, das der Wiederherstellungsschlüssel abdecken soll.
+
+Bewusst in Kauf genommen:
+- Die Adressen der **übrigen** Benutzer sind nicht rekonstruierbar (sie
+  liegen nirgends unter dem Tresor). Der Admin trägt sie unter
+  `/admin/benutzer/<id>` neu ein; das Formular bietet das Feld nur für
+  unlesbare Adressen an. Bis dahin können sich diese Konten nicht anmelden;
+  ihre Authenticator-Apps sind ungültig, Passwort und Freigabe intakt.
+- Ein Admin, der **Passwort und** `config.php` verloren hat, kommt mit dem
+  Wiederherstellungsschlüssel allein nicht hinein. Nahe liegender Ausbau
+  (nicht umgesetzt, Folge-Idee): „neues Admin-Konto mit dem Wiederherstellungs-
+  schlüssel anlegen“ – Tresor-Grant aus dem Papierschlüssel, wie bei der
+  frischen Installation ohne neuen Tresor.
+- Haben zwei Admins dasselbe Passwort, trifft die Verknüpfung das erste
+  Konto in Id-Reihenfolge (nicht unterscheidbar; in der Praxis irrelevant).
+- Folge-Idee gegen den Datenverlust der Adressen: je Konto eine an `VK_pub`
+  versiegelte Kopie von Adresse und Name, dann könnte der verknüpfte Admin
+  alle Konten in einer Session automatisch neu berechnen.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
