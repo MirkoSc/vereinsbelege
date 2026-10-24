@@ -192,10 +192,14 @@ final class VolltextsucheTest extends DatabaseTestCase
             self::assertLessThan(4096 * 2, filesize($datei), 'one small part with one document');
         }
 
-        // The document leaves the scope after the build: still in the index,
-        // never shown.
+        // The document leaves the scope after the build: the index no longer
+        // matches the scope and is not trusted, the rebuild leaves it out.
         $this->pdo()->prepare('UPDATE document SET cost_center_id = ? WHERE id = ?')->execute([$herren, $eigene]);
+        self::assertNull($suche->suche(self::BENUTZER, $bereich, $this->tresor, Suchanfrage::aus('trikots')));
+        self::assertTrue($suche->nachziehen(self::BENUTZER, $bereich, $this->tresor)->aktuell());
         self::assertSame([], $this->gefunden($suche, 'trikots', $bereich));
+        $this->pdo()->prepare('UPDATE document SET cost_center_id = ? WHERE id = ?')->execute([$jugend, $eigene]);
+        $suche->nachziehen(self::BENUTZER, $bereich, $this->tresor);
 
         // A changed scope starts over.
         $alt = (string) new SitzungsSuchindex()->lies()['id'];
