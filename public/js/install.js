@@ -33,7 +33,11 @@ function statusText(antwort) {
         return 'Datei ' + antwort.offset + ' von ' + antwort.gesamt + ' …';
     }
 
-    return 'Anweisung ' + antwort.offset + ' von ' + antwort.gesamt + ' …';
+    // The dump phase counts bytes of dump.sql (issue #120): the total number
+    // of statements is not known without reading the whole file, so the line
+    // names the statements run so far and the share of the file.
+    return 'Anweisung ' + (antwort.anweisungen || 0) + ' eingespielt ('
+        + fortschrittProzent(antwort.offset, antwort.gesamt) + ' %) …';
 }
 
 /**
