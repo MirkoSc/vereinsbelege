@@ -13,6 +13,7 @@ use App\Admin\NextcloudSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
+use App\Admin\BackupController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
@@ -110,6 +111,7 @@ use App\Service\Account\UserAdministration;
 use App\Service\Account\VaultRecovery;
 use App\Service\Archiv\ArchivImport;
 use App\Service\Audit\AuditLog;
+use App\Service\Backup\BackupErstellung;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BelegStandard;
@@ -912,6 +914,31 @@ $exportAdmin = static function () use ($connections, $view, $auditFor): ExportSe
 
 // The Nextcloud target of the export (issue #95, 05 section 2): vault data,
 // the page needs the session's unlocked vault. Permission: `admin.settings`.
+// Backups page (issue #112): list, step chain, download. Built lazily like
+// $mail - only these routes open the connection. No vault: the backup holds
+// business data as ciphertext only.
+$backupsSeite = static function () use ($connections, $view, $auditFor, $paths, $version): BackupController {
+    $pdo = $connections->pdo();
+    $backups = new BackupService(
+        $pdo,
+        $paths->backupDir(),
+        $paths->configFile(),
+        $version->value,
+        $paths->blobDir(),
+    );
+
+    return new BackupController(
+        $view,
+        new Session(),
+        $backups,
+        new BackupErstellung($backups, $pdo, $paths->backupDir(), $paths->configFile()),
+        $auditFor($pdo),
+        new UserRepository($pdo),
+        new PasswordHasher(),
+        new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+    );
+};
+
 $nextcloudAdmin = static function () use ($connections, $view, $auditFor): NextcloudSettingsController {
     $pdo = $connections->pdo();
 
@@ -1402,6 +1429,7 @@ $router = new Router();
     $archivImport,
     $sucheSeite,
     $nextcloudAdmin,
+    $backupsSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route
