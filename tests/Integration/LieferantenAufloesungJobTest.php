@@ -462,6 +462,19 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         self::assertSame([AufloesungsArt::Treffer, 4], [$this->aufloesung($id)?->art, $this->aufloesung($id)?->stufe]);
     }
 
+    public function testAPayerIsNeverPartOfThePreselection(): void
+    {
+        $this->lieferant('Erika Mustermann', ['ibans' => self::IBAN], SupplierRole::Zahler);
+        $this->lieferant('Sporthaus Beispiel', [], SupplierRole::Beide);
+        $this->beleg(text: "Sporthaus Beispiel\nErika Mustermann\nDE89 3704 0044 0532 0130 00");
+
+        $this->allesAbarbeiten([$this->antwort(['name' => 'Sporthaus Beispiel', 'vat_id' => '', 'iban' => ''])]);
+
+        $system = $this->client->anfragen[0]['anfrage']->system;
+        self::assertStringContainsString("\n- Sporthaus Beispiel", $system);
+        self::assertStringNotContainsString('- Erika Mustermann', $system, 'a payer may be a private person');
+    }
+
     public function testAPhotoWithoutTextHasNoPreselection(): void
     {
         $this->lieferant('Sporthaus Beispiel');

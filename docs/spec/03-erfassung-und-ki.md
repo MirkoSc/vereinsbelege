@@ -1141,7 +1141,8 @@ das Fallback-Profil.
   `supplier_key`-Schlüssel; dazu Kennungen und Name des Verkäufers einer
   E-Rechnung. Deren Blind Indexes werden gesammelt nachgeschlagen
   (`SupplierRepository::idsMitSchluesseln()`); in `{{lieferanten}}` stehen die
-  **Namen** von höchstens 10 Treffern – über eine Kennung gefundene zuerst, dann
+  **Namen** von höchstens 10 Treffern der Rolle `lieferant`/`beide` (nie Zahler –
+  das können Privatpersonen sein; Datensparsamkeit) – über eine Kennung gefundene zuerst, dann
   nach Fundstelle –, je höchstens 100 Zeichen, einzeilig und ohne Marken, mit
   dem Hinweis, dass es Daten sind und der Name bei einem Treffer genau so in
   `supplier.name` gehört (ein Name kann aus Stufe 6 einer öffentlichen

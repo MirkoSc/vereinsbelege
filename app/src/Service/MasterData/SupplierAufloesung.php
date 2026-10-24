@@ -8,6 +8,7 @@ use App\Domain\Iban;
 use App\Domain\InvoiceDirection;
 use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRecord;
+use App\Domain\SupplierRole;
 use App\Repository\SupplierRepository;
 use App\Service\Crypto\Vault;
 
@@ -165,7 +166,9 @@ final readonly class SupplierAufloesung
      * Lieferantenliste"): every id and every run of words in $texte looked
      * up by blind index (LieferantenKandidaten), plus the ids and name of an
      * e-invoice's seller. Suppliers found by an id come first, then by
-     * where their name appears. Their names, cut to VORAUSWAHL_NAME_MAX -
+     * where their name appears. Only partners of the role `lieferant` or
+     * `beide` - a payer may be a private person. Their names, cut to
+     * VORAUSWAHL_NAME_MAX -
      * empty when nothing matched or there was no text (a photo).
      *
      * @param list<string> $texte the text layer, the submitter's free text
@@ -216,7 +219,9 @@ final readonly class SupplierAufloesung
                 break;
             }
             $lieferant = $this->service->finde($vault, $id);
-            if ($lieferant !== null && $lieferant->mergedInto === null) {
+            // Suppliers only: a payer may be a private person, whose name
+            // does not go to the AI provider as master data (data economy).
+            if ($lieferant !== null && $lieferant->mergedInto === null && $lieferant->role !== SupplierRole::Zahler) {
                 $ergebnis[] = mb_substr($lieferant->data->name, 0, self::VORAUSWAHL_NAME_MAX);
             }
         }
