@@ -128,9 +128,13 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         $log->insert(new KiAufruf($openai->id, $openai->name, 'gpt-test', 'extract-v1', false, KiAufrufStatus::Gueltig, 1200, 300, 1500, 2400, 200, 'GEHEIME ROHANTWORT'), $jetzt);
         $log->insert(new KiAufruf($openai->id, $openai->name, 'gpt-test', 'extract-v1', true, KiAufrufStatus::HttpFehler, null, null, null, 800, 503, null, true), $jetzt);
 
+        // The profile was renamed in between: two groups, each with its own calls only.
+        $log->insert(new KiAufruf($openai->id, 'Umbenannt', 'gpt-neu', 'extract-v1', false, KiAufrufStatus::Gueltig, 10, 5, 15, 100, 200, null), $jetzt);
+
         $antwort = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-protokoll'));
 
         self::assertSame(200, $antwort->status);
+        self::assertSame(1, substr_count($antwort->body, 'gpt-neu'), 'the renamed profile\'s call is listed once, under its own name');
         self::assertStringContainsString('2 Aufrufe', $antwort->body);
         self::assertStringContainsString('davon 1 gültig und 1 mit Fehler', $antwort->body);
         self::assertStringContainsString('1.500 Tokens', $antwort->body);

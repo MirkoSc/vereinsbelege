@@ -117,7 +117,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         private AiProviderRepository $anbieter,
         private KiAbfrage $abfrage,
         private Auslesung $auslesung,
-        private ?AiCallLogRepository $protokoll = null,
+        private AiCallLogRepository $protokoll,
     ) {
     }
 
@@ -207,7 +207,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
             ]);
             // After the attempt is stored: a request that dies in between
             // asks again from the stored attempt and logs nothing twice.
-            $this->protokoll?->insert($versuch->aufruf, $now);
+            $this->protokoll->insert($versuch->aufruf, $now);
         }
 
         return $this->weiter($document, $job, $n, $vault, $now);

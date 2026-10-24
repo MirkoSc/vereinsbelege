@@ -31,9 +31,9 @@ final readonly class AiCallLogRepository
         $stmt->execute([
             $zeitpunkt->format(self::FORMAT),
             $aufruf->anbieterId,
-            $aufruf->anbieterName,
-            $aufruf->modell,
-            $aufruf->promptVersion,
+            mb_substr($aufruf->anbieterName, 0, 100),
+            mb_substr($aufruf->modell, 0, 100),
+            mb_substr($aufruf->promptVersion, 0, 40),
             (int) $aufruf->reparatur,
             (int) $aufruf->fallback,
             $aufruf->status->value,
@@ -79,18 +79,19 @@ final readonly class AiCallLogRepository
     }
 
     /**
-     * The newest calls of one provider (null = profiles deleted since, by
-     * name), newest first.
+     * The newest calls since $seit of one group of summen() (provider and
+     * name; a null provider = profiles deleted since), newest first.
      *
      * @return list<array{zeitpunkt: \DateTimeImmutable, modell: string, promptVersion: string, reparatur: bool, fallback: bool, status: string, promptTokens: ?int, antwortTokens: ?int, tokens: ?int, dauerMs: ?int, httpStatus: ?int}>
      */
-    public function neueste(?int $providerId, string $name, int $limit): array
+    public function neueste(?int $providerId, string $name, \DateTimeImmutable $seit, int $limit): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT * FROM ai_call_log WHERE ' . ($providerId === null ? 'provider_id IS NULL AND provider_name = ?' : 'provider_id = ?')
+            'SELECT * FROM ai_call_log WHERE ' . ($providerId === null ? 'provider_id IS NULL' : 'provider_id = ?')
+            . ' AND provider_name = ? AND called_at >= ?'
             . ' ORDER BY called_at DESC, id DESC LIMIT ' . max(1, $limit),
         );
-        $stmt->execute([$providerId ?? $name]);
+        $stmt->execute([...($providerId === null ? [] : [$providerId]), $name, $seit->format(self::FORMAT)]);
 
         $int = static fn(mixed $wert): ?int => $wert === null ? null : (int) $wert;
 

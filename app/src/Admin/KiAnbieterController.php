@@ -82,7 +82,7 @@ final readonly class KiAnbieterController
         $seit = new \DateTimeImmutable('-' . self::PROTOKOLL_TAGE . ' days');
         $gruppen = array_map(fn(array $summe): array => [
             ...$summe,
-            'aufrufeListe' => $this->protokoll->neueste($summe['providerId'], $summe['name'], self::PROTOKOLL_ZEILEN),
+            'aufrufeListe' => $this->protokoll->neueste($summe['providerId'], $summe['name'], $seit, self::PROTOKOLL_ZEILEN),
         ], $this->protokoll->summen($seit));
 
         return Response::html($this->view->render('admin/ki-protokoll', [
