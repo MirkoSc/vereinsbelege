@@ -389,7 +389,7 @@ final class WorkerGrantTest extends WorkerTestCase
 
     public function testTheAiConfigurationIsSealedToTheWorkerAndResealedOnChange(): void
     {
-        $anbieter = $this->anbieter->insert('OpenAI', 'https://api.example.org/v1', 'gpt-test', new KiFaehigkeiten(true, true, 4, 1000), 60, true, 'sk-geheim-1');
+        $anbieter = $this->anbieter->insert('Worker-Testanbieter', 'https://api.example.org/v1', 'gpt-test', new KiFaehigkeiten(true, true, 4, 1000), 60, true, 'sk-geheim-1');
         [$id, $schluessel] = $this->koppeln();
 
         $erste = self::daten($this->heartbeat($id, $schluessel));
@@ -398,12 +398,14 @@ final class WorkerGrantTest extends WorkerTestCase
         self::assertIsString($json);
         $konfig = json_decode($json, true);
         self::assertSame(WorkerKonfiguration::FORMAT, $konfig['format']);
-        self::assertSame('sk-geheim-1', $konfig['ki_anbieter'][0]['api_key']);
+        $profil = array_values(array_filter($konfig['ki_anbieter'], static fn(array $a): bool => $a['id'] === $anbieter));
+        self::assertCount(1, $profil);
+        self::assertSame('sk-geheim-1', $profil[0]['api_key']);
         self::assertStringNotContainsString('sk-geheim', (string) $this->pdo()->query('SELECT config_sealed FROM worker')->fetchColumn());
 
         self::assertNull(self::daten($this->heartbeat($id, $schluessel, configVersion: 1))['config'], 'Unchanged: nothing new.');
 
-        $this->anbieter->update($anbieter, 'OpenAI', 'https://api.example.org/v1', 'gpt-test', new KiFaehigkeiten(true, true, 4, 1000), 60, true, 'sk-geheim-2');
+        $this->anbieter->update($anbieter, 'Worker-Testanbieter', 'https://api.example.org/v1', 'gpt-test', new KiFaehigkeiten(true, true, 4, 1000), 60, true, 'sk-geheim-2');
         $zweite = self::daten($this->heartbeat($id, $schluessel, configVersion: 1));
         self::assertSame(2, $zweite['config']['version']);
     }
