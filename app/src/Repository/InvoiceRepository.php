@@ -6,6 +6,7 @@ namespace App\Repository;
 
 use App\Domain\DocumentStatus;
 use App\Domain\ExportRunStatus;
+use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\Zugriffsbereich;
@@ -167,6 +168,48 @@ final readonly class InvoiceRepository
             static fn(mixed $id): ?int => $id === null ? null : (int) $id,
             $stmt->fetchAll(\PDO::FETCH_COLUMN),
         );
+    }
+
+    /**
+     * The checked receipts (`geprueft`/`festgeschrieben`) of a supplier and
+     * direction, also those still pointing at a supplier merged into it -
+     * what series detection (issue #57/M8-1, App\Service\Invoice\Serien)
+     * looks at. Not scoped: a series is about the supplier, and its pages
+     * are only open to accounts without a scope.
+     *
+     * @return list<InvoiceRecord>
+     */
+    public function geprueftFuerLieferant(int $supplierId, InvoiceDirection $richtung): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT i.* FROM invoice i JOIN supplier s ON s.id = i.supplier_id JOIN document d ON d.id = i.document_id
+             WHERE (i.supplier_id = ? OR s.merged_into = ?) AND i.direction = ? AND i.checked_at IS NOT NULL AND d.status IN (?, ?)
+             ORDER BY i.invoice_date, i.id',
+        );
+        $stmt->execute([$supplierId, $supplierId, $richtung->value, DocumentStatus::Geprueft->value, DocumentStatus::Festgeschrieben->value]);
+
+        return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * Receipts by id, in date order - the receipts of a series (issue
+     * #57/M8-1), whatever their state now.
+     *
+     * @param list<int> $ids
+     *
+     * @return list<InvoiceRecord>
+     */
+    public function nachIds(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM invoice WHERE id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') ORDER BY invoice_date, id',
+        );
+        $stmt->execute(array_values($ids));
+
+        return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
     }
 
     /** Who marked the receipt as checked, and when ("Geprüft, nächster"). */

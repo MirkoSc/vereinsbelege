@@ -113,6 +113,12 @@ enum AuditAction: string
     case BelegDuplikatBehalten = 'beleg.duplikat_behalten';
     // The AI extraction (issue #47/M7-5): a person asks for a new run.
     case BelegKiErneut = 'beleg.ki_erneut';
+    // Recurring series (issue #57/M8-1): details name the changed fields,
+    // the status before or the document linked - never an amount.
+    case SerieBestaetigt = 'serie.bestaetigt';
+    case SerieGeaendert = 'serie.geaendert';
+    case SerieVerworfen = 'serie.verworfen';
+    case SerieBelegVerknuepft = 'serie.beleg_verknuepft';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -214,6 +220,10 @@ enum AuditAction: string
             self::BelegDuplikatVerworfen => 'Beleg als Duplikat verworfen',
             self::BelegDuplikatBehalten => 'Duplikat-Verdacht: bewusst behalten',
             self::BelegKiErneut => 'KI-Auslesen neu angestoßen',
+            self::SerieBestaetigt => 'Wiederkehrende Serie bestätigt',
+            self::SerieGeaendert => 'Wiederkehrende Serie geändert',
+            self::SerieVerworfen => 'Wiederkehrende Serie verworfen',
+            self::SerieBelegVerknuepft => 'Beleg einer Serie zugeordnet',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -268,6 +278,8 @@ enum AuditAction: string
             self::BelegBearbeitet, self::BelegGeprueft,
             self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben,
             self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut => 'document',
+            self::SerieBestaetigt, self::SerieGeaendert, self::SerieVerworfen,
+            self::SerieBelegVerknuepft => 'recurring_series',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,

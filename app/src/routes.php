@@ -37,6 +37,7 @@ use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\PruefungController;
 use App\App\SecurityController;
+use App\App\SerienController;
 use App\App\SupplierController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
@@ -170,6 +171,9 @@ use App\View\View;
  *        built lazily, same reason as $mail (issue #95). Optional and last,
  *        so route tables built for other pages need not name it; without it
  *        the routes exist but answer with an error.
+ * @param (\Closure(): SerienController)|null $serien built lazily, same
+ *        reason as $mail: only the recurring series pages need the database
+ *        (issue #57/M8-1). Optional and last like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -212,8 +216,10 @@ return static function (
     \Closure $export,
     \Closure $archivImport,
     ?\Closure $nextcloudAdmin = null,
+    ?\Closure $serien = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
+    $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -518,6 +524,18 @@ return static function (
     // two decisions as in the inbox, with the review page's scope.
     $post('/app/belege/pruefen/{id:\d+}/duplikat-verwerfen', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatVerwerfen($r, $params));
     $post('/app/belege/pruefen/{id:\d+}/duplikat-behalten', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatBehalten($r, $params));
+
+    // Recurring invoices (M8-1, issue #57, docs/spec/03-erfassung-und-ki.md
+    // section 9): the suggestions of the `detect_recurring` job and the
+    // confirmed series - confirm, change, dismiss. Permission:
+    // `document.edit` like the review page whose receipts they are; a series
+    // spans a supplier's receipts of every cost center and period, so an
+    // account with a scope gets a refusal (App\App\SerienController). CSRF
+    // on the writes, the unlocked vault for everything (amounts, names).
+    $get('/app/serien', $documentEdit, static fn(Request $r) => $serien()->liste($r));
+    $get('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->formular($r, $params));
+    $post('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->speichern($r, $params));
+    $post('/app/serien/{id:\d+}/verwerfen', $documentEdit, static fn(Request $r, array $params) => $serien()->verwerfen($r, $params));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,

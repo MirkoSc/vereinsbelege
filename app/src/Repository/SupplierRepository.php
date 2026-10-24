@@ -259,17 +259,19 @@ final readonly class SupplierRepository
     /**
      * How often the supplier is referred to - a supplier in use is not
      * deleted: a supplier merged into this one and the receipts of the
-     * review page (`invoice`, issue #37/M6-3). Every later table with a
-     * supplier_id (recurring_series, assignment_rule) adds its foreign key
-     * with ON DELETE RESTRICT and is counted here.
+     * review page (`invoice`, issue #37/M6-3) and the recurring series
+     * (`recurring_series`, issue #57/M8-1). Every later table with a
+     * supplier_id (assignment_rule) adds its foreign key with ON DELETE
+     * RESTRICT and is counted here.
      */
     public function usageCount(int $id): int
     {
         $stmt = $this->pdo->prepare(
             'SELECT (SELECT COUNT(*) FROM supplier WHERE merged_into = ?)
-                  + (SELECT COUNT(*) FROM invoice WHERE supplier_id = ?)',
+                  + (SELECT COUNT(*) FROM invoice WHERE supplier_id = ?)
+                  + (SELECT COUNT(*) FROM recurring_series WHERE supplier_id = ?)',
         );
-        $stmt->execute([$id, $id]);
+        $stmt->execute([$id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }
@@ -280,10 +282,14 @@ final readonly class SupplierRepository
      * `merged_into` is never more than one step. The source's keys go: the
      * target now carries them, and a merged supplier must not be found by
      * the uniqueness check or the resolution (M7-6). The row itself stays;
-     * locked receipts still refer to it.
+     * locked receipts still refer to it. The source's recurring series
+     * (issue #57/M8-1) move to the target - a series has no lock.
      */
     public function markiereZusammengefuehrt(int $quelle, int $ziel, \DateTimeImmutable $now): void
     {
+        $serien = $this->pdo->prepare('UPDATE recurring_series SET supplier_id = ? WHERE supplier_id = ?');
+        $serien->execute([$ziel, $quelle]);
+
         $stmt = $this->pdo->prepare('UPDATE supplier SET merged_into = ?, updated_at = ? WHERE merged_into = ? OR id = ?');
         $stmt->bindValue(1, $ziel, \PDO::PARAM_INT);
         $stmt->bindValue(2, $now->format(self::FORMAT));
