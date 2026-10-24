@@ -1005,7 +1005,7 @@ das Fallback-Profil.
   Ausweich-Aufruf; `KiErgebnis::meldung()` hängt „Das Fallback-Profil wurde
   verwendet.“ an.
 
-**Umsetzung (M7-8, issue #50, Migration 032):** das **KI-Protokoll**.
+**Umsetzung (M7-8, issue #50, Migration 034):** das **KI-Protokoll**.
 - *Daten:* `ai_call_log` (Betriebsdaten im Klartext, kein Tresor): Zeitpunkt,
   Anbieter (ID + kopierter Name/Modell), Prompt-Version, Reparatur/Fallback,
   Status (`KiAufrufStatus`, das „Ergebnis“), Tokens, Dauer, HTTP-Status –
