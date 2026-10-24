@@ -38,7 +38,7 @@ final readonly class CronLockRepository
     {
         $now ??= new \DateTimeImmutable();
         $jetzt = $now->format(self::FORMAT);
-        $bis = $now->modify(sprintf('+%d seconds', $ttlSeconds))->format(self::FORMAT);
+        $bis = $now->setTimestamp($now->getTimestamp() + $ttlSeconds)->format(self::FORMAT);
 
         // Timestamps compare correctly as strings (fixed width, big-endian).
         // updated_at is assigned first: the assignments run left to right, and
