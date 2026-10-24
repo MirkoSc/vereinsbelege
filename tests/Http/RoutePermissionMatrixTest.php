@@ -455,6 +455,36 @@ final class RoutePermissionMatrixTest extends TestCase
         }
     }
 
+    /**
+     * Issue #90: while a vault key rotation runs, /app and /admin are closed
+     * - except the rotation itself and the account's own security pages.
+     * Accounts that may run the rotation are sent there; JSON answers 409.
+     */
+    public function testWaehrendDerSchluesselrotationIstNurDieRotationOffen(): void
+    {
+        $router = self::routerMit(fn(): ?SessionUser => $this->angemeldet, rotationLaeuft: true);
+
+        $this->anmelden(self::berechtigungen(SystemRole::Admin));
+        self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/admin/tresor/rotation')));
+        self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Post, '/admin/tresor/rotation/schritt')));
+        self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/app/sicherheit')));
+        $umgeleitet = $this->aufrufen($router, HttpMethod::Get, '/app/belege');
+        self::assertFalse($this->erreicht($umgeleitet));
+        self::assertSame(302, $umgeleitet->status);
+        self::assertSame('/admin/tresor/rotation', $umgeleitet->headers['Location'] ?? null);
+        self::assertFalse($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/admin/tresor')));
+        $json = $this->aufrufen($router, HttpMethod::Post, '/api/jobs/step');
+        self::assertSame(409, $json->status);
+
+        $this->anmelden(self::berechtigungen(SystemRole::Finanzen));
+        $gesperrt = $this->aufrufen($router, HttpMethod::Get, '/app/belege');
+        self::assertSame(503, $gesperrt->status);
+        self::assertFalse($this->erreicht($gesperrt));
+        self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/app/sicherheit')));
+        // A right the account lacks is still a plain 403, not a hint at the rotation.
+        self::assertSame(403, $this->aufrufen($router, HttpMethod::Get, '/admin/tresor/rotation')->status);
+    }
+
     public function testAdminIsSentToTheFirstAdminPageItMayOpen(): void
     {
         $this->anmelden(self::berechtigungen(SystemRole::Admin));
@@ -586,7 +616,7 @@ final class RoutePermissionMatrixTest extends TestCase
     /**
      * @param \Closure(): ?SessionUser $benutzer who the guard sees as logged in
      */
-    private static function routerMit(\Closure $benutzer): Router
+    private static function routerMit(\Closure $benutzer, bool $rotationLaeuft = false): Router
     {
         $view = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test');
         $stellvertreter = static fn(): object => new class {
@@ -602,6 +632,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             static fn(): SessionTimeouts => new SessionTimeouts(),
             static fn(int $id): ?SessionUser => $benutzer(),
+            rotationLaeuft: static fn(): bool => $rotationLaeuft,
         );
 
         $router = new Router();
@@ -646,7 +677,9 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,
-            // The Nextcloud settings (issue #95), the optional last one.
+            // The Nextcloud settings (issue #95), optional.
+            $stellvertreter,
+            // The vault key rotation (issue #90), the optional last one.
             $stellvertreter,
         );
 

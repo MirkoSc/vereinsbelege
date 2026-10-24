@@ -15,6 +15,7 @@ use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
+use App\Admin\VaultRotationController;
 use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
@@ -92,6 +93,7 @@ use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Repository\VaultRotationRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
@@ -173,6 +175,8 @@ use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
+use App\Service\Tresor\Indexpflegen;
+use App\Service\Tresor\Schluesselrotation;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Suche\ERechnungQuelle;
@@ -1012,6 +1016,32 @@ $wiederherstellung = static function () use ($connections, $view, $serverCrypto,
     );
 };
 
+// Vault key rotation (issue #90): the same collaborators as $tresor plus
+// the rotation service with every blind index handler.
+$tresorRotation = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRotationController {
+    $pdo = $connections->pdo();
+    $users = new UserRepository($pdo);
+
+    return new VaultRotationController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Schluesselrotation(
+            $pdo,
+            new VaultRepository($pdo),
+            new VaultGrantRepository($pdo),
+            $users,
+            new VaultRotationRepository($pdo),
+            Indexpflegen::alle($pdo),
+            $auditFor($pdo),
+        ),
+        $verwaltungFor($pdo),
+        $users,
+        $mailerFor($pdo),
+        $serverCrypto,
+    );
+};
+
 // Accepting an invitation: a public page, built lazily like $passwort.
 $einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor, $auditFor): InvitationController {
     $pdo = $connections->pdo();
@@ -1357,6 +1387,9 @@ $guard = static fn(): LoginGuard => new LoginGuard(
 
         return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo), $browserJobTypenFor($pdo))->offen($berechtigungen);
     },
+    // A vault key rotation closes /app and /admin (issue #90): one COUNT
+    // per request behind the login.
+    static fn(): bool => new VaultRepository($connections->pdo())->rotationInProgress(),
 );
 
 $router = new Router();
@@ -1402,6 +1435,7 @@ $router = new Router();
     $archivImport,
     $sucheSeite,
     $nextcloudAdmin,
+    $tresorRotation,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

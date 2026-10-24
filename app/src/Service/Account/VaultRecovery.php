@@ -71,8 +71,9 @@ final readonly class VaultRecovery
             $tresor = RecoveryKey::parse($eingabe)->openVault($aktuell->publicKey(), $aktuell->version);
         } catch (RecoveryKeyException $e) {
             $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
+            $problem = self::problemFuer($e, $eingabe, $this->vaults);
 
-            return VaultRecoveryResult::fehler(self::meldungFuer($e->problem), $e->problem->value);
+            return VaultRecoveryResult::fehler(self::meldungFuer($problem), $problem->value);
         }
 
         $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
@@ -104,6 +105,27 @@ final readonly class VaultRecovery
             RecoveryKeyProblem::Pruefsumme => 'Der Schlüssel ist an einer Stelle falsch eingegeben. '
                 . 'Bitte Gruppe für Gruppe mit dem Ausdruck vergleichen.',
             RecoveryKeyProblem::FremderTresor => 'Dieser Schlüssel gehört nicht zu dieser Installation.',
+            RecoveryKeyProblem::Abgeloest => 'Dieser Wiederherstellungsschlüssel wurde durch eine Schlüsselrotation abgelöst. '
+                . 'Er gilt nur noch für Backups von vor der Rotation – hier bitte den neueren Schlüssel eingeben.',
         };
+    }
+
+    /**
+     * The problem to report: a key of "another vault" that is in fact an
+     * earlier generation of this one (issue #90) says so instead.
+     */
+    public static function problemFuer(RecoveryKeyException $e, #[\SensitiveParameter] string $eingabe, VaultRepository $vaults): RecoveryKeyProblem
+    {
+        if ($e->problem !== RecoveryKeyProblem::FremderTresor) {
+            return $e->problem;
+        }
+
+        try {
+            return $vaults->versionForPublicKey(RecoveryKey::parse($eingabe)->publicKey()) === null
+                ? RecoveryKeyProblem::FremderTresor
+                : RecoveryKeyProblem::Abgeloest;
+        } catch (RecoveryKeyException) {
+            return $e->problem;
+        }
     }
 }

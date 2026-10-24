@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Domain\VaultGeneration;
 use App\Service\Crypto\Vault;
 
 /**
@@ -50,6 +51,106 @@ final readonly class VaultRepository
         $stmt->bindValue(2, $publicKey, \PDO::PARAM_LOB);
         $stmt->bindValue(3, ($now ?? new \DateTimeImmutable())->format(self::FORMAT));
         $stmt->execute();
+    }
+
+    /**
+     * Every generation, oldest first (issue #90).
+     *
+     * @return list<VaultGeneration>
+     */
+    public function all(): array
+    {
+        $stmt = $this->pdo->query(
+            'SELECT version, public_key, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
+        );
+        if ($stmt === false) {
+            return [];
+        }
+
+        return array_map(self::generation(...), $stmt->fetchAll(\PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * The generations not replaced yet, oldest first. One in normal
+     * operation; two while a key rotation runs - that IS the rotation state
+     * (migration 042), there is no separate flag to keep in step.
+     *
+     * @return list<VaultGeneration>
+     */
+    public function active(): array
+    {
+        return array_values(array_filter($this->all(), static fn(VaultGeneration $g): bool => $g->aktiv()));
+    }
+
+    public function rotationInProgress(): bool
+    {
+        $stmt = $this->pdo->query('SELECT COUNT(*) FROM vault WHERE retired_at IS NULL');
+
+        return $stmt !== false && (int) $stmt->fetchColumn() > 1;
+    }
+
+    public function generationOf(int $version): ?VaultGeneration
+    {
+        foreach ($this->all() as $generation) {
+            if ($generation->version === $version) {
+                return $generation;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Which generation a public key belongs to - lets a recovery key of a
+     * replaced generation be told apart from one of another installation.
+     */
+    public function versionForPublicKey(string $publicKey): ?int
+    {
+        foreach ($this->all() as $generation) {
+            if (hash_equals($generation->publicKey, $publicKey)) {
+                return $generation->version;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The admin typed back the last group of this generation's printed
+     * recovery key. Idempotent: the first confirmation stays.
+     */
+    public function confirmRecovery(int $version, \DateTimeImmutable $now): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE vault SET recovery_confirmed_at = ? WHERE version = ? AND recovery_confirmed_at IS NULL',
+        );
+        $stmt->execute([$now->format(self::FORMAT), $version]);
+    }
+
+    /**
+     * The generation is replaced. Never deleted: the row carries the foreign
+     * keys of history and recognises the paper key of an old backup.
+     */
+    public function retire(int $version, \DateTimeImmutable $now): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE vault SET retired_at = ? WHERE version = ? AND retired_at IS NULL');
+        $stmt->execute([$now->format(self::FORMAT), $version]);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private static function generation(array $row): VaultGeneration
+    {
+        $datum = static fn(mixed $wert): ?\DateTimeImmutable => $wert === null ? null : new \DateTimeImmutable((string) $wert);
+
+        return new VaultGeneration(
+            (int) $row['version'],
+            (string) $row['public_key'],
+            new \DateTimeImmutable((string) $row['created_at']),
+            $datum($row['recovery_confirmed_at'] ?? null),
+            $datum($row['retired_at'] ?? null),
+        );
     }
 
     /**

@@ -173,6 +173,9 @@ use App\View\View;
  *        built lazily, same reason as $mail (issue #95). Optional and last,
  *        so route tables built for other pages need not name it; without it
  *        the routes exist but answer with an error.
+ * @param (\Closure(): VaultRotationController)|null $tresorRotation built
+ *        lazily (issue #90); optional and last for the same reason as
+ *        $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -216,8 +219,10 @@ return static function (
     \Closure $archivImport,
     \Closure $suche,
     ?\Closure $nextcloudAdmin = null,
+    ?\Closure $tresorRotation = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
+    $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -712,6 +717,18 @@ return static function (
     $get('/admin/tresor', $freigaben, static fn(Request $r) => $tresor()->seite($r));
     $post('/admin/tresor/{id:\d+}/freigeben', $freigaben, static fn(Request $r, array $params) => $tresor()->freigeben($r, $params));
     $post('/admin/tresor/{id:\d+}/entziehen', $freigaben, static fn(Request $r, array $params) => $tresor()->entziehen($r, $params));
+
+    // Vault key rotation (issue #90, docs/spec/01-sicherheit.md section 2
+    // "Schlüsselrotation"). Same permission as granting - it is the same
+    // kind of act, for every user at once. CSRF on all writes; every write
+    // needs this session's unlocked key ring. While a rotation runs,
+    // App\Http\LoginGuard keeps these routes (and /app/sicherheit) open and
+    // everything else in /app and /admin closed.
+    $get('/admin/tresor/rotation', $freigaben, static fn(Request $r) => $tresorRotation()->seite($r));
+    $post('/admin/tresor/rotation/starten', $freigaben, static fn(Request $r) => $tresorRotation()->starten($r));
+    $post('/admin/tresor/rotation/bestaetigen', $freigaben, static fn(Request $r) => $tresorRotation()->bestaetigen($r));
+    $post('/admin/tresor/rotation/schritt', $freigaben->alsApi(), static fn(Request $r) => $tresorRotation()->schritt($r));
+    $post('/admin/tresor/rotation/abschliessen', $freigaben, static fn(Request $r) => $tresorRotation()->abschliessen($r));
 
     // Vault recovery with the paper recovery key (M3-9, issue #22,
     // docs/spec/01-sicherheit.md section 2 "Letzter Admin hat Passwort
