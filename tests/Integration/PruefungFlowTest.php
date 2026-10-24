@@ -16,10 +16,12 @@ use App\Domain\DocumentStatus;
 use App\Domain\InboxAction;
 use App\Domain\InvoiceStructure;
 use App\Domain\JobExecutor;
+use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
+use App\Domain\Zugriffsbereich;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
 use App\Http\Kernel;
@@ -1452,6 +1454,26 @@ final class PruefungFlowTest extends DatabaseTestCase
         // Only receipts within the reader's scope teach: both are dated March.
         new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2026-06-01'), null);
         self::assertStringContainsString('Vorgeschlagen von: KI 0,60', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+    }
+
+    public function testASupplierMergedAwayCountsAsTheOneItWentInto(): void
+    {
+        $ausruestung = $this->kategorie('Sportausrüstung & Trikots');
+        $quelle = $this->lieferant('Sporthaus alt', SupplierRole::Lieferant);
+        $ziel = $this->supplierService()->anlegen($this->tresor, [
+            'name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'kategorie' => (string) $ausruestung,
+        ], new \DateTimeImmutable())->id;
+        $this->pdo()->prepare('UPDATE supplier SET merged_into = ? WHERE id = ?')->execute([$ziel, $quelle]);
+
+        ['vorschlag' => $vorschlag] = $this->pruefung()->kategorieVorschlagen(
+            [...$this->felder(), 'lieferant' => (string) $quelle, 'kategorie' => ''],
+            null,
+            $this->tresor,
+            Zugriffsbereich::unbeschraenkt(),
+        );
+
+        self::assertSame($ausruestung, $vorschlag?->kategorieId, 'the default of the supplier it went into');
+        self::assertSame(KategorieHerkunft::Lieferant, $vorschlag->herkunft);
     }
 
     public function testTheCategoryFollowsTheSupplierTheArchiveSet(): void

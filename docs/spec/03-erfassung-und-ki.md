@@ -1281,7 +1281,8 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
   passenden aktiven Regeln **mit Kategorie** gilt die älteste.
 - *Lieferanten-Default:* zuerst `supplier.default_category_id`, dann
   **gelernt**: Haben die zwei neuesten geprüften bzw. festgeschriebenen
-  Belege des Partners (`checked_at`, auch über `merged_into` aufgelöst,
+  Belege des Partners (`checked_at`, auch über `merged_into` aufgelöst –
+  ein zusammengeführter Partner im Formular zählt als sein Ziel –,
   nur im Zugriffsbereich der Person) dieselbe Kategorie, wird sie
   vorgeschlagen (`InvoiceRepository::letzteGeprueftenKategorien()`, nichts
   wird in `supplier` geschrieben).

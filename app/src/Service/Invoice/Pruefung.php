@@ -521,7 +521,9 @@ final readonly class Pruefung
     {
         $richtung = InvoiceDirection::tryFrom($felder['richtung'] ?? '') ?? InvoiceDirection::Ausgabe;
         $lieferantId = $felder['lieferant'] ?? '';
-        $lieferant = ctype_digit($lieferantId) ? $this->lieferanten->finde($vault, (int) $lieferantId) : null;
+        // A supplier merged away since counts as the one it went into
+        // (issue #39/M6-5) - its default and its receipts.
+        $lieferant = ctype_digit($lieferantId) ? $this->lieferanten->finde($vault, $this->lieferantenRepository->aufgeloest((int) $lieferantId)) : null;
         if ($lieferant !== null) {
             $namen = [$lieferant->data->name, ...$lieferant->data->aliases];
             $ibans = $lieferant->data->ibans;
