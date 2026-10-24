@@ -32,6 +32,12 @@ use App\Service\Crypto\Vault;
  * and keeping them here is what lets this class unlock without a database
  * connection - the guard on a page that never decrypts pays for nothing.
  *
+ * Older generations the vault may open as well (a key rotation in progress,
+ * issue #90) are stored the same way under 'previous', version => cipher,
+ * each under its own nonce but the same K_s: one cookie opens the whole
+ * ring. A stored value without 'previous' (written before the rotation
+ * existed) reads as a vault with none - the format version stays 1.
+ *
  * No state of its own: everything lives in $_SESSION, so a fresh instance
  * per request sees what the last request left behind.
  */
@@ -63,10 +69,18 @@ final class SessionVault
         $sessionKey = random_bytes(self::KEY_BYTES);
         $nonce = random_bytes(self::NONCE_BYTES);
 
+        $previous = [];
+        foreach ($vault->previousVersions() as $version) {
+            $olderNonce = random_bytes(self::NONCE_BYTES);
+            $previous[$version] = chr(self::VERSION) . $olderNonce
+                . sodium_crypto_secretbox($vault->generation($version)->secretKey(), $olderNonce, $sessionKey);
+        }
+
         $_SESSION[self::SESSION_KEY] = [
             'cipher' => chr(self::VERSION) . $nonce . sodium_crypto_secretbox($secretKey, $nonce, $sessionKey),
             'public_key' => $vault->publicKey(),
             'version' => $vault->version,
+            'previous' => $previous,
         ];
 
         $cookieValue = sodium_bin2base64($sessionKey, SODIUM_BASE64_VARIANT_URLSAFE_NO_PADDING);
@@ -104,16 +118,6 @@ final class SessionVault
             return null;
         }
 
-        $cipher = (string) ($stored['cipher'] ?? '');
-        if (strlen($cipher) < 1 + self::NONCE_BYTES + self::MAC_BYTES) {
-            throw new CryptoException('The stored session vault is too short.');
-        }
-
-        $version = ord($cipher[0]);
-        if ($version !== self::VERSION) {
-            throw new CryptoException(sprintf('The session vault has unknown format version %d.', $version));
-        }
-
         // A cookie value is whatever the client sent: not base64 at all is a
         // wrong key like any other, not an error worth a stack trace.
         try {
@@ -126,18 +130,56 @@ final class SessionVault
             return null;
         }
 
+        $secretKey = self::open((string) ($stored['cipher'] ?? ''), $sessionKey);
+        if ($secretKey === null) {
+            sodium_memzero($sessionKey);
+
+            return null;
+        }
+
+        $previous = [];
+        $olderEntries = $stored['previous'] ?? [];
+        foreach (is_array($olderEntries) ? $olderEntries : [] as $version => $cipher) {
+            $olderSecretKey = self::open((string) $cipher, $sessionKey);
+            if ($olderSecretKey === null) {
+                // The same K_s wrote every entry of the ring: one that does
+                // not open was not written by it, and a ring that is only
+                // half readable is not a ring.
+                sodium_memzero($sessionKey);
+
+                return null;
+            }
+            $previous[(int) $version] = $olderSecretKey;
+        }
+        sodium_memzero($sessionKey);
+
+        return Vault::unlocked((string) $stored['public_key'], $secretKey, (int) $stored['version'], $previous);
+    }
+
+    /**
+     * One stored entry - version(1) | nonce(24) | secretbox - opened with K_s.
+     * Null when the key does not fit.
+     *
+     * @throws CryptoException for a format this release does not know
+     */
+    private static function open(string $cipher, #[\SensitiveParameter] string $sessionKey): ?string
+    {
+        if (strlen($cipher) < 1 + self::NONCE_BYTES + self::MAC_BYTES) {
+            throw new CryptoException('The stored session vault is too short.');
+        }
+
+        $version = ord($cipher[0]);
+        if ($version !== self::VERSION) {
+            throw new CryptoException(sprintf('The session vault has unknown format version %d.', $version));
+        }
+
         $secretKey = sodium_crypto_secretbox_open(
             substr($cipher, 1 + self::NONCE_BYTES),
             substr($cipher, 1, self::NONCE_BYTES),
             $sessionKey,
         );
-        sodium_memzero($sessionKey);
 
-        if ($secretKey === false) {
-            return null;
-        }
-
-        return Vault::unlocked((string) $stored['public_key'], $secretKey, (int) $stored['version']);
+        return $secretKey === false ? null : $secretKey;
     }
 
     /**

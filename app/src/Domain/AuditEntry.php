@@ -32,7 +32,23 @@ final readonly class AuditEntry
         public string $prevHash,
         /** raw 32 bytes */
         public string $hash,
+        /**
+         * The data key re-sealed to a newer vault generation by a key
+         * rotation (issue #90, migration 042) - OUTSIDE the hash chain, which
+         * covers `dekSealed` as originally written. Null until a rotation
+         * happened after this row was written.
+         */
+        public ?string $dekResealed = null,
     ) {
+    }
+
+    /**
+     * The sealed data key a reader opens: the re-sealed one when a rotation
+     * wrote it, else the original.
+     */
+    public function dekZumOeffnen(): ?string
+    {
+        return $this->dekResealed ?? $this->dekSealed;
     }
 
     /** The same row with its hash filled in - the hash covers everything else. */
@@ -50,6 +66,7 @@ final readonly class AuditEntry
             $this->dekSealed,
             $this->prevHash,
             $hash,
+            $this->dekResealed,
         );
     }
 

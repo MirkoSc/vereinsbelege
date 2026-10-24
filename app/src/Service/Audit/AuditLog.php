@@ -127,13 +127,14 @@ final readonly class AuditLog
      */
     public function details(AuditEntry $entry, Vault $vault): ?array
     {
-        if ($entry->detailsEnc === null || $entry->dekSealed === null) {
+        $dekSealed = $entry->dekZumOeffnen();
+        if ($entry->detailsEnc === null || $dekSealed === null) {
             return null;
         }
 
         try {
             $klartext = FieldCipher::decrypt(
-                $vault->openDataKey($entry->dekSealed),
+                $vault->openDataKey($dekSealed),
                 $entry->detailsEnc,
                 new FieldContext(self::TABLE, $entry->id, self::DETAILS_COLUMN),
             );
