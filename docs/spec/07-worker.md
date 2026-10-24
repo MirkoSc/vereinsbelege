@@ -78,7 +78,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
    15 min gültig) wird angezeigt.
 2. Auf dem Pi: `docker compose run --rm worker pair https://belege.verein.de
    <code>` → Worker erzeugt Schlüsselpaar, sendet `W_pub`, erhält
-   Worker-ID + Zugangsschlüssel (32 Byte, auf dem Webhoster nur als Hash).
+   Worker-ID + Zugangsschlüssel (32 Byte, auf dem Webhoster mit dem
+   Server-Schlüssel verschlüsselt – eine HMAC lässt sich nicht gegen einen
+   Hash prüfen, E-28).
 3. Admin sieht den Fingerabdruck von `W_pub` (auch in der Worker-Konsole
    ausgegeben), vergleicht und bestätigt. Erst dann ist der Worker aktiv.
 - Jede Anfrage: `Authorization: Worker <id>` + HMAC-SHA256-Signatur über
@@ -88,6 +90,28 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - Mehrere Worker sind technisch möglich, v1 unterstützt **einen** aktiven.
 - Entkoppeln im Admin: Grants löschen, Zugang sperren, sofortige Rückkehr
   zum Browser-Weg.
+- **Stand M7b-1 (issue #51, Migration 038, E-28):** Tabellen `worker`,
+  `worker_pairing`, `worker_nonce`. Admin-Seite `/admin/worker`
+  (`admin.settings`): Kopplungscode erzeugen (Crockford-Base32 `ABCD-EFGH`,
+  nur als HMAC gespeichert, nur angezeigt in der Antwort, ein neuer ersetzt
+  den alten; nur ohne gekoppelten Worker), Fingerabdruck bestätigen
+  (SHA-256 von `W_pub`, 8 × 4 Hex-Zeichen), entkoppeln (Status `gesperrt`,
+  `secret_enc` gelöscht, gehaltene Jobs sofort freigegeben). Status
+  `gekoppelt` = nur Heartbeat, `aktiv` = darf Jobs beanspruchen.
+  Wire-Format in `App\Service\Worker\WorkerProtokoll` (ohne
+  HTTP/DB-Abhängigkeit, damit `bin/worker.php` denselben Code nutzt):
+  Header `Authorization: Worker <id>` (Ersatz `X-Worker-Authorization`),
+  `X-Worker-Timestamp` (Unix-Sekunden), `X-Worker-Nonce` (16–64 Zeichen
+  `[A-Za-z0-9_-]`), `X-Worker-Signature` = hex HMAC-SHA256 über
+  `METHODE|PFAD|ZEIT|NONCE|hex(SHA-256(Body))`; Pfad ohne Query –
+  Worker-Routen lehnen Query-Strings ab. Prüfung in
+  `App\Service\Worker\WorkerAuth`, von `app/src/routes.php` aus der
+  Deklaration `Zugriff::worker()` abgeleitet (wie der Login-Guard).
+  Grenzen: 30 Fehlversuche je IP/15 min (429), 300 Anfragen je Worker/min;
+  Kopplung 10 Fehlversuche je IP und 50 insgesamt je 15 min. Nonces räumt
+  der Cron (`worker_aufraeumen`) nach 11 min, abgelaufene Codes nach einem
+  Tag. Grants löschen (#52) und Rückkehr zum Browser-Weg (#53) hängen sich
+  an `WorkerKopplung::entkoppeln()`.
 
 ## 5. Protokoll (Webhoster-API `/api/worker/*`)
 
@@ -106,6 +130,33 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   Meldung im Admin ab („Worker-Update nötig").
 - Idempotenz: Artefakte tragen eine Job-Versuchs-ID; doppelte Uploads
   werden erkannt.
+- **Stand M7b-1 (issue #51):** umgesetzt sind `pair`, `heartbeat`,
+  `jobs/claim`, `jobs/{id}/complete`, `jobs/{id}/fail`
+  (`App\Api\WorkerApiController`, JSON, Fehler als `{fehler, meldung}`);
+  `blobs`, `context`, `artifacts` folgen mit #52. Protokollversion 1
+  (`WorkerProtokoll::VERSION`); inkompatibel → 409 `protokoll` „Worker-Update
+  nötig“ – bei `pair` ohne den Code zu verbrauchen, beim Heartbeat wird die
+  Version trotzdem gespeichert (Admin-Anzeige) und Claims werden abgelehnt.
+  - `pair` `{code, public_key (Base64, 32 Byte X25519), name, version,
+    protokoll_version}` → `{worker_id, schluessel (Base64), fingerabdruck,
+    status, protokoll_version}`.
+  - `heartbeat` `{protokoll_version, version, faehigkeiten[], config_version}`
+    → `{status, server_zeit, poll_sekunden, wartend, config}`; `config` =
+    `{version, versiegelt}` nur, wenn `worker.config_version` neuer ist
+    (befüllt von Folge-Issues). Freie Ressourcen werden noch nicht
+    ausgewertet.
+  - `jobs/claim` `{max ≤ 5}` → `{jobs: [{id, typ, ref_type, ref_id, step,
+    versuch, lock, gesperrt_bis}]}`, nur `executor = worker` und nur Typen
+    der gemeldeten Fähigkeiten (`ocr` → `ocr`/`image_cleanup`, `render` →
+    `render_pages`, `ai` → `ai_extract`); Sperre 30 min, je Job ein eigenes
+    `lock` (`w<id>-<zufall>`); ein Job über 3 Versuche wird beim Claim
+    beendet statt ausgegeben. `versuch` (= `attempts`) ist die
+    Job-Versuchs-ID für die Artefakt-Idempotenz (#52).
+  - `complete` `{lock}`, `fail` `{lock, fehler, endgueltig}`: nur mit der
+    eigenen Sperre (sonst 409 bzw. 404 für fremde/unbekannte Jobs); `fehler`
+    nur als Bezeichner (`[A-Za-z][A-Za-z0-9_.:\-]*`, sonst `WorkerFehler`),
+    nie Text; ohne `endgueltig` geht der Job bis zum 3. Versuch zurück auf
+    `offen`.
 
 ## 6. Routing auf dem Webhoster
 

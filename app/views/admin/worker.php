@@ -32,7 +32,7 @@ use App\Domain\WorkerStatus;
 
     <?php if ($code !== null): ?>
         <div class="karte">
-            <h3>Kopplungscode</h3>
+            <h4>Kopplungscode</h4>
             <p><strong><code><?= e($code) ?></code></strong></p>
             <p class="gedaempft">
                 Gültig bis <?= e($codeBis?->format('H:i') ?? '–') ?> Uhr, nur einmal verwendbar.
@@ -72,21 +72,19 @@ use App\Domain\WorkerStatus;
             <?php endif; ?>
         </p>
 
-        <div class="tabelle-rahmen">
-            <table class="tabelle">
-                <caption>Gekoppelter Worker</caption>
-                <tbody>
-                    <tr><th scope="row">Name</th><td><?= e($worker->name) ?></td></tr>
-                    <tr><th scope="row">Fingerabdruck</th><td><code><?= e($fingerabdruck) ?></code></td></tr>
-                    <tr><th scope="row">Gekoppelt am</th><td><?= e($worker->gekoppeltAm->format('d.m.Y H:i')) ?></td></tr>
-                    <tr><th scope="row">Letzte Meldung</th><td><?= e($worker->letzterHeartbeat?->format('d.m.Y H:i') ?? '–') ?></td></tr>
-                    <tr><th scope="row">Version</th><td><?= e($worker->appVersion === '' ? '–' : $worker->appVersion) ?> (Protokoll <?= e((string) $worker->protokollVersion) ?>)</td></tr>
-                    <tr>
-                        <th scope="row">Fähigkeiten</th>
-                        <td><?= e($worker->faehigkeiten === [] ? '–' : implode(', ', array_map(static fn(\App\Domain\WorkerFaehigkeit $f): string => $f->label(), $worker->faehigkeiten))) ?></td>
-                    </tr>
-                </tbody>
-            </table>
+        <div class="karte">
+            <h4><?= e($worker->name) ?></h4>
+            <p>
+                Fingerabdruck:<br>
+                <strong><code><?= e($fingerabdruck) ?></code></strong>
+            </p>
+            <p class="gedaempft">
+                Gekoppelt am <?= e($worker->gekoppeltAm->format('d.m.Y H:i')) ?> ·
+                letzte Meldung <?= e($worker->letzterHeartbeat?->format('d.m.Y H:i') ?? '–') ?><br>
+                Version <?= e($worker->appVersion === '' ? '–' : $worker->appVersion) ?>
+                (Protokoll <?= e((string) $worker->protokollVersion) ?>) ·
+                Fähigkeiten: <?= e($worker->faehigkeiten === [] ? '–' : implode(', ', array_map(static fn(\App\Domain\WorkerFaehigkeit $f): string => $f->label(), $worker->faehigkeiten))) ?>
+            </p>
         </div>
 
         <?php if ($worker->status === WorkerStatus::Gekoppelt): ?>

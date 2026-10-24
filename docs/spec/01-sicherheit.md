@@ -555,6 +555,11 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `sqlBedingung()`: `document.cost_center_id` / `document.created_at`
   (`App\Repository\DocumentRepository::inbox()`/`inboxItem()`); eine ID
   außerhalb des Scopes antwortet 404 wie eine unbekannte.
+- Worker (M7b-1, issue #51): `/admin/worker*` = `admin.settings`;
+  `/api/worker/pair` = öffentlich (der Einmal-Kopplungscode ist das
+  Geheimnis, Rate-Limit je IP und gesamt); alle übrigen `/api/worker/*` =
+  `Zugriff::worker()` – keine Session, HMAC-Signatur des gekoppelten Workers
+  (`App\Service\Worker\WorkerAuth`, 07 §4, E-28).
 
 ## 5. Öffentliche Einreichung – Schutz
 
