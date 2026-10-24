@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\BackupController;
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
@@ -174,6 +175,8 @@ use App\View\View;
  *        built lazily, same reason as $mail (issue #95). Optional and last,
  *        so route tables built for other pages need not name it; without it
  *        the routes exist but answer with an error.
+ * @param (\Closure(): BackupController)|null $backups built lazily, same
+ *        reason as $mail (issue #112). Optional, like $nextcloudAdmin.
  * @param (\Closure(): SerienController)|null $serien built lazily, same
  *        reason as $mail: only the recurring series pages need the database
  *        (issue #57/M8-1). Optional and last like $nextcloudAdmin.
@@ -220,9 +223,11 @@ return static function (
     \Closure $archivImport,
     \Closure $suche,
     ?\Closure $nextcloudAdmin = null,
+    ?\Closure $backups = null,
     ?\Closure $serien = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
+    $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
     $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -843,6 +848,20 @@ return static function (
         static fn(Request $r, array $params) => $updates()->step($r, $params),
     );
     $post('/admin/wartung/aufheben', $system, static fn(Request $r) => $updates()->releaseMaintenance($r));
+
+    // Backups (06 section 2, issue #112): list, create as a step chain,
+    // download. Permission: `admin.system`, like Update ("Backup, Update,
+    // Wartung", 01 section 4); CSRF on all writes. The name pattern only
+    // pre-filters - BackupService::path() is what guards against
+    // traversal. A backup with config.php is downloaded only by POST with
+    // the account's password (BackupController).
+    $backupName = '{name:backup_[0-9_]+\\.zip}';
+    $get('/admin/backups', $system, static fn(Request $r) => $backups()->page($r));
+    $post('/admin/backups', $system, static fn(Request $r) => $backups()->starten($r));
+    $post('/admin/backups/schritt', $system, static fn(Request $r) => $backups()->schritt($r));
+    $post('/admin/backups/abbrechen', $system, static fn(Request $r) => $backups()->abbrechen($r));
+    $get('/admin/backups/' . $backupName, $system, static fn(Request $r, array $p) => $backups()->download($r, $p));
+    $post('/admin/backups/' . $backupName, $system, static fn(Request $r, array $p) => $backups()->downloadBestaetigt($r, $p));
 
     // System check (06 section 5, issue #107/M3-10): do the M0 hosting
     // assumptions still hold? Read only, so no CSRF and no write route.

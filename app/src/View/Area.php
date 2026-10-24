@@ -97,7 +97,7 @@ enum Area: string
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),
-                new NavItem('Backup', meilenstein: 'M1', recht: Permission::AdminSystem),
+                new NavItem('Backups', '/admin/backups', recht: Permission::AdminSystem),
                 new NavItem('Einstellungen', meilenstein: 'M3', recht: Permission::AdminSettings),
             ],
         };
