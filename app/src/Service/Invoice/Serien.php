@@ -23,6 +23,7 @@ use App\Repository\RecurringSeriesRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Audit\AuditLog;
+use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -161,8 +162,10 @@ final readonly class Serien implements JobHandler
 
     /**
      * Suggestions and confirmed series, next expected date first, each with
-     * the figures of the overview (issue #58/M8-2): every receipt of every
-     * listed series is decrypted - a club has a few dozen series.
+     * the figures of the overview (issue #58/M8-2). Only the checked
+     * receipts count; of those, only the few the figures need are
+     * decrypted, picked by their plaintext date. A receipt that cannot be
+     * decrypted is left out instead of breaking the whole page.
      *
      * @return list<SerienAnsicht>
      */
@@ -170,28 +173,37 @@ final readonly class Serien implements JobHandler
     {
         $records = $this->serien->liste([SeriesStatus::Vorgeschlagen, SeriesStatus::Bestaetigt]);
         $mitglieder = $this->serien->alleMitglieder(array_map(static fn(RecurringSeriesRecord $r): int => $r->id, $records));
-        $posten = [];
+        $rechnungen = [];
         foreach (array_chunk(array_merge([], ...array_values($mitglieder)), 500) as $teil) {
             foreach ($this->invoices->nachIds($teil) as $invoice) {
-                $posten[$invoice->id] = $this->posten($vault, $invoice);
+                $rechnungen[$invoice->id] = $invoice;
             }
         }
+        $entschluessle = function (int $id) use ($vault, $rechnungen): ?SerienPosten {
+            try {
+                return isset($rechnungen[$id]) ? $this->posten($vault, $rechnungen[$id]) : null;
+            } catch (CryptoException | \JsonException) {
+                return null;
+            }
+        };
 
         $namen = [];
         $liste = [];
         foreach ($records as $record) {
             $namen[$record->supplierId] ??= $this->lieferantName($vault, $record->supplierId);
             $daten = $this->daten($vault, $record);
-            $eigene = array_values(array_filter(array_map(
-                static fn(int $id): ?SerienPosten => $posten[$id] ?? null,
-                $mitglieder[$record->id] ?? [],
-            )));
+            $geprueft = [];
+            foreach ($mitglieder[$record->id] ?? [] as $id) {
+                if (isset($rechnungen[$id]) && $rechnungen[$id]->checkedAt !== null) {
+                    $geprueft[$id] = $rechnungen[$id]->invoiceDate;
+                }
+            }
             $liste[] = new SerienAnsicht(
                 $record,
                 $daten,
                 $namen[$record->supplierId],
-                count($eigene),
-                kennzahlen: SerienKennzahlen::berechne($record, $daten, $eigene, $heute),
+                count($mitglieder[$record->id] ?? []),
+                kennzahlen: SerienKennzahlen::berechne($record, $daten, $geprueft, $entschluessle, $heute),
             );
         }
 

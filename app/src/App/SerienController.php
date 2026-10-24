@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\App;
 
 use App\Domain\Berechtigungen;
-use App\Domain\InvoiceDirection;
 use App\Domain\Permission;
 use App\Domain\SeriesPeriod;
 use App\Domain\SeriesStatus;
@@ -19,6 +18,7 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\SerienAnsicht;
+use App\Service\Invoice\SerienKennzahlen;
 use App\Service\Invoice\Serien;
 use App\Service\Processing\Betrag;
 use App\View\Area;
@@ -64,41 +64,16 @@ final readonly class SerienController
         }
         $tresor = $this->tresor($request);
         $liste = $tresor === null ? [] : $this->serien->liste($tresor, new \DateTimeImmutable());
+        $bestaetigt = array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt));
 
         return Response::html($this->view->render('app/serien', [
             'title' => 'Wiederkehrende Kosten',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
             'vorschlaege' => array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Vorgeschlagen)),
-            'bestaetigt' => $bestaetigt = array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt)),
-            'summen' => self::summen($bestaetigt),
+            'bestaetigt' => $bestaetigt,
+            'summen' => SerienKennzahlen::summen($bestaetigt),
         ], Area::App));
-    }
-
-    /**
-     * The yearly projection of the confirmed series added up, per direction
-     * and currency; series without a fixed rhythm do not count.
-     *
-     * @param list<SerienAnsicht> $bestaetigt
-     *
-     * @return list<array{richtung: string, waehrung: string, cent: int, anzahl: int}>
-     */
-    private static function summen(array $bestaetigt): array
-    {
-        $summen = [];
-        foreach ($bestaetigt as $serie) {
-            $cent = $serie->kennzahlen?->jahreshochrechnung;
-            if ($cent === null) {
-                continue;
-            }
-            $schluessel = $serie->record->direction->value . '|' . $serie->daten->currency;
-            $summen[$schluessel] ??= ['richtung' => $serie->record->direction === InvoiceDirection::Ausgabe ? 'Ausgaben' : 'Einnahmen', 'waehrung' => $serie->daten->currency, 'cent' => 0, 'anzahl' => 0];
-            $summen[$schluessel]['cent'] += $cent;
-            ++$summen[$schluessel]['anzahl'];
-        }
-        ksort($summen);
-
-        return array_values($summen);
     }
 
     /**

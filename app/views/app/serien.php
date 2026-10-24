@@ -13,13 +13,14 @@
  * @var bool $entsperrt
  * @var list<\App\Service\Invoice\SerienAnsicht> $vorschlaege
  * @var list<\App\Service\Invoice\SerienAnsicht> $bestaetigt
- * @var list<array{richtung: string, waehrung: string, cent: int, anzahl: int}> $summen
+ * @var list<array{richtung: \App\Domain\InvoiceDirection, waehrung: string, cent: int, anzahl: int}> $summen
  */
 
+use App\Domain\InvoiceDirection;
 use App\Service\Invoice\SerienFaelligkeit;
 use App\Service\Processing\Betrag;
 
-$tabelle = static function (array $serien, string $beschriftung, bool $mitFaelligkeit): void {
+$tabelle = static function (array $serien, string $beschriftung): void {
     ?>
     <div class="tabelle-rahmen">
         <table class="tabelle">
@@ -28,6 +29,7 @@ $tabelle = static function (array $serien, string $beschriftung, bool $mitFaelli
                 <tr>
                     <th scope="col">Serie</th>
                     <th scope="col">Rhythmus</th>
+                    <th scope="col">Erwartet</th>
                     <th scope="col">Letzter Beleg</th>
                     <th scope="col">Jahreshochrechnung</th>
                     <th scope="col">Trend</th>
@@ -39,7 +41,7 @@ $tabelle = static function (array $serien, string $beschriftung, bool $mitFaelli
                     <?php
                     $k = $serie->kennzahlen;
                     $letzter = $k?->letzter;
-                    $faelligkeit = $mitFaelligkeit ? ($k?->faelligkeit ?? SerienFaelligkeit::Keine) : SerienFaelligkeit::Keine;
+                    $faelligkeit = $k?->faelligkeit ?? SerienFaelligkeit::Keine;
                     ?>
                     <tr>
                         <td>
@@ -50,6 +52,7 @@ $tabelle = static function (array $serien, string $beschriftung, bool $mitFaelli
                             <br><span class="gedaempft"><?= e(sprintf('%d %s', $serie->anzahl, $serie->anzahl === 1 ? 'Beleg' : 'Belege')) ?></span>
                         </td>
                         <td><?= e($serie->record->period->label()) ?> · <?= e($serie->record->direction->label()) ?></td>
+                        <td><?= e(Betrag::format($serie->daten->expectedGross) . ' ' . $serie->daten->currency) ?></td>
                         <td>
                             <?php if ($letzter === null): ?>
                                 –
@@ -127,15 +130,15 @@ $ueberfaellig = array_values(array_filter(
             <?php if ($summen !== []): ?>
                 <?php foreach ($summen as $summe): ?>
                     <p>
-                        <strong><?= e(sprintf('%s pro Jahr (Hochrechnung):', $summe['richtung'])) ?></strong>
+                        <strong><?= e(sprintf('%s pro Jahr (Hochrechnung):', $summe['richtung'] === InvoiceDirection::Ausgabe ? 'Ausgaben' : 'Einnahmen')) ?></strong>
                         <?= e(Betrag::format($summe['cent']) . ' ' . $summe['waehrung']) ?>
                         <span class="gedaempft"><?= e(sprintf('aus %d %s', $summe['anzahl'], $summe['anzahl'] === 1 ? 'Serie' : 'Serien')) ?></span>
                     </p>
                 <?php endforeach; ?>
             <?php endif; ?>
-            <?php $tabelle($bestaetigt, sprintf('%d %s, nächste Fälligkeit zuerst', count($bestaetigt), count($bestaetigt) === 1 ? 'Serie' : 'Serien'), true); ?>
+            <?php $tabelle($bestaetigt, sprintf('%d %s, nächste Fälligkeit zuerst', count($bestaetigt), count($bestaetigt) === 1 ? 'Serie' : 'Serien')); ?>
             <p class="gedaempft">
-                Jahreshochrechnung: erwarteter Betrag × Belege pro Jahr. Trend: letzter Betrag verglichen mit dem Beleg
+                Letzter Beleg: der neueste geprüfte Beleg der Serie. Jahreshochrechnung: erwarteter Betrag × Belege pro Jahr. Trend: letzter Betrag verglichen mit dem Beleg
                 etwa ein Jahr davor (sonst dem ältesten der Serie). „Überfällig“: nächste Fälligkeit plus Toleranz ist
                 vorbei, ohne dass ein neuer geprüfter Beleg zur Serie kam.
             </p>
@@ -150,7 +153,7 @@ $ueberfaellig = array_values(array_filter(
             <p class="hinweis hinweis-warnung">
                 <?= e(sprintf('%d %s auf Ihre Entscheidung: öffnen, prüfen, dann bestätigen oder verwerfen.', count($vorschlaege), count($vorschlaege) === 1 ? 'Vorschlag wartet' : 'Vorschläge warten')) ?>
             </p>
-            <?php $tabelle($vorschlaege, sprintf('%d %s', count($vorschlaege), count($vorschlaege) === 1 ? 'Vorschlag' : 'Vorschläge'), false); ?>
+            <?php $tabelle($vorschlaege, sprintf('%d %s', count($vorschlaege), count($vorschlaege) === 1 ? 'Vorschlag' : 'Vorschläge')); ?>
         <?php endif; ?>
     </section>
 <?php endif; ?>

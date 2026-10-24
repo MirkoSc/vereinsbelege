@@ -1567,16 +1567,20 @@ Bankbuchungen später.
   (`recurring_series.data_enc`), `job.state` leer.
 - *Übersicht* (M8-2, `/app/serien`, Titel „Wiederkehrende Kosten“, Recht
   und Scope wie oben, keine Migration): zuerst die bestätigten Serien, dann
-  die Vorschläge, je Serie Rhythmus, letzter Beleg (Betrag, Datum, Link in
-  die Prüfansicht), Jahreshochrechnung, Trend, nächste Fälligkeit; die
-  Bezeichnung führt zur Serie. Berechnet rein in PHP nach dem Entschlüsseln
-  (`App\Service\Invoice\SerienKennzahlen`, ohne DB):
+  die Vorschläge, je Serie Rhythmus, erwarteter Betrag, letzter geprüfter
+  Beleg (Betrag, Datum, Link in die Prüfansicht), Jahreshochrechnung, Trend,
+  nächste Fälligkeit; die Bezeichnung führt zur Serie. Berechnet rein in PHP
+  (`App\Service\Invoice\SerienKennzahlen`, ohne DB); entschlüsselt werden
+  nur die Belege, die die Kennzahlen brauchen (nach Klartext-Datum
+  ausgewählt: der neueste, der Vergleichsbeleg), ein nicht lesbarer Beleg
+  wird übersprungen statt die Seite abzubrechen:
   - *Jahreshochrechnung* = erwarteter Betrag × Belege pro Jahr (12/4/2/1);
     „unregelmäßig“ hat keine. Darüber die Summe je Richtung und Währung
     über die bestätigten Serien („Ausgaben pro Jahr“).
   - *Trend* = letzter Betrag gegen den neuesten Beleg der Serie, der
     mindestens 335 Tage älter ist (≈ Vorjahr), sonst gegen den ältesten; nur
-    Belege in der Währung der Serie mit Betrag > 0, in Zehntelprozent
+    Belege in der Währung der Serie mit Betrag > 0 (ist der neueste eine
+    Gutschrift oder in anderer Währung: kein Trend), in Zehntelprozent
     gerundet, ab zwei Belegen.
   - *Fälligkeit* nur für bestätigte Serien mit nächster Fälligkeit:
     „fällig“ ab dem Tag bis einschließlich Fälligkeit + `tolerance_days`,
@@ -1851,7 +1855,8 @@ Beleg, Verwerfen ohne erneuten Vorschlag, Validierung je Feld, Tresor/CSRF,
 Zusammenführen; `RoutePermissionMatrixTest`; M8-2: `SerienKennzahlenTest`:
 Jahreshochrechnung je Rhythmus, keine bei „unregelmäßig“, Trend gegen ≈
 Vorjahr bzw. ältesten Beleg, keiner bei einem Beleg/anderer Währung,
-„überfällig“ erst nach der Toleranz, nur bestätigte Serien mit Fälligkeit;
+„überfällig“ erst nach der Toleranz, nur bestätigte Serien mit Fälligkeit,
+nur benötigte Belege entschlüsselt, unlesbarer übersprungen, Summen;
 `SerienFlowTest`: Übersicht mit „überfällig“, Links zu Serie und Beleg,
 letzter Betrag, Hochrechnung, Trend, Vorschlag nie überfällig);
 Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der
