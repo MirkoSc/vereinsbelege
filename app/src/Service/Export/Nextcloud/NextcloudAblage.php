@@ -14,8 +14,10 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Export\ExportFilter;
+use App\Service\Export\Dateiname;
 use App\Service\Export\ExportPlan;
 use App\Service\Export\ZipExport;
+use App\Service\Storage\BlobException;
 use App\Service\Storage\BlobService;
 
 /**
@@ -92,7 +94,7 @@ final readonly class NextcloudAblage
         if ($plan->anzahlBelege === 0) {
             throw new NextcloudAblageFehler('Die Belege dieses Exports sind nicht mehr verfügbar – es wurde nichts abgelegt.');
         }
-        $this->uploads->starten($lauf->id, $plan->anzahlDateien(), $userId, $now);
+        $this->uploads->starten($lauf->id, $plan->anzahlDateien(), self::planHash($plan), $userId, $now);
 
         return $this->uploads->find($lauf->id) ?? throw new \LogicException('The upload row vanished.');
     }
@@ -115,6 +117,16 @@ final readonly class NextcloudAblage
         $plan = $this->plan($lauf, $bereich, $vault);
         $gesamt = $plan->anzahlDateien();
         $index = $stand->nextIndex;
+        $hash = self::planHash($plan);
+        if ($hash !== $stand->planHash) {
+            // A receipt of the run was deleted, rejected or moved since the
+            // chain started: the cursor no longer points at the same file.
+            // Start over - what is up already counts as there.
+            if (!$this->uploads->neuerPlan($lauf->id, $stand->planHash, $gesamt, $hash, $now)) {
+                return $this->uploads->find($lauf->id) ?? $stand;
+            }
+            $index = 0;
+        }
         $beginn = hrtime(true);
         $erledigt = 0;
         /** @var array<string, true> $ordner folders known to exist in this request */
@@ -124,7 +136,11 @@ final readonly class NextcloudAblage
             if ($erledigt > 0 && (hrtime(true) - $beginn) / 1e9 >= $this->budgetS) {
                 break;
             }
-            $ergebnis = $this->datei($ziel, $plan, $index, $vault, $ordner);
+            try {
+                $ergebnis = $this->datei($ziel, $plan, $index, $vault, $ordner);
+            } catch (BlobException | CryptoException) {
+                throw new NextcloudAblageFehler('Eine Datei des Exports ist nicht lesbar. Bitte einen neuen Export erstellen.');
+            }
             if (!$this->uploads->weiter($lauf->id, $index, $ergebnis, $now)) {
                 // Another tab moved on first; it carries the chain.
                 break;
@@ -195,7 +211,11 @@ final readonly class NextcloudAblage
             $kandidat = self::variante($pfad, $nummer);
             $vorhanden = $this->dav->eigenschaften($ziel, $kandidat);
             if ($vorhanden !== null) {
-                if ($vorhanden->gleicheDatei($groesse, $sha1)) {
+                // Without Nextcloud's checksum (a file put there by hand) a
+                // matching size is not proof enough: compare the content.
+                $gleich = $vorhanden->gleicheDatei($groesse, $sha1)
+                    ?? hash_equals($sha1, sha1($this->dav->lesen($ziel, $kandidat, $groesse)));
+                if ($gleich) {
                     return 'vorhanden';
                 }
                 // Somebody else's file (or a folder) has the name: never
@@ -250,8 +270,19 @@ final readonly class NextcloudAblage
         $punkt = strrpos($name, '.');
         $stamm = $punkt === false || $punkt === 0 ? $name : substr($name, 0, $punkt);
         $endung = $punkt === false || $punkt === 0 ? '' : substr($name, $punkt);
+        $suffix = sprintf(' (%d)', $nummer);
 
-        return sprintf('%s%s (%d)%s', $ordner, $stamm, $nummer, $endung);
+        // The suffix always fits: the stem gives way, never the counter.
+        return $ordner . Dateiname::segment($stamm, Dateiname::MAX_LAENGE - mb_strlen($suffix)) . $suffix . $endung;
+    }
+
+    /**
+     * What a running chain must not lose track of: which file sits at which
+     * position. Blob ids only - no name goes into the hash.
+     */
+    private static function planHash(ExportPlan $plan): string
+    {
+        return hash('sha256', implode(',', array_column($plan->eintraege, 'blobId')) . '|' . $plan->anzahlDateien());
     }
 
     private function plan(ExportRun $lauf, Zugriffsbereich $bereich, Vault $vault): ExportPlan

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Repository;
 
 /**
- * The table `nextcloud_target` (migrations/034_nextcloud.sql, issue #95):
+ * The table `nextcloud_target` (migrations/033_nextcloud.sql, issue #95):
  * the club's one Nextcloud folder, as vault ciphertext. SQL only - the
  * encryption is App\Service\Export\Nextcloud\NextcloudZielSpeicher.
  */

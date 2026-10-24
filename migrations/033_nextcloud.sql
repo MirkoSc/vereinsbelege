@@ -13,7 +13,10 @@
 -- counters, never a path or a name:
 -- - `status` `laeuft` / `fertig` (App\Domain\NextcloudAblageStatus).
 -- - `next_index` the next file of the run in upload order (index.csv last),
---   `total` the files of the run when the chain started.
+--   `total` the files of the run when the chain started, `plan_hash` a
+--   SHA-256 over the blob ids in upload order (ids only, no names): a step
+--   that finds another plan - a receipt deleted, rejected or moved - starts
+--   over from the first file, which then counts as already there.
 -- - `hochgeladen`, `vorhanden` (already in the cloud with the same content,
 --   skipped), `umbenannt` (a different file had the name; filed with a
 --   " (2)" suffix instead of overwriting it).
@@ -33,6 +36,7 @@ CREATE TABLE export_run_upload (
     status VARCHAR(16) NOT NULL,
     next_index INT UNSIGNED NOT NULL DEFAULT 0,
     total INT UNSIGNED NOT NULL,
+    plan_hash CHAR(64) NOT NULL,
     hochgeladen INT UNSIGNED NOT NULL DEFAULT 0,
     vorhanden INT UNSIGNED NOT NULL DEFAULT 0,
     umbenannt INT UNSIGNED NOT NULL DEFAULT 0,

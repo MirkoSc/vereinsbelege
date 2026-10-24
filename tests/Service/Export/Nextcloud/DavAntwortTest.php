@@ -44,8 +44,8 @@ final class DavAntwortTest extends TestCase
         $eintrag = DavAntwort::lesen(self::antwort('<d:resourcetype/><d:getcontentlength>12</d:getcontentlength><oc:checksums/>'));
 
         self::assertNull($eintrag->sha1);
-        self::assertTrue($eintrag->gleicheDatei(12, self::SHA1), 'then the size decides');
-        self::assertFalse($eintrag->gleicheDatei(13, self::SHA1));
+        self::assertNull($eintrag->gleicheDatei(12, self::SHA1), 'same size: only the content can tell');
+        self::assertFalse($eintrag->gleicheDatei(13, self::SHA1), 'another size is another file');
     }
 
     public function testTheChecksumDecidesWhenThereIsOne(): void

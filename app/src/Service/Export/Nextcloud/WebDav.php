@@ -25,6 +25,14 @@ interface WebDav
     public function eigenschaften(NextcloudZiel $ziel, string $pfad): ?DavEintrag;
 
     /**
+     * GET of a file of at most $maxBytes - to compare a file that has no
+     * checksum in the cloud.
+     *
+     * @throws WebDavFehler also when the file is larger
+     */
+    public function lesen(NextcloudZiel $ziel, string $pfad, int $maxBytes): string;
+
+    /**
      * MKCOL. A folder that exists already is fine.
      *
      * @throws WebDavFehler

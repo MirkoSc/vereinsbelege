@@ -67,6 +67,17 @@ final class FakeWebDav implements WebDav
         return $datei === null ? null : new DavEintrag(false, strlen($datei['inhalt']), $datei['sha1']);
     }
 
+    public function lesen(NextcloudZiel $ziel, string $pfad, int $maxBytes): string
+    {
+        $this->pruefe($ziel, 'GET', $pfad);
+        $datei = $this->dateien[$pfad] ?? throw WebDavFehler::status(404, 'beim Lesen');
+        if (strlen($datei['inhalt']) > $maxBytes) {
+            throw WebDavFehler::antwort('Datei größer als erwartet');
+        }
+
+        return $datei['inhalt'];
+    }
+
     public function ordnerAnlegen(NextcloudZiel $ziel, string $pfad): void
     {
         $this->pruefe($ziel, 'MKCOL', $pfad);

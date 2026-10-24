@@ -252,13 +252,19 @@ leer → Ebene entfällt).
     nach 8 s keine neue; der Cursor rückt **nach jeder Datei** per
     bedingtem UPDATE (`WHERE next_index = ?`) – zwei Tabs zählen nichts
     doppelt. Ein fehlgeschlagener Schritt (Netz, 401, 507 …) bewegt nichts,
-    der nächste versucht dieselbe Datei. Ein geschlossener Tab hält einfach
+    der nächste versucht dieselbe Datei; eine unlesbare Datei (Blob defekt)
+    meldet sich als Fehler, nicht als HTTP 500. Ändert sich der Plan
+    unterwegs (ein Beleg gelöscht, abgelehnt, verschoben – erkannt an
+    `plan_hash`, einem SHA-256 nur über die Blob-IDs), beginnt die Kette
+    von vorn; schon Abgelegtes zählt dann als vorhanden, nichts wird
+    übersprungen oder vorzeitig fertig. Ein geschlossener Tab hält einfach
     an; die Seite bietet „Weiter ablegen“.
   - **Nie überschreiben, schon Vorhandenes überspringen.** Je Datei:
     PROPFIND auf den Zielnamen. Nichts da → fehlende Ordner per MKCOL
     (405 = gibt es schon), PUT mit `OC-Checksum: SHA1:…`, danach Größe per
-    PROPFIND prüfen. Dieselbe Datei da (SHA-1 aus `oc:checksums`, ohne
-    Prüfsumme – von Hand abgelegt – die Größe) → übersprungen („vorhanden“).
+    PROPFIND prüfen. Dieselbe Datei da (SHA-1 aus `oc:checksums`; ohne
+    Prüfsumme – von Hand abgelegt – bei gleicher Größe per GET der Inhalt)
+    → übersprungen („vorhanden“).
     Eine **andere** Datei da → nächster freier Name „ (2)“, „ (3)“ …
     (wie die Kollisionen im ZIP, höchstens 50 Varianten), gezählt als
     „umbenannt“. Die `index.csv` nennt dann den vom Muster vergebenen Namen;
@@ -280,7 +286,8 @@ leer → Ebene entfällt).
     das Passwort öffnet das Vereinsarchiv, und ohne Tresor gibt es ohnehin
     nichts abzulegen. Seite `/admin/export/nextcloud` (Recht
     `admin.settings`, verlinkt von `/admin/export`): Speichern (leeres
-    Passwortfeld behält das alte; das Passwort geht nie zurück an den
+    Passwortfeld behält das alte – nur bei unveränderter Adresse, damit es
+    nie an einen anderen Server geht; das Passwort geht nie zurück an den
     Browser), „Verbindung testen“ (PROPFIND auf den Ordner), Entfernen.
     Audit `einstellung.nextcloud` nur mit `aktion` (`gespeichert`/
     `entfernt`), ohne Adresse oder Benutzer. Regeln
@@ -437,7 +444,8 @@ gegen einen nachgebauten WebDAV-Ordner (`tests/Support/FakeWebDav.php`):
   fehlgeschlagener Schritt bewegt den Cursor nicht; der Cursor rückt nur
   von dort weiter, wo er gelesen wurde (zwei Tabs).
 - **Nie überschreiben:** fremde Datei gleichen Namens bleibt, unsere wird
-  „ (2)“; von Hand abgelegte gleiche Datei zählt als vorhanden.
+  „ (2)“; von Hand abgelegte gleiche Datei zählt als vorhanden, gleich
+  große andere nicht; ein unterwegs geänderter Plan beginnt von vorn.
 - **Ziel im Tresor**, Passwort nie in der Seite, Audit ohne Adresse;
   `http://` und Zugangsdaten in der Adresse werden abgelehnt.
 - **Rechte/CSRF/Tresor:** Scope-Rolle 404, ohne Tresor bzw. Token nichts.

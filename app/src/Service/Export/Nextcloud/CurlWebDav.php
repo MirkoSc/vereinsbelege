@@ -43,6 +43,23 @@ final readonly class CurlWebDav implements WebDav
         return DavAntwort::lesen($body);
     }
 
+    public function lesen(NextcloudZiel $ziel, string $pfad, int $maxBytes): string
+    {
+        [$status, $body] = $this->anfrage($ziel, 'GET', $pfad, [
+            // Stop as soon as the body outgrows what we compare with.
+            CURLOPT_MAXFILESIZE => $maxBytes,
+        ], self::UPLOAD_TIMEOUT_S);
+
+        if ($status !== 200) {
+            throw WebDavFehler::status($status, 'beim Lesen');
+        }
+        if (strlen($body) > $maxBytes) {
+            throw WebDavFehler::antwort('Datei größer als erwartet');
+        }
+
+        return $body;
+    }
+
     public function ordnerAnlegen(NextcloudZiel $ziel, string $pfad): void
     {
         [$status] = $this->anfrage($ziel, 'MKCOL', $pfad, [], self::TIMEOUT_S);

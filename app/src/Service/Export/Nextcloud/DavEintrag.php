@@ -22,11 +22,12 @@ final readonly class DavEintrag
     }
 
     /**
-     * Whether this is the file we would upload: same SHA-1 when the cloud
-     * knows one, else (a file put there by hand or by the desktop client)
-     * the same size.
+     * Whether this is the file we would upload: decided by the SHA-1 when
+     * the cloud knows one; another size is never the same file; null when
+     * only the content can tell (same size, no checksum - a file put there
+     * by hand or by the desktop client).
      */
-    public function gleicheDatei(int $groesse, string $sha1): bool
+    public function gleicheDatei(int $groesse, string $sha1): ?bool
     {
         if ($this->ordner) {
             return false;
@@ -35,6 +36,6 @@ final readonly class DavEintrag
             return hash_equals($this->sha1, $sha1);
         }
 
-        return $this->groesse === $groesse;
+        return $this->groesse === $groesse ? null : false;
     }
 }

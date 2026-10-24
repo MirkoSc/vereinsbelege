@@ -6,7 +6,7 @@ namespace App\Domain;
 
 /**
  * Status of the Nextcloud filing of one export run (`export_run_upload`,
- * migrations/034_nextcloud.sql, issue #95).
+ * migrations/033_nextcloud.sql, issue #95).
  */
 enum NextcloudAblageStatus: string
 {

@@ -76,8 +76,13 @@ final readonly class NextcloudSettingsController
         $passwort = $request->post['passwort'] ?? '';
         $passwort = is_string($passwort) ? $passwort : '';
         if ($passwort === '') {
-            // An empty field keeps the stored password.
-            $passwort = $this->gespeichert($tresor)?->passwort ?? '';
+            // An empty field keeps the stored password - for the same
+            // address only: it must never go along to another server.
+            $alt = $this->gespeichert($tresor);
+            if ($alt !== null && rtrim($url, '/') !== $alt->url) {
+                return $this->formular(true, $url, $benutzer, 'Die Adresse hat sich geändert – bitte das App-Passwort erneut eingeben.', 422);
+            }
+            $passwort = $alt?->passwort ?? '';
         }
 
         try {

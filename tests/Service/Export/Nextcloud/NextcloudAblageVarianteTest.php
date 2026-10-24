@@ -17,4 +17,11 @@ final class NextcloudAblageVarianteTest extends TestCase
         self::assertSame('Belege_2026/v1.2/ohne (2)', NextcloudAblage::variante('Belege_2026/v1.2/ohne', 2), 'a dot in a folder is no extension');
         self::assertSame('.hidden (2)', NextcloudAblage::variante('.hidden', 2));
     }
+
+    public function testTheStemGivesWayToTheSuffixLikeInTheZip(): void
+    {
+        $lang = str_repeat('a', 80);
+
+        self::assertSame('x/' . str_repeat('a', 76) . ' (2).pdf', NextcloudAblage::variante('x/' . $lang . '.pdf', 2));
+    }
 }

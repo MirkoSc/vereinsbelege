@@ -177,6 +177,12 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
         $this->post('/admin/export/nextcloud', ['url' => self::URL . '/', 'benutzer' => 'kasse', 'passwort' => '']);
         self::assertSame(self::PASSWORT, new NextcloudZielSpeicher(new NextcloudTargetRepository($this->pdo()))->lesen($this->tresor)?->passwort);
 
+        // A new address needs the password again: it must not go along.
+        $antwort = $this->post('/admin/export/nextcloud', ['url' => 'https://andere.example.net/dav', 'benutzer' => 'kasse', 'passwort' => '']);
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame(422, $antwort->status);
+        self::assertSame(self::URL, new NextcloudZielSpeicher(new NextcloudTargetRepository($this->pdo()))->lesen($this->tresor)?->url);
+
         $audits = $this->audits(AuditAction::EinstellungNextcloud);
         self::assertCount(2, $audits);
         $details = json_encode(array_map(fn(\App\Domain\AuditEntry $e): mixed => $this->auditDetails($e), $audits), JSON_THROW_ON_ERROR);
@@ -310,6 +316,50 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
         $stand = new ExportRunUploadRepository($this->pdo())->find($lauf);
         self::assertSame([2, 1, 1], [$stand?->hochgeladen, $stand?->vorhanden, $stand?->umbenannt]);
         self::assertStringContainsString('1 mit Zusatz', $this->get('/app/export/lauf/' . $lauf)->body);
+    }
+
+    /** Same size, no checksum, other content: not ours - never skipped on the size alone. */
+    public function testAFileOfTheSameSizeWithoutChecksumIsComparedByContent(): void
+    {
+        $this->einrichten();
+        $belege = $this->belege();
+        $pfad = 'Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 03.02.2025.pdf';
+        $echt = self::pdfText($belege[0]);
+        $this->dav->legen($pfad, strrev($echt));
+        $lauf = $this->laufAnlegen();
+
+        $this->starten($lauf);
+        $this->bisFertig($lauf);
+
+        self::assertSame(strrev($echt), $this->dav->dateien[$pfad]['inhalt']);
+        self::assertSame($echt, $this->dav->dateien['Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 03.02.2025 (2).pdf']['inhalt']);
+        self::assertContains('GET ' . $pfad, $this->dav->aufrufe, 'compared by content');
+    }
+
+    /**
+     * A receipt leaves the run while it is filed: the chain starts over on
+     * the new plan instead of finishing early or skipping a file, and
+     * index.csv still comes last.
+     */
+    public function testAPlanThatChangesMidwayStartsTheChainOver(): void
+    {
+        $this->einrichten();
+        $this->belege();
+        $lauf = $this->laufAnlegen();
+        $this->starten($lauf);
+        self::assertSame(2, $this->schritt($lauf)['verarbeitet']);
+
+        // The first receipt is rejected - it no longer belongs to the export.
+        $this->pdo()->prepare('UPDATE document SET status = ? WHERE id = (SELECT MIN(document_id) FROM export_run_document WHERE export_run_id = ?)')
+            ->execute([DocumentStatus::Abgelehnt->value, $lauf]);
+        $this->bisFertig($lauf);
+
+        $stand = new ExportRunUploadRepository($this->pdo())->find($lauf);
+        self::assertSame([3, 3], [$stand?->nextIndex, $stand?->total]);
+        self::assertSame(1, $stand->vorhanden, 'the second receipt was up before the change');
+        self::assertSame(2, $stand->hochgeladen, 'the third receipt and index.csv');
+        self::assertSame('Belege_2025/index.csv', array_slice($this->dav->hochgeladen(), -1)[0]);
+        self::assertStringNotContainsString('03.02.2025', $this->dav->dateien['Belege_2025/index.csv']['inhalt']);
     }
 
     /** A failed step moves nothing; the next one carries on with the same file. */
