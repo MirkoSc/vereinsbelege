@@ -278,6 +278,7 @@ final readonly class ZipExport
                 MagicBytes::PDF => 'pdf',
                 MagicBytes::JPEG => 'jpg',
                 MagicBytes::PNG => 'png',
+                MagicBytes::HEIC => 'heic',
                 default => 'bin',
             },
             'groesse' => $blob->size,

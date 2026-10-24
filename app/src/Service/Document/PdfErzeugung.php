@@ -131,7 +131,7 @@ final readonly class PdfErzeugung implements JobHandler
 
         $bilder = array_filter(
             $typen,
-            static fn (string $typ): bool => $typ === MagicBytes::JPEG || $typ === MagicBytes::PNG,
+            static fn (string $typ): bool => $typ === MagicBytes::JPEG || $typ === MagicBytes::PNG || $typ === MagicBytes::HEIC,
         );
         if ($xml === [] && count($bilder) === count($typen)) {
             return JobSchrittErgebnis::weiter('seite', ['arbeit' => [], 'zwischen' => []]);
@@ -194,6 +194,10 @@ final readonly class PdfErzeugung implements JobHandler
 
             $blobId = $document->originalBlobIds[$i];
             $typ = $this->mimeType($blobId, $vault);
+            if ($typ === MagicBytes::HEIC) {
+                // GD cannot read HEIC; the browser's JPEG is the only way in.
+                throw new ProcessingException('HEIC-Bild ohne aufbereitete Fassung: bitte als JPEG erneut einreichen.');
+            }
             if ($typ !== MagicBytes::JPEG && $typ !== MagicBytes::PNG) {
                 throw new ProcessingException('Unerwarteter Bildtyp in der PDF-Erzeugung.');
             }

@@ -432,6 +432,10 @@ final readonly class ArchivImport
             if ($typ === null) {
                 return $this->auslassen($vault, $import, $eintrag, $stats->mitAuslassung(false, false), 'Kein PDF und kein Bild (JPEG/PNG) – nicht übernommen.', $now);
             }
+            if ($typ === MagicBytes::HEIC) {
+                // The server cannot read HEIC (no JPEG version exists in an archive).
+                return $this->auslassen($vault, $import, $eintrag, $stats->mitAuslassung(false, false), 'HEIC wird im Archiv-Import nicht unterstützt – bitte als JPEG/PDF beilegen.', $now);
+            }
             $blob = $this->blobs->store($inhalt, new BlobMeta($typ, mb_substr($eintrag->dateiname(), 0, 200)), $vault, $storage);
         } catch (ZipEintragDefekt $e) {
             return $this->auslassen($vault, $import, $eintrag, $stats->mitAuslassung(false, false), $e->getMessage(), $now);
