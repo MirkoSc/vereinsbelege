@@ -9,6 +9,7 @@ use App\Admin\MailController;
 use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\ExportSettingsController;
+use App\Admin\NextcloudSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
@@ -69,6 +70,8 @@ use App\Repository\DocumentDuplicateRepository;
 use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\ExportRunRepository;
+use App\Repository\ExportRunUploadRepository;
+use App\Repository\NextcloudTargetRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
@@ -131,6 +134,9 @@ use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Export\Nextcloud\CurlWebDav;
+use App\Service\Export\Nextcloud\NextcloudAblage;
+use App\Service\Export\Nextcloud\NextcloudZielSpeicher;
 use App\Service\Export\ZipExport;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
@@ -648,24 +654,38 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
     $kostenstellen = new CostCenterRepository($pdo);
     $lieferanten = new SupplierService($pdo, new SupplierRepository($pdo), $kategorien);
 
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    $zipExport = new ZipExport(
+        new InvoiceRepository($pdo),
+        $blobService,
+        $lieferanten,
+        $kategorien,
+        $kostenstellen,
+        new SettingRepository($pdo),
+        $logger,
+        sekundenJeDatei: 30,
+    );
+    $audit = $auditFor($pdo);
+
     return new ExportController(
         $view,
         new Session(),
         new SessionVault(),
-        new ZipExport(
-            new InvoiceRepository($pdo),
-            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-            $lieferanten,
-            $kategorien,
-            $kostenstellen,
-            new SettingRepository($pdo),
-            $logger,
-            sekundenJeDatei: 30,
-        ),
+        $zipExport,
         new ExportRunRepository($pdo),
         $kategorien,
         $kostenstellen,
-        $auditFor($pdo),
+        $audit,
+        // Filing into the Nextcloud (issue #95): the same plan as the ZIP,
+        // filed one by one over WebDAV in short steps.
+        new NextcloudAblage(
+            $zipExport,
+            $blobService,
+            new ExportRunUploadRepository($pdo),
+            new NextcloudZielSpeicher(new NextcloudTargetRepository($pdo)),
+            new CurlWebDav(),
+            $audit,
+        ),
     );
 };
 
@@ -851,6 +871,21 @@ $exportAdmin = static function () use ($connections, $view, $auditFor): ExportSe
     $pdo = $connections->pdo();
 
     return new ExportSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+};
+
+// The Nextcloud target of the export (issue #95, 05 section 2): vault data,
+// the page needs the session's unlocked vault. Permission: `admin.settings`.
+$nextcloudAdmin = static function () use ($connections, $view, $auditFor): NextcloudSettingsController {
+    $pdo = $connections->pdo();
+
+    return new NextcloudSettingsController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new NextcloudZielSpeicher(new NextcloudTargetRepository($pdo)),
+        new CurlWebDav(),
+        $auditFor($pdo),
+    );
 };
 
 // User management and vault grants (M3-7, issue #20). One small factory
@@ -1290,6 +1325,7 @@ $router = new Router();
     $buchungsregeln,
     $export,
     $archivImport,
+    $nextcloudAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

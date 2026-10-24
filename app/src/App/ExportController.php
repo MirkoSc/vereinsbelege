@@ -25,6 +25,9 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Export\ExportEinstellungen;
 use App\Service\Export\ExportFilter;
+use App\Service\Export\Nextcloud\NextcloudAblage;
+use App\Service\Export\Nextcloud\NextcloudAblageFehler;
+use App\Service\Export\Nextcloud\WebDavFehler;
 use App\Service\Export\ZipExport;
 use App\View\Area;
 use App\View\FlashArt;
@@ -52,6 +55,12 @@ use App\View\View;
  * `export.zip` without a scope - a scoped role (the tax advisor) sees only
  * its own runs. Downloading a run applies the current scope again.
  *
+ * Instead of the download a run can be filed into the club's Nextcloud
+ * (issue #95, App\Service\Export\Nextcloud\NextcloudAblage): the run page
+ * starts the chain, public/js/nextcloud.js drives its steps. Only a holder
+ * of `export.zip` without a scope may do so - the cloud folder is the
+ * club's archive. Filing marks nothing either; confirming stays the user's.
+ *
  * Every write is a POST with CSRF token, and the token stays out of URLs.
  * The filter travels as ids and dates only; the download name names the
  * period only.
@@ -72,6 +81,7 @@ final readonly class ExportController
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
         private AuditLog $audit,
+        private ?NextcloudAblage $nextcloud = null,
     ) {
     }
 
@@ -152,7 +162,91 @@ final readonly class ExportController
             'filter' => $filter,
             'dateiname' => ExportEinstellungen::wurzelordner($filter->von, $filter->bis) . '.zip',
             'csrf' => $this->session->csrfToken(),
+            'nextcloud' => $this->darfNextcloud() ? [
+                'eingerichtet' => $this->nextcloud->eingerichtet(),
+                'stand' => $this->nextcloud->stand($lauf->id),
+                'darfEinrichten' => $this->berechtigungen()->darf(Permission::AdminSettings),
+            ] : null,
+            'scripts' => $this->darfNextcloud() ? ['/js/nextcloud.js'] : [],
         ], Area::App));
+    }
+
+    /**
+     * Starts filing the run into the Nextcloud (issue #95) and leads back to
+     * the run page, where public/js/nextcloud.js drives the steps.
+     *
+     * @param array<string, string> $params
+     */
+    public function nextcloudStarten(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $lauf = $this->sichtbarerLauf($params);
+        if ($lauf === null || !$this->darfNextcloud()) {
+            return $this->nichtGefunden();
+        }
+        $zurueck = self::pfad($lauf->id);
+        if (!$this->session->checkCsrf($request)) {
+            return $this->zurueck($zurueck, 'Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->zurueck($zurueck, 'Nichts abgelegt. ' . self::TRESOR_GESPERRT, FlashArt::Fehler);
+        }
+
+        try {
+            $this->nextcloud->starten($lauf, $this->bereich(), $tresor, $this->session->userId(), new \DateTimeImmutable());
+        } catch (NextcloudAblageFehler | WebDavFehler $e) {
+            return $this->zurueck($zurueck, $e->getMessage(), FlashArt::Fehler);
+        }
+
+        return Response::redirect($zurueck);
+    }
+
+    /**
+     * One step of the filing, as JSON for public/js/nextcloud.js.
+     *
+     * @param array<string, string> $params
+     */
+    public function nextcloudSchritt(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $lauf = $this->sichtbarerLauf($params);
+        if ($lauf === null || !$this->darfNextcloud()) {
+            return Response::json(['fehler' => 'Diesen Export gibt es nicht.'], 404);
+        }
+        if (!$this->session->checkCsrf($request)) {
+            return Response::json(['fehler' => 'Die Sitzung ist abgelaufen – bitte die Seite neu laden.'], 403);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return Response::json(['fehler' => self::TRESOR_GESPERRT], 403);
+        }
+        // The steps of other tabs must not wait for this session's lock.
+        $userId = $this->session->userId();
+        $this->session->schliessen();
+
+        try {
+            $stand = $this->nextcloud->schritt($lauf, $this->bereich(), $tresor, $userId, $request->ip, new \DateTimeImmutable());
+        } catch (NextcloudAblageFehler | WebDavFehler $e) {
+            return Response::json(['fehler' => $e->getMessage()], 409);
+        }
+
+        return Response::json([
+            'status' => $stand->status->value,
+            'verarbeitet' => $stand->nextIndex,
+            'gesamt' => $stand->total,
+            'hochgeladen' => $stand->hochgeladen,
+            'vorhanden' => $stand->vorhanden,
+            'umbenannt' => $stand->umbenannt,
+        ]);
+    }
+
+    /**
+     * @phpstan-assert-if-true !null $this->nextcloud
+     */
+    private function darfNextcloud(): bool
+    {
+        return $this->nextcloud !== null && $this->bereich()->istUnbeschraenkt();
     }
 
     /**

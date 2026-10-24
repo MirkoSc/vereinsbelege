@@ -132,6 +132,24 @@ Benutzer in `user_key` (`kdf_ops`, `kdf_mem`, `kdf_alg`); ältere Konten
 angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
 auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
 Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
+## E-22 ✅ (vorläufig) Nextcloud-Ablage: einzelne Dateien statt ZIP, Ziel im Tresor
+*Betrifft: issue #95 (Backlog) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Der Export kann direkt in einen Ordner der Vereins-Nextcloud gelegt werden
+(WebDAV). Entschieden wurde:
+- **Kein serverseitiges ZIP**, sondern jede Datei einzeln mit den Pfaden
+  und Namen des ZIP-Exports, `index.csv` zuletzt – als idempotente
+  Schrittkette kurzer Requests in der Nutzer-Session. Ein Server-ZIP
+  bräuchte Klartext auf Platte oder einen langen Request (CLAUDE.md §1, §4).
+- **Nie überschreiben:** Schon vorhandene gleiche Dateien (SHA-1, sonst
+  Größe) werden übersprungen, eine andere Datei gleichen Namens bleibt und
+  die neue bekommt „ (2)“.
+- **Adresse, Benutzer und App-Passwort liegen im Tresor**, nicht beim
+  Server-Schlüssel – das Passwort öffnet das Archiv des Vereins.
+- Die Ablage **markiert den Lauf nicht** als exportiert; das bleibt die
+  Bestätigung von Hand. Nur `export.zip` ohne Scope darf ablegen.
+
+Details: 05 §2 „Nextcloud-Ablage“.
 
 ## E-20 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
