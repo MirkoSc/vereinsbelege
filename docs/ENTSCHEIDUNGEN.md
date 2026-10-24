@@ -349,7 +349,7 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
 
 ## E-38 ✅ Umbuchungen eigene Konten: eigenes Paar, `doc_source = umbuchung`, nur Eindeutiges automatisch (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
-*Betrifft: M10-6 (issue #70, Migration 038), 02 „Fachdaten“, 04 §5 „Stand M10-6“, 05 (Auswertungen)*
+*Betrifft: M10-6 (issue #70, Migration 039), 02 „Fachdaten“, 04 §5 „Stand M10-6“, 05 (Auswertungen)*
 
 - **Eigene Tabelle `transfer`** (Buchung ↔ Buchung, wie in E-27
   vorgesehen): Ausgabe auf dem abgebenden, Einnahme auf dem empfangenden
