@@ -187,19 +187,27 @@ final readonly class RecurringSeriesRepository
     }
 
     /**
-     * How many receipts each series has.
+     * The invoice ids of each of these series (the overview, issue #58).
      *
-     * @return array<int, int> series id => count
+     * @param list<int> $seriesIds
+     *
+     * @return array<int, list<int>> series id => invoice ids
      */
-    public function anzahlMitglieder(): array
+    public function alleMitglieder(array $seriesIds): array
     {
-        $stmt = $this->pdo->query('SELECT series_id, COUNT(*) AS n FROM recurring_series_invoice GROUP BY series_id');
-        $anzahl = [];
-        foreach ($stmt === false ? [] : $stmt->fetchAll() as $zeile) {
-            $anzahl[(int) $zeile['series_id']] = (int) $zeile['n'];
+        $mitglieder = [];
+        foreach (array_chunk(array_values(array_unique($seriesIds)), 500) as $teil) {
+            $stmt = $this->pdo->prepare(
+                'SELECT series_id, invoice_id FROM recurring_series_invoice WHERE series_id IN ('
+                . implode(', ', array_fill(0, count($teil), '?')) . ') ORDER BY series_id, invoice_id',
+            );
+            $stmt->execute($teil);
+            foreach ($stmt->fetchAll() as $zeile) {
+                $mitglieder[(int) $zeile['series_id']][] = (int) $zeile['invoice_id'];
+            }
         }
 
-        return $anzahl;
+        return $mitglieder;
     }
 
     /**

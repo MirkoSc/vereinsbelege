@@ -391,6 +391,27 @@ Die Spec (03 §9) nennt nur die Eckwerte. Umgesetzt (Details 03 §9 „Stand M8-
   Jahreshochrechnung/Trend/„überfällig“ (M8-2, #58), Hinweis auf die Serie in
   der Prüfansicht.
 
+## E-33 ❓ Übersicht „Wiederkehrende Kosten“: Kennzahlen und „überfällig“
+*M8-2 (issue #58) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht“):
+- **Keine neue Seite**, sondern `/app/serien` erweitert (Titel „Wiederkehrende
+  Kosten“, bestätigte Serien vor den Vorschlägen); Recht und „nur ohne Scope“
+  wie E-26. Keine Migration.
+- **Jahreshochrechnung** = erwarteter Betrag × Belege pro Jahr, nicht die
+  Summe der letzten zwölf Monate (die wäre bei neuen Serien zu klein);
+  „unregelmäßig“ bekommt keine. Summe je Richtung und Währung.
+- **Trend** gegen den Beleg etwa ein Jahr davor (≥ 335 Tage), sonst gegen den
+  ältesten der Serie – eine Prozentzahl, kein Diagramm.
+- **„Überfällig“** = heute nach nächster Fälligkeit + Toleranz, nur bei
+  bestätigten Serien; dazwischen „fällig“. Es zählen nur **geprüfte** Belege
+  (wie E-26) – ein noch ungeprüfter Beleg im Posteingang hebt die Markierung
+  nicht auf. Verworfen: Posteingang mitzählen (dort ist der Betrag noch nicht
+  bestätigt und der Lieferant oft noch offen).
+- **Nur Anzeige:** keine Mail, kein Hinweis auf der Startseite/Navigation,
+  kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
+  wäre ein Folge-Issue.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
