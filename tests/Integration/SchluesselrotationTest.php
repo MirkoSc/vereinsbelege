@@ -337,9 +337,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
     /**
      * Between the updater's 'switch' and 'migrate' steps the new code runs on
      * the old schema: the guard and the login must not fail on the missing
-     * columns of migration 037.
+     * columns of migration 039.
      */
-    public function testVorMigration037GibtEsKeineRotationUndDieAnmeldungGeht(): void
+    public function testVorMigration039GibtEsKeineRotationUndDieAnmeldungGeht(): void
     {
         $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at');
 

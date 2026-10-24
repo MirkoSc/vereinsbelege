@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain;
 
 /**
- * One row of `vault` with its lifecycle (migration 037, issue #90,
+ * One row of `vault` with its lifecycle (migration 039, issue #90,
  * docs/spec/01-sicherheit.md section 2 "Schlüsselrotation"): when it was
  * created, when its printed recovery key was confirmed, and when a newer
  * generation replaced it.

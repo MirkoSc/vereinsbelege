@@ -46,7 +46,7 @@ use App\Service\Crypto\VaultGrant;
  * What the rotation does NOT reach, by design (spec): backups made before
  * it - they keep their old keys, and the OLD recovery key stays needed for
  * them; the original `audit_log.dek_sealed` (inside the hash chain, see
- * migration 037), which the old key still opens.
+ * migration 039), which the old key still opens.
  */
 final readonly class Schluesselrotation
 {

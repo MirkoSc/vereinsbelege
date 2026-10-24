@@ -34,7 +34,7 @@ final readonly class AuditEntry
         public string $hash,
         /**
          * The data key re-sealed to a newer vault generation by a key
-         * rotation (issue #90, migration 037) - OUTSIDE the hash chain, which
+         * rotation (issue #90, migration 039) - OUTSIDE the hash chain, which
          * covers `dekSealed` as originally written. Null until a rotation
          * happened after this row was written.
          */
