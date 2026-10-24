@@ -444,7 +444,12 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
   der Beleg muss eine Buchung erwarten (Zahlungsweg `konto` oder
   `erstattung`); sein Dokument darf nicht **abgelehnt** sein. Alles andere
   ist eine `BankRuleViolation` mit Feld. Sperr-Reihenfolge überall:
-  Dokument → Beleg → Buchung.
+  Dokument → Beleg → Buchung. Die Summen der Zuordnungen werden unter den
+  Sperren per **Locking Read** (`FOR UPDATE`) gelesen – ein einfacher Read
+  sähe in der Transaktion den Snapshot ihres ersten Reads (REPEATABLE READ)
+  und nicht, was eine gleichzeitige Anfrage inzwischen festgeschrieben hat
+  (#67). Ebenso liest das Audit-Log nach einem ID-Konflikt den Kopf der
+  Hash-Kette per Locking Read neu.
 - **Gegenseiten, die Zuordnungen respektieren** (jeweils unter Zeilensperre
   neu geprüft): eine Handbuchung mit Zuordnung lässt sich weder löschen
   noch in Betrag/Richtung ändern; ein Beleg mit Zuordnungen lässt sich nicht

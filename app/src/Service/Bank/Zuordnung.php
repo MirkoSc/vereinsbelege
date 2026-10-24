@@ -128,11 +128,11 @@ final readonly class Zuordnung
                 );
             }
 
-            $stand = $this->zahlungsstand($vault, $beleg);
+            $stand = $this->zahlungsstand($vault, $beleg, sperren: true);
             if ($betrag > $stand->offen()) {
                 throw new BankRuleViolation('Der Betrag übersteigt den offenen Betrag des Belegs.', 'betrag');
             }
-            $belegstand = $this->belegstand($vault, $buchung);
+            $belegstand = $this->belegstand($vault, $buchung, sperren: true);
             if ($betrag > $belegstand->offen()) {
                 throw new BankRuleViolation('Der Betrag übersteigt den noch nicht zugeordneten Betrag der Buchung.', 'betrag');
             }
@@ -216,7 +216,7 @@ final readonly class Zuordnung
             if ($beleg->differenceReason !== null) {
                 throw new BankRuleViolation('Die Differenz dieses Belegs ist bereits abgeschlossen.');
             }
-            $stand = $this->zahlungsstand($vault, $beleg);
+            $stand = $this->zahlungsstand($vault, $beleg, sperren: true);
             if (!$stand->weg->erwartetBuchung() || $stand->zugeordnet <= 0 || $stand->differenzbetrag() <= 0) {
                 throw new BankRuleViolation('Eine Differenz lässt sich nur abschließen, wenn ein Teil des Belegs zugeordnet ist und ein Rest fehlt.');
             }
@@ -249,7 +249,7 @@ final readonly class Zuordnung
             if ($beleg->differenceReason === null) {
                 throw new BankRuleViolation('Für diesen Beleg ist keine Differenz abgeschlossen.');
             }
-            $stand = $this->zahlungsstand($vault, $beleg);
+            $stand = $this->zahlungsstand($vault, $beleg, sperren: true);
             $neu = new Zahlungsstand($stand->weg, $stand->brutto, $stand->zugeordnet, null);
             $this->belege->setzeZahlungsstatus($invoiceId, $neu->status(), null);
             $this->audit->record(AuditAction::BelegDifferenzGeoeffnet, $userId, $ip, $beleg->documentId, ['grund' => $beleg->differenceReason->value], $now);
@@ -271,9 +271,9 @@ final readonly class Zuordnung
      */
     public function belegNeuBerechnen(Vault $vault, int $invoiceId): Zahlungsstand
     {
-        $beleg = $this->belege->find($invoiceId)
+        $beleg = $this->belege->find($invoiceId, sperren: true)
             ?? throw new BankRuleViolation('Diesen Beleg gibt es nicht.');
-        $stand = $this->zahlungsstand($vault, $beleg);
+        $stand = $this->zahlungsstand($vault, $beleg, sperren: true);
         // A closed difference needs something allocated and something
         // missing; once that is no longer so, it goes.
         if ($stand->differenz !== null && ($stand->zugeordnet <= 0 || $stand->differenzbetrag() <= 0)) {
@@ -287,38 +287,46 @@ final readonly class Zuordnung
     /** The booking-side twin of belegNeuBerechnen(). */
     public function buchungNeuBerechnen(Vault $vault, int $transactionId, \DateTimeImmutable $now): Belegstand
     {
-        $buchung = $this->buchungen->find($transactionId)
+        $buchung = $this->buchungen->find($transactionId, sperren: true)
             ?? throw new BankRuleViolation('Diese Buchung gibt es nicht.');
-        $stand = $this->belegstand($vault, $buchung);
+        $stand = $this->belegstand($vault, $buchung, sperren: true);
         $this->buchungen->setzeBelegstatus($transactionId, $stand->status(), $now);
 
         return $stand;
     }
 
-    /** Gross, allocated sum, Zahlungsweg and closed difference of one receipt - decrypted. */
-    public function zahlungsstand(Vault $vault, InvoiceRecord $beleg): Zahlungsstand
+    /**
+     * Gross, allocated sum, Zahlungsweg and closed difference of one receipt - decrypted.
+     *
+     * @param bool $sperren read the allocations with a locking read - inside a
+     *        transaction a plain read sees the snapshot of its first read
+     *        (REPEATABLE READ), not what another request committed since;
+     *        every check or derivation under the row locks passes true
+     */
+    public function zahlungsstand(Vault $vault, InvoiceRecord $beleg, bool $sperren = false): Zahlungsstand
     {
         return new Zahlungsstand(
             $beleg->paymentKind,
             Pruefung::entschluesseln($vault, $beleg)->gross,
-            $this->summe($vault, $this->zuordnungen->forInvoice($beleg->id)),
+            $this->summe($vault, $this->zuordnungen->forInvoice($beleg->id, $sperren)),
             $beleg->differenceReason,
         );
     }
 
-    /** Amount, allocated sum and need of one booking - decrypted. */
-    public function belegstand(Vault $vault, BankTransactionRecord $buchung): Belegstand
+    /** Amount, allocated sum and need of one booking - decrypted; $sperren as zahlungsstand(). */
+    public function belegstand(Vault $vault, BankTransactionRecord $buchung, bool $sperren = false): Belegstand
     {
         return new Belegstand(
             $buchung->docRequired,
             Buchungen::entschluesseln($vault, $buchung)->amount,
-            $this->summe($vault, $this->zuordnungen->forTransaction($buchung->id)),
+            $this->summe($vault, $this->zuordnungen->forTransaction($buchung->id, $sperren)),
         );
     }
 
-    public function hatZuordnungen(int $invoiceId): bool
+    /** @param bool $sperren locking read, as zahlungsstand() */
+    public function hatZuordnungen(int $invoiceId, bool $sperren = false): bool
     {
-        return $this->zuordnungen->countForInvoice($invoiceId) > 0;
+        return $this->zuordnungen->countForInvoice($invoiceId, $sperren) > 0;
     }
 
     /**

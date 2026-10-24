@@ -24,9 +24,15 @@ final readonly class AuditLogRepository
     }
 
     /** The newest row - the one the next row chains to. */
-    public function head(): ?AuditEntry
+    /**
+     * The newest row. $sperren makes it a locking read: inside a
+     * transaction a plain read sees the snapshot of its first read
+     * (REPEATABLE READ) - after an id conflict the retry must see the row
+     * that another request committed since (App\Service\Audit\AuditLog).
+     */
+    public function head(bool $sperren = false): ?AuditEntry
     {
-        $row = $this->pdo->query('SELECT * FROM audit_log ORDER BY id DESC LIMIT 1')->fetch();
+        $row = $this->pdo->query('SELECT * FROM audit_log ORDER BY id DESC LIMIT 1' . ($sperren ? ' FOR UPDATE' : ''))->fetch();
 
         return $row === false ? null : self::hydrate($row);
     }

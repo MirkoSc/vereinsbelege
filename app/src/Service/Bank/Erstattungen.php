@@ -227,10 +227,10 @@ final readonly class Erstattungen
                 if ($einreicher === null || !hash_equals($einreicher, $bi)) {
                     throw new BankRuleViolation('Die IBAN der Gegenseite ist nicht die IBAN, die der Einreicher für die Erstattung angegeben hat.');
                 }
-                $betraege[$beleg->id] = $this->zuordnung->zahlungsstand($vault, $beleg)->offen();
+                $betraege[$beleg->id] = $this->zuordnung->zahlungsstand($vault, $beleg, sperren: true)->offen();
                 $summe += $betraege[$beleg->id];
             }
-            if ($summe !== $this->zuordnung->belegstand($vault, $record)->offen()) {
+            if ($summe !== $this->zuordnung->belegstand($vault, $record, sperren: true)->offen()) {
                 throw new BankRuleViolation('Die offenen Beträge der gewählten Belege ergeben zusammen nicht den offenen Betrag der Buchung.');
             }
 
