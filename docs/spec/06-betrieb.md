@@ -201,9 +201,59 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   `php bin/backup.php [--mit-config] [--ohne-blobs]`; `--help` zeigt die
   Optionen, eine unbekannte Option bricht mit Exit-Code 2 ab, statt
   stillschweigend ein Backup anzulegen (`App\Service\Backup\BackupCliOptions`,
-  issue #155). Eine **Admin-Seite mit Download gibt es noch nicht**: bis zur
-  Anmeldung (M3-3) wäre sie ein offener Download des kompletten Dumps. Sie
-  kommt mit M3 (#112), zusammen mit der Wahl „config.php mitsichern“.
+  issue #155). Über die Oberfläche: Admin-Seite `/admin/backups` (nächster
+  Punkt).
+- *Admin-Seite `/admin/backups`* (issue #112, E-30 – vorläufig): Recht
+  `admin.system` auf allen Routen (wie Update), CSRF auf allen
+  Schreibrouten.
+  - `GET /admin/backups`: Liste aus `BackupService::list()` (Name, Datum,
+    Größe, „mit/ohne config.php“ – gelesen aus dem ZIP selbst,
+    `BackupService::containsConfig()`), Hinweis auf Platzbedarf und
+    Rotation, Warnung zum Backup ohne `config.php` (deutsche Fassung von
+    `BackupService::WARNUNG_OHNE_CONFIG`).
+  - `POST /admin/backups` startet die Erstellung, Checkbox „`config.php`
+    mitsichern“ (Standard aus; Hinweis: Server-Schlüssel, Betriebsdaten
+    lesbar). **Erstellt wird als Schrittkette** (`App\Service\Backup\
+    BackupErstellung`, `public/js/backups.js`, je ein
+    `POST /admin/backups/schritt`): (1) Dump + ggf. `config.php`, (2) die
+    Blob-Dateien in Portionen (200 Dateien bzw. 16 MiB je Request) aus
+    einer Liste, die direkt nach dem Dump festgehalten wird – fehlt eine
+    gelistete Datei später (Löschen, Speicher-Umzug) oder ist sie nicht
+    lesbar, **bricht die Kette mit Fehler ab**, statt ein Backup ohne sie
+    als erstellt zu melden,
+    (3) `manifest.json` + Zentralverzeichnis, dann Übergabe unter einem
+    Namen aus `BackupService::reserveName()` (`rename()` über den
+    reservierten Platzhalter) und Rotation. Ergebnis ist dasselbe Backup wie
+    `create()`, der Installer spielt beide gleich ein. Bis zum letzten
+    Schritt ist das Archiv eine Arbeitsdatei `erstellung_<id>.zip.part`, die
+    `list()`/`path()` nie sehen. Geschrieben wird es nicht mit `ZipArchive`
+    (libzip schreibt bei jedem `close()` das ganze Archiv neu, Gigabytes je
+    Portion), sondern angehängt (`App\Service\Backup\ZipAnhang`, immer
+    ZIP64, Einträge der Blobs ungepackt, Dump mit Deflate Stufe 1). Stand in
+    `erstellung.json` neben den Backups, gesperrt per `flock`; jeder Schritt
+    kürzt die Arbeitsdateien zuerst auf den zuletzt bestätigten Stand – ein
+    abgebrochener Schritt läuft einfach erneut. Der reservierte Name wird
+    vor dem `rename()` gespeichert, sodass ein Abbruch direkt danach im
+    nächsten Schritt als fertig erkannt wird; „fertig“ (und damit der
+    Audit-Eintrag) meldet nur der eine Schritt, der es unter der Sperre
+    wurde. Eine zweite Erstellung
+    während einer laufenden → 409; eine seit `VERWAIST_NACH_SEKUNDEN`
+    (1 h) nicht fortgesetzte darf ein neuer Start verwerfen;
+    `POST /admin/backups/abbrechen` räumt auf. Der Dump selbst bleibt **ein**
+    Request (wie im `backup`-Schritt der Update-Kette).
+  - Download `GET /admin/backups/{name}`: nur über `BackupService::path()`
+    (Muster + Datei im Backup-Verzeichnis, sonst 404), gestreamt per
+    `StreamResponse` in Stücken zu 1 MiB, Zeitlimit je Stück neu gesetzt
+    (wie der ZIP-Export – die zweite Ausnahme von „kein langer Request“,
+    CLAUDE.md §1), `Cache-Control: no-store`, Session vorher geschlossen. **Backups mit `config.php`** (Server-Schlüssel) gibt der
+    GET nicht heraus (403); sie kommen nur per `POST /admin/backups/{name}`
+    mit CSRF **und dem aktuellen Passwort** des Kontos, Fehlversuche je
+    Konto begrenzt – im selben Zähler wie die Passwortänderung
+    (`PasswordChange::LIMIT_ACCOUNT`, `RateLimiter::LOGIN_LIMIT_PER_ACCOUNT`),
+    damit beide zusammen nicht mehr Versuche erlauben.
+  - Audit: `backup.erstellt` (beim Schritt, der fertig wird) und
+    `backup.heruntergeladen` (vor dem ersten Byte), Details: Dateiname,
+    `config_enthalten`, ggf. Zahl der Blob-Dateien – nichts Fachliches.
 - *Dateinamen:* `backup_YYYYMMDD_HHMMSS.zip`; fällt ein zweites Backup in
   dieselbe Sekunde, heißt es `…_2.zip`, `…_3.zip` (höchstens
   `BackupService::MAX_PER_SECOND`). Der Name wird vorab mit `fopen(…, 'x')`
@@ -217,7 +267,7 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   genau das holt der Dump zurück. Ein ZIP über Gigabytes an Belegdateien
   passt auf dem Zielhost in keinen Request.
 - *Platzbedarf:* mit Blobs ist ein Backup so groß wie der Belegbestand;
-  Rotation 10 heißt dann zehnmal so viel. Die Admin-Seite in M3 weist darauf
+  Rotation 10 heißt dann zehnmal so viel. Die Admin-Seite weist darauf
   hin.
 - *Einspielen:* Installer-Schritt 6, „Backup einspielen“ mit hochgeladenem
   ZIP, in zwei Phasen (ein Request je Block, Stand in der Session,
@@ -346,7 +396,17 @@ Wiederherstellung); `BackupRestoreRoundtripTest` zusätzlich: zwei Backups in
 derselben Sekunde überschreiben sich nicht und sind beide in `list()`/`path()`,
 Begrenzung des Suffixes, natürliche Sortierung ab `_10` samt Rotation;
 `BackupCliOptionsTest` (`--help`, unbekannte Option
-abgelehnt); `UserManagementFlowTest` (unlesbare Adresse wird angezeigt,
+abgelehnt); `BackupErstellungTest` (Schrittkette ergibt ein konsistentes,
+einspielbares Backup samt Blobs, `config.php` nur auf Wunsch, Portionen,
+abgebrochener Schritt läuft erneut, zweiter Start abgelehnt, verwaiste Kette
+ersetzbar, Abbrechen räumt auf, fertige Kette wird nicht zweimal fertig,
+verschwundene Belegdatei bricht ab, Abbruch nach dem `rename()` wird
+nachgeholt);
+`BackupPageFlowTest` (Seite mit Checkbox – Standard aus – und Warnung,
+Erstellen → Liste → Download, Checkbox wirkt, Backup mit `config.php` nur mit
+Passwort und CSRF, Fehlversuche begrenzt, Download nur aus dem
+Backup-Verzeichnis (Traversal), ohne Recht 403 auf allen Routen, CSRF, 409
+bei laufender Erstellung, Audit); `tests/js/backups.test.js`; `UserManagementFlowTest` (unlesbare Adresse wird angezeigt,
 neu gesetzt samt TOTP-Reset bei unlesbarem Geheimnis, lesbares Geheimnis
 bleibt, Anmeldung danach möglich, lesbare Adresse nicht änderbar);
 `tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen,
