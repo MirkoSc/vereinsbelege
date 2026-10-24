@@ -374,7 +374,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
             $this->zuordnen($beleg, $buchung, 6000);
             self::fail('linked twice');
         } catch (BankRuleViolation $e) {
-            self::assertStringContainsString('bereits einander zugeordnet', $e->getMessage());
+            self::assertStringContainsString('einander bereits zugeordnet', $e->getMessage());
         }
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM allocation')->fetchColumn());
         self::assertSame('teilbezahlt', $this->rechnung($beleg)['payment_status'], 'the refused attempt changed nothing');
@@ -454,6 +454,19 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         ], new \DateTimeImmutable()));
         self::assertSame('teilweise', $this->buchung($manuell)['doc_status'], 'the choice changes the need, not what is allocated');
         self::assertSame(0, (int) $this->buchung($manuell)['doc_required']);
+        foreach ([['betrag' => '50,00'], ['richtung' => 'einnahme']] as $abweichend) {
+            try {
+                $buchungen->aendern($this->tresor, $buchung, [
+                    'konto' => (string) $kasse, 'datum' => '2026-03-20', 'betrag' => '100,00', 'richtung' => 'ausgabe',
+                    'kategorie' => (string) $kategorie, 'zweck' => 'Dünger bar', 'gegenseite' => 'Bauhaus', 'beleg' => '',
+                    ...$abweichend,
+                ], new \DateTimeImmutable());
+                self::fail('amount or direction changed under an allocation');
+            } catch (BankRuleViolation $e) {
+                self::assertStringContainsString('wenn die Zuordnung gelöst ist', $e->getMessage());
+            }
+        }
+        self::assertSame('teilweise', $this->buchung($manuell)['doc_status']);
 
         // A rule taken back leaves a partly allocated booking alone too.
         $importiert = $this->importierteBuchung($this->bankkonto('Girokonto'), '2026-03-21', -10000, 'RE-1', 'Bauhaus');
@@ -585,7 +598,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
             . "02.03.2026;Ausgabe;;RE-2;100,00;Platzpflege & Grünanlagen;;Geprüft;;;;(Datei fehlt)\r\n"
             . "03.03.2026;Ausgabe;;BON-3;12,99;Platzpflege & Grünanlagen;;Geprüft;;;;(Datei fehlt)\r\n"
             . "04.03.2026;Ausgabe;;BON-4;25,00;Platzpflege & Grünanlagen;;Geprüft;04.03.2026;Barkasse;Kleinteile;(Datei fehlt)\r\n",
-            $plan->csv,
+            $plan->indexCsv,
         );
     }
 

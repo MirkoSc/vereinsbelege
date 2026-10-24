@@ -264,7 +264,7 @@ final readonly class BankTransactionRepository
     ): void {
         $stmt = $this->pdo->prepare(
             "UPDATE bank_transaction SET account_id = ?, booking_date = ?, direction = ?, category_id = ?, doc_required = ?,
-                                         doc_status = ?, doc_source = ?, category_source = 'manuell', updated_at = ?
+                                         doc_status = IF(doc_status IN ('zugeordnet', 'teilweise'), doc_status, ?), doc_source = ?, category_source = 'manuell', updated_at = ?
              WHERE id = ? AND source = ?",
         );
         $stmt->bindValue(1, $accountId, \PDO::PARAM_INT);
@@ -296,9 +296,9 @@ final readonly class BankTransactionRepository
         \DateTimeImmutable $now,
     ): void {
         $stmt = $this->pdo->prepare(
-            'UPDATE bank_transaction SET category_id = ?, category_source = ?, doc_required = ?, doc_status = ?, doc_source = ?,
+            "UPDATE bank_transaction SET category_id = ?, category_source = ?, doc_required = ?, doc_status = IF(doc_status IN ('zugeordnet', 'teilweise'), doc_status, ?), doc_source = ?,
                                          rule_id = ?, updated_at = ?
-             WHERE id = ? AND source = ?',
+             WHERE id = ? AND source = ?",
         );
         $stmt->bindValue(1, $categoryId, $categoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(2, $categorySource?->value);
@@ -360,7 +360,9 @@ final readonly class BankTransactionRepository
         $teile = ['rule_id = ?', 'updated_at = ?'];
         $parameter = [$ruleId, $now->format(self::FORMAT)];
         if ($docRequired !== null && $docStatus !== null) {
-            array_push($teile, 'doc_required = ?', 'doc_status = ?', 'doc_source = ?');
+            // A status derived from allocations (M10-1) is only ever written by
+            // App\Service\Bank\Zuordnung - a concurrent allocation wins.
+            array_push($teile, 'doc_required = ?', "doc_status = IF(doc_status IN ('zugeordnet', 'teilweise'), doc_status, ?)", 'doc_source = ?');
             array_push($parameter, $docRequired ? 1 : 0, $docStatus->value, BankTransactionSetBy::Regel->value);
         }
         if ($categoryId !== null) {
@@ -453,7 +455,6 @@ final readonly class BankTransactionRepository
         return $anzahl;
     }
 
-    /** Deletes a manual booking; an imported one stays. Returns whether a row went. */
     /**
      * Writes the receipt status the allocations imply (M10-1, issue #65,
      * App\Domain\BankTransactionDocStatus::ableiten()). `doc_required`,
@@ -466,6 +467,7 @@ final readonly class BankTransactionRepository
         $stmt->execute([$status->value, $now->format(self::FORMAT), $id]);
     }
 
+    /** Deletes a manual booking; an imported one stays. Returns whether a row went. */
     public function deleteManual(int $id): bool
     {
         $stmt = $this->pdo->prepare('DELETE FROM bank_transaction WHERE id = ? AND source = ?');

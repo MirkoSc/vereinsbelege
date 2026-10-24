@@ -194,6 +194,10 @@ final readonly class Buchungen
         if ($geaendert === []) {
             return [];
         }
+        // Allocations (M10-1) rely on amount and direction: released first.
+        if ($alt->docStatus->hatBeleg() && (in_array('amount', $geaendert, true) || in_array('direction', $geaendert, true))) {
+            throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – Betrag und Richtung lassen sich erst ändern, wenn die Zuordnung gelöst ist.', 'betrag');
+        }
 
         // A receipt already allocated (M10-1, fully or in part) stays
         // allocated; otherwise the status follows the choice.

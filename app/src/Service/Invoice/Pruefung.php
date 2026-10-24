@@ -799,6 +799,11 @@ final readonly class Pruefung
             } else {
                 // The row keeps its data key, like a supplier does.
                 $invoiceId = $vorher->id;
+                // Checked again under the row lock Zuordnung::zuordnen()
+                // takes too: an allocation made since the first check counts.
+                $gesperrt = $this->invoices->find($invoiceId, sperren: true)
+                    ?? throw new InvoiceRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
+                $this->pruefeGegenZuordnungen($vault, $gesperrt, $struktur, $daten);
                 $key = $vault->openDataKey($vorher->dekSealed);
                 if ($geaendert !== []) {
                     $this->invoices->update($invoiceId, $struktur, self::verschluesseln($key, $invoiceId, $daten), $numberBi, $userId, $now);

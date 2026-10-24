@@ -357,12 +357,14 @@ final readonly class Zuordnung
             $referenzen = [];
             $nurKasse = true;
             foreach ($zuordnungen as $zuordnung) {
-                $record = $this->buchungen->find($zuordnung->transactionId);
-                if ($record === null) {
+                if (!array_key_exists($zuordnung->transactionId, $buchungen)) {
+                    $record = $this->buchungen->find($zuordnung->transactionId);
+                    $buchungen[$zuordnung->transactionId] = $record === null ? null : Buchungen::entschluesseln($vault, $record);
+                }
+                $buchung = $buchungen[$zuordnung->transactionId];
+                if ($buchung === null) {
                     continue;
                 }
-                $buchungen[$record->id] ??= Buchungen::entschluesseln($vault, $record);
-                $buchung = $buchungen[$record->id];
                 if ($bezahltAm === null || $buchung->bookingDate > $bezahltAm) {
                     $bezahltAm = $buchung->bookingDate;
                 }

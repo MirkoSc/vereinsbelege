@@ -593,7 +593,7 @@ $lieferantenAufloesungFor = static function (\PDO $pdo) use ($paths, $kiAuslesun
 
 // The review page (M6-3, issue #37): captures a document as a receipt with
 // the session's unlocked vault - only the review pages open the connection.
-$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor): PruefungController {
+$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor, $zuordnungFor): PruefungController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -699,7 +699,7 @@ $buchungsregeln = static function () use ($connections, $view, $auditFor): Buchu
 // section 2): reads and decrypts with the session's unlocked vault - only
 // these pages open the connection. The time limit restarts before every
 // file, so a long download never hits it.
-$export = static function () use ($connections, $view, $auditFor, $paths, $logger): ExportController {
+$export = static function () use ($connections, $view, $auditFor, $paths, $logger, $zuordnungFor): ExportController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);

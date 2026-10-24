@@ -1241,7 +1241,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $spalten = array_map(strval(...), $this->pdo()->query('SHOW COLUMNS FROM invoice')->fetchAll(\PDO::FETCH_COLUMN));
 
         self::assertSame([
-            'id', 'document_id', 'doc_type', 'direction', 'supplier_id', 'invoice_date', 'due_date', 'service_from',
+            'id', 'document_id', 'doc_type', 'direction', 'payment_kind', 'payment_status', 'difference_reason', 'supplier_id', 'invoice_date', 'due_date', 'service_from',
             'service_to', 'category_id', 'sphere', 'cost_center_id', 'checked_by', 'checked_at', 'locked_by', 'locked_at', 'dek_sealed', 'data_enc',
             'number_bi', 'created_by', 'created_at', 'updated_by', 'updated_at',
         ], $spalten);
