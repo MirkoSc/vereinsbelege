@@ -36,7 +36,8 @@ final class MailControllerTest extends DatabaseTestCase
     {
         parent::setUp();
         new Migrator($this->pdo(), $this->migrationsDir())->migrate();
-        $_SESSION = ['csrf' => 'token'];
+        $_SESSION = [];
+        new Session()->start();
 
         $serverKey = new ServerCrypto(str_repeat('t', ServerCrypto::KEY_BYTES));
         $this->settings = new MailSettingsRepository(new SettingRepository($this->pdo()), $serverKey);
@@ -63,7 +64,7 @@ final class MailControllerTest extends DatabaseTestCase
     public function testAValidationErrorKeepsTheTypedInputButNeverThePassword(): void
     {
         $antwort = $this->controller->save(new Request(HttpMethod::Post, '/admin/mail/einstellungen', post: [
-            '_csrf' => 'token',
+            '_csrf' => new Session()->csrfToken(),
             'transport' => 'smtp',
             'host' => 'mail.example.test',
             'port' => '2525',
