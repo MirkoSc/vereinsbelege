@@ -55,6 +55,15 @@ final readonly class EinreichungsDaten
             return null;
         }
 
+        return self::oeffnen($submissionId, $dekSealed, $payloadEnc, $vault);
+    }
+
+    /**
+     * ausChiffrat() for columns known to be filled - the reimbursement
+     * matching (M10-3, issue #67) reads only completed submissions.
+     */
+    public static function oeffnen(int $submissionId, string $dekSealed, string $payloadEnc, Vault $vault): ?self
+    {
         try {
             $json = FieldCipher::decrypt(
                 $vault->openDataKey($dekSealed),

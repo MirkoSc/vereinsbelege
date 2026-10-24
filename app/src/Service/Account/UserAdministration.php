@@ -132,9 +132,17 @@ final readonly class UserAdministration
     {
         $now ??= new \DateTimeImmutable();
         $konto = $this->konto($userId);
-        $aktuell = $this->vaults->current();
+        // The generation of the vault in hand - normally the one in use;
+        // during a key rotation (issue #90) either of the two still active
+        // ones, so the recovery key of each can restore access to it.
+        $aktuell = null;
+        foreach ($this->vaults->active() as $generation) {
+            if ($tresor->isUnlocked() && $generation->version === $tresor->version && hash_equals($generation->publicKey, $tresor->publicKey())) {
+                $aktuell = $generation;
+            }
+        }
 
-        if (!$tresor->isUnlocked() || $aktuell === null || !hash_equals($aktuell->publicKey(), $tresor->publicKey())) {
+        if ($aktuell === null) {
             throw new UserRuleViolation('Ihr Tresor ist in dieser Sitzung nicht entsperrt. Bitte melden Sie sich neu an.');
         }
         if (!$konto->mayLogIn($now)) {
@@ -147,7 +155,7 @@ final readonly class UserAdministration
         }
 
         try {
-            $grant = VaultGrant::seal($tresor, $schluessel->publicKey());
+            $grant = VaultGrant::seal($tresor->withoutPrevious(), $schluessel->publicKey());
         } catch (CryptoException) {
             throw new UserRuleViolation('Die Freigabe konnte nicht erzeugt werden.');
         }

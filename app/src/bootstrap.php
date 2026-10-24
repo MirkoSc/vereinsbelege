@@ -17,6 +17,7 @@ use App\Admin\UpdateController;
 use App\Admin\WorkerController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
+use App\Admin\VaultRotationController;
 use App\Admin\VaultRecoveryController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
@@ -30,6 +31,7 @@ use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
+use App\App\ErstattungController;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -77,6 +79,7 @@ use App\Repository\BlobRepository;
 use App\Repository\DocumentDuplicateRepository;
 use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
+use App\Repository\ErstattungRepository;
 use App\Repository\ExportRunRepository;
 use App\Repository\ExportRunUploadRepository;
 use App\Repository\NextcloudTargetRepository;
@@ -103,6 +106,7 @@ use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
 use App\Repository\WorkerNonceRepository;
 use App\Repository\WorkerRepository;
+use App\Repository\VaultRotationRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
@@ -128,6 +132,7 @@ use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Erstattungen;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Umbuchungen;
 use App\Service\Bank\Import\KontoauszugImport;
@@ -193,6 +198,8 @@ use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
+use App\Service\Tresor\Indexpflegen;
+use App\Service\Tresor\Schluesselrotation;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Suche\ERechnungQuelle;
@@ -391,6 +398,7 @@ $updates = static fn(): UpdateController => new UpdateController(
             $paths->backupDir(),
             $paths->configFile(),
         ),
+        rollbackHindernis: static fn(): ?string => new VaultRepository($connections->pdo())->rollbackHindernis(),
     ),
     $maintenance,
     $auditFor($connections->pdo()),
@@ -752,6 +760,19 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
         $auditFor($pdo),
         new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), $transaktionen, $kategorien, $settings),
         new Umbuchungen($pdo, new TransferRepository($pdo), $transaktionen, $konten, $auditFor($pdo), BelegStandard::fromSettings($settings)),
+    );
+};
+
+// Reimbursements for one booking (M10-3, issue #67): submissions, receipts
+// and bookings are vault data - only this page opens the connection.
+$erstattungen = static function () use ($connections, $view, $zuordnungFor): ErstattungController {
+    $pdo = $connections->pdo();
+
+    return new ErstattungController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Erstattungen($pdo, new ErstattungRepository($pdo), new InvoiceRepository($pdo), new BankTransactionRepository($pdo), $zuordnungFor($pdo)),
     );
 };
 
@@ -1158,6 +1179,32 @@ $wiederherstellung = static function () use ($connections, $view, $serverCrypto,
     );
 };
 
+// Vault key rotation (issue #90): the same collaborators as $tresor plus
+// the rotation service with every blind index handler.
+$tresorRotation = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRotationController {
+    $pdo = $connections->pdo();
+    $users = new UserRepository($pdo);
+
+    return new VaultRotationController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Schluesselrotation(
+            $pdo,
+            new VaultRepository($pdo),
+            new VaultGrantRepository($pdo),
+            $users,
+            new VaultRotationRepository($pdo),
+            Indexpflegen::alle($pdo),
+            $auditFor($pdo),
+        ),
+        $verwaltungFor($pdo),
+        $users,
+        $mailerFor($pdo),
+        $serverCrypto,
+    );
+};
+
 // Accepting an invitation: a public page, built lazily like $passwort.
 $einladung = static function () use ($connections, $view, $serverCrypto, $paths, $mailSettingsFor, $freigabeHinweisFor, $zuweisungFor, $auditFor): InvitationController {
     $pdo = $connections->pdo();
@@ -1538,6 +1585,9 @@ $guard = static fn(): LoginGuard => new LoginGuard(
 
         return new JobRunner(new JobRepository($pdo), $jobHandlerFor($pdo), $browserJobTypenFor($pdo))->offen($berechtigungen);
     },
+    // A vault key rotation closes /app and /admin (issue #90): one COUNT
+    // per request behind the login.
+    static fn(): bool => new VaultRepository($connections->pdo())->rotationInProgress(),
 );
 
 $router = new Router();
@@ -1590,6 +1640,8 @@ $router = new Router();
     $workerAdmin,
     $abgleichSeite,
     $offenSeite,
+    $tresorRotation,
+    $erstattungen,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

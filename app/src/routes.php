@@ -30,6 +30,7 @@ use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
+use App\App\ErstattungController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
@@ -186,13 +187,19 @@ use App\View\View;
  *        reason as $mail (issue #112). Optional, like $nextcloudAdmin.
  * @param (\Closure(): SerienController)|null $serien built lazily, same
  *        reason as $mail: only the recurring series pages need the database
- *        (issue #57/M8-1). Optional and last like $nextcloudAdmin.
+ *        (issue #57/M8-1). Optional like $nextcloudAdmin.
  * @param (\Closure(): AbgleichController)|null $abgleich built lazily, same
  *        reason as $mail: only the matching page needs the database
- *        (issue #66/M10-2). Optional and last like $nextcloudAdmin.
+ *        (issue #66/M10-2). Optional like $nextcloudAdmin.
  * @param (\Closure(): UebersichtController)|null $offen built lazily, same
  *        reason as $mail: only the work lists "Offen" need the database
- *        (issue #69/M10-5). Optional and last like $nextcloudAdmin.
+ *        (issue #69/M10-5). Optional like $nextcloudAdmin.
+ * @param (\Closure(): VaultRotationController)|null $tresorRotation built
+ *        lazily (issue #90); optional for the same reason as
+ *        $nextcloudAdmin.
+ * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
+ *        same reason as $mail: only the reimbursement page needs the
+ *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -243,6 +250,8 @@ return static function (
     ?\Closure $workerAdmin = null,
     ?\Closure $abgleich = null,
     ?\Closure $offen = null,
+    ?\Closure $tresorRotation = null,
+    ?\Closure $erstattungen = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -254,6 +263,8 @@ return static function (
     $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
     $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
     $offen ??= static fn(): never => throw new \LogicException('The work lists are not wired into this route table.');
+    $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
+    $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -698,6 +709,15 @@ return static function (
     $post('/app/buchungen/{id:\d+}/umbuchung', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungPaaren($r, $params));
     $post('/app/buchungen/{id:\d+}/umbuchung/loesen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungLoesen($r, $params));
 
+    // Reimbursements for one booking (M10-3, issue #67, docs/spec/
+    // 04-bank-und-abgleich.md section 5): open reimbursements of the
+    // counterparty's IBAN and their combinations. Permission `matching.edit`
+    // for reading and allocating - it is the matching. CSRF on the POST;
+    // without the unlocked vault nothing is read or written
+    // (App\App\ErstattungController).
+    $get('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->ansicht($r, $params));
+    $post('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->zuordnen($r, $params));
+
     // Rules "kein Beleg nötig" / category (M9-6, issue #64, docs/spec/
     // 04-bank-und-abgleich.md section 5). Permission: reading `bank.view` -
     // auditors see what the rules do -, everything that writes `bank.book`,
@@ -811,6 +831,19 @@ return static function (
     $get('/admin/tresor', $freigaben, static fn(Request $r) => $tresor()->seite($r));
     $post('/admin/tresor/{id:\d+}/freigeben', $freigaben, static fn(Request $r, array $params) => $tresor()->freigeben($r, $params));
     $post('/admin/tresor/{id:\d+}/entziehen', $freigaben, static fn(Request $r, array $params) => $tresor()->entziehen($r, $params));
+
+    // Vault key rotation (issue #90, docs/spec/01-sicherheit.md section 2
+    // "Schlüsselrotation"). Same permission as granting - it is the same
+    // kind of act, for every user at once. CSRF on all writes; every write
+    // needs this session's unlocked key ring. While a rotation runs,
+    // App\Http\LoginGuard keeps these routes (and /app/sicherheit) open and
+    // everything else in /app and /admin closed.
+    $get('/admin/tresor/rotation', $freigaben, static fn(Request $r) => $tresorRotation()->seite($r));
+    $post('/admin/tresor/rotation/starten', $freigaben, static fn(Request $r) => $tresorRotation()->starten($r));
+    $post('/admin/tresor/rotation/bestaetigen', $freigaben, static fn(Request $r) => $tresorRotation()->bestaetigen($r));
+    $post('/admin/tresor/rotation/schritt', $freigaben->alsApi(), static fn(Request $r) => $tresorRotation()->schritt($r));
+    $post('/admin/tresor/rotation/abschliessen', $freigaben, static fn(Request $r) => $tresorRotation()->abschliessen($r));
+    $post('/admin/tresor/rotation/abbrechen', $freigaben, static fn(Request $r) => $tresorRotation()->abbrechen($r));
 
     // Vault recovery with the paper recovery key (M3-9, issue #22,
     // docs/spec/01-sicherheit.md section 2 "Letzter Admin hat Passwort

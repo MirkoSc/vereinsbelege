@@ -347,6 +347,45 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - **Umbuchungen eigene Konten (M10-6)** brauchen keine Allocation: Das sind
   Buchung↔Buchung-Paare; vorgesehen ist eine eigene Verknüpfung plus ein
   `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
+## E-36 ✅ Erstattungen: Einreicher-IBAN ohne gespeicherten Index, begrenzte Kombinationssuche (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-3 (issue #67), 04 §5*
+
+- **Keine Migration, kein neuer Index:** Die IBAN des Einreichers steht nur
+  in der versiegelten Einreichung (`submission.payload_enc`). Statt einen
+  Blind Index am Beleg zu speichern (müsste in einer Session nachgezogen
+  und bei jeder Änderung gepflegt werden), wird sie bei der Suche in der
+  Session entschlüsselt und als Blind Index mit demselben Zweck wie
+  `bank_transaction.counterparty_bi` (`bank_transaction.counterparty`)
+  verglichen. Von der Buchung aus werden dafür die offenen Erstattungen
+  gelesen (höchstens 500, ältester Beleg zuerst – ein Verein hat ein paar
+  Dutzend; wird abgeschnitten, sagt die Seite das); vom Beleg aus findet
+  SQL die Buchungen direkt über `counterparty_bi`. **Offen für Mirko:** Reicht das bei sehr vielen offenen
+  Erstattungen nicht mehr, ist ein gespeicherter Index am Beleg die
+  Erweiterung.
+- **Nur „Erstattung per Überweisung“ mit gültiger IBAN** zählt; ein Beleg
+  mit Zahlungsweg `erstattung`, dessen Einreichung bar oder ohne IBAN war,
+  wird nur manuell zugeordnet (M10-4). Die IBAN ist nicht in der
+  Prüfansicht änderbar – maßgeblich ist, was der Einreicher angegeben hat.
+- **Kombinationssuche exakt und begrenzt:** Teilmengensumme über die
+  *offenen* Beträge (Brutto − zugeordnet), Ziel = noch nicht zugeordneter
+  Betrag der Buchung, **genau** gleich (keine Toleranz). Grenzen: 6 Belege
+  je Kombination (Spec), die 20 ältesten Kandidaten, 20 000 Rechenschritte
+  (deterministischer Ersatz für ein Zeitlimit, wenige Millisekunden),
+  5 Treffer; kleinere Kombinationen zuerst. Schneidet eine Grenze ab, sagt
+  die Seite das.
+- **Nie automatisch:** Die Kombination wird immer von einem Menschen
+  übernommen (`vorschlag_bestaetigt`, `rule_trace` `erstattung_iban: 60`
+  aus der Punktetabelle plus Zahl der Belege, `score` leer). Die
+  automatische Zuordnung ab 85 Punkten bleibt M10-2 vorbehalten.
+- **Eine Transaktion für die ganze Kombination:** `Zuordnung::zuordnen()`
+  läuft dafür in einer offenen Transaktion des Aufrufers mit (kleine,
+  additive Änderung); jeder Beleg wird mit seinem vollen offenen Betrag
+  ausgeglichen. Sperren Dokumente → Belege → Buchung, jeweils aufsteigend.
+- **Recht `matching.edit`** für Seite und Zuordnen; dessen Zugriffsbereich
+  gilt für Buchung (Buchungsdatum) und Belege (Belegdatum, Kostenstelle).
+  **Offen für Mirko:** ob die Seite später in die Abgleich-Oberfläche
+  (M10-4) wandert; ob eine Teilerstattung (Überweisung kleiner als die
+  Belegsumme) vorgeschlagen werden soll.
 
 ## E-38 ✅ Umbuchungen eigene Konten: eigenes Paar, `doc_source = umbuchung`, nur Eindeutiges automatisch (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: M10-6 (issue #70, Migration 039), 02 „Fachdaten“, 04 §5 „Stand M10-6“, 05 (Auswertungen)*
@@ -824,6 +863,43 @@ ungeprüfte Belege wenigstens als Vorschlag erscheinen sollen; Lernen von
 IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
 Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ob Paare
 nur mit Namensähnlichkeit (ohne Anker) doch als Vorschlag erscheinen sollen.
+
+## E-32 ❓ Tresor-Schlüsselrotation (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage:
+
+- **Nur `dek_sealed` neu versiegeln, Daten nicht neu verschlüsseln.** Die
+  DEKs bleiben; das hält jeden Schritt kurz und Blobs unberührt.
+  Rest-Exposure: Wer alten `VK_priv` **und** alte Daten (DB-Kopie, Backup)
+  hat, liest das damals Vorhandene weiter. Ein vollständiges Neu-
+  Verschlüsseln wäre ein eigenes Issue.
+- **Freigaben ohne Passwort neu versiegeln** (`box_seal` an `U_pub`) – kein
+  Konto muss sich für die Rotation anmelden.
+- **Neuer Wiederherstellungsschlüssel mit Bestätigung** (letzte Gruppe); der
+  alte bleibt für Backups von vor der Rotation nötig und wird beim Eingeben
+  als „abgelöst“ erkannt.
+- **Audit-Log:** `dek_sealed` bleibt (Hash-Kette), der neue Schlüssel steht in
+  `dek_resealed`; mit dem alten Schlüssel bleiben die Audit-Details von vor
+  der Rotation lesbar.
+- **Neue Generation erst nach Bestätigung des Papierschlüssels in Gebrauch**
+  (bis dahin „vorgemerkt“, nichts wird an sie versiegelt, Umschlüsseln
+  gesperrt); bis dahin ist **Abbrechen** ohne Folgen möglich, danach geht
+  die Kette nur vorwärts.
+- **Während der Rotation sind `/app` und `/admin` gesperrt** – außer
+  Rotation, eigener Sicherheit und den Auswegen Wiederherstellung, Update,
+  Wartung, Backups; die öffentliche Einreichung läuft weiter.
+  Wiederherstellung nimmt den Papierschlüssel jeder aktiven Generation an
+  (Passwort-Reset mitten in der Rotation). Passwort-Resets werden während der
+  Rotation nicht gesperrt (das sperrte Vergessliche ganz aus).
+- **Index-Handler-Fehler** an einer Zeile leeren deren Indexe statt die Kette
+  anzuhalten.
+- **Blind Indexes** werden neu berechnet; `document.content_bi` (müsste alle
+  Dateien lesen) und `bank_import.source_bi` (müsste alle Auszüge parsen)
+  werden geleert – der Inhaltsindex entsteht per Job neu, der Kontovorschlag
+  beim nächsten Auszug fällt einmal weg. Dedup-Schlüssel behalten ihre
+  Laufnummer; passt keine, bekommt die Buchung die nächste freie.
+- **Unlesbare Zeilen** (DEK öffnet schon vor der Rotation nicht) halten den
+  Abschluss nicht auf, werden gezählt und im Audit-Log genannt.
+- **Abschluss beendet alle Sitzungen** (auch weitere des rotierenden Admins).
 
 ## E-40 ❓ GiroCode (EPC-QR) für offene Rechnungen (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Backlog (issue #86), 04 §5 „Stand Backlog: GiroCode“*

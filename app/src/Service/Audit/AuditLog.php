@@ -78,7 +78,10 @@ final readonly class AuditLog
         $klartext = $details === [] ? null : json_encode($details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         for ($versuch = 1; ; ++$versuch) {
-            $head = $this->repository->head();
+            // A retry reads the newest row with a locking read: in the
+            // caller's transaction a plain read would see the same snapshot
+            // again and run into the same conflict every time.
+            $head = $this->repository->head(sperren: $versuch > 1);
             $id = ($head?->id ?? 0) + 1;
 
             $detailsEnc = null;
@@ -127,13 +130,14 @@ final readonly class AuditLog
      */
     public function details(AuditEntry $entry, Vault $vault): ?array
     {
-        if ($entry->detailsEnc === null || $entry->dekSealed === null) {
+        $dekSealed = $entry->dekZumOeffnen();
+        if ($entry->detailsEnc === null || $dekSealed === null) {
             return null;
         }
 
         try {
             $klartext = FieldCipher::decrypt(
-                $vault->openDataKey($entry->dekSealed),
+                $vault->openDataKey($dekSealed),
                 $entry->detailsEnc,
                 new FieldContext(self::TABLE, $entry->id, self::DETAILS_COLUMN),
             );
