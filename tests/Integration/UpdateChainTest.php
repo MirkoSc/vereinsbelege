@@ -9,6 +9,7 @@ use App\Repository\SettingRepository;
 use App\Service\Backup\BackupService;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
@@ -359,6 +360,9 @@ final class UpdateChainTest extends DatabaseTestCase
         self::assertNull($state->fehler);
         self::assertSame("1.0.0\n", file_get_contents($this->base . '/current/VERSION'));
         self::assertFileDoesNotExist($this->base . '/shared/maintenance.flag');
+        // The previous release in this fixture predates issue #101 - it
+        // comes back as current/ without a .htaccess, the rollback adds one.
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/current/.htaccess'));
     }
 
     public function testAStepWithoutAPreparedUpdateFails(): void

@@ -14,7 +14,7 @@ namespace App\Service\Crypto;
  *     version (1 byte) | nonce (24 bytes) | secretbox(U_priv, KEK)
  *
  * KEK = Argon2id(password, kdf_salt, kdf_ops, kdf_mem) - the KDF parameters
- * travel in their own columns (KdfParameters).
+ * (and `kdf_alg`) travel in their own columns (KdfParameters).
  *
  * This is deliberately not where the login password hash lives: the password
  * hash and the KEK salt are separate (docs/spec/01-sicherheit.md section 3),
@@ -81,7 +81,7 @@ final readonly class UserKey
     }
 
     /**
-     * The `kdf_salt`, `kdf_ops` and `kdf_mem` columns.
+     * The `kdf_salt`, `kdf_ops`, `kdf_mem` and `kdf_alg` columns.
      */
     public function kdf(): KdfParameters
     {
@@ -124,19 +124,37 @@ final readonly class UserKey
      * "Benutzer-Lebenszyklus"). The key pair stays the same, so existing vault
      * grants keep working - no admin has to approve anything again.
      *
-     * The new wrapping gets a fresh salt, and picks up raised defaults if the
-     * old row still carries weaker ones.
+     * The new wrapping gets a fresh salt, and picks up raised defaults where
+     * the old row still carries weaker ones (KdfParameters::raisedToDefaults()).
      */
     public function rewrap(
         #[\SensitiveParameter] string $oldPassword,
         #[\SensitiveParameter] string $newPassword,
     ): self {
-        $defaults = KdfParameters::defaults();
-        $kdf = $this->kdf->opsLimit >= $defaults->opsLimit && $this->kdf->memLimit >= $defaults->memLimit
-            ? $this->kdf->withNewSalt()
-            : $defaults;
+        return self::wrap($this->unwrap($oldPassword), $newPassword, $this->kdf->raisedToDefaults());
+    }
 
-        return self::wrap($this->unwrap($oldPassword), $newPassword, $kdf);
+    /**
+     * The same key pair under the same password, wrapped again with a fresh
+     * salt and at least the current profile - or null when this wrapping already
+     * is at least that strong (issue #100). For the login, which has just
+     * unwrapped the pair and holds the password anyway; the caller passes the
+     * pair in so that the expensive derivation is not run twice.
+     *
+     * @throws CryptoException when the pair is not the one wrapped here, or
+     *                         the new derivation fails
+     */
+    public function upgradedWrapping(UserKeyPair $pair, #[\SensitiveParameter] string $password): ?self
+    {
+        if (!$this->kdf->isWeakerThanDefaults()) {
+            return null;
+        }
+
+        if (!hash_equals($this->publicKey, $pair->publicKey())) {
+            throw new CryptoException('The key pair does not belong to this wrapping.');
+        }
+
+        return self::wrap($pair, $password, $this->kdf->raisedToDefaults());
     }
 
     /**

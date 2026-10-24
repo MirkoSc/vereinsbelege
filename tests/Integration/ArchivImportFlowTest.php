@@ -255,6 +255,24 @@ final class ArchivImportFlowTest extends DatabaseTestCase
         self::assertCount(1, $this->audits(AuditAction::ArchivImportiert), 'finished once, logged once');
     }
 
+    public function testAHeicPhotoInTheArchiveIsSkippedWithAReason(): void
+    {
+        $heic = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic" . str_repeat("\x00", 64);
+        $id = $this->hochladen(self::zip([
+            '2026/02. Februar/Bauhaus 03.02.2026.pdf' => self::pdf('Bauhaus'),
+            '2026/IMG_0001.HEIC' => $heic,
+        ]));
+        $this->starten($id);
+        $this->alleSchritte($id);
+
+        self::assertSame(1, $this->anzahl('document'), 'only the PDF becomes a receipt');
+        $import = $this->importe()->find($id);
+        self::assertNotNull($import);
+        $bericht = $this->importService()->bericht($this->tresor, $import);
+        self::assertSame(['2026/IMG_0001.HEIC'], array_column($bericht, 'pfad'));
+        self::assertStringContainsString('HEIC wird im Archiv-Import nicht unterstützt', $bericht[0]['grund']);
+    }
+
     public function testNoPlaintextIsLeftOnceTheImportIsDone(): void
     {
         $vorher = scandir(sys_get_temp_dir()) ?: [];

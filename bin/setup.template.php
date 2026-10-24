@@ -4,8 +4,8 @@
  * setup.php - Bootstrap installer (docs/spec/06-betrieb.md section 1,
  * Nextcloud style).
  *
- * GENERATED FILE - edit bin/setup.template.php and the shared class
- * app/src/Service/Update/ReleaseDownloader.php, then run
+ * GENERATED FILE - edit bin/setup.template.php and the shared classes
+ * app/src/Service/Update/ReleaseDownloader.php and DenyHtaccess.php, then run
  * `php bin/build_setup.php`. CI verifies freshness.
  *
  * Upload this single file via FTP into the /web docroot and open it in the
@@ -22,6 +22,7 @@ namespace App\Service\Update {
 
 namespace {
 
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\ReleaseDownloader;
 
 error_reporting(E_ALL);
@@ -229,6 +230,13 @@ try {
         }
     }
 
+    // Deny-all .htaccess in shared/ and releases/ before anything lands in
+    // them (issue #101): they are only private as long as the domain points
+    // at web/. current/ brings its own from the release ZIP. A failure does
+    // not stop the installation - it is shown below and again on /install,
+    // which retries.
+    $ungeschuetzt = DenyHtaccess::ensureAll($rootDir);
+
     // The channel the admin just picked, handed to the installer: there is
     // no database yet to hold the setting, and without this an instance
     // installed from a pre-release would afterwards look for updates on
@@ -274,6 +282,15 @@ try {
 
     if (!rename($target, $rootDir . '/current')) {
         throw new RuntimeException('Release kann nicht nach current/ verschoben werden.');
+    }
+
+    if ($ungeschuetzt !== []) {
+        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> Keine'
+            . ' .htaccess-Sperre in ' . htmlspecialchars(DenyHtaccess::describe($ungeschuetzt), ENT_QUOTES)
+            . '. Solange die Domain auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie'
+            . ' eine Ebene höher, wären Konfiguration und Belegdateien abrufbar.'
+            . ' Die Installation versucht es erneut.</p>'
+            . '<p><a href="/install">Weiter zur Installation</a></p>');
     }
 
     header('Location: /install');

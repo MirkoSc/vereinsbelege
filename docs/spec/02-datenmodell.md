@@ -18,7 +18,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_role` | user_id, role_id – PK beide; Rolle `ON DELETE RESTRICT` (Migration 010, M3-6) | – |
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher"; Migration 010, M3-6) | – |
 | `user_scope` | user_id PK, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten, Grenzen inklusive; Migration 010, M3-6) | – |
-| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
+| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, kdf_alg (Migration 006, M3-2; `kdf_alg` seit Migration 033, issue #100) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at, created_at (Migration 008, M3-4) | S |
@@ -57,9 +57,12 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login
   (`App\Service\Account\LoginService`): den Hash nur dann neu, wenn
   `password_needs_rehash()` angehobene Kostenfaktoren meldet – der Klartext
-  liegt in genau diesem Moment ohnehin vor. `user_key` bleibt dabei
-  unberührt: das KEK-Salt ist bewusst vom Passwort-Hash getrennt (01 §3),
-  die Umhüllung wird erst beim echten Passwortwechsel erneuert (M3-5). Seit
+  liegt in genau diesem Moment ohnehin vor. `user_key` schreibt der Login
+  nur, wenn die Umhüllung ein schwächeres Argon2id-Profil trägt als das
+  aktuelle (issue #100, 01 §2 „Argon2id-Profil der Umhüllung"): dasselbe
+  Schlüsselpaar, frisches Salt, per Compare-and-Swap
+  (`UserKeyRepository::replaceWrapping()`); das KEK-Salt bleibt dabei
+  bewusst vom Passwort-Hash getrennt (01 §3). Seit
   M3-4 (issue #17) ist „Passwort stimmt" nicht mehr dasselbe wie „Anmeldung
   abgeschlossen" – `last_login_at` wird deshalb nicht mehr in `attempt()`
   gesetzt, sondern in `LoginService::registerSuccess()`, das
@@ -201,7 +204,7 @@ ein Request ohne Fortschritt beendet die Kette statt endlos zu wiederholen).
 | `bank_transaction` | account_id (FK `RESTRICT`), import_id NULL (FK `RESTRICT`), booking_date, value_date NULL, direction (`einnahme`/`ausgabe` aus dem Vorzeichen, `App\Domain\BankTransactionDirection`), dek_sealed, data_enc {amount (Cent mit Vorzeichen), currency, counterparty_name, counterparty_iban, purpose, eref, mref, cred, gvc, booking_text} (AAD Tabelle, ID, Spalte wie bei `bank_account`, zweistufig geschrieben), dedup_bi NULL `UNIQUE(account_id, dedup_bi)` (Zweck `bank_transaction.dedup`, `App\Service\Bank\Import\Dedupschluessel`; NULL für manuelle Buchungen), counterparty_bi NULL (IBAN der Gegenseite, Zweck `bank_transaction.counterparty`), category_id NULL (FK `RESTRICT`), rule_id NULL (FK `assignment_rule` `RESTRICT`), category_source NULL (`regel`/`manuell`, `App\Domain\BankTransactionSetBy`; NULL ohne Kategorie), doc_required (Default: Ausgabe 1, Einnahme laut Setting `buchung_einnahme_beleg_noetig`, sonst 0), doc_status (`fehlt`/`zugeordnet`/`nicht_noetig`, `App\Domain\BankTransactionDocStatus`), doc_source (`standard`/`regel`/`manuell`, Default `standard`), source (`import`/`manuell`), created_at, updated_at. **Stand M9-5** (issue #63, ohne neue Migration): der Import (M9-4) und manuelle Buchungen schreiben – manuelle mit denselben `data_enc`-Schlüsseln (IBAN, eref, mref, cred, gvc, booking_text leer), `import_id`/`value_date`/`dedup_bi`/`counterparty_bi` NULL und Pflicht-`category_id`; nur `source = manuell` wird geändert oder gelöscht (04 §1). **Stand M9-6** (issue #64, Migration 027): `rule_id`, `doc_source`, `category_source` halten fest, woher Beleg-Bedarf und Kategorie stammen; bestehende Kategorien wurden `manuell`. Bei importierten Buchungen sind nur Kategorie und Beleg-Bedarf von Hand setzbar (04 §5 „Stand M9-6“) | T |
 | `csv_profile` | name UNIQUE, builtin (1 = mitgeliefert, schreibgeschützt – auch in SQL), header_signature NULL (SHA-256 hex der normalisierten Kopfzeile, `CsvProfil::signatur()`), mapping JSON {Feld (`App\Service\Bank\Csv\CsvFeld`) → [Spaltennamen]}, delimiter (`semikolon`/`komma`/`tab`/`pipe`), encoding (`auto`/`UTF-8`/`Windows-1252`), date_format (`d.m.Y`/`Y-m-d`/`d/m/Y`), decimal_sep (`,`/`.`), created_at, updated_at. **Stand M9-3** (issue #61, Migration 022, Seed „Sparkasse CSV-CAMT“ und „VR Bank CSV-CAMT“; Details 04 §3) | – |
 | `allocation` (Abgleich) | invoice_id, transaction_id, dek_sealed, amount_enc (Teilbetrag), method (`auto`/`vorschlag_bestaetigt`/`manuell`), score, rule_trace JSON, created_by, created_at | T (Betrag) |
-| `assignment_rule` | Regeltabelle (Migration 027, M9-6, issue #64): dek_sealed, data_enc {label, stichwort, gegenseite} (AAD `assignment_rule\|id\|data_enc`, zweistufig geschrieben), direction NULL (`einnahme`/`ausgabe`, NULL = beide), no_receipt (1 = „kein Beleg nötig“), category_id NULL (FK `RESTRICT`), active, created_by NULL (FK `SET NULL`), created_at, updated_at. Muster sind Vereinsdaten (Gegenseiten, IBANs) und werden **nicht** als Blind Index gespeichert, sondern in PHP nach dem Entschlüsseln verglichen (`App\Service\Bank\Regelabgleich`) – ein Blind Index fände nur ganze Werte, kein Stichwort im Zweck. Die Beleg-Seite (Lieferant → Kategorie, M7-7) ergänzt eigene Spalten | T |
+| `assignment_rule` | Regeltabelle (Migration 027, M9-6, issue #64): dek_sealed, data_enc {label, stichwort, gegenseite} (AAD `assignment_rule\|id\|data_enc`, zweistufig geschrieben), direction NULL (`einnahme`/`ausgabe`, NULL = beide), no_receipt (1 = „kein Beleg nötig“), category_id NULL (FK `RESTRICT`), active, created_by NULL (FK `SET NULL`), created_at, updated_at. Muster sind Vereinsdaten (Gegenseiten, IBANs) und werden **nicht** als Blind Index gespeichert, sondern in PHP nach dem Entschlüsseln verglichen (`App\Service\Bank\Regelabgleich`) – ein Blind Index fände nur ganze Werte, kein Stichwort im Zweck. Die Beleg-Seite (M7-7, issue #49) braucht **keine** eigenen Spalten: dieselben Regeln schlagen ihre Kategorie auch Belegen vor (03 §8 „Stand M7-7“, E-21) | T |
 
 ## Statusmodell `document.status`
 

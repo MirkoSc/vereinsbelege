@@ -173,6 +173,7 @@ use App\Service\Suche\SitzungsSuchindex;
 use App\Service\Suche\SuchindexSpeicher;
 use App\Service\Suche\TextlayerQuelle;
 use App\Service\Suche\Volltextsuche;
+use App\Service\SystemCheck\CurlStatusProbe;
 use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
@@ -577,6 +578,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
             new Posteingang($documents, $kostenstellen, $blobService, $audit, new JobRepository($pdo)),
             $audit,
             $kiAuslesungFor($pdo),
+            new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -727,7 +729,12 @@ $archivImport = static function () use ($connections, $view, $auditFor, $paths, 
 $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
     $view,
     new Session(),
-    new SystemCheck($connections->pdo(), $paths->varDir()),
+    new SystemCheck(
+        $connections->pdo(),
+        $paths->varDir(),
+        \Closure::fromCallable(new CurlStatusProbe()),
+        $paths->sharedDir(),
+    ),
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the

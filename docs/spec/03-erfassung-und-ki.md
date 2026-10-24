@@ -8,8 +8,7 @@ Mobile-first, eine Seite, kein Login. Ablauf:
    - „Foto aufnehmen": Live-Kamera (`getUserMedia`, Rückkamera) mit
      Rahmen-Overlay; Fallback `<input type="file" accept="image/*"
      capture="environment">` (iOS/ältere Browser).
-   - „Bild wählen" (JPEG/PNG; HEIC wird im Browser, wenn möglich, konvertiert,
-     sonst verständliche Fehlermeldung).
+   - „Bild wählen" (JPEG/PNG; HEIC/HEIF, seit #147: siehe „HEIC" unten).
    - „PDF oder E-Rechnung wählen" (PDF, ZUGFeRD/Factur-X-PDF oder
      XRechnung als XML-Datei, seit M7-4 – Abschnitt 3).
    - Mehrere Seiten pro Beleg: „Weitere Seite hinzufügen", Reihenfolge per
@@ -149,6 +148,32 @@ Bedienung:
   Karte „Seite fotografieren“.
 - Der Posteingang zeigt die aufbereitete Fassung mit „Original öffnen“
   (`Posteingang::seiten()`, `Document::blobIds()` enthält beide).
+
+### HEIC (Issue #147, vorläufig)
+
+- **Server:** `MagicBytes` erkennt HEIC/HEIF am `ftyp`-Kopf (Hauptmarke
+  `heic`, `heix`, `hevc`, `hevx`, `heim`, `heis`, `hevm`, `hevs`; bei `mif1`/
+  `msf1` nur mit HEVC-Marke unter den kompatiblen Marken – so bleiben AVIF
+  und MP4 abgelehnt). Endung und MIME-Typ des Browsers zählen nicht.
+- **E-10 bleibt:** Das HEIC ist das **Original**, das im Browser erzeugte
+  JPEG die **aufbereitete Fassung**. Der Server liest nie HEIC (GD kann es
+  nicht), deshalb nimmt der Client ein HEIC **nur zusammen mit dem JPEG**
+  an. Absicherung auf dem Server: `pdf_erzeugen` scheitert bei einem
+  HEIC-Original ohne aufbereitete Fassung mit verständlichem Hinweis, die
+  KI-Auslesung überspringt die Seite (die Blob-Metadaten der öffentlichen
+  Einreichung sind versiegelt, eine Prüfung beim Absenden ist dort nicht
+  möglich). Im **Archiv-Import** wird HEIC übersprungen („HEIC wird im
+  Archiv-Import nicht unterstützt – bitte als JPEG/PDF beilegen“).
+- **Browser:** Nur eigene Dekoder (`createImageBitmap`, Safari kann HEIC),
+  keine Bibliothek: ein WASM-Dekoder bräuchte `'wasm-unsafe-eval'` in der
+  CSP (CLAUDE.md §4). Die Fähigkeitsprüfung ist der Versuch selbst –
+  schlägt er fehl (Chrome/Firefox), wird die Seite **vor dem Upload
+  abgelehnt** mit der bisherigen Fehlermeldung (`HEIC_HINWEIS`, ergänzt um
+  den iPhone-Tipp Einstellungen › Kamera › Formate › „Maximale
+  Kompatibilität“). Das JPEG (Qualität 0,95) läuft durch dieselbe
+  Scanner-Pipeline wie JPEG/PNG; scheitert der Scanner, ist das
+  umgewandelte JPEG selbst die aufbereitete Fassung. „Zuschneiden"
+  arbeitet auf dem JPEG.
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -327,6 +352,57 @@ der **Server-Fallback** in `pdf_erzeugen` (Abschnitt 3):
 
 Kein Entzerren, keine adaptive Schwelle – das bleibt dem Browser. Eine
 A4-Seite braucht so in PHP unter 1 s.
+
+### Live-Kantenerkennung im Kamerabild (issue #146)
+
+Der Kameradialog (`public/js/scanner/kamera.js`,
+`app/views/partials/kamera-dialog.php`) zeigt zusätzlich zum A4-Rahmen das
+**live erkannte Viereck** über dem Video. Reine, mit `node --test`
+geprüfte Funktionen (`tests/js/kamera.test.js`):
+
+- **Drosselung:** `kantenErkennen()` (M5-2, unverändert) läuft auf einer
+  auf `LIVE_BREITE` = 320 px Breite (lange Kante höchstens 500 px, die
+  Arbeitsgröße von `kantenErkennen`) verkleinerten Kopie des Frames
+  (`vorschauGroesse`, nie hochskaliert). Nächster Start frühestens nach
+  `LIVE_INTERVALL_MS` = 400 ms, und danach mindestens so lange Pause, wie
+  die Erkennung selbst brauchte (`naechsteErkennungIn`) – auf einem
+  langsamen Handy bleibt der Hauptthread so höchstens zur Hälfte belegt.
+  Keine Erkennung bei verstecktem Tab, ungeladenem Frame oder laufender
+  Aufnahme. Ein Fehler in der Erkennung gilt als „nichts gefunden“.
+- **Stabilität:** `liveFortschreiben` – „stabil“ sind
+  `LIVE_STABIL_ANZAHL` = 3 aufeinanderfolgende Treffer, von denen sich
+  **jedes Paar** um höchstens `LIVE_STABIL_TOLERANZ` = 2 % der
+  Bilddiagonale unterscheidet (`eckenAbweichung`, größte Eckverschiebung) –
+  paarweise, damit langsames Wandern nicht als Stillhalten gilt. Ein
+  Fehlschlag oder ein geänderter Frame (Drehen des Handys) beginnt von vorn.
+- **Overlay:** ein `<svg class="kamera-overlay">` über dem ganzen Video
+  mit einem `<polygon>`; die Punkte setzt `overlayPunkte` als **Attribut**
+  (kleiner Frame → Videopixel → Elementpixel unter `object-fit: contain`,
+  `anzeigeAbbildung`), kein Inline-Style, kein Inline-Skript (CSP).
+  Gestrichelt gelb, solange das Viereck wandert, durchgezogen grün, sobald
+  es stabil ist; dazu die Statuszeile „Beleg erkannt.“ (`role=status`,
+  `liveHinweis`).
+- **Auslösen:** manuell immer möglich, auch ohne Viereck. Automatisches
+  Auslösen ist ein Ankreuzfeld im Dialog (E-20), **standardmäßig aus**, gilt bis zum
+  Neuladen der Seite (nicht gespeichert, `autocomplete="off"`); angekreuzt
+  löst die erste stabile Erkennung aus. Nach einem Klick auf „Kamera-App
+  verwenden“ (dessen Dateiauswahl offen sein kann) löst der Dialog nicht
+  mehr selbst aus, nach einer gescheiterten Aufnahme erst wieder, wenn das
+  Viereck einmal verloren war (keine Wiederholungsschleife).
+- **Startecken:** beim Auslösen gehen die Ecken nur eines **stabilen**
+  Vierecks (`startEckenAusLive`, auf Videopixel hochgerechnet und
+  geklemmt) mit dem Foto mit: `eckenVormerken(datei, ecken)` in
+  `scanner.js` (eine `WeakMap` am `File`-Objekt, nichts verlässt die
+  Seite). `scannerOeffnen()`/`automatischAufbereiten()` erkennen zuerst
+  wie bisher auf dem aufgenommenen Foto selbst (genau dieser Frame, feiner
+  als die Vorschau); nur wenn das nichts findet, nehmen sie die vorgemerkten
+  Live-Ecken statt Standardrahmen bzw. ganzem Bild (`erkannteEcken`). Im
+  Normalfall stimmen beide überein. Das ganze Kamerabild bleibt das
+  Original (E-10).
+
+Der Nutzen hängt an der Trefferquote der Kantenerkennung (E-03, #142).
+Prüfung auf einem echten Mittelklasse-Handy (ruckelt das Video? wie oft
+„Beleg erkannt“?) steht noch aus.
 
 ## 3. PDF-Erzeugung und PDF-Eingang
 
@@ -667,7 +743,8 @@ in einem Lauf ab, nicht eines je Datei.
   Uploads hoch (Abschnitt 1).
 
 **Pflicht-Tests (Upload):** `MagicBytesTest` (die erlaubten Typen inkl.
-XRechnung CII/UBL mit BOM und ohne Prolog, ZIP/ELF/HTML/Text/GIF/HEIC/leer/
+XRechnung CII/UBL mit BOM und ohne Prolog, HEIC (`heic`/`heix`, `mif1` mit
+HEVC-Marke), ZIP/ELF/HTML/Text/GIF/AVIF/MP4/abgeschnittener ftyp-Kopf/leer/
 zu kurz abgelehnt, PDF-Kopf mit Versatz abgelehnt, HTML/SVG/beliebiges XML/
 XML mit DOCTYPE/ZUGFeRD 1.0 abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
 Übertragung abgelehnt, Limit selbst erlaubt, zu langer Chunk abgelehnt und
@@ -1188,7 +1265,8 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   unveränderlich und werden nicht umgehängt, sondern über `merged_into`
   aufgelöst – Details unter „Stand M6-5“.
 - Lieferant hat Default-Kategorie/-Sphäre; ab dem 2. bestätigten Beleg mit
-  gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI).
+  gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI) –
+  umgesetzt mit M7-7, §8 „Stand M7-7“.
 - **Stand M6-2** (issue #36): Stammdaten-Pflege unter `/app/lieferanten`
   (Lieferanten und Zahler, Spalte `role`), Blind-Index-Schlüssel in
   `supplier_key` für Name/Aliasse, IBAN, USt-ID, Steuernummer, Gläubiger-ID
@@ -1242,6 +1320,44 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 `assignment_rule` gibt es seit M9-6 für Buchungen (04 §5 „Stand M9-6“,
 Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
 
+**Stand M7-7** (issue #49, ohne Migration, E-21):
+- *Regeln:* Es gibt **eine** Regelliste (`/app/buchungen/regeln`). Eine Regel
+  mit Kategorie schlägt diese Kategorie auch für Belege vor
+  (`App\Service\Bank\Regelabgleich::trifftBeleg()`): *Stichwort* enthalten
+  im Zweck des Belegs, *Gegenseite* als IBAN gleich einer IBAN des
+  Lieferanten bzw. Zahlers, sonst enthalten in seinem Namen oder einem
+  Alias – beim noch unbekannten Partner (KI/E-Rechnung „Neu anlegen“) in
+  dessen Name bzw. IBAN; Richtung, Groß-/Kleinschreibung, Leerraum, „beides
+  muss passen“ und „ohne Bedingung nichts“ wie bei Buchungen. Von mehreren
+  passenden aktiven Regeln **mit Kategorie** gilt die älteste.
+- *Lieferanten-Default:* zuerst `supplier.default_category_id`, dann
+  **gelernt**: Haben die zwei neuesten geprüften bzw. festgeschriebenen
+  Belege des Partners (`checked_at`, auch über `merged_into` aufgelöst –
+  ein zusammengeführter Partner im Formular zählt als sein Ziel –,
+  nur im Zugriffsbereich der Person) dieselbe Kategorie, wird sie
+  vorgeschlagen (`InvoiceRepository::letzteGeprueftenKategorien()`, nichts
+  wird in `supplier` geschrieben).
+- *KI:* `category_id` des neuesten Laufs (§6).
+- Jede Stufe zählt nur mit einer **aktiven, zur Richtung passenden**
+  Kategorie, sonst fragt die nächste. Reihenfolge und Herkunft:
+  `App\Service\Invoice\Kategorisierung` (rein, ohne DB), angewendet in
+  `Pruefung::kategorieVorschlagen()` auf das fertig vorbelegte Formular
+  (Partner, Zweck, Richtung aus KI, E-Rechnung und Archiv-Vorgabe). Nennt
+  die Archiv-Vorgabe (M12-3) selbst eine Kategorie, bleibt diese – sie hat
+  ein Mensch einsortiert.
+- *Anzeige:* unter dem Feld „Vorgeschlagen von: Regel „Name““ bzw.
+  „Standard-Kategorie des Lieferanten/Zahlers“, „wie die letzten 2 geprüften
+  Belege des Lieferanten/Zahlers“, „KI 0,82“ (`aria-describedby`). Den
+  Namen der Regel sieht nur, wer Regeln lesen darf (`bank.view`), sonst
+  steht nur „Regel“. Gelb („KI unsicher“) nur, wenn die KI-Kategorie
+  stehen bleibt.
+- *Änderbar:* Wie die ganze Vorbelegung (§6) nur ein Vorschlag, solange
+  der Beleg nicht gespeichert ist; gespeichert wird, was die Person wählt.
+  Danach ändert die Kategorie nur noch das Formular – bis „Geprüft“ und
+  nach „Festschreibung aufheben“ (01 §7); spätere Regeln oder Lieferanten-
+  Defaults fassen gespeicherte Belege nie an. Die Herkunft wird nicht
+  gespeichert.
+
 ## 9. Wiederkehrende Rechnungen
 
 - Erkennung bei jedem neuen Beleg eines Lieferanten: ≥ 3 Belege (bzw. 2 +
@@ -1260,7 +1376,7 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
 
 **Stand issue #94** (ohne Migration): `/app/suche` findet Belege über ihren
 erkannten Text, ohne dass ein durchsuchbarer Index dauerhaft auf dem Server
-liegt (CLAUDE.md §5, E-19).
+liegt (CLAUDE.md §5, E-22).
 
 - *Kein dauerhafter Index:* weder Klartext noch Wort-HMACs (Blind Indexes je
   Wort) in DB oder Dateien – beides verriete einem Datenbank- oder
@@ -1372,7 +1488,10 @@ Farbmodus-Anwendung je Modus); Scanner-Einbau (`tests/js/scanner.test.js`:
 Fähigkeitsprüfung, Startecken, Upload-Reihenfolge Original → Fassung, Abbruch
 ohne Upload, Fallback nur mit Original; `tests/js/kamera.test.js`:
 Verfügbarkeit nur im sicheren Kontext, Rahmen A4 innerhalb des Videos,
-Fehlertexte); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
+Fehlertexte; Live-Erkennung #146: Drosselung, Vorschaugröße, Stabilität
+über 3 Frames inkl. Fehlschlag/Wandern, Startecken nur aus stabilem
+Viereck, Overlay-Abbildung unter `object-fit: contain`; `scanner.test.js`:
+vorgemerkte Startecken je Datei); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
 dunkles Foto nicht schwarz, lange Kante gedeckelt, EXIF-Drehung,
 PNG-Transparenz, Pixel-Obergrenze); Original + aufbereitete Fassung
 (`PdfErzeugungTest`: Fassung unverändert eingebettet, Originale
@@ -1436,6 +1555,15 @@ und „KI erneut versuchen“ (Status, Job, Audit, kein zweiter Lauf), „Mit KI
 auslesen“, ohne Profil nichts angeboten, Tresor/CSRF/Scope;
 `InboxFlowTest`/`ArchivImportFlowTest`: Job beim Annehmen bzw. Import;
 `RoutePermissionMatrixTest`);
+Kategorisierung (M7-7: `KategorisierungTest`: Regel am Beleg – Stichwort im
+Zweck, Gegenseite über Name/Alias/IBAN, beides, Richtung, ohne Bedingung
+nichts; Reihenfolge Regel > Standard > gelernt > KI, älteste aktive Regel mit
+Kategorie, unbrauchbare Kategorie gibt weiter, gelernt nur bei zwei gleichen
+neuesten, Belege nur bei Bedarf gelesen, Herkunftstexte samt Regelname nur
+mit Leserecht; `PruefungFlowTest`: Regel vor Lieferanten-Default vor KI samt
+Anzeige und ohne Gelb, Regel auf neuen Partner der KI, aus zwei geprüften
+Belegen gelernt und nur im Zugriffsbereich, Lieferant aus dem Archiv,
+Vorschlag änderbar und nach dem Speichern weg);
 KI-Client mit aufgezeichneten Antworten (`tests/fixtures/llm/extract-v1/`,
 `FakeLlmClient`/`FakeChatHttp`; `KiAbfrageTest`: gültig, ungültig +
 Reparatur mit Verlauf und Fehlerliste, nach der Reparatur ungültig →
