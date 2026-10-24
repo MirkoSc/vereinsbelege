@@ -131,6 +131,7 @@ use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\KiAuslesung;
+use App\Service\Document\LieferantenAufloesung;
 use App\Service\Document\Texterkennung;
 use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
@@ -157,6 +158,7 @@ use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
+use App\Service\MasterData\SupplierAufloesung;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
@@ -549,12 +551,32 @@ $kiAuslesungFor = static function (\PDO $pdo) use ($paths, $serverCrypto): KiAus
         new KiAbfrage(new OpenAiCompatibleClient(new CurlChatHttp(), $prompts), $prompts),
         new Auslesung($prompts),
         new AiCallLogRepository($pdo),
+        new SupplierAufloesung(new SupplierRepository($pdo), new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo))),
+    );
+};
+
+// The supplier resolution (issue #48/M7-6): the `resolve_supplier` job
+// handler that follows `ai_extract` - for the job list below and for the
+// review page, which reads its result.
+$lieferantenAufloesungFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $auditFor): LieferantenAufloesung {
+    $blobs = new BlobRepository($pdo);
+    $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    $lieferanten = new SupplierRepository($pdo);
+
+    return new LieferantenAufloesung(
+        $pdo,
+        new DocumentRepository($pdo),
+        new DocumentArtifactRepository($pdo),
+        $kiAuslesungFor($pdo),
+        new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService),
+        new SupplierAufloesung($lieferanten, new SupplierService($pdo, $lieferanten, new CategoryRepository($pdo))),
+        $auditFor($pdo),
     );
 };
 
 // The review page (M6-3, issue #37): captures a document as a receipt with
 // the session's unlocked vault - only the review pages open the connection.
-$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor): PruefungController {
+$pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor): PruefungController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -585,6 +607,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
             $audit,
             $kiAuslesungFor($pdo),
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
+            $lieferantenAufloesungFor($pdo),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -1219,7 +1242,7 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
 // registered here once and both pick it up.
 //
 // @return list<\App\Service\Job\JobHandler>
-$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor): array {
+$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor): array {
     $blobs = new BlobRepository($pdo);
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
 
@@ -1230,6 +1253,8 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor): arra
         // The AI extraction (issue #47/M7-5): its calls run between the two
         // halves of a step, without database (JobController, $jobsSeite).
         $kiAuslesungFor($pdo),
+        // The supplier resolution that follows it (issue #48/M7-6).
+        $lieferantenAufloesungFor($pdo),
     ];
 };
 

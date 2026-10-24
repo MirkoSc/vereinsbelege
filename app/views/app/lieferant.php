@@ -49,9 +49,16 @@ $text = static fn(string $feld, string $label, int $max = SupplierService::TEXT_
     <?php endif; ?>
 
     <?php if (!$neu && $lieferant->needsReview): ?>
-        <p class="hinweis hinweis-warnung">
-            Von der KI angelegt – bitte Angaben prüfen und speichern.
-        </p>
+        <div class="hinweis hinweis-warnung">
+            <p>
+                Von der KI beim Auslesen eines Belegs angelegt – bitte die Angaben prüfen. Speichern gilt als geprüft;
+                stimmt alles, genügt „Als geprüft markieren“. Ist es ein schon vorhandener Lieferant, unten zusammenführen.
+            </p>
+            <form method="post" action="/app/lieferanten/<?= e((string) $lieferant->id) ?>/geprueft" class="knopfreihe">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="knopf">Als geprüft markieren</button>
+            </form>
+        </div>
     <?php endif; ?>
 
     <form method="post" action="<?= e($ziel) ?>" class="formular">

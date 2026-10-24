@@ -148,6 +148,18 @@ final readonly class PruefungController
             ['felder' => $felder, 'hinweise' => $hinweise] = $this->pruefung->vorbelegen($felder, $eRechnung->extraktion, $tresor);
         }
 
+        // ... then the supplier as `resolve_supplier` found it (issue
+        // #48/M7-6) - it knows the master data, the AI and the e-invoice
+        // only name a supplier.
+        $lieferant = ['hinweis' => '', 'unsicher' => false, 'pruefen' => false];
+        $aufloesung = $vorbelegbar ? $this->pruefung->lieferantenAufloesung($document, $tresor) : null;
+        if ($aufloesung !== null) {
+            ['felder' => $felder, 'hinweis' => $lieferant['hinweis'], 'unsicher' => $lieferant['unsicher'], 'pruefen' => $lieferant['pruefen']]
+                = $this->pruefung->lieferantVorbelegen($felder, $aufloesung, $tresor);
+        }
+        $nachAufloesung = $felder['lieferant'];
+        $vorgeschlagen = $lieferant['unsicher'] ? $nachAufloesung : '';
+
         // From the archive import (issue #77/M12-3): what the path said lies
         // over what was read automatically - the archive was sorted by a
         // person.
@@ -181,8 +193,15 @@ final readonly class PruefungController
             eRechnungHinweise: $hinweise,
             archivHinweise: $archivHinweise,
             ki: $ki,
-            unsicher: $unsicher,
+            unsicher: [
+                ...$unsicher,
+                // A suggestion by a similar name (step 5) - unless the archive chose another.
+                ...($vorgeschlagen !== '' && $felder['lieferant'] === $vorgeschlagen ? ['lieferant'] : []),
+            ],
             kategorieVorschlag: $kategorie,
+            // Said only while the choice is still the resolution's.
+            lieferantHinweis: $felder['lieferant'] === $nachAufloesung ? $lieferant['hinweis'] : '',
+            lieferantPruefen: $lieferant['pruefen'],
         );
     }
 
@@ -528,6 +547,8 @@ final readonly class PruefungController
      * @param ?KiAuszug $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
      * @param list<string> $unsicher form fields the AI filled in unsure
      * @param ?KategorieVorschlag $kategorieVorschlag where the category of an unsaved form came from (issue #49/M7-7)
+     * @param string $lieferantHinweis how the supplier was resolved (issue #48/M7-6)
+     * @param bool $lieferantPruefen the AI created the chosen supplier, nobody has reviewed it yet
      */
     private function seite(
         InboxItem $eintrag,
@@ -541,6 +562,8 @@ final readonly class PruefungController
         ?KiAuszug $ki = null,
         array $unsicher = [],
         ?KategorieVorschlag $kategorieVorschlag = null,
+        string $lieferantHinweis = '',
+        bool $lieferantPruefen = false,
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
@@ -579,8 +602,10 @@ final readonly class PruefungController
             'eRechnungHinweise' => $eRechnungHinweise,
             'archivHinweise' => $archivHinweise,
             'ki' => $ki,
-            'unsicher' => $unsicher,
+            'unsicher' => array_values(array_unique($unsicher)),
             'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(regelName: $this->berechtigungen()->darf(Permission::BankView)),
+            'lieferantHinweis' => $lieferantHinweis,
+            'lieferantPruefen' => $lieferantPruefen,
             'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
             'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],

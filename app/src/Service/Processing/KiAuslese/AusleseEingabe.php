@@ -35,6 +35,10 @@ final readonly class AusleseEingabe
      * @param list<Category> $kategorien the active categories
      * @param array<int, string> $kostenstellen the active cost centers, id => name
      *        (App\Repository\CostCenterRepository::active())
+     * @param list<string> $lieferanten names of known suppliers the receipt
+     *        hints at, at most ten - the blind-index preselection (issue
+     *        #48/M7-6), gathered in the session: it needs the vault's
+     *        blind-index key. Empty without one or without a hint.
      */
     public function __construct(
         public ?string $text,
@@ -44,6 +48,7 @@ final readonly class AusleseEingabe
         public string $freitext,
         public array $kategorien,
         public array $kostenstellen,
+        public array $lieferanten = [],
     ) {
     }
 }
