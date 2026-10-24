@@ -379,8 +379,9 @@ final readonly class JobRepository
     /**
      * Sends the still pending jobs of one type for one row back to their
      * first step (issue #90: a duplicate index half computed under the old
-     * vault key must not be finished under the new one). Returns how many
-     * there were - none means the caller queues a new one.
+     * vault key must not be finished under the new one). Returns the rows
+     * MySQL reports as changed - not a reliable "was there one"; ask
+     * offenFuer() for that.
      */
     public function setzeZurueck(string $typ, string $refType, int $refId, ?\DateTimeImmutable $now = null): int
     {

@@ -15,7 +15,7 @@ namespace App\Repository;
  * opens, and the rotation would lose it the moment the old grants go.
  *
  * `audit_log` is the one exception in how it is written: its `dek_sealed` is
- * covered by the hash chain (migration 042), so the re-sealed key goes into
+ * covered by the hash chain (migration 037), so the re-sealed key goes into
  * `dek_resealed`, and "the sealed key of this row" is
  * COALESCE(dek_resealed, dek_sealed).
  *

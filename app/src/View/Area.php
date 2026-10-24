@@ -72,6 +72,7 @@ enum Area: string
                 new NavItem('Suche', '/app/suche', recht: Permission::InboxView),
                 new NavItem('Beleg erfassen', '/app/belege/neu', recht: Permission::DocumentSubmitInternal),
                 new NavItem('Belege prüfen', '/app/belege/pruefen', recht: Permission::DocumentEdit),
+                new NavItem('Wiederkehrend', '/app/serien', recht: Permission::DocumentEdit),
                 new NavItem('Belege', meilenstein: 'M6', recht: Permission::InboxView),
                 new NavItem('Lieferanten', '/app/lieferanten', recht: Permission::SupplierManage),
                 new NavItem('Konten', '/app/konten', recht: Permission::BankView),
@@ -96,7 +97,7 @@ enum Area: string
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),
-                new NavItem('Backup', meilenstein: 'M1', recht: Permission::AdminSystem),
+                new NavItem('Backups', '/admin/backups', recht: Permission::AdminSystem),
                 new NavItem('Einstellungen', meilenstein: 'M3', recht: Permission::AdminSettings),
             ],
         };

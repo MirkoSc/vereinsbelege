@@ -109,16 +109,23 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $this->pdo()->prepare('UPDATE vault SET recovery_confirmed_at = created_at')->execute();
 
         // A second account with its own grant - re-sealed without its password.
-        $this->kassiererId = new UserRepository($this->pdo())->insert(
-            $this->crypto->encrypt('kasse@example.org'),
-            $this->crypto->blindIndex()->forValue('user.email', 'kasse@example.org'),
-            $this->crypto->encrypt('Karl Kasse'),
+        $this->kassiererId = $this->kontoMitFreigabe('kasse@example.org', $this->alt);
+    }
+
+    private function kontoMitFreigabe(string $email, Vault $tresor): int
+    {
+        $id = new UserRepository($this->pdo())->insert(
+            $this->crypto->encrypt($email),
+            $this->crypto->blindIndex()->forValue('user.email', $email),
+            $this->crypto->encrypt('Konto'),
             new PasswordHasher()->hash(self::PASSWORT),
             mfaRequired: false,
         );
         $paar = UserKeyPair::create();
-        new UserKeyRepository($this->pdo())->insert($this->kassiererId, UserKey::wrap($paar, self::PASSWORT));
-        new VaultGrantRepository($this->pdo())->insert($this->kassiererId, VaultGrant::seal($this->alt, $paar->publicKey()), $this->adminId);
+        new UserKeyRepository($this->pdo())->insert($id, UserKey::wrap($paar, self::PASSWORT));
+        new VaultGrantRepository($this->pdo())->insert($id, VaultGrant::seal($tresor, $paar->publicKey()), $this->adminId);
+
+        return $id;
     }
 
     protected function tearDown(): void
@@ -155,8 +162,15 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $schritte = $this->umschluesseln($rotation, $ring, budget: 0.0);
         self::assertGreaterThan(5, $schritte);
 
+        // A grant of the old generation that slipped in after the start
+        // (granted just before the pages closed) is carried over at the end.
+        $spaet = $this->kontoMitFreigabe('spaet@example.org', $this->alt);
+
         $ergebnis = $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable());
         self::assertSame([], $ergebnis['defekt']);
+        self::assertContains($spaet, array_column(new VaultGrantRepository($this->pdo())->holdersOf(2), 'userId'));
+        $grantedBy = $this->pdo()->query('SELECT granted_by FROM vault_grant WHERE vault_version = 2 AND user_id = ' . $this->kassiererId)->fetchColumn();
+        self::assertSame($this->adminId, (int) $grantedBy, 'Wer ursprünglich freigegeben hat, bleibt vermerkt.');
         $neu = $ergebnis['tresor'];
         self::assertSame([], $neu->previousVersions());
 
@@ -289,11 +303,18 @@ final class SchluesselrotationTest extends DatabaseTestCase
     {
         $rotation = $this->rotation();
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        $vaults = new VaultRepository($this->pdo());
+        $eingabe = $this->alterSchluessel->formatted();
+        try {
+            RecoveryKey::parse($eingabe)->openVault($ring->publicKey(), $ring->version);
+            self::fail();
+        } catch (RecoveryKeyException $e) {
+            self::assertSame(RecoveryKeyProblem::FremderTresor, VaultRecovery::problemFuer($e, $eingabe, $vaults), 'Während der Rotation ist der alte Schlüssel noch nicht abgelöst.');
+        }
         $this->bestaetigen($rotation, $ring);
         $this->umschluesseln($rotation, $ring);
         $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable());
 
-        $vaults = new VaultRepository($this->pdo());
         $aktuell = $vaults->current();
         self::assertNotNull($aktuell);
         $eingabe = $this->alterSchluessel->formatted();
@@ -311,6 +332,21 @@ final class SchluesselrotationTest extends DatabaseTestCase
         } catch (RecoveryKeyException $e) {
             self::assertSame(RecoveryKeyProblem::FremderTresor, VaultRecovery::problemFuer($e, $fremd, $vaults));
         }
+    }
+
+    /**
+     * Between the updater's 'switch' and 'migrate' steps the new code runs on
+     * the old schema: the guard and the login must not fail on the missing
+     * columns of migration 037.
+     */
+    public function testVorMigration037GibtEsKeineRotationUndDieAnmeldungGeht(): void
+    {
+        $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at');
+
+        $vaults = new VaultRepository($this->pdo());
+        self::assertFalse($vaults->rotationInProgress());
+        self::assertCount(1, $vaults->active());
+        self::assertSame(1, $this->anmelden(self::ADMIN)?->version);
     }
 
     /**

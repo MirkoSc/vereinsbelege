@@ -159,7 +159,7 @@ final readonly class AuditLogRepository
             prevHash: (string) $row['prev_hash'],
             hash: (string) $row['hash'],
             // Missing only between the updater's 'switch' and 'migrate'
-            // steps (migration 042 not applied yet).
+            // steps (migration 037 not applied yet).
             dekResealed: ($row['dek_resealed'] ?? null) === null ? null : (string) $row['dek_resealed'],
         );
     }

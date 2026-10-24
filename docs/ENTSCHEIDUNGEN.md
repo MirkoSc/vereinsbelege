@@ -318,6 +318,34 @@ Einreichung und von Hand erfasste Belegfelder (Zweck, Notiz) gehören nicht
 zum Index – das Issue nennt nur erkannte Texte. Kosten: Der erste Aufbau
 dauert je Session einige Sekunden je 1000 Belege.
 
+## E-26 ❓ Wiederkehrende Rechnungen: Erkennung, Verknüpfung, Verwerfen
+*M8-1 (issue #57) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §9) nennt nur die Eckwerte. Umgesetzt (Details 03 §9 „Stand M8-1“):
+- **Belege über eine eigene Tabelle** `recurring_series_invoice` statt
+  `invoice.recurring_series_id`: festgeschriebene Belege sind unveränderlich
+  (01 §7), und die meisten Belege, in denen man eine Serie erkennt, sind schon
+  festgeschrieben. Spalte `period` statt `interval` (reserviertes Wort),
+  `status` (Vorschlag/bestätigt/verworfen) statt `active`/`confirmed`.
+- **Auslöser „Geprüft“**: nur geprüfte/festgeschriebene Belege zählen
+  (Beträge sind von Menschen bestätigt), je Lieferant **und** Richtung.
+- **Betrag:** ±15 % jeweils zum nächstneueren Beleg (nicht zum Median) – eine
+  Preissteigerung in Schritten bleibt eine Serie. **Rhythmus:** Median der
+  Abstände ± 5/12/20/30 Tage, von zu dicht liegenden Belegen bleibt der besser
+  passende (Einzelkauf mit ähnlichem Betrag), eine Lücke
+  über 2,5 Rhythmen schneidet ab. Toleranz bis „überfällig“: 7/14/21/30 Tage.
+  Die Betragstoleranz ist ein Setting ohne Admin-Seite (Folge-Issue).
+- **Bestätigte Serie verknüpft neue passende Belege automatisch** (mit Audit,
+  auf der Serienseite wieder abwählbar) – die Serie hat ein Mensch bestätigt.
+- **Verwerfen** behält die Verknüpfungen: diese Belege kommen nie wieder als
+  Vorschlag; erst neue Belege können eine neue Serie bilden. Eine verworfene
+  Serie ist nur noch lesbar (kein „Wiederherstellen“).
+- **Nur ohne Scope:** die Seiten verlangen `document.edit` ohne Kostenstellen-/
+  Zeitraum-Einschränkung, weil eine Serie alle Belege eines Lieferanten zeigt.
+- **Noch nicht:** Serien aus Bankbuchungen (Mandatsreferenz), Übersicht mit
+  Jahreshochrechnung/Trend/„überfällig“ (M8-2, #58), Hinweis auf die Serie in
+  der Prüfansicht.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
@@ -416,6 +444,32 @@ Variante:
 - **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
   Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
   10 MB entpackt.
+
+## E-30 ❓ Admin-Seite „Backups“: Erstellen als Schrittkette, Download mit `config.php` nur mit Passwort
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #112)*
+
+- **Erstellen als Schrittkette statt `BackupService::create()` in einem
+  Request:** Ein Backup mit Belegdateien passt auf dem Zielhost in keinen
+  Request (06 §2). Die Seite baut das ZIP deshalb in kurzen Schritten (Dump,
+  Blobs in Portionen, Abschluss) und hängt dabei selbst an das Archiv an
+  (`ZipAnhang`, ZIP64), weil libzip bei jedem `close()` das ganze Archiv neu
+  schreibt. Ergebnis und Format sind dieselben wie bei `create()`.
+  Verworfen: Backup über die Seite nur ohne Blobs (unvollständig bei
+  Backend `fs`), Blobs per `ZipArchive` portionsweise (Kopie des ganzen
+  Archivs je Portion). Der Dump bleibt ein einzelner Request – wie in der
+  Update-Kette; bei sehr großen `db`-Blob-Beständen ist das die Grenze.
+- **Download eines Backups mit `config.php` nur per POST mit dem aktuellen
+  Passwort** (zusätzlich zu `admin.system` und CSRF), Fehlversuche begrenzt.
+  Ein solches ZIP enthält den Server-Schlüssel; eine liegengelassene,
+  angemeldete Sitzung soll ihn nicht mit einem Klick herausgeben. Kein
+  erneuter zweiter Faktor: das bräuchte einen eigenen Bestätigungsablauf je
+  Methode (TOTP, E-Mail-Code) – Folge-Idee, falls gewünscht. Backups ohne
+  `config.php` lädt der angemeldete Admin per GET.
+- **Eine Erstellung gleichzeitig** (409), eine über 1 h nicht fortgesetzte
+  darf ein neuer Start verwerfen; Erstellen ist nur mit JavaScript möglich
+  (wie Update und Speicher-Umzug).
+- **Kein Löschen einzelner Backups** über die Seite (nicht im Umfang des
+  Issues); es bleibt bei der Rotation (10).
 
 ## E-32 ❓ Tresor-Schlüsselrotation (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage:

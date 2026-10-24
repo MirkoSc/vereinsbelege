@@ -80,12 +80,15 @@ final readonly class VaultGrantRepository
      *
      * @return list<array{userId: int, publicKey: string, grantedBy: int|null}>
      */
-    public function holdersOf(int $vaultVersion): array
+    public function holdersOf(int $vaultVersion, bool $sperren = false): array
     {
+        // $sperren (inside the caller's transaction): locks the grants read,
+        // and the scan's range, so no grant of this generation can appear
+        // until the caller commits.
         $stmt = $this->pdo->prepare(
             'SELECT g.user_id, k.public_key, g.granted_by FROM vault_grant g
              JOIN user_key k ON k.user_id = g.user_id
-             WHERE g.vault_version = ? ORDER BY g.user_id',
+             WHERE g.vault_version = ? ORDER BY g.user_id' . ($sperren ? ' FOR UPDATE' : ''),
         );
         $stmt->execute([$vaultVersion]);
 

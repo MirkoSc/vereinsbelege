@@ -121,11 +121,15 @@ final readonly class VaultRecovery
         }
 
         try {
-            return $vaults->versionForPublicKey(RecoveryKey::parse($eingabe)->publicKey()) === null
-                ? RecoveryKeyProblem::FremderTresor
-                : RecoveryKeyProblem::Abgeloest;
+            $version = $vaults->versionForPublicKey(RecoveryKey::parse($eingabe)->publicKey());
         } catch (RecoveryKeyException) {
             return $e->problem;
         }
+
+        // Only a generation that was actually retired: during a rotation the
+        // old key is still in use, the rotation is not finished.
+        return $version !== null && $vaults->generationOf($version)?->retiredAt !== null
+            ? RecoveryKeyProblem::Abgeloest
+            : $e->problem;
     }
 }

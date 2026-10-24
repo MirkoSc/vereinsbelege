@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\BackupController;
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
@@ -37,6 +38,7 @@ use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\PruefungController;
 use App\App\SecurityController;
+use App\App\SerienController;
 use App\App\SucheController;
 use App\App\SupplierController;
 use App\Domain\Berechtigungen;
@@ -173,6 +175,11 @@ use App\View\View;
  *        built lazily, same reason as $mail (issue #95). Optional and last,
  *        so route tables built for other pages need not name it; without it
  *        the routes exist but answer with an error.
+ * @param (\Closure(): BackupController)|null $backups built lazily, same
+ *        reason as $mail (issue #112). Optional, like $nextcloudAdmin.
+ * @param (\Closure(): SerienController)|null $serien built lazily, same
+ *        reason as $mail: only the recurring series pages need the database
+ *        (issue #57/M8-1). Optional like $nextcloudAdmin.
  * @param (\Closure(): VaultRotationController)|null $tresorRotation built
  *        lazily (issue #90); optional and last for the same reason as
  *        $nextcloudAdmin.
@@ -219,9 +226,13 @@ return static function (
     \Closure $archivImport,
     \Closure $suche,
     ?\Closure $nextcloudAdmin = null,
+    ?\Closure $backups = null,
+    ?\Closure $serien = null,
     ?\Closure $tresorRotation = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
+    $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
+    $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -539,6 +550,18 @@ return static function (
     $post('/app/belege/pruefen/{id:\d+}/duplikat-verwerfen', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatVerwerfen($r, $params));
     $post('/app/belege/pruefen/{id:\d+}/duplikat-behalten', $documentEdit, static fn(Request $r, array $params) => $pruefung()->duplikatBehalten($r, $params));
 
+    // Recurring invoices (M8-1, issue #57, docs/spec/03-erfassung-und-ki.md
+    // section 9): the suggestions of the `detect_recurring` job and the
+    // confirmed series - confirm, change, dismiss. Permission:
+    // `document.edit` like the review page whose receipts they are; a series
+    // spans a supplier's receipts of every cost center and period, so an
+    // account with a scope gets a refusal (App\App\SerienController). CSRF
+    // on the writes, the unlocked vault for everything (amounts, names).
+    $get('/app/serien', $documentEdit, static fn(Request $r) => $serien()->liste($r));
+    $get('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->formular($r, $params));
+    $post('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->speichern($r, $params));
+    $post('/app/serien/{id:\d+}/verwerfen', $documentEdit, static fn(Request $r, array $params) => $serien()->verwerfen($r, $params));
+
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
     // Vorstand, Finanzen, Kassenprüfer, Steuerberater) to see the list, an
@@ -842,6 +865,20 @@ return static function (
         static fn(Request $r, array $params) => $updates()->step($r, $params),
     );
     $post('/admin/wartung/aufheben', $system, static fn(Request $r) => $updates()->releaseMaintenance($r));
+
+    // Backups (06 section 2, issue #112): list, create as a step chain,
+    // download. Permission: `admin.system`, like Update ("Backup, Update,
+    // Wartung", 01 section 4); CSRF on all writes. The name pattern only
+    // pre-filters - BackupService::path() is what guards against
+    // traversal. A backup with config.php is downloaded only by POST with
+    // the account's password (BackupController).
+    $backupName = '{name:backup_[0-9_]+\\.zip}';
+    $get('/admin/backups', $system, static fn(Request $r) => $backups()->page($r));
+    $post('/admin/backups', $system, static fn(Request $r) => $backups()->starten($r));
+    $post('/admin/backups/schritt', $system, static fn(Request $r) => $backups()->schritt($r));
+    $post('/admin/backups/abbrechen', $system, static fn(Request $r) => $backups()->abbrechen($r));
+    $get('/admin/backups/' . $backupName, $system, static fn(Request $r, array $p) => $backups()->download($r, $p));
+    $post('/admin/backups/' . $backupName, $system, static fn(Request $r, array $p) => $backups()->downloadBestaetigt($r, $p));
 
     // System check (06 section 5, issue #107/M3-10): do the M0 hosting
     // assumptions still hold? Read only, so no CSRF and no write route.

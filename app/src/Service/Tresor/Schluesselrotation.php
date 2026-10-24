@@ -46,7 +46,7 @@ use App\Service\Crypto\VaultGrant;
  * What the rotation does NOT reach, by design (spec): backups made before
  * it - they keep their old keys, and the OLD recovery key stays needed for
  * them; the original `audit_log.dek_sealed` (inside the hash chain, see
- * migration 042), which the old key still opens.
+ * migration 037), which the old key still opens.
  */
 final readonly class Schluesselrotation
 {
@@ -131,13 +131,15 @@ final readonly class Schluesselrotation
         }
 
         $neu = Vault::create($alt->version + 1);
-        $inhaber = $this->grants->holdersOf($alt->version);
-
         $this->pdo->beginTransaction();
         try {
             $this->vaults->insert($neu->publicKey(), $neu->version, $now);
+            // Read under lock, inside the transaction: a grant of N that
+            // commits meanwhile waits and is caught by abschliessen().
+            $inhaber = $this->grants->holdersOf($alt->version, sperren: true);
             foreach ($inhaber as $h) {
-                $this->grants->insert($h['userId'], VaultGrant::seal($neu, $h['publicKey']), $userId, $now);
+                // The original grantor stays on record.
+                $this->grants->insert($h['userId'], VaultGrant::seal($neu, $h['publicKey']), $h['grantedBy'], $now);
             }
             $this->pdo->commit();
         } catch (\PDOException $e) {
@@ -280,30 +282,43 @@ final readonly class Schluesselrotation
             throw new RotationException('Bitte zuerst den neuen Wiederherstellungsschlüssel bestätigen.');
         }
 
-        // What is left must be rows the old key does not open either -
-        // checked here, not taken from the session's memory.
-        $defekt = [];
-        foreach ($this->rotation->tabellen() as $tabelle => $pk) {
-            $nach = 0;
-            while (($ids = $this->rotation->naechste($tabelle, $pk, $alt, $nach, self::BATCH)) !== []) {
-                foreach ($ids as $id) {
-                    $zeile = $this->rotation->sperre($tabelle, $pk, $id);
-                    if ($zeile !== null && is_string($zeile['__dek'] ?? null)) {
-                        try {
-                            $ring->openDataKey($zeile['__dek']);
-
-                            throw new RotationException('Es sind noch Daten mit dem alten Schlüssel versiegelt. Bitte die Umschlüsselung fortsetzen.');
-                        } catch (CryptoException) {
-                            $defekt[$tabelle] = ($defekt[$tabelle] ?? 0) + 1;
-                        }
-                    }
-                    $nach = $id;
-                }
-            }
-        }
-
         $this->pdo->beginTransaction();
         try {
+            // What is left must be rows the old key does not open either -
+            // checked here, under lock and in the same transaction that
+            // retires the key, not taken from the session's memory.
+            $defekt = [];
+            foreach ($this->rotation->tabellen() as $tabelle => $pk) {
+                $nach = 0;
+                while (($ids = $this->rotation->naechste($tabelle, $pk, $alt, $nach, self::BATCH)) !== []) {
+                    foreach ($ids as $id) {
+                        $zeile = $this->rotation->sperre($tabelle, $pk, $id);
+                        $nach = $id;
+                        if ($zeile === null || !is_string($zeile['__dek'] ?? null)) {
+                            continue;
+                        }
+                        try {
+                            $ring->openDataKey($zeile['__dek']);
+                        } catch (CryptoException) {
+                            $defekt[$tabelle] = ($defekt[$tabelle] ?? 0) + 1;
+                            continue;
+                        }
+
+                        throw new RotationException('Es sind noch Daten mit dem alten Schlüssel versiegelt. Bitte die Umschlüsselung fortsetzen.');
+                    }
+                }
+            }
+
+            // Whoever got a grant of N after the start (granted just before
+            // the guard closed the pages) gets one of N+1 now - nobody loses
+            // access with the old generation.
+            $neueInhaber = array_column($this->grants->holdersOf($neu, sperren: true), 'userId');
+            foreach ($this->grants->holdersOf($alt, sperren: true) as $h) {
+                if (!in_array($h['userId'], $neueInhaber, true)) {
+                    $this->grants->insert($h['userId'], VaultGrant::seal($ring->withoutPrevious(), $h['publicKey']), $h['grantedBy'], $now);
+                }
+            }
+
             $this->grants->deleteVersion($alt);
             $this->vaults->retire($alt, $now);
             $this->users->bumpSessionEpochAll();

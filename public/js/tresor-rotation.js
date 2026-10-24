@@ -60,7 +60,14 @@ function initRotation() {
             method: 'POST',
             headers: { 'X-CSRF-Token': csrf },
         });
-        const daten = await antwort.json();
+        // A timeout, a hoster error page or the login form is not JSON:
+        // then the HTTP status is the message, not a parse error.
+        let daten = null;
+        try {
+            daten = await antwort.json();
+        } catch (problem) {
+            throw new Error('HTTP ' + antwort.status);
+        }
         if (!antwort.ok || daten.fehler) {
             throw new Error(daten.fehler || 'HTTP ' + antwort.status);
         }

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\BackupController;
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
@@ -41,6 +42,7 @@ use App\App\PasswordController;
 use App\App\PasswordToolbox;
 use App\App\SecurityController;
 use App\App\PruefungController;
+use App\App\SerienController;
 use App\App\SucheController;
 use App\App\SupplierController;
 use App\Config\Config;
@@ -82,6 +84,7 @@ use App\Repository\MfaEmailCodeRepository;
 use App\Repository\MfaTotpRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\RoleRepository;
+use App\Repository\RecurringSeriesRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
@@ -112,6 +115,7 @@ use App\Service\Account\UserAdministration;
 use App\Service\Account\VaultRecovery;
 use App\Service\Archiv\ArchivImport;
 use App\Service\Audit\AuditLog;
+use App\Service\Backup\BackupErstellung;
 use App\Service\Backup\BackupService;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BelegStandard;
@@ -145,6 +149,7 @@ use App\Service\Export\Nextcloud\NextcloudZielSpeicher;
 use App\Service\Export\ZipExport;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\Pruefung;
+use App\Service\Invoice\Serien;
 use App\Service\Job\JobRunner;
 use App\Service\Ki\CurlChatHttp;
 use App\Service\Ki\KiAbfrage;
@@ -581,6 +586,29 @@ $lieferantenAufloesungFor = static function (\PDO $pdo) use ($paths, $kiAuslesun
     );
 };
 
+// Recurring invoices (issue #57/M8-1): the `detect_recurring` job handler
+// and the service behind the series pages, built fresh from a connection.
+$serienFor = static function (\PDO $pdo) use ($kiAuslesungFor, $auditFor): Serien {
+    $lieferanten = new SupplierRepository($pdo);
+
+    return new Serien(
+        $pdo,
+        new RecurringSeriesRepository($pdo),
+        new InvoiceRepository($pdo),
+        new DocumentRepository($pdo),
+        $lieferanten,
+        new SupplierService($pdo, $lieferanten, new CategoryRepository($pdo)),
+        $kiAuslesungFor($pdo),
+        new SettingRepository($pdo),
+        $auditFor($pdo),
+    );
+};
+
+// The series pages (issue #57/M8-1): only they open the connection.
+$serienSeite = static function () use ($connections, $view, $serienFor): SerienController {
+    return new SerienController($view, new Session(), new SessionVault(), $serienFor($connections->pdo()));
+};
+
 // The review page (M6-3, issue #37): captures a document as a receipt with
 // the session's unlocked vault - only the review pages open the connection.
 $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor, $kiAuslesungFor, $lieferantenAufloesungFor): PruefungController {
@@ -615,6 +643,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
             $kiAuslesungFor($pdo),
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
             $lieferantenAufloesungFor($pdo),
+            new JobRepository($pdo),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -912,6 +941,31 @@ $exportAdmin = static function () use ($connections, $view, $auditFor): ExportSe
     $pdo = $connections->pdo();
 
     return new ExportSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+};
+
+// Backups page (issue #112): list, step chain, download. Built lazily like
+// $mail - only these routes open the connection. No vault: the backup holds
+// business data as ciphertext only.
+$backupsSeite = static function () use ($connections, $view, $auditFor, $paths, $version): BackupController {
+    $pdo = $connections->pdo();
+    $backups = new BackupService(
+        $pdo,
+        $paths->backupDir(),
+        $paths->configFile(),
+        $version->value,
+        $paths->blobDir(),
+    );
+
+    return new BackupController(
+        $view,
+        new Session(),
+        $backups,
+        new BackupErstellung($backups, $pdo, $paths->backupDir(), $paths->configFile()),
+        $auditFor($pdo),
+        new UserRepository($pdo),
+        new PasswordHasher(),
+        new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+    );
 };
 
 // The Nextcloud target of the export (issue #95, 05 section 2): vault data,
@@ -1277,7 +1331,7 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
 // registered here once and both pick it up.
 //
 // @return list<\App\Service\Job\JobHandler>
-$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor): array {
+$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor, $serienFor): array {
     $blobs = new BlobRepository($pdo);
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
 
@@ -1290,6 +1344,8 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lief
         $kiAuslesungFor($pdo),
         // The supplier resolution that follows it (issue #48/M7-6).
         $lieferantenAufloesungFor($pdo),
+        // Series detection after "Geprüft" (issue #57/M8-1).
+        $serienFor($pdo),
     ];
 };
 
@@ -1435,6 +1491,8 @@ $router = new Router();
     $archivImport,
     $sucheSeite,
     $nextcloudAdmin,
+    $backupsSeite,
+    $serienSeite,
     $tresorRotation,
 );
 

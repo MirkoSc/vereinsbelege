@@ -269,7 +269,7 @@ final readonly class InstallController
 
         /** @var array<string, string> $dbValues */
         $dbValues = $stand['db'];
-        // The generation's key is confirmed (migration 042, issue #90): a
+        // The generation's key is confirmed (migration 037, issue #90): a
         // later key rotation can only finish once ITS key is, and this
         // records the same fact for the first one.
         // Nothing depends on it for the first generation, so a database

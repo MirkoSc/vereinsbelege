@@ -60,9 +60,18 @@ final readonly class VaultRepository
      */
     public function all(): array
     {
-        $stmt = $this->pdo->query(
-            'SELECT version, public_key, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
-        );
+        try {
+            $stmt = $this->pdo->query(
+                'SELECT version, public_key, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
+            );
+        } catch (\PDOException) {
+            // Between the updater's 'switch' and 'migrate' steps migration 037
+            // has not run yet: no rotation can exist, every generation is
+            // active - logins and the update chain must keep working.
+            $stmt = $this->pdo->query(
+                'SELECT version, public_key, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
+            );
+        }
         if ($stmt === false) {
             return [];
         }
@@ -73,7 +82,7 @@ final readonly class VaultRepository
     /**
      * The generations not replaced yet, oldest first. One in normal
      * operation; two while a key rotation runs - that IS the rotation state
-     * (migration 042), there is no separate flag to keep in step.
+     * (migration 037), there is no separate flag to keep in step.
      *
      * @return list<VaultGeneration>
      */
@@ -84,7 +93,13 @@ final readonly class VaultRepository
 
     public function rotationInProgress(): bool
     {
-        $stmt = $this->pdo->query('SELECT COUNT(*) FROM vault WHERE retired_at IS NULL');
+        try {
+            $stmt = $this->pdo->query('SELECT COUNT(*) FROM vault WHERE retired_at IS NULL');
+        } catch (\PDOException) {
+            // Before migration 037 (update between 'switch' and 'migrate'):
+            // no rotation, and the update's own pages must stay reachable.
+            return false;
+        }
 
         return $stmt !== false && (int) $stmt->fetchColumn() > 1;
     }

@@ -214,6 +214,15 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/systemcheck', false],
+            // Backups (issue #112): admin.system, like Update - the list, the
+            // chain and the download of the whole dump.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/backups', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/backups/schritt', true],
+            [SystemRole::Admin, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups', false],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/backups', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/backups/backup_20260101_120000.zip', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -282,6 +291,16 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/belege/pruefen/7/datei/3', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/belege/pruefen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/belege/pruefen/7', false],
+            // Recurring series (issue #57/M8-1): `document.edit` like the review page.
+            [SystemRole::Admin, HttpMethod::Get, '/app/serien', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/serien', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/serien/3', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/serien/3', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/serien/3/verwerfen', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/serien', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/serien/3', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/serien/3', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/serien/3/verwerfen', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
             [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
@@ -592,7 +611,7 @@ final class RoutePermissionMatrixTest extends TestCase
             '/\{([a-z_][a-zA-Z0-9_]*)(?::([^{}]+))?\}/',
             static function (array $m): string {
                 $regex = ($m[2] ?? '') !== '' ? $m[2] : '[^/]+';
-                foreach (['1', str_repeat('a', 32), 'abc'] as $kandidat) {
+                foreach (['1', str_repeat('a', 32), 'abc', 'backup_20260101_120000.zip'] as $kandidat) {
                     if (preg_match('#^(?:' . $regex . ')$#', $kandidat) === 1) {
                         return $kandidat;
                     }
@@ -678,6 +697,10 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             $stellvertreter,
             // The Nextcloud settings (issue #95), optional.
+            $stellvertreter,
+            // The backups page (issue #112), optional.
+            $stellvertreter,
+            // The recurring series pages (issue #57/M8-1), optional.
             $stellvertreter,
             // The vault key rotation (issue #90), the optional last one.
             $stellvertreter,
