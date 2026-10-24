@@ -32,7 +32,9 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Http\StreamResponse;
 use App\Repository\AiProviderRepository;
+use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -42,6 +44,7 @@ use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\RoleRepository;
+use App\Repository\SettingRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
@@ -52,6 +55,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -1238,7 +1242,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
 
         self::assertMatchesRegularExpression('/<label for="pruefen-brutto">Brutto <span class="pflicht" aria-hidden="true">\*<\/span> <span class="marke marke-warnung">KI unsicher<\/span>\s+<input [^>]*name="brutto"[^>]*class="feld-unsicher"/', $seite);
-        self::assertMatchesRegularExpression('/<label for="pruefen-kategorie">Kategorie <span class="marke marke-warnung">KI unsicher<\/span>\s+<select id="pruefen-kategorie" name="kategorie" class="feld-unsicher">/', $seite);
+        self::assertMatchesRegularExpression('/<label for="pruefen-kategorie">Kategorie <span class="marke marke-warnung">KI unsicher<\/span>\s+<select id="pruefen-kategorie" name="kategorie" class="feld-unsicher"[^>]*>/', $seite);
         self::assertDoesNotMatchRegularExpression('/name="datum"[^>]*class="feld-unsicher"/', $seite, '0.9 is sure enough');
         self::assertDoesNotMatchRegularExpression('/name="lieferant_neu_name"[^>]*class="feld-unsicher"/', $seite);
         self::assertSame(2, substr_count($seite, 'class="feld-unsicher"'));
@@ -1371,6 +1375,97 @@ final class PruefungFlowTest extends DatabaseTestCase
         $erfasst = $this->beleg(DocumentStatus::InPruefung);
         $this->post('/app/belege/pruefen/' . $erfasst . '/ki-erneut', []);
         self::assertSame(0, $this->offeneKiJobs($erfasst));
+    }
+
+    // ------------------- category: rule > supplier > AI (M7-7, issue #49)
+
+    public function testARuleWinsOverTheSupplierDefaultWhichWinsOverTheAi(): void
+    {
+        $baelle = $this->kategorie('Bälle & Trainingsmaterial');
+        $ausruestung = $this->kategorie('Sportausrüstung & Trikots');
+        $lieferant = $this->supplierService()->anlegen($this->tresor, [
+            'name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'ibans' => self::IBAN, 'kategorie' => (string) $ausruestung,
+        ], new \DateTimeImmutable())->id;
+        $regel = $this->regeln()->anlegen($this->tresor, [
+            ...Buchungsregeln::leer(), 'bezeichnung' => 'Trainingsbälle', 'stichwort' => 'trainingsbälle', 'richtung' => 'ausgabe', 'kategorie' => (string) $baelle,
+        ], $this->userId, new \DateTimeImmutable());
+        $id = $this->beleg();
+        // The AI names the supplier by its IBAN and a third category, unsure.
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite);
+        self::assertMatchesRegularExpression('/<option value="' . $baelle . '" selected>/', $seite, 'the rule wins');
+        self::assertStringContainsString('<p class="feld-hilfe" id="pruefen-kategorie-herkunft">Vorgeschlagen von: Regel „Trainingsbälle“</p>', $seite);
+        self::assertMatchesRegularExpression('/<select id="pruefen-kategorie" name="kategorie" aria-describedby="pruefen-kategorie-herkunft">/', $seite, 'not yellow - the AI did not choose it');
+
+        // Without the rule the supplier's default category comes next ...
+        $this->regeln()->aktivieren($this->regeln()->finde($this->tresor, $regel) ?? self::fail('no rule'), false, new \DateTimeImmutable());
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<option value="' . $ausruestung . '" selected>/', $seite);
+        self::assertStringContainsString('Vorgeschlagen von: Standard-Kategorie des Lieferanten', $seite);
+
+        // ... and without that the AI, with its confidence and its doubt.
+        $this->pdo()->exec('UPDATE supplier SET default_category_id = NULL');
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '" selected>/', $seite);
+        self::assertStringContainsString('Vorgeschlagen von: KI 0,60', $seite);
+        self::assertMatchesRegularExpression('/<select id="pruefen-kategorie" name="kategorie" class="feld-unsicher" aria-describedby="pruefen-kategorie-herkunft">/', $seite);
+        self::assertSame(0, $this->anzahlBelege(), 'all of it a suggestion until a person saves');
+    }
+
+    public function testARuleMatchesTheCounterpartyOfANewSupplierTheAiRead(): void
+    {
+        $baelle = $this->kategorie('Bälle & Trainingsmaterial');
+        $this->regeln()->anlegen($this->tresor, [
+            ...Buchungsregeln::leer(), 'bezeichnung' => 'Sporthaus', 'gegenseite' => self::IBAN, 'kategorie' => (string) $baelle, 'richtung' => 'ausgabe',
+        ], $this->userId, new \DateTimeImmutable());
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/name="lieferant_neu_name"[^>]*value="Sporthaus Beispiel GmbH"/', $seite, 'not known yet');
+        self::assertMatchesRegularExpression('/<option value="' . $baelle . '" selected>/', $seite);
+        self::assertStringContainsString('Vorgeschlagen von: Regel „Sporthaus“', $seite);
+    }
+
+    public function testTwoCheckedReceiptsWithTheSameCategoryAreLearnt(): void
+    {
+        $baelle = $this->kategorie('Bälle & Trainingsmaterial');
+        $lieferant = $this->lieferant('Sporthaus Beispiel GmbH', SupplierRole::Lieferant, self::IBAN);
+        $erster = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $erster, $this->felder(['lieferant' => (string) $lieferant, 'kategorie' => (string) $baelle]));
+
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])]);
+        self::assertStringContainsString('Vorgeschlagen von: KI 0,60', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'one receipt is not enough');
+
+        $zweiter = $this->beleg(DocumentStatus::InPruefung);
+        $this->post('/app/belege/pruefen/' . $zweiter, $this->felder(['lieferant' => (string) $lieferant, 'kategorie' => (string) $baelle]));
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($zweiter));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<option value="' . $baelle . '" selected>/', $seite);
+        self::assertStringContainsString('Vorgeschlagen von: wie die letzten 2 geprüften Belege des Lieferanten', $seite);
+    }
+
+    public function testTheSuggestedCategoryCanBeChangedBeforeSaving(): void
+    {
+        $baelle = $this->kategorie('Bälle & Trainingsmaterial');
+        $this->regeln()->anlegen($this->tresor, [
+            ...Buchungsregeln::leer(), 'bezeichnung' => 'Trainingsbälle', 'stichwort' => 'Trainingsbälle', 'richtung' => 'ausgabe', 'kategorie' => (string) $baelle,
+        ], $this->userId, new \DateTimeImmutable());
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()]);
+        self::assertMatchesRegularExpression('/<option value="' . $baelle . '" selected>/', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->felder(['kategorie' => (string) $this->ausgabeKategorie, 'aktion' => 'speichern']));
+
+        self::assertSame((string) $this->ausgabeKategorie, (string) $this->rechnung($id)['category_id'], 'what the person chose');
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '" selected>/', $seite);
+        self::assertStringNotContainsString('Vorgeschlagen von', $seite, 'a saved receipt is no suggestion any more');
     }
 
     // ------------------------------------------------------------ helpers
@@ -1559,7 +1654,15 @@ final class PruefungFlowTest extends DatabaseTestCase
             new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
             $this->audit,
             KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto, $this->kiClient),
+            $this->regeln(),
         );
+    }
+
+    private function regeln(): Buchungsregeln
+    {
+        $pdo = $this->pdo();
+
+        return new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo));
     }
 
     private function festschreibung(): Festschreibung

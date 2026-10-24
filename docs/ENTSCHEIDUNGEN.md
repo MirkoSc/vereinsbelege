@@ -119,6 +119,22 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ✅ Eine Regelliste für Buchungen und Belege (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M7-7 (issue #49), 03 §8, 04 §5*
+
+Die Regeln aus M9-6 (`assignment_rule`) schlagen ihre Kategorie auch für
+Belege vor, statt eine zweite Regelart „Lieferant → Kategorie“ mit eigener
+Seite einzuführen: Wer „Telekom → Telefon“ für Buchungen einrichtet, will
+dasselbe für die Telekom-Rechnung. Stichwort gilt am Beleg für den Zweck,
+Gegenseite für Name/Aliasse/IBANs des Lieferanten. Für reine
+„Lieferant → Kategorie“-Fälle gibt es die Standard-Kategorie des
+Lieferanten. „Gelernt“ heißt: die **zwei neuesten** geprüften Belege des
+Lieferanten haben dieselbe Kategorie (nicht „irgendwann zwei gleiche“) –
+so folgt der Vorschlag einem Wechsel. Herkunft wird nur angezeigt, nicht
+gespeichert. Offen für Mirko: ob Regeln nur für Belege bzw. nur für
+Buchungen gelten können sollen, und ob die Herkunft am gespeicherten Beleg
+festgehalten werden soll (bräuchte eine Migration).
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Bank;
 
 use App\Domain\AssignmentRule;
+use App\Domain\Belegmerkmale;
 use App\Domain\Buchungsmerkmale;
 use App\Domain\Iban;
 
@@ -24,6 +25,11 @@ use App\Domain\Iban;
  * Of several active rules the oldest (lowest id) wins, for both of its
  * effects - one rule per booking keeps "which rule did this" a single
  * answer.
+ *
+ * The same rules suggest the category of a receipt (M7-7, issue #49,
+ * docs/spec/03-erfassung-und-ki.md section 8, trifftBeleg()): the keyword in
+ * the receipt's purpose, the counterparty against the supplier's IBANs or
+ * its name and aliases.
  */
 final class Regelabgleich
 {
@@ -65,6 +71,49 @@ final class Regelabgleich
         }
 
         return true;
+    }
+
+    /**
+     * Whether the rule matches a receipt (M7-7, issue #49): `stichwort`
+     * contained in the purpose; `gegenseite` an IBAN equal to one of the
+     * partner's, anything else contained in its name or one of its aliases.
+     * Same normalisation, same "both must match" and "no condition matches
+     * nothing" as for a booking.
+     */
+    public static function trifftBeleg(AssignmentRule $regel, Belegmerkmale $beleg): bool
+    {
+        if ($regel->stichwort === '' && $regel->gegenseite === '') {
+            return false;
+        }
+        if ($regel->direction !== null && $regel->direction->value !== $beleg->richtung->value) {
+            return false;
+        }
+        if ($regel->stichwort !== '' && !str_contains(self::normalisieren($beleg->zweck), self::normalisieren($regel->stichwort))) {
+            return false;
+        }
+        if ($regel->gegenseite === '') {
+            return true;
+        }
+
+        if ($regel->gegenseiteIstIban()) {
+            $iban = Iban::normalisieren($regel->gegenseite);
+            foreach ($beleg->partnerIbans as $partnerIban) {
+                if (Iban::normalisieren($partnerIban) === $iban) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        $muster = self::normalisieren($regel->gegenseite);
+        foreach ($beleg->partnerNamen as $name) {
+            if (str_contains(self::normalisieren($name), $muster)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

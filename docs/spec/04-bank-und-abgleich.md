@@ -395,6 +395,11 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
   Link, „(von Hand gesetzt)“ oder „(Standard für Ausgaben/Einnahmen)“; die
   Liste markiert „Regel“; die Regelliste nennt je Regel die Zahl der
   Buchungen, verlinkt auf `/app/buchungen?regel=<id>`.
+- **Belege** (M7-7, issue #49, 03 §8 „Stand M7-7“): Die Kategorie einer
+  Regel wird auch Belegen in der Prüfansicht vorgeschlagen (Stichwort im
+  Zweck, Gegenseite gegen Name/Aliasse/IBANs des Partners) – nur als
+  Vorschlag vor dem ersten Speichern, nichts wird an Belegen geschrieben.
+  Die Regelseite sagt das unter „Kategorie“.
 - **Setting** `buchung_einnahme_beleg_noetig` (Schalter auf der Regelseite,
   `bank.book`): gilt für neue Buchungen (Import, manuell „nach Richtung“) und
   als Ziel beim Zurücknehmen; bestehende Buchungen bleiben.
