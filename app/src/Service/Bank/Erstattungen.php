@@ -10,7 +10,9 @@ use App\Domain\BankTransactionDocStatus;
 use App\Domain\DocumentStatus;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
+use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
+use App\Domain\InvoiceType;
 use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Domain\ZuordnungMethode;
@@ -91,7 +93,10 @@ final readonly class Erstattungen
             return new Erstattungsvorschlag($buchung, $offen, 'Die Buchung nennt keine gültige IBAN der Gegenseite.');
         }
 
-        $kandidaten = $this->kandidaten($vault, $bi, $bereich);
+        // A receipt already allocated to this booking cannot get a second
+        // allocation of the same pair - it is not offered again.
+        $schon = array_map(static fn($z): int => $z->invoiceId, $this->zuordnung->fuerBuchung($vault, $transactionId));
+        [$kandidaten, $alleGelesen] = $this->kandidaten($vault, $bi, $bereich, $schon);
         $nachId = [];
         $betraege = [];
         foreach ($kandidaten as $kandidat) {
@@ -106,13 +111,14 @@ final readonly class Erstattungen
             null,
             $kandidaten,
             array_map(static fn(array $ids): array => array_map(static fn(int $id): Erstattungskandidat => $nachId[$id], $ids), $ergebnis->treffer),
-            $ergebnis->vollstaendig,
+            $ergebnis->vollstaendig && $alleGelesen,
         );
     }
 
     /**
      * Outgoing bookings to the submitter's IBAN of one open reimbursement
-     * that still miss a receipt (blind index in SQL) - the receipt-side
+     * that still miss a receipt (blind index in SQL; manual bookings carry
+     * no index and are found from the booking side only) - the receipt-side
      * view of the same link, for the scoring (M10-2) and the matching page
      * (M10-4). Empty when the receipt is no open reimbursement or names no
      * valid IBAN.
@@ -122,7 +128,8 @@ final readonly class Erstattungen
     public function buchungenFuerBeleg(Vault $vault, int $invoiceId, Zugriffsbereich $bereich): array
     {
         $beleg = $this->belege->find($invoiceId);
-        if ($beleg === null || !self::istOffeneErstattung($beleg) || !$bereich->erlaubt($beleg->costCenterId, $beleg->invoiceDate)) {
+        if ($beleg === null || !self::istOffeneErstattung($beleg) || !$bereich->erlaubt($beleg->costCenterId, $beleg->invoiceDate)
+            || $this->belege->dokumentStatus($beleg->documentId) === DocumentStatus::Abgelehnt) {
             return [];
         }
         $bi = $this->einreicherIndex($vault, $invoiceId);
@@ -209,6 +216,9 @@ final readonly class Erstattungen
             if ($buchung->direction !== BankTransactionDirection::Ausgabe || $bi === null) {
                 throw new BankRuleViolation('Eine Erstattung ist eine Ausgabe an die IBAN des Einreichers.');
             }
+            if (!in_array($record->docStatus, [BankTransactionDocStatus::Fehlt, BankTransactionDocStatus::Teilweise], true)) {
+                throw new BankRuleViolation('Für diese Buchung wird kein weiterer Beleg erwartet.');
+            }
 
             $betraege = [];
             $summe = 0;
@@ -242,13 +252,19 @@ final readonly class Erstattungen
     }
 
     /**
-     * @return list<Erstattungskandidat> oldest first
+     * @param list<int> $ausgenommen invoice ids already allocated to the booking
+     *
+     * @return array{0: list<Erstattungskandidat>, 1: bool} oldest first; false when MAX_OFFENE cut the read
      */
-    private function kandidaten(Vault $vault, string $bi, Zugriffsbereich $bereich): array
+    private function kandidaten(Vault $vault, string $bi, Zugriffsbereich $bereich, array $ausgenommen): array
     {
         $index = $vault->blindIndex();
         $kandidaten = [];
-        foreach ($this->erstattungen->offene($bereich, self::MAX_OFFENE) as $zeile) {
+        $zeilen = $this->erstattungen->offene($bereich, self::MAX_OFFENE);
+        foreach ($zeilen as $zeile) {
+            if (in_array($zeile['beleg']->id, $ausgenommen, true) || !self::istOffeneErstattung($zeile['beleg'])) {
+                continue;
+            }
             $daten = EinreichungsDaten::oeffnen($zeile['submissionId'], $zeile['dekSealed'], $zeile['payloadEnc'], $vault);
             $iban = self::ibanAus($daten);
             if ($iban === null || !hash_equals($index->forValue(KontoauszugImport::COUNTERPARTY_PURPOSE, $iban), $bi)) {
@@ -271,7 +287,7 @@ final readonly class Erstattungen
             );
         }
 
-        return $kandidaten;
+        return [$kandidaten, count($zeilen) < self::MAX_OFFENE];
     }
 
     /** Blind index of the IBAN a receipt's submitter gave for the transfer, or null. */
@@ -304,8 +320,14 @@ final readonly class Erstattungen
         return Iban::istGueltig($iban) ? $iban : null;
     }
 
+    /**
+     * Open, reimbursed by transfer, and settled by an outgoing booking: an
+     * expense that is no credit note (a credit note is settled by the
+     * opposite direction - App\Service\Bank\Zuordnung).
+     */
     private static function istOffeneErstattung(InvoiceRecord $beleg): bool
     {
-        return $beleg->paymentKind === Zahlungsweg::Erstattung && $beleg->paymentStatus->offen();
+        return $beleg->paymentKind === Zahlungsweg::Erstattung && $beleg->paymentStatus->offen()
+            && $beleg->direction === InvoiceDirection::Ausgabe && $beleg->docType !== InvoiceType::Gutschrift;
     }
 }

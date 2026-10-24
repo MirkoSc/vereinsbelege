@@ -73,6 +73,8 @@ final readonly class Kombinationssuche
             $vollstaendig = false;
         }
 
+        $treffer = array_slice($treffer, 0, $this->maxTreffer);
+
         return new Kombinationsergebnis(
             array_map(static fn(array $indizes): array => array_map(static fn(int $i): int => $ids[$i], $indizes), $treffer),
             $vollstaendig,
@@ -103,8 +105,8 @@ final readonly class Kombinationssuche
             if ($fehlen === 1) {
                 if ($neu === $ziel) {
                     $treffer[] = [...$gewaehlt, $i];
-                    if (count($treffer) >= $this->maxTreffer) {
-                        // More may exist: the person sees that the list is cut.
+                    if (count($treffer) > $this->maxTreffer) {
+                        // One more than shown: the person sees that the list is cut.
                         $abbruch = true;
 
                         return;

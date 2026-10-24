@@ -84,6 +84,14 @@ final class KombinationssucheTest extends TestCase
         self::assertFalse($ergebnis->vollstaendig);
     }
 
+    public function testExactlyAsManyHitsAsShownIsComplete(): void
+    {
+        $ergebnis = new Kombinationssuche(maxTreffer: 4)->suchen(500, [1 => 500, 2 => 100, 3 => 400, 4 => 200, 5 => 300, 6 => 150, 7 => 350]);
+
+        self::assertSame([[1], [2, 3], [4, 5], [6, 7]], $ergebnis->treffer);
+        self::assertTrue($ergebnis->vollstaendig);
+    }
+
     public function testAmountsAboveTheTargetAndNonPositiveOnesAreIgnored(): void
     {
         $ergebnis = new Kombinationssuche()->suchen(500, [1 => 0, 2 => -500, 3 => 900, 4 => 500]);

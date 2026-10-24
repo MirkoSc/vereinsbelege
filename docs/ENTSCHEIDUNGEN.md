@@ -358,8 +358,8 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   `bank_transaction.counterparty_bi` (`bank_transaction.counterparty`)
   verglichen. Von der Buchung aus werden dafür die offenen Erstattungen
   gelesen (höchstens 500, ältester Beleg zuerst – ein Verein hat ein paar
-  Dutzend); vom Beleg aus findet SQL die Buchungen direkt über
-  `counterparty_bi`. **Offen für Mirko:** Reicht das bei sehr vielen offenen
+  Dutzend; wird abgeschnitten, sagt die Seite das); vom Beleg aus findet
+  SQL die Buchungen direkt über `counterparty_bi`. **Offen für Mirko:** Reicht das bei sehr vielen offenen
   Erstattungen nicht mehr, ist ein gespeicherter Index am Beleg die
   Erweiterung.
 - **Nur „Erstattung per Überweisung“ mit gültiger IBAN** zählt; ein Beleg

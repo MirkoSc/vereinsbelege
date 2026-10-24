@@ -172,6 +172,7 @@ final class ErstattungFlowTest extends DatabaseTestCase
         $this->erstattung(1000, 'Anna Auslage', self::IBAN_ANNA, art: 'bar');
         $this->erstattung(1000, 'Anna Auslage', self::IBAN_ANNA, status: DocumentStatus::Abgelehnt);
         $this->erstattung(1000, 'Anna Auslage', 'DE00123', datum: '2026-01-05');
+        $this->erstattung(1000, 'Anna Auslage', self::IBAN_ANNA, typ: InvoiceType::Gutschrift);
         $buchung = $this->buchung(-1000, self::IBAN_ANNA);
 
         $vorschlag = $this->erstattungen()->vorschlag($this->tresor, $buchung, Zugriffsbereich::unbeschraenkt()) ?? self::fail();
@@ -209,6 +210,22 @@ final class ErstattungFlowTest extends DatabaseTestCase
         self::assertSame([[$a, $b]], array_map(self::ids(...), $vorschlag->kombinationen));
         $this->erstattungen()->zuordnen($this->tresor, $buchung, [$a, $b], Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
         self::assertSame('zugeordnet', $this->zeile('bank_transaction', $buchung)['doc_status']);
+    }
+
+    public function testAReceiptAlreadyAllocatedToThisTransferIsNotOfferedAgain(): void
+    {
+        $teil = $this->erstattung(3000, 'Anna Auslage', self::IBAN_ANNA, datum: '2026-01-10');
+        $rest = $this->erstattung(1000, 'Anna Auslage', self::IBAN_ANNA);
+        $buchung = $this->buchung(-4000, self::IBAN_ANNA);
+        ZuordnungFabrik::bauen($this->pdo(), $this->audit)->zuordnen($this->tresor, $teil, $buchung, 1000, ZuordnungMethode::Manuell, null, null, $this->userId, self::IP, new \DateTimeImmutable());
+
+        $vorschlag = $this->erstattungen()->vorschlag($this->tresor, $buchung, Zugriffsbereich::unbeschraenkt()) ?? self::fail();
+
+        // 2 000 open on the receipt + 1 000 would make the 3 000 left - but
+        // the pair receipt/booking exists already.
+        self::assertSame(3000, $vorschlag->offen);
+        self::assertSame([$rest], self::ids($vorschlag->kandidaten));
+        self::assertSame([], $vorschlag->kombinationen);
     }
 
     public function testAllocatingChecksIbanSumScopeAndWritesNothingOnRefusal(): void
@@ -299,6 +316,7 @@ final class ErstattungFlowTest extends DatabaseTestCase
         DocumentStatus $status = DocumentStatus::Geprueft,
         string $datum = '2026-02-14',
         string $nummer = '',
+        InvoiceType $typ = InvoiceType::Rechnung,
     ): int {
         ++$this->laufnummer;
         $einreichungen = new SubmissionRepository($this->pdo());
@@ -330,7 +348,7 @@ final class ErstattungFlowTest extends DatabaseTestCase
         $rechnungen = new InvoiceRepository($this->pdo());
         $id = $rechnungen->insert(
             $dokument,
-            new InvoiceStructure(InvoiceType::Rechnung, InvoiceDirection::Ausgabe, null, new \DateTimeImmutable($datum), null, null, null, null, null, $weg),
+            new InvoiceStructure($typ, InvoiceDirection::Ausgabe, null, new \DateTimeImmutable($datum), null, null, null, null, null, $weg),
             $this->tresor->sealDataKey($key),
             null,
             $this->userId,
