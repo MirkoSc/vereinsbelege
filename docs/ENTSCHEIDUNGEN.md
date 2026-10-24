@@ -119,7 +119,7 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
-## E-19 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
+## E-20 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
 Der Kameradialog zeigt das live erkannte Viereck und „Beleg erkannt.“, löst
 aber **ab Werk nicht selbst aus** – ein Ankreuzfeld im Dialog schaltet das

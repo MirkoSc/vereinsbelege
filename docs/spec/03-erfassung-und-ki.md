@@ -383,7 +383,7 @@ geprüfte Funktionen (`tests/js/kamera.test.js`):
   es stabil ist; dazu die Statuszeile „Beleg erkannt.“ (`role=status`,
   `liveHinweis`).
 - **Auslösen:** manuell immer möglich, auch ohne Viereck. Automatisches
-  Auslösen ist ein Ankreuzfeld im Dialog, **standardmäßig aus**, gilt bis zum
+  Auslösen ist ein Ankreuzfeld im Dialog (E-20), **standardmäßig aus**, gilt bis zum
   Neuladen der Seite (nicht gespeichert, `autocomplete="off"`); angekreuzt
   löst die erste stabile Erkennung aus. Nach einem Klick auf „Kamera-App
   verwenden“ (dessen Dateiauswahl offen sein kann) löst der Dialog nicht
