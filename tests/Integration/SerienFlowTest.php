@@ -377,8 +377,8 @@ final class SerienFlowTest extends DatabaseTestCase
         $lieferanten->markiereZusammengefuehrt($this->miete, $ziel, new \DateTimeImmutable());
 
         self::assertSame($ziel, $this->serien()[0]->supplierId);
-        // The receipts still point at the merged supplier (as locked ones would) - detection resolves it.
-        $this->geprueft('2026-04-01', '450,00');
+        // The older receipts still point at the merged supplier where locked - detection resolves it.
+        $this->geprueft('2026-04-01', '450,00', $ziel);
         $this->allesAbarbeiten();
         self::assertCount(1, $this->serien());
         self::assertCount(4, $this->mitglieder($this->serien()[0]->id));
@@ -487,9 +487,9 @@ final class SerienFlowTest extends DatabaseTestCase
     private function aktionen(string $praefix): array
     {
         $eintraege = [];
-        foreach (new AuditLogRepository($this->pdo())->all() as $eintrag) {
+        foreach (new AuditLogRepository($this->pdo())->after(0, 1000) as $eintrag) {
             if (str_starts_with($eintrag->action, $praefix)) {
-                $eintraege[] = [$eintrag->action, $eintrag->details];
+                $eintraege[] = [$eintrag->action, $this->audit->details($eintrag, $this->tresor) ?? []];
             }
         }
 
