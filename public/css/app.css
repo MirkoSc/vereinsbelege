@@ -1368,6 +1368,43 @@ body.bereich-app:has(.pruefansicht) {
     pointer-events: none;
 }
 
+/* Live erkanntes Viereck (issue #146): SVG über dem ganzen Video, die
+   Punkte setzt public/js/scanner/kamera.js als Attribut (overlayPunkte) –
+   kein Inline-Style. Gestrichelt, solange es noch wandert, durchgezogen,
+   sobald es ruhig steht („Beleg erkannt“). */
+.kamera-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.kamera-overlay[hidden] {
+    display: none;
+}
+
+.kamera-overlay polygon {
+    fill: rgba(255, 255, 255, 0.12);
+    stroke: #ffd400;
+    stroke-width: 3;
+    stroke-dasharray: 8 6;
+    stroke-linejoin: round;
+}
+
+.kamera-overlay.kamera-overlay-stabil polygon {
+    stroke: #2ecc71;
+    stroke-dasharray: none;
+}
+
+/* Statuszeile „Beleg erkannt“ (role=status): bleibt im Layout, auch leer,
+   damit die Knöpfe darunter nicht springen. */
+.kamera-status {
+    min-height: 1.5em;
+    margin: 0.25rem 0;
+    font-weight: 600;
+}
+
 /* Knopf „Zuschneiden“ unter einer Seiten-Karte (public/js/einreichen.js,
    public/js/erfassen.js) - volle Kartenbreite, damit er bei 360 px
    genauso groß zu treffen ist wie die ↑/↓/✕-Knöpfe. */

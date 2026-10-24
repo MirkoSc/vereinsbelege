@@ -119,6 +119,18 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
+Der Kameradialog zeigt das live erkannte Viereck und „Beleg erkannt.“, löst
+aber **ab Werk nicht selbst aus** – ein Ankreuzfeld im Dialog schaltet das
+ein; es gilt bis zum Neuladen der Seite (nicht gespeichert). Grund: die Trefferquote der
+Kantenerkennung ist noch nicht belegt (E-03, #142); ein Fehlauslösen auf
+eine Tischkante wäre ärgerlicher als ein Tipp auf „Auslösen“. Eckwerte:
+Erkennung höchstens alle 400 ms auf 320 px Breite, „stabil“ = 3
+aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
+überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
+getestet wurde (Standard „an“? Einstellung merken?).
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
