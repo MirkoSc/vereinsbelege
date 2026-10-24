@@ -173,3 +173,13 @@ Die 9 Fotos für diese Messung liegen **nicht** in diesem Repository (CLAUDE.md
 Beträge, Lieferanten und teils Namen/Adressen. Auswertung lief einmalig
 lokal in der Bearbeitungssession; weder die Fotos noch daraus erzeugte
 Bilder wurden committet.
+
+## E-10 Nachtrag: HEIC (Issue #147) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+HEIC/HEIF wird serverseitig als Original zugelassen (Magic Bytes, nicht
+Endung/MIME); das im Browser erzeugte JPEG ist die aufbereitete Fassung.
+E-10 (Original bleibt immer erhalten) gilt damit unverändert, statt dass das
+konvertierte JPEG zum „Original" wird. Konvertierung nur mit Browser-eigenen
+Dekodern; keine WASM-Bibliothek, weil sie `'wasm-unsafe-eval'` in der CSP
+bräuchte. Wo der Browser HEIC nicht lesen kann, wird das Original trotzdem
+eingereicht und ein Hinweis gezeigt. Details: Spec 03 §1 „HEIC".

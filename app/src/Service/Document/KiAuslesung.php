@@ -407,13 +407,14 @@ final readonly class KiAuslesung implements ExternerJobHandler
                 }
                 continue;
             }
-            if ($mime !== MagicBytes::JPEG && $mime !== MagicBytes::PNG) {
+            if ($mime !== MagicBytes::JPEG && $mime !== MagicBytes::PNG && $mime !== MagicBytes::HEIC) {
                 continue;
             }
             $verarbeitet = $document->processedBlobId($index);
             if ($verarbeitet !== null && $this->mimeType($verarbeitet, $vault) === MagicBytes::JPEG) {
                 $quellen[] = [$verarbeitet, false];
-            } else {
+            } elseif ($mime !== MagicBytes::HEIC) {
+                // A HEIC original without a JPEG is no input for the model.
                 $quellen[] = [$originalId, $mime === MagicBytes::PNG];
             }
         }

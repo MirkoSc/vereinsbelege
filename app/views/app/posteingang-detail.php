@@ -128,6 +128,10 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                             <a class="knopf" href="<?= e($url) ?>" download>
                                 <?= e('E-Rechnung (XML) herunterladen (Seite ' . $seite['seite'] . ')') ?>
                             </a>
+                        <?php elseif ($seite['mime'] === MagicBytes::HEIC): ?>
+                            <a class="knopf" href="<?= e($url) ?>" download>
+                                <?= e('HEIC-Foto herunterladen (Seite ' . $seite['seite'] . ')') ?>
+                            </a>
                         <?php else: ?>
                             <a href="<?= e($url) ?>" target="_blank" rel="noopener">
                                 <img src="<?= e($url) ?>" alt="<?= e('Seite ' . $seite['seite']) ?>" loading="lazy">

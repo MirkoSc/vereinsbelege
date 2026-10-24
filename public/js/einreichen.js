@@ -36,12 +36,10 @@ function seitenEntfernen(seiten, id) {
 }
 
 /**
- * HEIC/HEIF cannot be read by the browser's own image decoders reliably
- * enough to convert here (docs/spec/03-erfassung-und-ki.md section 1: "wird
- * im Browser, wenn möglich, konvertiert, sonst verständliche
- * Fehlermeldung") - this app takes the second path and says so clearly,
- * rather than uploading a file the server's magic-byte check would reject
- * anyway.
+ * HEIC/HEIF (docs/spec/03-erfassung-und-ki.md section 1): converted to JPEG
+ * in the browser where it can decode it (heicZuJpeg() in
+ * public/js/scanner/scanner.js), otherwise a clear hint - the HEIC file is
+ * uploaded as the original either way.
  */
 function istHeic(datei) {
     const typ = (datei && datei.type) || '';
@@ -49,6 +47,9 @@ function istHeic(datei) {
 
     return typ === 'image/heic' || typ === 'image/heif' || /\.hei[cf]$/i.test(name);
 }
+
+/** Shown when a HEIC photo could not be converted in this browser. */
+const HEIC_HINWEIS = 'HEIC wird von diesem Browser nicht unterstützt. Das Foto wurde trotzdem eingereicht, kann aber nicht automatisch aufbereitet werden – bitte als JPEG aufnehmen oder teilen (iPhone: Einstellungen › Kamera › Formate › „Maximale Kompatibilität“).';
 
 /**
  * The processed version of every page, parallel to the originals
@@ -430,11 +431,6 @@ function initEinreichen() {
 
             return;
         }
-        if (istHeic(datei)) {
-            zeigeUploadFehler('HEIC-Bilder werden nicht unterstützt. Bitte als JPEG oder PNG wählen, oder das Foto direkt aufnehmen.');
-
-            return;
-        }
         if (datei.size > maxDateiBytes) {
             zeigeUploadFehler('Die Datei ist zu groß (höchstens ' + maxDateiMb + ' MB je Datei).');
 
@@ -442,11 +438,12 @@ function initEinreichen() {
         }
 
         zeigeUploadFehler('');
-        const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0;
+        const heic = istHeic(datei);
+        const kannVorschau = typeof URL !== 'undefined' && datei.type.indexOf('image/') === 0 && !heic;
         const scanbar = typeof istScanbar === 'function' && istScanbar(datei);
         const seite = {
             id: 'seite-' + naechsteId++,
-            status: kannScan && scanbar ? 'scan' : 'laedt',
+            status: kannScan && (scanbar || heic) ? 'scan' : 'laedt',
             blobId: null,
             aufbereitetId: null,
             // The original stays in memory for "Zuschneiden".
@@ -461,6 +458,7 @@ function initEinreichen() {
         try {
             const ergebnis = await seiteVerarbeiten(datei, {
                 kann: kannScan,
+                heicWandeln: typeof heicZuJpeg === 'function' ? heicZuJpeg : undefined,
                 aufbereiten: function (bild) {
                     return inEditorReihe(function () {
                         return scannerOeffnen(scannerDialog, bild);
@@ -486,6 +484,12 @@ function initEinreichen() {
             seite.blobId = ergebnis.blobId;
             seite.aufbereitetId = ergebnis.aufbereitetId;
             seite.serverFallback = ergebnis.serverFallback;
+            if (ergebnis.scanDatei !== null) {
+                seite.datei = ergebnis.scanDatei;
+            }
+            if (ergebnis.heicNichtLesbar) {
+                zeigeUploadFehler(HEIC_HINWEIS);
+            }
             if (ergebnis.aufbereitet !== null) {
                 vorschauFreigeben(seite);
                 seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
@@ -629,5 +633,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, aufbereitetListe, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
+    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, HEIC_HINWEIS, aufbereitetListe, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
 }

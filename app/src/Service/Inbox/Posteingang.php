@@ -58,6 +58,7 @@ final readonly class Posteingang
         MagicBytes::JPEG => 'jpg',
         MagicBytes::PNG => 'png',
         MagicBytes::PDF => 'pdf',
+        MagicBytes::HEIC => 'heic',
         MagicBytes::XML => 'xml',
     ];
 
