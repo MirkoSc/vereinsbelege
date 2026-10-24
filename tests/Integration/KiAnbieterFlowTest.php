@@ -17,6 +17,7 @@ use App\Http\Response;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\RoleRepository;
@@ -30,6 +31,8 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Ki\KiAnbieter;
 use App\Service\Ki\KiAnbieterService;
+use App\Service\Ki\KiAufruf;
+use App\Service\Ki\KiAufrufStatus;
 use App\Service\Ki\KiFaehigkeiten;
 use App\Service\Ki\KiVorlage;
 use App\Service\Ki\Verbindungstest;
@@ -111,6 +114,31 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         self::assertFalse($openai->nutzbar(), 'no key = AI switched off');
         self::assertSame($openai->id, $this->anbieter->standard()?->id);
         self::assertNull($this->anbieter->apiKey($openai->id));
+    }
+
+    public function testTheCallLogPageGroupsCallsPerProviderWithoutBusinessData(): void
+    {
+        $leer = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-protokoll'));
+        self::assertSame(200, $leer->status);
+        self::assertStringContainsString('keine KI-Aufrufe', $leer->body);
+
+        $openai = $this->openai();
+        $log = new AiCallLogRepository($this->pdo());
+        $jetzt = new \DateTimeImmutable();
+        $log->insert(new KiAufruf($openai->id, $openai->name, 'gpt-test', 'extract-v1', false, KiAufrufStatus::Gueltig, 1200, 300, 1500, 2400, 200, 'GEHEIME ROHANTWORT'), $jetzt);
+        $log->insert(new KiAufruf($openai->id, $openai->name, 'gpt-test', 'extract-v1', true, KiAufrufStatus::HttpFehler, null, null, null, 800, 503, null, true), $jetzt);
+
+        $antwort = $this->dispatch(new Request(HttpMethod::Get, '/admin/ki-protokoll'));
+
+        self::assertSame(200, $antwort->status);
+        self::assertStringContainsString('2 Aufrufe', $antwort->body);
+        self::assertStringContainsString('davon 1 gültig und 1 mit Fehler', $antwort->body);
+        self::assertStringContainsString('1.500 Tokens', $antwort->body);
+        self::assertStringContainsString('gpt-test', $antwort->body);
+        self::assertStringContainsString('Reparatur', $antwort->body);
+        self::assertStringContainsString('HTTP 503', $antwort->body);
+        self::assertStringNotContainsString('GEHEIME ROHANTWORT', $antwort->body);
+        self::assertStringContainsString('href="/admin/ki-protokoll" aria-current="page"', $antwort->body);
     }
 
     public function testTheListSaysThatAiIsOffWithoutAKey(): void
@@ -802,6 +830,7 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
             new KiAnbieterService($this->anbieter),
             new Verbindungstest($this->http),
             new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), $this->crypto),
+            new AiCallLogRepository($pdo),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

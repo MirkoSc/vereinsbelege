@@ -9,6 +9,7 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Ki\KiAnbieter;
@@ -41,6 +42,10 @@ use App\View\View;
  */
 final readonly class KiAnbieterController
 {
+    private const int PROTOKOLL_TAGE = 30;
+
+    private const int PROTOKOLL_ZEILEN = 25;
+
     private const string FALLBACK_ENTFALLEN = ' Es ist nicht mehr nutzbar (inaktiv oder ohne Key) – das Fallback-Profil ist deshalb entfernt.';
 
     public function __construct(
@@ -50,6 +55,7 @@ final readonly class KiAnbieterController
         private KiAnbieterService $service,
         private Verbindungstest $verbindungstest,
         private AuditLog $audit,
+        private AiCallLogRepository $protokoll,
     ) {
     }
 
@@ -62,6 +68,29 @@ final readonly class KiAnbieterController
             'flash' => $this->session->pullFlash(),
             'profile' => $this->anbieter->all(),
             'vorlagen' => KiVorlage::cases(),
+        ], Area::Admin));
+    }
+
+    /**
+     * The AI call log (M7-8, issue #50): per provider the totals of the last
+     * PROTOKOLL_TAGE days and its newest calls. Read only; the log holds no
+     * business data (migrations/032_ai_call_log.sql).
+     */
+    public function protokoll(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        $seit = new \DateTimeImmutable('-' . self::PROTOKOLL_TAGE . ' days');
+        $gruppen = array_map(fn(array $summe): array => [
+            ...$summe,
+            'aufrufeListe' => $this->protokoll->neueste($summe['providerId'], $summe['name'], self::PROTOKOLL_ZEILEN),
+        ], $this->protokoll->summen($seit));
+
+        return Response::html($this->view->render('admin/ki-protokoll', [
+            'title' => 'KI-Protokoll',
+            'flash' => $this->session->pullFlash(),
+            'gruppen' => $gruppen,
+            'tage' => self::PROTOKOLL_TAGE,
+            'zeilen' => self::PROTOKOLL_ZEILEN,
         ], Area::Admin));
     }
 
