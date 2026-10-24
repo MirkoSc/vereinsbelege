@@ -6,6 +6,7 @@ use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
+use App\Admin\NextcloudSettingsController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -165,6 +166,10 @@ use App\View\View;
  * @param \Closure(): ArchivImportController $archivImport built lazily, same
  *        reason as $mail: only the archive import needs the database (issue
  *        #77/M12-3).
+ * @param (\Closure(): NextcloudSettingsController)|null $nextcloudAdmin
+ *        built lazily, same reason as $mail (issue #95). Optional and last,
+ *        so route tables built for other pages need not name it; without it
+ *        the routes exist but answer with an error.
  */
 return static function (
     Router $router,
@@ -206,7 +211,10 @@ return static function (
     \Closure $buchungsregeln,
     \Closure $export,
     \Closure $archivImport,
+    ?\Closure $nextcloudAdmin = null,
 ): void {
+    $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
+
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
     // guard is built once per request and only where a protected route was
@@ -604,6 +612,11 @@ return static function (
     $post('/app/export/lauf/{id:\d+}/zip', $exportZip, static fn(Request $r, array $params) => $export()->zip($r, $params));
     $post('/app/export/lauf/{id:\d+}/bestaetigen', $exportZip, static fn(Request $r, array $params) => $export()->bestaetigen($r, $params));
     $post('/app/export/lauf/{id:\d+}/zuruecksetzen', $exportZip, static fn(Request $r, array $params) => $export()->zuruecksetzen($r, $params));
+    // Filing a run into the club's Nextcloud (issue #95): start, then one
+    // JSON step at a time from public/js/nextcloud.js. `export.zip` without
+    // a scope only - the controller answers 404 to a scoped role.
+    $post('/app/export/lauf/{id:\d+}/nextcloud', $exportZip, static fn(Request $r, array $params) => $export()->nextcloudStarten($r, $params));
+    $post('/app/export/lauf/{id:\d+}/nextcloud/schritt', $exportZip->alsApi(), static fn(Request $r, array $params) => $export()->nextcloudSchritt($r, $params));
 
     // Archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
     // export.md section 3). Permission: `archive.import` (Admin, Finanzen)
@@ -775,6 +788,13 @@ return static function (
     $get('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->page($r));
     $post('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->save($r));
     $post('/admin/export/vorschau', $einstellungen, static fn(Request $r) => $exportAdmin()->vorschau($r));
+    // Nextcloud target of the export (05 §2, issue #95): WebDAV address,
+    // user, app password - vault data, so the page needs the unlocked
+    // vault. Permission: `admin.settings`; CSRF on all writes.
+    $get('/admin/export/nextcloud', $einstellungen, static fn(Request $r) => $nextcloudAdmin()->page($r));
+    $post('/admin/export/nextcloud', $einstellungen, static fn(Request $r) => $nextcloudAdmin()->save($r));
+    $post('/admin/export/nextcloud/testen', $einstellungen, static fn(Request $r) => $nextcloudAdmin()->testen($r));
+    $post('/admin/export/nextcloud/entfernen', $einstellungen, static fn(Request $r) => $nextcloudAdmin()->entfernen($r));
 
     // Update and maintenance. Permission: `admin.system` ("Backup, Update,
     // Wartung", 01 section 4); CSRF on all writes.
