@@ -28,6 +28,7 @@ use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Camt053Parser;
 use App\Service\Bank\Kontoangabe;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -134,7 +135,7 @@ final readonly class KontoauszugImport
 
         $blob = $this->blobs->storeString(
             $inhalt,
-            new BlobMeta($format->istMt940() ? 'text/plain' : 'text/csv', self::dateiname($dateiname)),
+            new BlobMeta(self::dateityp($format, $inhalt), self::dateiname($dateiname)),
             $vault,
             BlobService::configuredStorage($this->settings),
         );
@@ -576,6 +577,15 @@ final readonly class KontoauszugImport
         $daten = json_decode($json, true, 4, JSON_THROW_ON_ERROR);
 
         return is_array($daten) && is_int($daten['amount'] ?? null) ? $daten['amount'] : 0;
+    }
+
+    private static function dateityp(ImportFormat $format, string $inhalt): string
+    {
+        return match (true) {
+            $format->istMt940() => 'text/plain',
+            $format->istCamt053() => Camt053Parser::istZip($inhalt) ? 'application/zip' : 'application/xml',
+            default => 'text/csv',
+        };
     }
 
     /** Only the base name, at most 200 characters - it is shown, never used as a path. */

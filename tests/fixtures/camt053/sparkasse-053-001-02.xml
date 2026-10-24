@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>MSG-02-0001</MsgId><CreDtTm>2024-03-13T06:00:00+01:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>2024031100012</Id><ElctrncSeqNb>12</ElctrncSeqNb><CreDtTm>2024-03-13T06:00:00+01:00</CreDtTm>
+      <Acct><Id><IBAN>DE09123456780001234567</IBAN></Id><Ccy>EUR</Ccy><Svcr><FinInstnId><BIC>TESTDEFFXXX</BIC></FinInstnId></Svcr></Acct>
+      <Bal><Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1523.40</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-03-08</Dt></Dt></Bal>
+      <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1607.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-03-11</Dt></Dt></Bal>
+      <Ntry>
+        <Amt Ccy="EUR">45.90</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-03-11</Dt></BookgDt><ValDt><Dt>2024-03-11</Dt></ValDt><AcctSvcrRef>2024031100001</AcctSvcrRef>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>IDDT</Cd><SubFmlyCd>ESDD</SubFmlyCd></Fmly></Domn><Prtry><Cd>NDDT+105+931</Cd><Issr>DK</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>RE-2024-0311-77</EndToEndId><MndtId>M-0815</MndtId></Refs>
+            <RltdPties><Cdtr><Nm>Getränke Müller GmbH &amp; Co. KG Musterstadt</Nm><Id><PrvtId><Othr><Id>DE98ZZZ09999999999</Id><SchmeNm><Prtry>SEPA</Prtry></SchmeNm></Othr></PrvtId></Id></Cdtr><CdtrAcct><Id><IBAN>DE40120505550001234567</IBAN></Id></CdtrAcct></RltdPties>
+            <RltdAgts><CdtrAgt><FinInstnId><BIC>GENODEF1XXX</BIC></FinInstnId></CdtrAgt></RltdAgts>
+            <RmtInf><Ustrd>Getränke Müller Rechnung 4711 Vereinsheim Kd-Nr 1234</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>FOLGELASTSCHRIFT</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">250.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-03-11</Dt></BookgDt><ValDt><Dt>2024-03-11</Dt></ValDt>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>RCDT</Cd><SubFmlyCd>ESCT</SubFmlyCd></Fmly></Domn><Prtry><Cd>NTRF+166+804</Cd><Issr>DK</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
+            <RltdPties><Dbtr><Nm>Schäfer, Jürgen</Nm></Dbtr><DbtrAcct><Id><IBAN>DE23120906400007654321</IBAN></Id></DbtrAcct></RltdPties>
+            <RltdAgts><DbtrAgt><FinInstnId><BIC>BYLADEM1XXX</BIC></FinInstnId></DbtrAgt></RltdAgts>
+            <RmtInf><Ustrd>Spende Jugendabteilung Sommerfest 2024</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>GUTSCHR. UEBERWEISUNG</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">120.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-03-11</Dt></BookgDt><ValDt><Dt>2024-03-11</Dt></ValDt>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>ICDT</Cd><SubFmlyCd>ESCT</SubFmlyCd></Fmly></Domn><Prtry><Cd>NTRF+116+9310</Cd><Issr>DK</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>UEB-2024-031</EndToEndId></Refs>
+            <RltdPties><UltmtDbtr><Nm>Förderverein Sportfreunde</Nm></UltmtDbtr><Cdtr><Nm>Weiß, Anna-Lena</Nm></Cdtr><CdtrAcct><Id><IBAN>DE52120300001111111111</IBAN></Id></CdtrAcct></RltdPties>
+            <RltdAgts><CdtrAgt><FinInstnId><BIC>COBADEFFXXX</BIC></FinInstnId></CdtrAgt></RltdAgts>
+            <RmtInf><Ustrd>Übungsleiterpauschale März 2024 Turnen Kinder</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>ONLINE-UEBERWEISUNG</AddtlNtryInf>
+      </Ntry>
+    </Stmt>
+    <Stmt>
+      <Id>2024031200013</Id><ElctrncSeqNb>13</ElctrncSeqNb><CreDtTm>2024-03-13T06:00:00+01:00</CreDtTm>
+      <Acct><Id><IBAN>DE09123456780001234567</IBAN></Id><Ccy>EUR</Ccy><Svcr><FinInstnId><BIC>TESTDEFFXXX</BIC></FinInstnId></Svcr></Acct>
+      <Bal><Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1607.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-03-11</Dt></Dt></Bal>
+      <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1649.90</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-03-12</Dt></Dt></Bal>
+      <Ntry>
+        <Amt Ccy="EUR">45.90</Amt><CdtDbtInd>CRDT</CdtDbtInd><RvslInd>true</RvslInd><Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-03-12</Dt></BookgDt><ValDt><Dt>2024-03-12</Dt></ValDt>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>IDDT</Cd><SubFmlyCd>UPDD</SubFmlyCd></Fmly></Domn><Prtry><Cd>NRTI+109+931</Cd><Issr>DK</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>RE-2024-0311-77</EndToEndId><MndtId>M-0815</MndtId></Refs>
+            <RltdPties><Cdtr><Nm>Getränke Müller GmbH &amp; Co. KG Musterstadt</Nm><Id><PrvtId><Othr><Id>DE98ZZZ09999999999</Id><SchmeNm><Prtry>SEPA</Prtry></SchmeNm></Othr></PrvtId></Id></Cdtr><CdtrAcct><Id><IBAN>DE40120505550001234567</IBAN></Id></CdtrAcct></RltdPties>
+            <RltdAgts><CdtrAgt><FinInstnId><BIC>GENODEF1XXX</BIC></FinInstnId></CdtrAgt></RltdAgts>
+            <RmtInf><Ustrd>Rücklastschrift Getränke Müller Rechnung 4711</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>RUECKLASTSCHRIFT</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="EUR">3.50</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts>
+        <BookgDt><Dt>2024-03-12</Dt></BookgDt><ValDt><Dt>2024-03-12</Dt></ValDt>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>CCRD</Cd><SubFmlyCd>CHRG</SubFmlyCd></Fmly></Domn><Prtry><Cd>NCHG+805+6200</Cd><Issr>DK</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
+            <RmtInf><Ustrd>Entgelt Kontoführung</Ustrd><Ustrd>Abrechnung 03/2024</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>ENTGELTABSCHLUSS</AddtlNtryInf>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

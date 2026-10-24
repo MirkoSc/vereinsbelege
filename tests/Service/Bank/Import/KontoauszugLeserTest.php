@@ -8,12 +8,13 @@ use App\Service\Bank\Import\ImportFormat;
 use App\Service\Bank\Import\ImportPosten;
 use App\Service\Bank\Import\KontoauszugLeser;
 use App\Service\Bank\Import\KontoauszugUnlesbar;
+use App\Tests\Service\Bank\Camt053ParserTest;
 use PHPUnit\Framework\TestCase;
 
 /**
  * Reading a statement file for the import (issue #62/M9-4, docs/spec/
- * 04-bank-und-abgleich.md section 4): format detection, one shape for
- * MT940 and CSV, chronological order, refusals that never quote the file.
+ * 04-bank-und-abgleich.md section 4, issue #91): format detection, one
+ * shape for MT940, CAMT.053 and CSV, chronological order, refusals that never quote the file.
  */
 final class KontoauszugLeserTest extends TestCase
 {
@@ -41,6 +42,90 @@ final class KontoauszugLeserTest extends TestCase
             self::assertSame('csv:' . ImportTestDaten::SPARKASSE_ID, $leser->erkenne(ImportTestDaten::datei(ImportTestDaten::CSV . $datei), $profile)->toString(), $datei);
         }
         self::assertSame('csv:' . ImportTestDaten::VR_BANK_ID, $leser->erkenne(ImportTestDaten::datei(ImportTestDaten::CSV . 'vrbank.csv'), $profile)->toString());
+        foreach (['sparkasse-053-001-02.xml', 'vrbank-053-001-08.xml', 'tagesauszuege-053-001-04.zip'] as $datei) {
+            self::assertSame('camt053', $leser->erkenne(ImportTestDaten::datei(ImportTestDaten::CAMT . $datei), $profile)->toString(), $datei);
+        }
+    }
+
+    public function testAZipOfMt940FilesIsNotTakenForMt940(): void
+    {
+        $zip = Camt053ParserTest::zip(['auszug.sta' => ImportTestDaten::datei(ImportTestDaten::MT940 . 'sparkasse.sta')]);
+        $leser = new KontoauszugLeser();
+
+        self::assertSame('camt053', $leser->erkenne($zip, ImportTestDaten::profile())->toString());
+        $this->expectException(KontoauszugUnlesbar::class);
+        $this->expectExceptionMessage('Das ZIP enthält keine XML-Datei.');
+        $leser->lies($zip, ImportFormat::camt053(), []);
+    }
+
+    public function testACamt053FileBecomesPostingsLikeMt940(): void
+    {
+        $leser = new KontoauszugLeser();
+        $camt = $leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'), ImportFormat::camt053(), []);
+        $mt940 = $leser->lies(ImportTestDaten::datei(ImportTestDaten::MT940 . 'sparkasse.sta'), ImportFormat::mt940(), []);
+
+        self::assertSame('DE09123456780001234567', $camt->konto?->iban);
+        self::assertSame('DE09123456780001234567', KontoauszugLeser::kontokennung($camt->konto));
+        self::assertCount(2, $camt->auszuege);
+        self::assertTrue($camt->hatSalden());
+        self::assertEquals($mt940->zeitraum(), $camt->zeitraum());
+        self::assertSame(
+            array_map(static fn(ImportPosten $p): array => [$p->nr, $p->umsatz->cent, $p->waehrung, $p->saldoNachCent, $p->zeile], $mt940->posten),
+            array_map(static fn(ImportPosten $p): array => [$p->nr, $p->umsatz->cent, $p->waehrung, $p->saldoNachCent, $p->zeile], $camt->posten),
+        );
+        self::assertSame(0, $camt->vorgemerkt);
+        self::assertSame([], $camt->fehler);
+    }
+
+    public function testPendingCamtEntriesAreCountedAndAZipBecomesOneFile(): void
+    {
+        $leser = new KontoauszugLeser();
+
+        self::assertSame(1, $leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'vrbank-053-001-08.xml'), ImportFormat::camt053(), [])->vorgemerkt);
+
+        $zip = $leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'tagesauszuege-053-001-04.zip'), ImportFormat::camt053(), []);
+        self::assertCount(2, $zip->auszuege);
+        self::assertSame([10000, -2450], array_map(static fn(ImportPosten $p): int => $p->umsatz->cent, $zip->posten));
+        self::assertSame(['2024-04-02', '2024-04-03'], array_map(static fn(\DateTimeImmutable $d): string => $d->format('Y-m-d'), $zip->zeitraum() ?? []));
+    }
+
+    public function testCamtStatementsOfSeveralAccountsAreRefused(): void
+    {
+        $zip = Camt053ParserTest::zip([
+            'a.xml' => ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'),
+            'b.xml' => ImportTestDaten::datei(ImportTestDaten::CAMT . 'vrbank-053-001-08.xml'),
+        ]);
+
+        try {
+            new KontoauszugLeser()->lies($zip, ImportFormat::camt053(), []);
+            self::fail('Statements of two accounts must be refused.');
+        } catch (KontoauszugUnlesbar $e) {
+            self::assertStringContainsString('mehrerer Konten', $e->getMessage());
+            self::assertStringNotContainsString('DE09', $e->getMessage());
+        }
+    }
+
+    public function testABrokenCamtFileNamesThePositionButNotTheContent(): void
+    {
+        $inhalt = str_replace('<Amt Ccy="EUR">250.00</Amt>', '<Amt Ccy="EUR">2x50.00</Amt>', ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'));
+
+        try {
+            new KontoauszugLeser()->lies($inhalt, ImportFormat::camt053(), []);
+            self::fail('A broken file must be refused.');
+        } catch (KontoauszugUnlesbar $e) {
+            self::assertStringContainsString('CAMT.053-Datei ist nicht lesbar: Auszug 1, Buchung 2', $e->getMessage());
+            self::assertStringNotContainsString('2x50', $e->getMessage());
+        }
+    }
+
+    public function testACamt052ReportIsRefusedWithAHint(): void
+    {
+        $this->expectException(KontoauszugUnlesbar::class);
+        $this->expectExceptionMessage('CAMT.052');
+
+        $leser = new KontoauszugLeser();
+        $inhalt = '<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"><BkToCstmrAcctRpt/></Document>';
+        $leser->lies($inhalt, $leser->erkenne($inhalt, ImportTestDaten::profile()), []);
     }
 
     public function testAnUnknownCsvLayoutPointsToTheCsvFormats(): void
@@ -158,6 +243,13 @@ final class KontoauszugLeserTest extends TestCase
         self::assertTrue(ImportFormat::fromString('mt940')->istMt940());
         self::assertSame(7, ImportFormat::fromString('csv:7')->csvProfilId);
         self::assertSame('csv:7', ImportFormat::csv(7)->toString());
+        $camt = ImportFormat::fromString('camt053');
+        self::assertTrue($camt->istCamt053());
+        self::assertFalse($camt->istMt940());
+        self::assertTrue($camt->hatAuszuege());
+        self::assertSame('camt053', $camt->toString());
+        self::assertSame(['MT940', 'CAMT.053', 'CSV'], [ImportFormat::mt940()->bezeichnung(), $camt->bezeichnung(), ImportFormat::csv(7)->bezeichnung()]);
+        self::assertFalse(ImportFormat::csv(7)->hatAuszuege());
 
         $this->expectException(\InvalidArgumentException::class);
         ImportFormat::fromString('csv:0');

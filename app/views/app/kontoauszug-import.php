@@ -31,7 +31,11 @@ $profilNamen = [];
 foreach ($profile as $profil) {
     $profilNamen['csv:' . $profil->id] = $profil->name;
 }
-$formatLabel = static fn(string $format): string => $format === 'mt940' ? 'MT940' : 'CSV: ' . ($profilNamen[$format] ?? 'gelöschtes Format');
+$formatLabel = static fn(string $format): string => match ($format) {
+    'mt940' => 'MT940',
+    'camt053' => 'CAMT.053',
+    default => 'CSV: ' . ($profilNamen[$format] ?? 'gelöschtes Format'),
+};
 $saldoMarke = static fn(?BalanceCheck $b): string => match ($b) {
     BalanceCheck::Ok => 'marke-ok',
     BalanceCheck::Abweichung => 'marke-warnung',
@@ -51,7 +55,7 @@ $statusMarke = static fn(BankImportStatus $s): string => match ($s) {
     <p class="gedaempft">
         Laden Sie den Kontoauszug-Export Ihrer Bank hoch. Bevor etwas gespeichert wird, zeigt eine Vorschau den
         Zeitraum, wie viele Buchungen neu oder schon vorhanden sind und ob die Salden stimmen. Empfohlen ist
-        <strong>MT940</strong> (enthält Anfangs- und Schlusssaldo); CSV-Exporte gehen ebenso, wenn ein
+        <strong>MT940</strong> oder <strong>CAMT.053</strong> (beide enthalten Anfangs- und Schlusssaldo); CSV-Exporte gehen ebenso, wenn ein
         <a href="/app/konten/csv-formate">CSV-Format</a> dazu passt.
     </p>
 
@@ -81,9 +85,9 @@ $statusMarke = static fn(BankImportStatus $s): string => match ($s) {
 
                 <label for="import-datei">Datei <span class="pflicht" aria-hidden="true">*</span>
                     <input type="file" id="import-datei" name="datei" required
-                           accept=".sta,.mt940,.940,.txt,.csv,text/plain,text/csv"<?= $fehlerAn('datei') ?>>
+                           accept=".sta,.mt940,.940,.txt,.csv,.xml,.zip,text/plain,text/csv,application/xml,text/xml,application/zip"<?= $fehlerAn('datei') ?>>
                 </label>
-                <p class="feld-hilfe">MT940 (.sta, .txt) oder CSV, höchstens <?= e((string) intdiv($maxBytes, 1024 * 1024)) ?> MB.</p>
+                <p class="feld-hilfe">MT940 (.sta, .txt), CAMT.053 (.xml oder ZIP mit mehreren Auszügen) oder CSV, höchstens <?= e((string) intdiv($maxBytes, 1024 * 1024)) ?> MB.</p>
 
                 <label for="import-konto">Konto
                     <select id="import-konto" name="konto" aria-describedby="import-konto-hilfe"<?= $fehlerAn('konto') ?>>
@@ -94,13 +98,14 @@ $statusMarke = static fn(BankImportStatus $s): string => match ($s) {
                     </select>
                 </label>
                 <p class="feld-hilfe" id="import-konto-hilfe">
-                    Eine MT940-Datei nennt ihr Konto selbst. Eine CSV-Datei nicht – dann fragt die Vorschau nach dem Konto.
+                    Eine MT940- oder CAMT.053-Datei nennt ihr Konto selbst. Eine CSV-Datei nicht – dann fragt die Vorschau nach dem Konto.
                 </p>
 
                 <label for="import-format">Format
                     <select id="import-format" name="format"<?= $fehlerAn('format') ?>>
                         <option value="">Automatisch erkennen</option>
                         <option value="mt940"<?= $felder['format'] === 'mt940' ? ' selected' : '' ?>>MT940</option>
+                        <option value="camt053"<?= $felder['format'] === 'camt053' ? ' selected' : '' ?>>CAMT.053 (XML/ZIP)</option>
                         <?php foreach ($profile as $profil): ?>
                             <?php $wert = 'csv:' . $profil->id; ?>
                             <option value="<?= e($wert) ?>"<?= $felder['format'] === $wert ? ' selected' : '' ?>>CSV: <?= e($profil->name) ?></option>
