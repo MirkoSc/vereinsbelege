@@ -336,7 +336,8 @@ Der Kameradialog (`public/js/scanner/kamera.js`,
 geprüfte Funktionen (`tests/js/kamera.test.js`):
 
 - **Drosselung:** `kantenErkennen()` (M5-2, unverändert) läuft auf einer
-  auf `LIVE_BREITE` = 320 px Breite verkleinerten Kopie des Frames
+  auf `LIVE_BREITE` = 320 px Breite (lange Kante höchstens 500 px, die
+  Arbeitsgröße von `kantenErkennen`) verkleinerten Kopie des Frames
   (`vorschauGroesse`, nie hochskaliert). Nächster Start frühestens nach
   `LIVE_INTERVALL_MS` = 400 ms, und danach mindestens so lange Pause, wie
   die Erkennung selbst brauchte (`naechsteErkennungIn`) – auf einem
@@ -358,16 +359,21 @@ geprüfte Funktionen (`tests/js/kamera.test.js`):
   `liveHinweis`).
 - **Auslösen:** manuell immer möglich, auch ohne Viereck. Automatisches
   Auslösen ist ein Ankreuzfeld im Dialog, **standardmäßig aus**, gilt bis zum
-  Neuladen der Seite (nicht gespeichert); angekreuzt löst die erste stabile Erkennung aus.
+  Neuladen der Seite (nicht gespeichert, `autocomplete="off"`); angekreuzt
+  löst die erste stabile Erkennung aus. Nach einem Klick auf „Kamera-App
+  verwenden“ (dessen Dateiauswahl offen sein kann) löst der Dialog nicht
+  mehr selbst aus, nach einer gescheiterten Aufnahme erst wieder, wenn das
+  Viereck einmal verloren war (keine Wiederholungsschleife).
 - **Startecken:** beim Auslösen gehen die Ecken nur eines **stabilen**
   Vierecks (`startEckenAusLive`, auf Videopixel hochgerechnet und
-  geklemmt) mit dem Foto in den Eck-Editor bzw. in die automatische
-  Aufbereitung: `eckenVormerken(datei, ecken)` in `scanner.js` (eine
-  `WeakMap` am `File`-Objekt, nichts verlässt die Seite);
-  `scannerOeffnen()`/`automatischAufbereiten()` nehmen sie vor einer
-  eigenen Erkennung (`erkannteEcken`). Ohne stabiles Viereck erkennt der
-  Editor wie bisher selbst auf dem vollen Foto. Das ganze Kamerabild bleibt
-  das Original (E-10).
+  geklemmt) mit dem Foto mit: `eckenVormerken(datei, ecken)` in
+  `scanner.js` (eine `WeakMap` am `File`-Objekt, nichts verlässt die
+  Seite). `scannerOeffnen()`/`automatischAufbereiten()` erkennen zuerst
+  wie bisher auf dem aufgenommenen Foto selbst (genau dieser Frame, feiner
+  als die Vorschau); nur wenn das nichts findet, nehmen sie die vorgemerkten
+  Live-Ecken statt Standardrahmen bzw. ganzem Bild (`erkannteEcken`). Im
+  Normalfall stimmen beide überein. Das ganze Kamerabild bleibt das
+  Original (E-10).
 
 Der Nutzen hängt an der Trefferquote der Kantenerkennung (E-03, #142).
 Prüfung auf einem echten Mittelklasse-Handy (ruckelt das Video? wie oft

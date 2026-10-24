@@ -76,6 +76,7 @@ test('a captured frame is the original: high quality, dated file name', () => {
 const {
     LIVE_INTERVALL_MS,
     LIVE_BREITE,
+    LIVE_MAX_KANTE,
     LIVE_STABIL_ANZAHL,
     LIVE_STABIL_TOLERANZ,
     vorschauGroesse,
@@ -117,10 +118,18 @@ test('the live defaults are what the issue asks for: ~400 ms, ~320 px, 3 detecti
 });
 
 test('the detection frame is 320 px wide with the video aspect, never upscaled', () => {
-    assert.deepEqual(vorschauGroesse(2560, 1920), { breite: 320, hoehe: 240, faktor: 8 });
-    assert.deepEqual(vorschauGroesse(1920, 2560), { breite: 320, hoehe: 427, faktor: 6 });
-    assert.deepEqual(vorschauGroesse(240, 180, 320), { breite: 240, hoehe: 180, faktor: 1 });
+    assert.deepEqual(vorschauGroesse(2560, 1920), { breite: 320, hoehe: 240, faktor: 8, videoBreite: 2560, videoHoehe: 1920 });
+    assert.deepEqual(vorschauGroesse(1920, 2560), { breite: 320, hoehe: 427, faktor: 6, videoBreite: 1920, videoHoehe: 2560 });
+    assert.deepEqual(vorschauGroesse(240, 180, 320), { breite: 240, hoehe: 180, faktor: 1, videoBreite: 240, videoHoehe: 180 });
     assert.equal(vorschauGroesse(0, 0), null, 'no frame yet');
+});
+
+test('a tall portrait frame keeps its long edge at kantenErkennen\'s own working size', () => {
+    assert.equal(LIVE_MAX_KANTE, 500);
+    const hoch = vorschauGroesse(1080, 1920);
+    assert.equal(hoch.hoehe, 500, 'not 569 - kantenErkennen would only resample it again');
+    assert.equal(hoch.breite, 281);
+    assert.ok(Math.abs(hoch.faktor - 1080 / 281) < 1e-12);
 });
 
 test('detection is throttled: at most one start per interval, and at least as much idle time as it took', () => {

@@ -120,10 +120,10 @@ async function seiteVerarbeiten(datei, optionen) {
 }
 
 /**
- * Start corners handed over with a file - the live camera (kamera.js, issue
- * #146) notes the quad it saw stable at the moment of capture, in the
- * photo's own pixels. Keyed by the File object itself, so nothing about the
- * receipt leaves the page and the entry goes away with the file.
+ * Corners handed over with a file - the live camera (kamera.js, issue #146)
+ * notes the quad it saw stable at the moment of capture, in the photo's own
+ * pixels. Keyed by the File object itself, so nothing about the receipt
+ * leaves the page and the entry goes away with the file.
  */
 const vorgemerkteEckenSpeicher = new WeakMap();
 
@@ -135,7 +135,7 @@ function eckenVormerken(datei, ecken) {
     }
 }
 
-/** The noted corners of `datei` (a copy), or null - then edge detection runs on the photo. */
+/** The noted corners of `datei` (a copy), or null. */
 function vorgemerkteEcken(datei) {
     const ecken = datei && typeof datei === 'object' ? vorgemerkteEckenSpeicher.get(datei) : undefined;
 
@@ -147,17 +147,22 @@ function vorgemerkteEcken(datei) {
 // --- Browser only from here on --------------------------------------------
 
 /**
- * Detected corners for an image: the noted ones of the live camera first
- * (if they fit inside it - they were taken in this very photo's pixels),
- * else kantenErkennen().
+ * Detected corners for an image: kantenErkennen() on the photo itself
+ * first - it sees the very frame that was captured, at a finer scale than
+ * the live preview. Only when it finds nothing, the quad the live camera
+ * saw stable (if it fits inside the image), else null.
  */
 function erkannteEcken(datei, bild) {
+    const gefunden = kantenErkennen(bild);
+    if (gefunden !== null) {
+        return gefunden;
+    }
     const vorgemerkt = vorgemerkteEcken(datei);
     const passt = vorgemerkt !== null && vorgemerkt.every(function (p) {
         return p.x >= 0 && p.y >= 0 && p.x <= bild.width && p.y <= bild.height;
     });
 
-    return passt ? vorgemerkt : kantenErkennen(bild);
+    return passt ? vorgemerkt : null;
 }
 
 /** An ImageBitmap's pixels as the { width, height, data } shape of the scanner functions. */

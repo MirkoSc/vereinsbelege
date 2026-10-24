@@ -125,6 +125,12 @@ const LIVE_INTERVALL_MS = 400;
 /** Width of the downscaled frame the live detection runs on, px. */
 const LIVE_BREITE = 320;
 
+/**
+ * Longest edge of that frame, px - kantenErkennen()'s own working size
+ * (maxKante 500): a tall portrait frame is not resampled a second time.
+ */
+const LIVE_MAX_KANTE = 500;
+
 /** Consecutive detections that must agree before the quad counts as stable. */
 const LIVE_STABIL_ANZAHL = 3;
 
@@ -133,17 +139,29 @@ const LIVE_STABIL_TOLERANZ = 0.02;
 
 /**
  * Size of the downscaled detection frame for a `videoBreite` x `videoHoehe`
- * video: `zielBreite` wide (never upscaled), height by the video's aspect.
- * `faktor` maps a point of the small frame back to video pixels.
+ * video: `zielBreite` wide, the long edge at most `maxKante`, the video's
+ * aspect, never upscaled. `faktor` maps a point of the small frame back to
+ * video pixels; the video size is kept to tell when it changed.
  */
-function vorschauGroesse(videoBreite, videoHoehe, zielBreite) {
+function vorschauGroesse(videoBreite, videoHoehe, zielBreite, maxKante) {
     if (!(videoBreite > 0) || !(videoHoehe > 0)) {
         return null;
     }
-    const breite = Math.max(1, Math.min(Math.round(zielBreite || LIVE_BREITE), videoBreite));
-    const hoehe = Math.max(1, Math.round((videoHoehe * breite) / videoBreite));
+    const skala = Math.min(
+        1,
+        (zielBreite || LIVE_BREITE) / videoBreite,
+        (maxKante || LIVE_MAX_KANTE) / Math.max(videoBreite, videoHoehe),
+    );
+    const breite = Math.max(1, Math.round(videoBreite * skala));
+    const hoehe = Math.max(1, Math.round(videoHoehe * skala));
 
-    return { breite: breite, hoehe: hoehe, faktor: videoBreite / breite };
+    return {
+        breite: breite,
+        hoehe: hoehe,
+        faktor: videoBreite / breite,
+        videoBreite: videoBreite,
+        videoHoehe: videoHoehe,
+    };
 }
 
 /**
@@ -226,10 +244,11 @@ function liveEcken(zustand) {
 }
 
 /**
- * The start corners for the corner editor in video pixels: the newest quad
- * scaled up by `faktor` (vorschauGroesse) and clamped to the frame - but
- * only from a stable state. A quad seen once may be a glimpse of the table
- * edge; the editor then detects on the full photo itself, as before.
+ * The quad handed to the corner editor with the photo, in video pixels: the
+ * newest quad scaled up by `faktor` (vorschauGroesse) and clamped to the
+ * frame - but only from a stable state; a quad seen once may be a glimpse
+ * of the table edge. The editor still detects on the full photo first and
+ * uses this only when that finds nothing (scanner.js, erkannteEcken).
  */
 function startEckenAusLive(zustand, faktor, videoBreite, videoHoehe) {
     if (!zustand || !zustand.stabil) {
@@ -345,6 +364,12 @@ function kameraOeffnen(dialog) {
         let liveGestartet = false;
         let liveZustand = liveStart();
         let liveGroesse = null;
+        // Auto-capture held back: after "Kamera-App verwenden" was clicked
+        // (its picker may be open - a live photo must not overtake the
+        // chosen file), and after a failed capture until the quad was lost
+        // (no retry loop on a full-resolution canvas).
+        let autoAusNachDatei = false;
+        let autoGesperrt = false;
         const liveCanvas = liveMoeglich ? document.createElement('canvas') : null;
 
         function overlayZeichnen() {
@@ -367,10 +392,14 @@ function kameraOeffnen(dialog) {
                 overlay.removeAttribute('hidden');
             }
 
-            const hinweis = liveHinweis(liveZustand.stabil, automatisch !== null && automatisch.checked);
+            const hinweis = liveHinweis(liveZustand.stabil, autoAktiv());
             if (statusText.textContent !== hinweis) {
                 statusText.textContent = hinweis;
             }
+        }
+
+        function autoAktiv() {
+            return automatisch !== null && automatisch.checked && !autoAusNachDatei && !autoGesperrt;
         }
 
         function livePlanen(verzoegerung) {
@@ -390,16 +419,14 @@ function kameraOeffnen(dialog) {
                 return;
             }
 
-            const groesse = vorschauGroesse(video.videoWidth, video.videoHeight, LIVE_BREITE);
+            const groesse = vorschauGroesse(video.videoWidth, video.videoHeight);
             if (groesse === null) {
                 livePlanen(LIVE_INTERVALL_MS);
 
                 return;
             }
-            groesse.videoBreite = video.videoWidth;
-            groesse.videoHoehe = video.videoHeight;
-            if (liveGroesse === null || liveGroesse.breite !== groesse.breite || liveGroesse.hoehe !== groesse.hoehe
-                || liveGroesse.videoBreite !== groesse.videoBreite || liveGroesse.videoHoehe !== groesse.videoHoehe) {
+            if (liveGroesse === null || liveGroesse.videoBreite !== groesse.videoBreite
+                || liveGroesse.videoHoehe !== groesse.videoHoehe) {
                 // A new frame size (e.g. the phone was turned): older quads
                 // are in other coordinates.
                 liveZustand = liveStart();
@@ -411,9 +438,12 @@ function kameraOeffnen(dialog) {
             const dauer = performance.now() - beginn;
 
             liveZustand = liveFortschreiben(liveZustand, ecken, groesse.breite, groesse.hoehe);
+            if (!liveZustand.stabil) {
+                autoGesperrt = false;
+            }
             overlayZeichnen();
 
-            if (liveZustand.stabil && automatisch !== null && automatisch.checked) {
+            if (liveZustand.stabil && autoAktiv()) {
                 beiAusloesen();
             }
             if (!erledigt) {
@@ -451,6 +481,7 @@ function kameraOeffnen(dialog) {
             ausloesen.removeEventListener('click', beiAusloesen);
             abbrechen.removeEventListener('click', beiAbbrechen);
             dateiFeld.removeEventListener('change', beiDatei);
+            dateiFeld.removeEventListener('click', beiDateiWahl);
             dialog.removeEventListener('cancel', beiEscape);
             video.removeEventListener('loadedmetadata', rahmenSetzen);
             video.removeEventListener('loadeddata', liveStarten);
@@ -487,6 +518,10 @@ function kameraOeffnen(dialog) {
             beenden(null);
         }
 
+        function beiDateiWahl() {
+            autoAusNachDatei = true;
+        }
+
         function beiDatei() {
             const datei = dateiFeld.files && dateiFeld.files[0];
             dateiFeld.value = '';
@@ -513,6 +548,7 @@ function kameraOeffnen(dialog) {
             canvas.toBlob(function (blob) {
                 ausloesen.disabled = false;
                 if (blob === null) {
+                    autoGesperrt = true;
                     fehlerText.textContent = 'Das Foto konnte nicht gespeichert werden. Bitte erneut auslösen.';
                     fehlerText.hidden = false;
 
@@ -529,6 +565,7 @@ function kameraOeffnen(dialog) {
         ausloesen.addEventListener('click', beiAusloesen);
         abbrechen.addEventListener('click', beiAbbrechen);
         dateiFeld.addEventListener('change', beiDatei);
+        dateiFeld.addEventListener('click', beiDateiWahl);
         dialog.addEventListener('cancel', beiEscape);
         video.addEventListener('loadedmetadata', rahmenSetzen);
         video.addEventListener('loadeddata', liveStarten);
@@ -587,6 +624,7 @@ if (typeof module === 'object' && module.exports) {
         aufnahmeName,
         LIVE_INTERVALL_MS,
         LIVE_BREITE,
+        LIVE_MAX_KANTE,
         LIVE_STABIL_ANZAHL,
         LIVE_STABIL_TOLERANZ,
         vorschauGroesse,

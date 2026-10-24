@@ -27,7 +27,7 @@
     <p class="feld-hilfe">Den Beleg im Rahmen ausrichten, flach und gut ausgeleuchtet.</p>
     <p class="kamera-status" data-kamera="status" role="status"></p>
     <label class="feld-ankreuz">
-        <input type="checkbox" data-kamera="automatisch">
+        <input type="checkbox" data-kamera="automatisch" autocomplete="off">
         Automatisch auslösen, sobald der Beleg ruhig erkannt ist
     </label>
     <p class="hinweis hinweis-fehler" data-kamera="fehler" hidden></p>
