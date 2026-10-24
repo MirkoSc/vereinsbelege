@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Backup;
 
 use App\Installer\ConfigWriter;
-use App\Service\Migration\SqlSplitter;
+use App\Service\Migration\SqlStatementStream;
 
 /**
  * The domain side of restoring a backup ZIP in the installer: no Http, no
@@ -20,6 +20,20 @@ final readonly class RestoreService
 {
     /** Statements per request - no single request may run long (CLAUDE.md section 1). */
     public const int STATEMENTS_PER_STEP = 200;
+
+    /**
+     * ... and a byte budget on top, like the blobs below: with storage
+     * backend `db` an INSERT of file_blob_chunk carries about 512 KiB of hex,
+     * and 200 of them would be a 100 MB request (issue #120).
+     */
+    public const int DUMP_BYTES_PER_STEP = 8 * 1024 * 1024;
+
+    /** The session settings at the top of every dump (MysqlDumper::dump()). */
+    public const string SESSION_NAMES = 'SET NAMES utf8mb4';
+
+    public const string SESSION_FOREIGN_KEYS_OFF = 'SET FOREIGN_KEY_CHECKS = 0';
+
+    public const string SESSION_FOREIGN_KEYS_ON = 'SET FOREIGN_KEY_CHECKS = 1';
 
     /** Blob files per request, for the same reason. */
     public const int BLOBS_PER_STEP = 200;
@@ -125,24 +139,85 @@ final readonly class RestoreService
     }
 
     /**
-     * Runs one block of statements and returns the new offset.
+     * Runs the next block of dump.sql, starting at byte `$offset` - always a
+     * statement boundary that an earlier call returned, or 0. Only the file
+     * from there on is read, in fixed-size portions, so every step costs
+     * about its own share of the dump instead of the whole file (issue #120).
      *
-     * @return array{offset: int, gesamt: int}
+     * A step ends after STATEMENTS_PER_STEP statements or once it has
+     * consumed DUMP_BYTES_PER_STEP, whichever comes first - but always after
+     * at least one statement, so even the largest INSERT moves the chain on.
+     *
+     * `$nachAnweisung` is called with the new boundary after every single
+     * statement. The installer keeps it in the session right away, so a
+     * request that breaks off mid-block resumes behind the last statement
+     * that ran instead of running the block again.
+     *
+     * @param (\Closure(int): void)|null $nachAnweisung
+     *
+     * @return array{offset: int, gesamt: int, anweisungen: int, gelesen: int} new byte offset, size of the dump,
+     *     statements run and bytes read in this step
      */
-    public function anwenden(\PDO $pdo, string $dumpDatei, int $offset): array
+    public function anwenden(\PDO $pdo, string $dumpDatei, int $offset, ?\Closure $nachAnweisung = null): array
     {
-        $dump = file_get_contents($dumpDatei);
-        if ($dump === false) {
-            throw new \RuntimeException('dump.sql nicht lesbar.');
+        $stream = new SqlStatementStream($dumpDatei, $offset);
+
+        // Every step is a request of its own with a fresh connection, but
+        // the dump sets its session variables once at the top (MysqlDumper).
+        // Without them a later step would create and fill the tables - in
+        // alphabetical, not dependency order - with foreign key checks on.
+        if ($offset > 0) {
+            $pdo->exec(self::SESSION_NAMES);
+            $pdo->exec(self::SESSION_FOREIGN_KEYS_OFF);
         }
 
-        $statements = SqlSplitter::split($dump);
-        $block = array_slice($statements, $offset, self::STATEMENTS_PER_STEP);
-        foreach ($block as $statement) {
+        $anweisungen = 0;
+        while ($anweisungen < self::STATEMENTS_PER_STEP
+            && $stream->boundary() - $offset < self::DUMP_BYTES_PER_STEP
+        ) {
+            $statement = $stream->next();
+            if ($statement === null) {
+                break;
+            }
             $pdo->exec($statement);
+            $anweisungen++;
+            if ($nachAnweisung !== null) {
+                $nachAnweisung($stream->boundary());
+            }
         }
 
-        return ['offset' => $offset + count($block), 'gesamt' => count($statements)];
+        // At the end of the file the boundary is its size, so the chain
+        // finishes even when only comments or blanks were left. The
+        // migrations then run on this connection: with foreign key checks
+        // back on, as the dump's last line leaves them.
+        if ($offset > 0 && $stream->boundary() >= $stream->size()) {
+            $pdo->exec(self::SESSION_FOREIGN_KEYS_ON);
+        }
+
+        return [
+            'offset' => $stream->boundary(),
+            'gesamt' => $stream->size(),
+            'anweisungen' => $anweisungen,
+            'gelesen' => $stream->bytesRead(),
+        ];
+    }
+
+    /**
+     * The byte offset behind the first `$anweisungen` statements of the dump
+     * - to carry on a restore whose session still counts statements, as the
+     * versions before issue #120 did. Reads the dump once up to there and
+     * runs nothing.
+     */
+    public function byteOffsetNachAnweisungen(string $dumpDatei, int $anweisungen): int
+    {
+        $stream = new SqlStatementStream($dumpDatei);
+        for ($i = 0; $i < $anweisungen; $i++) {
+            if ($stream->next() === null) {
+                break;
+            }
+        }
+
+        return $stream->boundary();
     }
 
     /**

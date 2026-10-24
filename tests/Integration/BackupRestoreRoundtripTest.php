@@ -11,7 +11,7 @@ use App\Service\Backup\BackupService;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
-use App\Service\Migration\SqlSplitter;
+use App\Service\Migration\SqlStatementStream;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -153,18 +153,10 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
 
         $name = $this->service()->create();
 
-        $zip = new \ZipArchive();
-        self::assertTrue($zip->open($this->backupDir . '/' . $name));
-        $dump = $zip->getFromName('dump.sql');
-        $zip->close();
-        self::assertIsString($dump);
-
         $this->wipeDatabase();
 
-        // Restore exactly like the installer does: split, then exec.
-        foreach (SqlSplitter::split($dump) as $statement) {
-            $this->pdo()->exec($statement);
-        }
+        // Restore exactly like the installer does: step by step from byte offsets.
+        $this->restoreDump(new RestoreService(), $this->backupDir . '/' . $name);
 
         foreach ($before as $table => $rows) {
             self::assertSame($rows, $this->dumpTable($table), 'restored table ' . $table . ' must be identical');
@@ -456,22 +448,102 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
     /** Restores a backup ZIP the way the installer does: dump, then blobs. */
     private function restore(string $zipPfad): void
     {
-        $zip = new \ZipArchive();
-        self::assertTrue($zip->open($zipPfad));
-        $dump = (string) $zip->getFromName('dump.sql');
-        $zip->close();
-
-        foreach (SqlSplitter::split($dump) as $statement) {
-            $this->pdo()->exec($statement);
-        }
-
         $restore = new RestoreService();
+        $this->restoreDump($restore, $zipPfad);
+
         $offset = 0;
         do {
             $fortschritt = $restore->blobsAusZip($zipPfad, $this->blobDir, $offset);
             self::assertSame(0, $fortschritt['abgelehnt']);
             $offset = $fortschritt['offset'];
         } while ($offset < $fortschritt['gesamt']);
+    }
+
+    /**
+     * Plays dump.sql in like the installer's step chain: one anwenden() per
+     * request, each resuming at the byte offset the one before returned.
+     *
+     * @return list<array{offset: int, gesamt: int, anweisungen: int, gelesen: int}> one entry per step
+     */
+    private function restoreDump(RestoreService $restore, string $zipPfad): array
+    {
+        $dumpDatei = $this->backupDir . '/restore_dump.sql';
+        $restore->dumpAusZip($zipPfad, $dumpDatei);
+
+        $schritte = [];
+        $offset = 0;
+        do {
+            // A connection of its own per step, like one request each: the
+            // dump's session settings must not leak from the first step.
+            $fortschritt = $restore->anwenden(self::neueVerbindung(), $dumpDatei, $offset);
+            self::assertGreaterThan($offset, $fortschritt['offset'], 'every step moves on');
+            $offset = $fortschritt['offset'];
+            $schritte[] = $fortschritt;
+            self::assertLessThan(10000, count($schritte), 'the chain ends');
+        } while ($offset < $fortschritt['gesamt']);
+        unlink($dumpDatei);
+
+        return $schritte;
+    }
+
+    private static function neueVerbindung(): \PDO
+    {
+        /** @var array{host: string, port: int, name: string, user: string, password: string} $db */
+        $db = self::configData()['db'];
+
+        return new \PDO(
+            sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $db['host'], $db['port'], $db['name']),
+            $db['user'],
+            $db['password'],
+            [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
+        );
+    }
+
+    /**
+     * Issue #120: a dump with many more statements than one step runs - and
+     * the values that trip a splitter, some longer than the read buffer -
+     * comes back identical through the byte-offset chain, and the chain
+     * reads the file once instead of once per step.
+     */
+    public function testALargeDumpRestoresInStepsFromByteOffsets(): void
+    {
+        $this->pdo()->exec('CREATE TABLE probe_gross (
+            id INT NOT NULL PRIMARY KEY,
+            text_feld MEDIUMTEXT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+        $insert = $this->pdo()->prepare('INSERT INTO probe_gross (id, text_feld) VALUES (?, ?)');
+        $knifflig = [
+            "Semikolon; im String; -- kein Kommentar",
+            "O'Brien \"zitiert\" /* kein Block */ # keine Zeile",
+            'Backslash am Ende \\',
+            "Zeile 1\nZeile 2; \\' noch im String",
+        ];
+        $this->pdo()->beginTransaction();
+        for ($i = 1; $i <= 30000; $i++) {
+            $insert->execute([$i, $i % 7 === 0 ? null : $knifflig[$i % 4] . ' ' . $i]);
+        }
+        $this->pdo()->commit();
+        // Longer than the 1 MiB read buffer, with a semicolon near both ends.
+        $insert->execute([30001, ';' . str_repeat("ab'c;d\\", 200000) . ';']);
+
+        $vorher = $this->dumpTable('probe_gross', 'id');
+        $name = $this->service()->create();
+        $this->wipeDatabase();
+
+        $schritte = $this->restoreDump(new RestoreService(), $this->backupDir . '/' . $name);
+
+        self::assertSame($vorher, $this->dumpTable('probe_gross', 'id'), 'restored byte for byte');
+        self::assertGreaterThan(1, count($schritte), 'more than one step');
+        $anweisungen = array_sum(array_column($schritte, 'anweisungen'));
+        self::assertGreaterThan(RestoreService::STATEMENTS_PER_STEP, $anweisungen);
+
+        // No step starts over at byte 0: together they read the file about
+        // once - each at most one read buffer beyond its own share.
+        $gesamt = $schritte[0]['gesamt'];
+        self::assertLessThanOrEqual(
+            $gesamt + count($schritte) * SqlStatementStream::READ_BYTES,
+            array_sum(array_column($schritte, 'gelesen')),
+        );
     }
 
     /**

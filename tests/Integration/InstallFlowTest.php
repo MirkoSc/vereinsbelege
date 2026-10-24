@@ -28,6 +28,7 @@ use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
+use App\Service\Migration\SqlSplitter;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
@@ -739,6 +740,43 @@ final class InstallFlowTest extends DatabaseTestCase
 
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary dump removed');
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
+    }
+
+    /**
+     * Issue #120: the dump phase keeps a byte offset in the session. A
+     * restore session of an older version still counts statements under
+     * `offset` - it is carried on from exactly that statement, nothing runs
+     * twice (a second CREATE TABLE would fail) and nothing is left out.
+     */
+    public function testARestoreSessionThatCountsStatementsIsCarriedOn(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        new SettingRepository($this->pdo())->set('probe', "Grün; 'zitiert'");
+        $zip = $this->makeBackup(mitConfig: true);
+        $this->wipeDatabase();
+
+        self::assertSame(200, $this->submitRestore($zip)->status);
+        self::assertSame(0, $_SESSION['install_restore']['dump_offset']);
+
+        // What an older version would have left after its first statements.
+        $dumpDatei = (string) $_SESSION['install_restore']['dump_datei'];
+        $statements = SqlSplitter::split((string) file_get_contents($dumpDatei));
+        $bisher = 0;
+        foreach ($statements as $statement) {
+            $this->pdo()->exec($statement);
+            $bisher++;
+            if (str_starts_with($statement, 'CREATE TABLE')) {
+                break;
+            }
+        }
+        unset($_SESSION['install_restore']['dump_offset'], $_SESSION['install_restore']['anweisungen']);
+        $_SESSION['install_restore']['offset'] = $bisher;
+
+        $ende = $this->runRestoreSteps();
+
+        self::assertTrue($ende['fertig']);
+        self::assertSame("Grün; 'zitiert'", new SettingRepository($this->pdo())->get('probe'));
+        self::assertFileExists($this->paths()->configFile());
     }
 
     /**

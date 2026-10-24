@@ -378,3 +378,38 @@ Variante:
 - **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
   Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
   10 MB entpackt.
+
+## E-31 ✅ Dump strömend einspielen: Byte-Offset, Byte-Budget, Fortschritt (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #120, 06 §2*
+
+Die Dump-Phase des Restores merkt sich einen Byte-Offset hinter der letzten
+ausgeführten Anweisung statt eines Statement-Index; jeder Schritt liest nur
+ab dort (`SqlStatementStream`). Getroffen ohne Rückfrage:
+
+- **Byte-Budget 8 MiB je Schritt** zusätzlich zu den 200 Anweisungen (wie
+  bei den Blob-Dateien). Mit Backend `db` trägt ein INSERT von
+  `file_blob_chunk` rund 512 KiB Hex – 200 davon wären ein Request über
+  100 MB. Mindestens eine Anweisung je Schritt, damit die Kette weiterläuft.
+- **Fortschritt in Bytes.** Die Gesamtzahl der Anweisungen kennt man nur
+  nach einem Lesen der ganzen Datei; das wäre wieder ein langer Request.
+  Die Seite zeigt deshalb „Anweisung X eingespielt (P %)“ statt
+  „Anweisung X von Y“.
+- **Offset nach jeder Anweisung in der Session**, nicht erst am Blockende:
+  ein Abbruch durch das Zeitlimit wiederholt keine Anweisung.
+- **Alte Restore-Session wird umgerechnet** statt abgebrochen: der
+  Statement-Index wird einmal durch Lesen bis dorthin in einen Byte-Offset
+  übersetzt (gleiche Zerlegung, nichts wird ausgeführt).
+- **Sitzungseinstellungen des Dumps je Schritt wiederholen** (`SET NAMES`,
+  `FOREIGN_KEY_CHECKS = 0`, am Ende wieder `= 1`) – fest im
+  `RestoreService`, weil genau diese der `MysqlDumper` oben schreibt; ein
+  allgemeines Nachspielen aller `SET`-Anweisungen gibt es nicht. Behebt
+  nebenbei, dass Restores über 200 Anweisungen schon vorher ab dem zweiten
+  Schritt mit Fremdschlüssel-Prüfung liefen und scheiterten.
+- **Anweisungen über 16 MiB werden abgelehnt** (Speicher konstant; der
+  Dumper erzeugt höchstens ~1 MiB, MariaDBs Standard-`max_allowed_packet`
+  ist 16 MiB).
+
+Offen für Mirko: Bei einem harten Prozessabbruch (Session nicht mehr
+geschrieben) kann die letzte Anweisung doppelt laufen – dann hilft nur ein
+Restore von vorn. Ganz schließen ließe sich das nur mit einem
+Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).

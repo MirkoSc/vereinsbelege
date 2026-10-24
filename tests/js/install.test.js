@@ -24,7 +24,11 @@ test('an empty dump counts as done rather than dividing by zero', () => {
 });
 
 test('the status line names the position, and the end', () => {
-    assert.equal(statusText({ fertig: false, offset: 200, gesamt: 400 }), 'Anweisung 200 von 400 …');
+    assert.equal(
+        statusText({ fertig: false, offset: 2048, gesamt: 8192, anweisungen: 200 }),
+        'Anweisung 200 eingespielt (25 %) …',
+        'the dump phase counts bytes of dump.sql and names the statements run so far',
+    );
     assert.equal(statusText({ fertig: true, offset: 400, gesamt: 400 }), 'Fertig. Das Backup ist eingespielt.');
     assert.equal(statusText(null), 'Starte …');
 });
@@ -37,8 +41,8 @@ test('the blob phase counts files, not statements', () => {
     );
     assert.equal(statusText({ fertig: false, phase: 'blobs', offset: 7, gesamt: 12 }), 'Datei 7 von 12 …');
     assert.equal(
-        statusText({ fertig: false, phase: 'sql', offset: 7, gesamt: 12 }),
-        'Anweisung 7 von 12 …',
+        statusText({ fertig: false, phase: 'sql', offset: 6, gesamt: 12, anweisungen: 3 }),
+        'Anweisung 3 eingespielt (50 %) …',
         'an answer without a phase is the dump phase',
     );
     assert.equal(
