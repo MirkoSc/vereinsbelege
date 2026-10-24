@@ -93,12 +93,13 @@ final readonly class AbgleichController
         }
         $beleg = self::text($request, 'beleg');
         $buchung = self::text($request, 'buchung');
-        if (!ctype_digit($beleg) || !ctype_digit($buchung)) {
+        $betrag = self::text($request, 'betrag');
+        if (!ctype_digit($beleg) || !ctype_digit($buchung) || !ctype_digit($betrag) || strlen($betrag) > 12) {
             return Response::redirect(self::ZIEL);
         }
 
         try {
-            $this->abgleich->uebernehmen($tresor, $this->bereich(), (int) $beleg, (int) $buchung, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+            $this->abgleich->uebernehmen($tresor, $this->bereich(), (int) $beleg, (int) $buchung, (int) $betrag, $this->session->userId(), $request->ip, new \DateTimeImmutable());
             $this->session->flash('Vorschlag übernommen: Beleg und Buchung sind einander zugeordnet.');
         } catch (BankRuleViolation $e) {
             $this->session->flash($e->getMessage(), FlashArt::Fehler);

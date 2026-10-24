@@ -31,6 +31,9 @@ final class Punktebewertung
     /** A number shorter than this ("1", "12") says nothing in a purpose. */
     private const int KENNUNG_MIN = 3;
 
+    /** Entries the in-request name caches hold before they start over. */
+    private const int MERKER_MAX = 20000;
+
     private function __construct()
     {
         // Static utility, no instances.
@@ -54,7 +57,7 @@ final class Punktebewertung
             $setze(Signal::BetragSkonto);
         }
 
-        $zweck = self::kompakt($buchung->verwendungszweck . ' ' . $buchung->endToEndReferenz);
+        $zweck = self::suchtext($buchung->verwendungszweck . ' ' . $buchung->endToEndReferenz);
         if (self::enthaeltKennung($zweck, $beleg->rechnungsnummer)) {
             $setze(Signal::Rechnungsnummer);
         }
@@ -177,7 +180,7 @@ final class Punktebewertung
             return false;
         }
 
-        return !isset($scores[1]) || $score - $scores[1] >= $abstand;
+        return !isset($scores[1]) || ($score > $scores[1] && $score - $scores[1] >= $abstand);
     }
 
     /**
@@ -190,9 +193,21 @@ final class Punktebewertung
     }
 
     /**
-     * Whether $kennung (an invoice or customer number) occurs in the compact
-     * $text. It needs a digit and three characters; a number edge must not
-     * touch another digit - "815" is not found in "20260815".
+     * The purpose as enthaeltKennung() searches it: lower case, umlauts
+     * spelled out, every run of other characters one space - separators stay
+     * visible, so "15.03.2026 4711" does not turn into "...20264711".
+     */
+    public static function suchtext(string $text): string
+    {
+        return trim((string) preg_replace('/[^a-z0-9]+/', ' ', SupplierKeys::umschrift($text)));
+    }
+
+    /**
+     * Whether $kennung (an invoice or customer number) occurs in $text (from
+     * suchtext()), separators inside it ignored: "RE-2026/0815" is found in
+     * "re 2026 0815". It needs a digit and three characters; a number edge
+     * must not touch another digit directly - "815" is not found in
+     * "20260815", but in "2026 815".
      */
     public static function enthaeltKennung(string $text, string $kennung): bool
     {
@@ -201,19 +216,11 @@ final class Punktebewertung
             return false;
         }
 
-        $start = 0;
-        while (($pos = strpos($text, $nadel, $start)) !== false) {
-            $davor = $pos > 0 ? $text[$pos - 1] : '';
-            $danach = $text[$pos + strlen($nadel)] ?? '';
-            $randDavor = ctype_digit($nadel[0]) && $davor !== '' && ctype_digit($davor);
-            $randDanach = ctype_digit($nadel[strlen($nadel) - 1]) && $danach !== '' && ctype_digit($danach);
-            if (!$randDavor && !$randDanach) {
-                return true;
-            }
-            $start = $pos + 1;
-        }
+        $muster = implode(' ?', str_split($nadel));
+        $davor = ctype_digit($nadel[0]) ? '(?<![0-9])' : '';
+        $danach = ctype_digit($nadel[strlen($nadel) - 1]) ? '(?![0-9])' : '';
 
-        return false;
+        return preg_match('/' . $davor . $muster . $danach . '/', $text) === 1;
     }
 
     private static function mandatBekannt(AbgleichBeleg $beleg, AbgleichBuchung $buchung): bool
@@ -232,17 +239,41 @@ final class Punktebewertung
      */
     private static function nameAehnlich(array $namen, string $gegenseite, int $prozent): bool
     {
-        $gegen = SupplierKeys::name($gegenseite);
+        $gegen = self::namensschluessel($gegenseite);
         if ($gegen === '') {
             return false;
         }
         foreach ($namen as $name) {
-            if (LieferantenAehnlichkeit::wert(SupplierKeys::name($name), $gegen) * 100 >= $prozent) {
+            if (round(self::aehnlichkeit(self::namensschluessel($name), $gegen) * 100, 6) >= $prozent) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * SupplierKeys::name(), remembered within the request - the same names
+     * come up for every pair.
+     */
+    private static function namensschluessel(string $name): string
+    {
+        static $merker = [];
+        if (count($merker) > self::MERKER_MAX) {
+            $merker = [];
+        }
+
+        return $merker[$name] ??= SupplierKeys::name($name);
+    }
+
+    private static function aehnlichkeit(string $a, string $b): float
+    {
+        static $merker = [];
+        if (count($merker) > self::MERKER_MAX) {
+            $merker = [];
+        }
+
+        return $merker[$a . "\0" . $b] ??= LieferantenAehnlichkeit::wert($a, $b);
     }
 
     /** Best first; ties by receipt, then booking id - the same input gives the same plan. */

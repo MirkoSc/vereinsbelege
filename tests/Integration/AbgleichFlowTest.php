@@ -147,7 +147,7 @@ final class AbgleichFlowTest extends DatabaseTestCase
         self::assertSame(-5000, $stand->buchungen[$buchung]->buchung->amount);
         self::assertSame(0, $this->abgleich()->automatischZuordnen($this->tresor, Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable())['angelegt']);
 
-        $id = $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $zwei, $buchung, $this->userId, self::IP, new \DateTimeImmutable());
+        $id = $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $zwei, $buchung, 5000, $this->userId, self::IP, new \DateTimeImmutable());
 
         $zuordnung = $this->zuordnung()->fuerBeleg($this->tresor, $zwei)[0];
         self::assertSame($id, $zuordnung->id);
@@ -158,7 +158,7 @@ final class AbgleichFlowTest extends DatabaseTestCase
         // The booking is used up: the other receipt's suggestion is gone and cannot be accepted from an old page.
         self::assertSame([], $this->abgleich()->planen($this->tresor, Zugriffsbereich::unbeschraenkt())->plan->vorschlaege);
         $this->expectException(BankRuleViolation::class);
-        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $eins, $buchung, $this->userId, self::IP, new \DateTimeImmutable());
+        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $eins, $buchung, 5000, $this->userId, self::IP, new \DateTimeImmutable());
     }
 
     public function testACollectiveTransferIsSuggestedPerReceiptWithItsOpenAmount(): void
@@ -171,11 +171,39 @@ final class AbgleichFlowTest extends DatabaseTestCase
         self::assertSame([], $plan->auto);
         self::assertSame([6000, 4000], array_map(static fn($v): int => $v->betrag, $plan->vorschlaege));
 
-        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $a, $buchung, $this->userId, self::IP, new \DateTimeImmutable());
+        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $a, $buchung, 6000, $this->userId, self::IP, new \DateTimeImmutable());
         self::assertSame('teilweise', $this->spalte('bank_transaction', $buchung, 'doc_status'));
-        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $b, $buchung, $this->userId, self::IP, new \DateTimeImmutable());
+        $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $b, $buchung, 4000, $this->userId, self::IP, new \DateTimeImmutable());
         self::assertSame('zugeordnet', $this->spalte('bank_transaction', $buchung, 'doc_status'));
         self::assertSame(['bezahlt', 'bezahlt'], [$this->spalte('invoice', $a, 'payment_status'), $this->spalte('invoice', $b, 'payment_status')]);
+    }
+
+    public function testAcceptingRefusesAChangedAmountAndAPairBelowTheMinimum(): void
+    {
+        $beleg = $this->beleg(5000);
+        $buchung = $this->buchung(-5000, '', 'Getränke Müller', '');      // 45 + 15 + 10 = 70
+        $fremd = $this->buchung(-1234, 'Miete', 'Stadt', '');            // 10
+
+        try {
+            $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $beleg, $buchung, 4000, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('the page showed another amount');
+        } catch (BankRuleViolation) {
+        }
+        try {
+            $this->abgleich()->uebernehmen($this->tresor, Zugriffsbereich::unbeschraenkt(), $beleg, $fremd, 1234, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('never a suggestion');
+        } catch (BankRuleViolation) {
+        }
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM allocation')->fetchColumn());
+    }
+
+    public function testAnExpenseMarkedAsNeedingNoReceiptIsNoCandidate(): void
+    {
+        $this->beleg(5000);
+        $buchung = $this->buchung(-5000, '', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $this->pdo()->prepare('UPDATE bank_transaction SET doc_required = 0, doc_status = ? WHERE id = ?')->execute([BankTransactionDocStatus::NichtNoetig->value, $buchung]);
+
+        self::assertSame([], $this->abgleich()->planen($this->tresor, Zugriffsbereich::unbeschraenkt())->buchungen);
     }
 
     public function testOnlyCheckedReceiptsExpectingABookingWithinTheScopeTakePart(): void
@@ -191,11 +219,11 @@ final class AbgleichFlowTest extends DatabaseTestCase
 
         $nur2026 = new Zugriffsbereich(null, new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31'));
         self::assertSame([], $this->abgleich()->planen($this->tresor, $nur2026)->belege, 'the receipt lies outside the period');
-        self::assertCount(1, $this->abgleich()->planen($this->tresor, $nur2026)->buchungen);
+        self::assertSame([], $this->abgleich()->planen($this->tresor, $nur2026)->buchungen, 'without an open receipt no booking is read');
         self::assertSame([], $this->abgleich()->planen($this->tresor, new Zugriffsbereich([999]))->buchungen, 'a booking has no cost center');
 
         $this->expectException(BankRuleViolation::class);
-        $this->abgleich()->uebernehmen($this->tresor, $nur2026, $alt, (int) $this->pdo()->query('SELECT MAX(id) FROM bank_transaction')->fetchColumn(), $this->userId, self::IP, new \DateTimeImmutable());
+        $this->abgleich()->uebernehmen($this->tresor, $nur2026, $alt, (int) $this->pdo()->query('SELECT MAX(id) FROM bank_transaction')->fetchColumn(), 7000, $this->userId, self::IP, new \DateTimeImmutable());
     }
 
     public function testACreditNoteIsMatchedWithTheOppositeDirection(): void

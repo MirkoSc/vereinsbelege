@@ -546,25 +546,29 @@ und Einreichung).
   nur Paare, die zugeordnet werden könnten (Richtung passt – Gutschrift
   Gegenrichtung –, beide Seiten haben noch etwas offen). Signale wie in der
   Tabelle, Beträge gegen den **offenen** Betrag; „Skonto“ nur nach unten;
-  Rechnungs-/Kundennummer normalisiert in Verwendungszweck und
-  End-to-End-Referenz (≥ 3 Zeichen mit Ziffer, Ziffernkante frei);
+  Rechnungs-/Kundennummer normalisiert (Trennzeichen egal) in
+  Verwendungszweck und End-to-End-Referenz (≥ 3 Zeichen mit Ziffer,
+  Ziffernkante berührt keine Ziffer);
   IBAN gegen die IBANs des Lieferanten, Mandatsreferenz bzw. Gläubiger-ID
   gegen dessen Mandate/Gläubiger-ID; Name ≥ 80 % (`LieferantenAehnlichkeit`)
   gegen Name und Aliasse; Fenster ohne Fälligkeit ab Rechnungsdatum.
   Erstattungssignal vorbereitet, die Einreicher-IBAN liefert M10-3.
 - **Automatisch** (`Punktebewertung::planen`): Score ≥ `auto_schwelle`,
-  Vorsprung ≥ `auto_abstand` vor dem Zweitbesten des Belegs **und** der
-  Buchung, offene Beträge beider Seiten gleich. Methode `auto`, `score`,
+  Vorsprung ≥ `auto_abstand` (≥ 1, Gleichstand nie) vor dem Zweitbesten
+  des Belegs **und** der Buchung, offene Beträge beider Seiten gleich. Methode `auto`, `score`,
   `rule_trace` = `{"v":1,"signale":{"<signal>":<punkte>,…}}` – nie ein Wert.
 - **Vorschläge:** alle übrigen Paare ab `vorschlag_ab` Punkten, je Beleg die
   drei besten, mit Begründung je Signal und Teilbetrag
   `min(offen Beleg, offen Buchung)`. Nicht gespeichert – bei jedem Aufruf in
-  der Session neu berechnet; „Übernehmen“ bewertet neu und ordnet als
+  der Session neu berechnet; „Übernehmen“ bewertet neu (abgelehnt unter
+  `vorschlag_ab` oder bei geändertem Betrag) und ordnet als
   `vorschlag_bestaetigt` zu. Jede Zuordnung bleibt über `Zuordnung::loesen`
   lösbar.
 - **Kandidaten:** Belege mit Dokument `geprueft`/`festgeschrieben`,
   Zahlungsweg `konto`/`erstattung`, Status offen/teilbezahlt/
-  erstattung_offen; Buchungen mit Status ≠ `zugeordnet`; beides im
+  erstattung_offen; Buchungen mit Status ≠ `zugeordnet`, ohne Ausgaben mit
+  „kein Beleg nötig“, ab Fensterbeginn des ältesten offenen Belegs (ohne
+  offenen Beleg keine); beides im
   Zugriffsbereich von `matching.edit` (Kostenstellen-Scope sieht keine
   Buchung).
 - **Seite** `/app/abgleich` (`matching.edit`, CSRF auf allen POST, ohne

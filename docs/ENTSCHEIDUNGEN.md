@@ -622,7 +622,7 @@ Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
 - **Automatisch nur, wenn eindeutig – von beiden Seiten:** Score ≥ Schwelle
   (85), Vorsprung ≥ Abstand (20) vor dem Zweitbesten **sowohl** unter den
   Kandidaten des Belegs **als auch** unter denen der Buchung (ein
-  Gleichstand ist nie eindeutig), und „Betrag vollständig gedeckt“ heißt:
+  Gleichstand ist nie eindeutig, der Abstand ist mindestens 1), und „Betrag vollständig gedeckt“ heißt:
   offener Betrag des Belegs **=** noch nicht zugeordneter Betrag der
   Buchung. Damit sind Sammelzahlung, Rate und Skonto nie automatisch,
   sondern Vorschläge mit dem Teilbetrag `min(offen Beleg, offen Buchung)`.
@@ -630,19 +630,22 @@ Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
   offenen Betrag (bei teilbezahlten Belegen dem Rest), „Skonto“ nur nach
   unten (bis 3 % weniger), nie mehr.
 - **Kennungen im Zweck** (Rechnungs-, Kundennummer): verglichen nach
-  Kleinschreibung, nur Buchstaben/Ziffern, über Verwendungszweck **und**
-  End-to-End-Referenz; mindestens 3 Zeichen mit einer Ziffer, und eine
-  Ziffernkante darf keine weitere Ziffer berühren („815“ steckt nicht in
-  „20260815“).
+  Kleinschreibung, Trennzeichen in der Kennung egal, über Verwendungszweck
+  **und** End-to-End-Referenz (Trennzeichen im Zweck bleiben Grenzen);
+  mindestens 3 Zeichen mit einer Ziffer, und eine Ziffernkante darf keine
+  weitere Ziffer direkt berühren („815“ steckt nicht in „20260815“).
 - **Kandidaten:** nur Belege mit Dokumentstatus `geprueft`/
   `festgeschrieben` (KI-Werte sind Vorschläge, ungeprüfte Beträge sollen
   nichts automatisch ausgleichen), Zahlungsweg `konto`/`erstattung`, noch
-  nicht ausgeglichen; Buchungen jeder Art außer `zugeordnet`. Beides im
-  Zugriffsbereich von `matching.edit`.
+  nicht ausgeglichen; Buchungen außer `zugeordnet` und außer Ausgaben mit
+  „kein Beleg nötig“ (bewusst ohne Beleg), und nur ab dem Fensterbeginn des
+  ältesten offenen Belegs – ohne offenen Beleg wird keine Buchung
+  entschlüsselt. Beides im Zugriffsbereich von `matching.edit`.
 - **Vorschläge werden nicht gespeichert:** Sie werden bei jedem Aufruf der
   Seite in der Session neu berechnet (keine Migration, kein veralteter
-  Vorschlag). „Übernehmen“ bewertet das Paar neu und schreibt über
-  `Zuordnung` (`vorschlag_bestaetigt`, Score, `rule_trace`). Angezeigt
+  Vorschlag). „Übernehmen“ bewertet das Paar neu, lehnt ab, wenn es unter
+  `vorschlag_ab` gefallen ist oder sich der angezeigte Betrag geändert hat,
+  und schreibt über `Zuordnung` (`vorschlag_bestaetigt`, Score, `rule_trace`). Angezeigt
   werden je Beleg bis zu drei Paare ab einer Mindestpunktzahl (`vorschlag_ab`,
   Start 40 – nicht in der Spec-Tabelle).
 - **Parameter** als ein Setting `abgleich_parameter` (JSON), auf der

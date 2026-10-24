@@ -64,8 +64,16 @@ final readonly class Abgleich
      */
     public function planen(Vault $vault, Zugriffsbereich $bereich): Abgleichsstand
     {
-        $belege = $this->belegeLaden($vault, $this->belege->abgleichKandidaten($bereich));
-        $buchungen = $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten($bereich));
+        $parameter = $this->parameter();
+        $records = $this->belege->abgleichKandidaten($bereich);
+        $belege = $this->belegeLaden($vault, $records);
+        // Without an open receipt there is nothing to score - no booking is
+        // decrypted. A booking from before the earliest open receipt's
+        // window is out of every window and stays unread as well.
+        $buchungen = $records === [] ? [] : $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten(
+            $bereich,
+            $records[0]->invoiceDate->modify(sprintf('-%d days', $parameter->fensterVorTage)),
+        ));
 
         $belegAnzeige = [];
         foreach ($belege as [$eingabe, $record, $daten, $lieferant]) {
@@ -77,7 +85,7 @@ final readonly class Abgleich
         }
 
         return new Abgleichsstand(
-            Punktebewertung::planen(array_column($belege, 0), array_column($buchungen, 0), $this->parameter()),
+            Punktebewertung::planen(array_column($belege, 0), array_column($buchungen, 0), $parameter),
             $belegAnzeige,
             $buchungAnzeige,
         );
@@ -109,18 +117,24 @@ final readonly class Abgleich
     /**
      * Accepts one suggestion: scores the pair afresh - the page may be old -
      * and allocates what both still have open, as "Vorschlag bestätigt".
+     * Refused when the pair no longer reaches the suggestion minimum or the
+     * amount differs from the $betrag the page showed.
      *
      * @return int the id of the new allocation
      *
-     * @throws BankRuleViolation when the pair is out of scope or no candidate any more
+     * @throws BankRuleViolation when the pair is out of scope, no suggestion any more, or changed
      */
-    public function uebernehmen(Vault $vault, Zugriffsbereich $bereich, int $invoiceId, int $transactionId, ?int $userId, string $ip, \DateTimeImmutable $now): int
+    public function uebernehmen(Vault $vault, Zugriffsbereich $bereich, int $invoiceId, int $transactionId, int $betrag, ?int $userId, string $ip, \DateTimeImmutable $now): int
     {
+        $parameter = $this->parameter();
         $beleg = $this->belegeLaden($vault, $this->belege->abgleichKandidaten($bereich, [$invoiceId]))[0][0] ?? null;
-        $buchung = $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten($bereich, [$transactionId]))[0][0] ?? null;
-        $bewertung = $beleg === null || $buchung === null ? null : Punktebewertung::bewerten($beleg, $buchung, $this->parameter());
-        if ($bewertung === null) {
+        $buchung = $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten($bereich, null, [$transactionId]))[0][0] ?? null;
+        $bewertung = $beleg === null || $buchung === null ? null : Punktebewertung::bewerten($beleg, $buchung, $parameter);
+        if ($bewertung === null || $bewertung->score < $parameter->vorschlagAb) {
             throw new BankRuleViolation('Dieser Vorschlag passt nicht mehr – Beleg oder Buchung wurden inzwischen zugeordnet oder geändert.');
+        }
+        if ($bewertung->betrag !== $betrag) {
+            throw new BankRuleViolation('Der Betrag dieses Vorschlags hat sich inzwischen geändert – bitte den neuen Vorschlag prüfen.');
         }
 
         return $this->zuordnung->zuordnen($vault, $invoiceId, $transactionId, $bewertung->betrag, ZuordnungMethode::VorschlagBestaetigt, $bewertung->score, $bewertung->trace(), $userId, $ip, $now);

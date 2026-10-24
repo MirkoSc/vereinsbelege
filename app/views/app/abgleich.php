@@ -121,6 +121,7 @@ $weitere = [
                         <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
                         <input type="hidden" name="beleg" value="<?= e((string) $vorschlag->invoiceId) ?>">
                         <input type="hidden" name="buchung" value="<?= e((string) $vorschlag->transactionId) ?>">
+                        <input type="hidden" name="betrag" value="<?= e((string) $vorschlag->betrag) ?>">
                         <button type="submit" class="knopf">Übernehmen (<?= $betrag($vorschlag->betrag) ?>)</button>
                     </form>
                 </article>

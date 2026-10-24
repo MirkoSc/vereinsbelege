@@ -347,20 +347,33 @@ final readonly class BankTransactionRepository
     /**
      * Bookings the matching may score (M10-2, issue #66): not yet fully
      * allocated, within $bereich (a booking has no cost center - a
-     * cost-center scope sees none). $ids narrows to those rows.
+     * cost-center scope sees none), booked on or after $ab. An expense
+     * marked "kein Beleg nötig" is left out - someone decided it gets no
+     * receipt -, income is not (it needs none by default, E-17, yet an
+     * outgoing invoice is settled by it). $ids narrows to those rows.
      *
      * @param list<int>|null $ids
      *
      * @return list<BankTransactionRecord>
      */
-    public function abgleichKandidaten(Zugriffsbereich $bereich, ?array $ids = null): array
+    public function abgleichKandidaten(Zugriffsbereich $bereich, ?\DateTimeImmutable $ab = null, ?array $ids = null): array
     {
         if ($ids === []) {
             return [];
         }
         [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
-        $sql = "SELECT t.* FROM bank_transaction t WHERE {$bedingung} AND t.doc_status <> ?";
-        $parameter[] = BankTransactionDocStatus::Zugeordnet->value;
+        $sql = "SELECT t.* FROM bank_transaction t
+                WHERE {$bedingung} AND t.doc_status <> ? AND NOT (t.doc_status = ? AND t.direction = ?)";
+        array_push(
+            $parameter,
+            BankTransactionDocStatus::Zugeordnet->value,
+            BankTransactionDocStatus::NichtNoetig->value,
+            BankTransactionDirection::Ausgabe->value,
+        );
+        if ($ab !== null) {
+            $sql .= ' AND t.booking_date >= ?';
+            $parameter[] = $ab->format('Y-m-d');
+        }
         if ($ids !== null) {
             $sql .= sprintf(' AND t.id IN (%s)', implode(',', array_fill(0, count($ids), '?')));
             array_push($parameter, ...$ids);

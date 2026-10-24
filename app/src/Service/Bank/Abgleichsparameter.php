@@ -42,7 +42,7 @@ final readonly class Abgleichsparameter
         'fenster_vor_tage' => [5, 0, 365],
         'fenster_nach_tage' => [45, 0, 365],
         'auto_schwelle' => [85, 1, 500],
-        'auto_abstand' => [20, 0, 500],
+        'auto_abstand' => [20, 1, 500],
         'vorschlag_ab' => [40, 1, 500],
     ];
 
@@ -51,17 +51,17 @@ final readonly class Abgleichsparameter
     public const int PUNKTE_MAX = 200;
 
     /**
-     * @param array<string, int> $punkte signal value => points, every signal present
+     * @param array<string, int> $punkte signal value => points; a missing signal counts its start value
      */
     public function __construct(
         public array $punkte = self::PUNKTE_START,
-        public int $skontoProzent = 3,
-        public int $nameAehnlichkeitProzent = 80,
-        public int $fensterVorTage = 5,
-        public int $fensterNachTage = 45,
-        public int $autoSchwelle = 85,
-        public int $autoAbstand = 20,
-        public int $vorschlagAb = 40,
+        public int $skontoProzent = self::WERTE['skonto_prozent'][0],
+        public int $nameAehnlichkeitProzent = self::WERTE['name_aehnlichkeit_prozent'][0],
+        public int $fensterVorTage = self::WERTE['fenster_vor_tage'][0],
+        public int $fensterNachTage = self::WERTE['fenster_nach_tage'][0],
+        public int $autoSchwelle = self::WERTE['auto_schwelle'][0],
+        public int $autoAbstand = self::WERTE['auto_abstand'][0],
+        public int $vorschlagAb = self::WERTE['vorschlag_ab'][0],
     ) {
     }
 

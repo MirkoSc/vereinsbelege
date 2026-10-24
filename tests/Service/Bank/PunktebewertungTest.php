@@ -61,16 +61,21 @@ final class PunktebewertungTest extends TestCase
 
         self::assertSame(40, $this->bewerten($beleg, $this->buchung(zweck: 'Rechnung re 2026 0815 vom 3.3.'))->signale[Signal::Rechnungsnummer->value] ?? null);
         self::assertSame(40, $this->bewerten($beleg, $this->buchung(zweck: 'Danke', eref: 'RE20260815'))->signale[Signal::Rechnungsnummer->value] ?? null, 'the end-to-end reference counts');
+        self::assertSame(40, $this->bewerten($this->beleg(nummer: '4711-1'), $this->buchung(zweck: 'Zahlung vom 15.03.2026', eref: '47111'))->signale[Signal::Rechnungsnummer->value] ?? null, 'purpose and reference stay apart');
         self::assertArrayNotHasKey(Signal::Rechnungsnummer->value, $this->bewerten($beleg, $this->buchung(zweck: 'RE-2026/08151'))->signale, 'a longer number is another number');
     }
 
     public function testShortOrDigitlessNumbersSayNothing(): void
     {
-        self::assertFalse(Punktebewertung::enthaeltKennung('re12abc', '12'));
-        self::assertFalse(Punktebewertung::enthaeltKennung('mitgliedsbeitrag', 'beitrag'));
-        self::assertFalse(Punktebewertung::enthaeltKennung('20260815', '815'), 'a number edge must not touch another digit');
-        self::assertTrue(Punktebewertung::enthaeltKennung('kd4711re9', '4711'));
-        self::assertTrue(Punktebewertung::enthaeltKennung('20260815x815x', '815'), 'a later clean occurrence counts');
+        $suche = static fn(string $text, string $kennung): bool => Punktebewertung::enthaeltKennung(Punktebewertung::suchtext($text), $kennung);
+        self::assertFalse($suche('RE12 abc', '12'));
+        self::assertFalse($suche('Mitgliedsbeitrag', 'beitrag'));
+        self::assertFalse($suche('20260815', '815'), 'a number edge must not touch another digit');
+        self::assertTrue($suche('Kd4711Re9', '4711'));
+        self::assertTrue($suche('20260815 x815x', '815'), 'a later clean occurrence counts');
+        self::assertTrue($suche('Zahlung vom 15.03.2026 4711', '4711'), 'a separator is a boundary');
+        self::assertTrue($suche('Kd 123456 / 4711', '4711'));
+        self::assertFalse($suche('Kd 1234567', '4567'));
     }
 
     public function testTheSupplierIbanScores30(): void
@@ -190,7 +195,7 @@ final class PunktebewertungTest extends TestCase
         self::assertTrue(Punktebewertung::fuehrtMitAbstand([90], 90, 20));
         self::assertTrue(Punktebewertung::fuehrtMitAbstand([70, 90], 90, 20));
         self::assertFalse(Punktebewertung::fuehrtMitAbstand([71, 90], 90, 20));
-        self::assertTrue(Punktebewertung::fuehrtMitAbstand([90, 90], 90, 0), 'a tie leads only without a distance');
+        self::assertFalse(Punktebewertung::fuehrtMitAbstand([90, 90], 90, 0), 'a tie never leads');
         self::assertFalse(Punktebewertung::fuehrtMitAbstand([95, 90], 90, 0), 'not the best');
     }
 
