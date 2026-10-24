@@ -45,6 +45,7 @@ use App\Service\Inbox\EinreichungsDaten;
 use App\Service\Inbox\Posteingang;
 use App\Service\MasterData\Aufloesung;
 use App\Service\MasterData\AufloesungsArt;
+use App\Service\MasterData\Merkmale;
 use App\Service\MasterData\SupplierKeys;
 use App\Service\MasterData\SupplierRuleViolation;
 use App\Service\MasterData\SupplierService;
@@ -80,6 +81,11 @@ use App\Service\Upload\MagicBytes;
  *   the supplier as the resolution found it (issue #48/M7-6,
  *   lieferantVorbelegen()). Nothing is saved before a person does.
  *   kiErneut() queues the AI again after it failed.
+ * - Confirming the supplier the page chose teaches it the receipt's new
+ *   IBAN, name (as an alias), creditor id and mandate reference (issue
+ *   #201/M7-6b, lernbareMerkmale(), decision E-29) - shown before saving,
+ *   ticked by default, written after the receipt in a transaction of its
+ *   own.
  * - The category of such a form comes in a fixed order (issue #49/M7-7,
  *   kategorieVorschlagen()): a rule of the club, the supplier's default,
  *   what its checked receipts had, the AI - App\Service\Invoice\
@@ -471,6 +477,47 @@ final readonly class Pruefung
         return ['felder' => $felder, 'hinweis' => $hinweis, 'unsicher' => $unsicher, 'pruefen' => $pruefen];
     }
 
+    /**
+     * What confirming $lieferantId for $document would teach that supplier
+     * (issue #201/M7-6b, docs/spec/03-erfassung-und-ki.md section 7): its
+     * new IBAN, alias, creditor id and mandate reference as the AI and a
+     * read e-invoice state them - App\Service\MasterData\
+     * SupplierService::lernbar(). Null when there is nothing to show: the
+     * supplier is gone or merged away, the receipt names nothing new and
+     * nothing was left out either.
+     */
+    public function lernbareMerkmale(Document $document, Vault $vault, int $lieferantId): ?Merkmale
+    {
+        $lieferant = $this->lieferanten->finde($vault, $lieferantId);
+        if ($lieferant === null || $lieferant->mergedInto !== null) {
+            return null;
+        }
+        [$partner, $mandat] = $this->belegPartner($document, $vault);
+        $merkmale = $partner === [] ? null : $this->lieferanten->lernbar($vault, $lieferant, $partner, $mandat);
+
+        return $merkmale === null || ($merkmale->leer() && $merkmale->hinweise === []) ? null : $merkmale;
+    }
+
+    /**
+     * The supplier the receipt states - the AI's suggestion with a read
+     * e-invoice over it, like the resolution reads it - and its mandate
+     * reference. Read again from the document's artifacts, never from the
+     * form: the form's free text is no id of anyone.
+     *
+     * @return array{array<mixed>, string}
+     */
+    private function belegPartner(Document $document, Vault $vault): array
+    {
+        $ki = $this->kiAuslesung->auszug($document, $vault)?->extraktion ?? [];
+        $eRechnung = $this->texterkennung->eRechnung($document, $vault);
+        $extraktion = LieferantenAufloesung::ueberlagern($ki, $eRechnung !== null && $eRechnung->gelesen() ? ($eRechnung->extraktion ?? []) : []);
+
+        $partner = is_array($extraktion['supplier'] ?? null) ? $extraktion['supplier'] : [];
+        $zahlung = is_array($extraktion['payment'] ?? null) ? $extraktion['payment'] : [];
+
+        return [$partner, is_string($zahlung['mandate_reference'] ?? null) ? $zahlung['mandate_reference'] : ''];
+    }
+
     /** Whether the AI is reading the document right now (a run is queued or running). */
     public function kiLaeuft(Document $document): bool
     {
@@ -742,7 +789,13 @@ final readonly class Pruefung
      *
      * @param array<string, string> $felder the form, see feldnamen()
      * @param bool $darfLieferantAnlegen whether the account may maintain
-     *        suppliers (`supplier.manage`) - only then may the form create one
+     *        suppliers (`supplier.manage`) - only then may the form create one,
+     *        or teach one what the receipt says (issue #201/M7-6b)
+     * @param ?int $lernenFuer the supplier the page offered to teach and the
+     *        person left ticked - learnt only if the receipt is saved for the
+     *        first time with exactly that supplier
+     * @param string $lernenStand Merkmale::fingerabdruck() of what the page
+     *        showed - learnt only if that is still the plan
      *
      * @throws InvoiceRuleViolation
      */
@@ -755,6 +808,8 @@ final readonly class Pruefung
         ?int $userId,
         string $ip,
         \DateTimeImmutable $now,
+        ?int $lernenFuer = null,
+        string $lernenStand = '',
     ): PruefErgebnis {
         if ($document->status === DocumentStatus::Festgeschrieben) {
             throw new InvoiceRuleViolation('Dieser Beleg ist festgeschrieben und lässt sich nicht ändern. Zum Korrigieren zuerst die Festschreibung aufheben.');
@@ -846,7 +901,51 @@ final readonly class Pruefung
             throw $e;
         }
 
-        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt);
+        // What the receipt teaches its supplier (issue #201/M7-6b) - after
+        // the receipt, in a transaction of its own: a conflict there must not
+        // cost the person the receipt they just saved. Only on the first
+        // save (the page offers it only then), only for the supplier the page
+        // chose and the person kept, never for one just created from the form.
+        $gelernt = [];
+        $nichtGelernt = false;
+        if ($lernenFuer !== null && $darfLieferantAnlegen && $vorher === null && !$lieferantAngelegt && $struktur->supplierId === $lernenFuer) {
+            [$partner, $mandat] = $this->belegPartner($document, $vault);
+            if ($partner !== []) {
+                $this->pdo->beginTransaction();
+                try {
+                    $merkmale = $this->lieferanten->merkmaleErgaenzen($vault, $lernenFuer, $partner, $mandat, $lernenStand, $now);
+                    if ($merkmale !== null) {
+                        // Field names only, like every supplier change.
+                        $this->audit->record(AuditAction::LieferantGeaendert, $userId, $ip, $lernenFuer, ['felder' => $merkmale->felder(), 'beleg' => $document->id], $now);
+                        $gelernt = $merkmale->bezeichnungen();
+                    }
+                    $this->pdo->commit();
+                } catch (SupplierRuleViolation) {
+                    // The plan changed since the page was shown.
+                    $this->pdo->rollBack();
+                    $nichtGelernt = true;
+                } catch (\PDOException $e) {
+                    // A parallel save of the same supplier or key won the
+                    // locks (deadlock, lock wait timeout): the receipt is
+                    // saved, only the learning is lost - not worth an error.
+                    if ($this->pdo->inTransaction()) {
+                        $this->pdo->rollBack();
+                    }
+                    if (!in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213], true)) {
+                        throw $e;
+                    }
+                    $nichtGelernt = true;
+                } catch (\Throwable $e) {
+                    if ($this->pdo->inTransaction()) {
+                        $this->pdo->rollBack();
+                    }
+
+                    throw $e;
+                }
+            }
+        }
+
+        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt);
     }
 
     /**
@@ -996,7 +1095,8 @@ final readonly class Pruefung
         $kennungen = [
             [SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))],
             [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))],
-            [SupplierKeyKind::Iban, Iban::normalisieren($wert('iban'))],
+            // The club's own account names no supplier (issue #201, E-29).
+            [SupplierKeyKind::Iban, $this->lieferanten->istVereinsIban($vault, $wert('iban')) ? '' : Iban::normalisieren($wert('iban'))],
             [SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))],
         ];
         foreach ($kennungen as [$art, $kennung]) {

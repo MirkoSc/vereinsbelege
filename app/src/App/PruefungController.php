@@ -34,6 +34,7 @@ use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\KategorieVorschlag;
 use App\Service\Invoice\Pruefung;
+use App\Service\MasterData\Merkmale;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -183,6 +184,14 @@ final readonly class PruefungController
             ['felder' => $felder, 'vorschlag' => $kategorie] = $this->pruefung->kategorieVorschlagen($felder, $ki, $tresor, $this->bereich());
         }
 
+        // What confirming the supplier would teach it (issue #201/M7-6b) -
+        // only for the one the page chose from what was read, not one the
+        // archive set, and only for whom may maintain suppliers.
+        $lernen = null;
+        if ($vorbelegbar && $felder['lieferant'] !== '' && $felder['lieferant'] === $nachAufloesung && $this->berechtigungen()->darf(Permission::SupplierManage)) {
+            $lernen = $this->pruefung->lernbareMerkmale($document, $tresor, (int) $felder['lieferant']);
+        }
+
         $unsicher = $ki === null ? [] : self::unsichereFelder($ki->unsicher, $leer, $nachKi, $felder);
         if ($kategorie !== null && $kategorie->herkunft !== KategorieHerkunft::Ki) {
             // A rule or the supplier chose it - the AI's doubt does not apply.
@@ -207,6 +216,7 @@ final readonly class PruefungController
             // Said only while the choice is still the resolution's.
             lieferantHinweis: $felder['lieferant'] === $nachAufloesung ? $lieferant['hinweis'] : '',
             lieferantPruefen: $lieferant['pruefen'],
+            lernen: $lernen === null ? null : ['fuer' => (int) $felder['lieferant'], 'merkmale' => $lernen, 'an' => true],
         );
     }
 
@@ -317,6 +327,11 @@ final readonly class PruefungController
 
         $felder = self::felder($request);
         $geprueft = ($request->post['aktion'] ?? '') === 'geprueft';
+        // The supplier the page offered to teach (issue #201/M7-6b).
+        $fuer = $request->post['lieferant_lernen_fuer'] ?? '';
+        $lernenFuer = is_string($fuer) && ctype_digit($fuer) ? (int) $fuer : null;
+        $lernenAn = ($request->post['lieferant_lernen'] ?? '') === '1';
+        $stand = $request->post['lieferant_lernen_stand'] ?? '';
         try {
             $ergebnis = $this->pruefung->speichern(
                 $eintrag->document,
@@ -327,9 +342,16 @@ final readonly class PruefungController
                 $this->session->userId(),
                 $request->ip,
                 new \DateTimeImmutable(),
+                $lernenAn ? $lernenFuer : null,
+                is_string($stand) ? $stand : '',
             );
         } catch (InvoiceRuleViolation $e) {
-            return $this->seite($eintrag, $tresor, $felder, $e, 422);
+            // Shown again as it was, ticked or not - planned anew.
+            $merkmale = $lernenFuer === null || !$this->berechtigungen()->darf(Permission::SupplierManage)
+                ? null
+                : $this->pruefung->lernbareMerkmale($eintrag->document, $tresor, $lernenFuer);
+
+            return $this->seite($eintrag, $tresor, $felder, $e, 422, lernen: $merkmale === null ? null : ['fuer' => (int) $lernenFuer, 'merkmale' => $merkmale, 'an' => $lernenAn]);
         }
 
         // Only the reference (plaintext) - the message shows on the next
@@ -339,7 +361,13 @@ final readonly class PruefungController
         if ($ergebnis->lieferantAngelegt) {
             $meldung .= ' Der neue Partner ist angelegt – weitere Angaben unter „Lieferanten“.';
         }
+        if ($ergebnis->gelernt !== []) {
+            $meldung .= ' Beim Lieferanten ergänzt: ' . implode(', ', $ergebnis->gelernt) . '.';
+        }
         $warnungen = $ergebnis->warnungen;
+        if ($ergebnis->nichtGelernt) {
+            $warnungen[] = 'Die neuen Merkmale wurden nicht beim Lieferanten ergänzt – sie haben sich seit dem Anzeigen geändert. Bitte unter „Lieferanten“ prüfen.';
+        }
         // After "Geprüft, nächster" the page with the duplicate notice is
         // gone - the message on the next page has to carry it (issue #40).
         $duplikat = $this->duplikate->verdacht($eintrag->document, $this->bereich());
@@ -554,6 +582,8 @@ final readonly class PruefungController
      * @param ?KategorieVorschlag $kategorieVorschlag where the category of an unsaved form came from (issue #49/M7-7)
      * @param string $lieferantHinweis how the supplier was resolved (issue #48/M7-6)
      * @param bool $lieferantPruefen the AI created the chosen supplier, nobody has reviewed it yet
+     * @param ?array{fuer: int, merkmale: Merkmale, an: bool} $lernen what confirming the
+     *        supplier `fuer` would teach it, ticked or not (issue #201/M7-6b)
      */
     private function seite(
         InboxItem $eintrag,
@@ -569,6 +599,7 @@ final readonly class PruefungController
         ?KategorieVorschlag $kategorieVorschlag = null,
         string $lieferantHinweis = '',
         bool $lieferantPruefen = false,
+        ?array $lernen = null,
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
@@ -611,6 +642,9 @@ final readonly class PruefungController
             'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(regelName: $this->berechtigungen()->darf(Permission::BankView)),
             'lieferantHinweis' => $lieferantHinweis,
             'lieferantPruefen' => $lieferantPruefen,
+            'lernen' => $bearbeitbar && $lernen !== null && $tresor !== null
+                ? [...$lernen, 'stand' => $lernen['merkmale']->fingerabdruck($tresor->blindIndex())]
+                : null,
             'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
             'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],

@@ -9,6 +9,7 @@ use App\Config\Paths;
 use App\Domain\ArtifactKind;
 use App\Domain\AuditAction;
 use App\Domain\AuditEntry;
+use App\Domain\BankAccountKind;
 use App\Domain\BlobMeta;
 use App\Domain\BlobStorage;
 use App\Domain\DocumentSource;
@@ -19,6 +20,7 @@ use App\Domain\JobExecutor;
 use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
+use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
 use App\Domain\Zahlungsweg;
@@ -37,6 +39,7 @@ use App\Http\StreamResponse;
 use App\Repository\AiProviderRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
@@ -59,6 +62,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\BankAccountService;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -1660,6 +1664,253 @@ final class PruefungFlowTest extends DatabaseTestCase
     // ------------------------------------------------------------ helpers
 
     /** The seeded default AI profile (migrations/024) gets a key: the AI is on. */
+    // ------------------------------ learning from the receipt (M7-6b, #201)
+
+    public function testConfirmingASuggestedSupplierTeachesItTheReceiptsNameAndIban(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('/<input type="hidden" name="lieferant_lernen_fuer" value="' . $lieferant . '">/', $seite);
+        self::assertMatchesRegularExpression('/<input type="checkbox" name="lieferant_lernen" value="1"[^>]* checked>/', $seite, 'ticked by default');
+        self::assertStringContainsString('Neue Merkmale beim Lieferanten „Sporthaus Beispiel“ ergänzen', $seite);
+        self::assertStringContainsString('<li>IBAN DE89 3704 0044 0532 0130 00</li>', $seite);
+        self::assertStringContainsString('<li>Name „Sporthaus Beispeil“ als Alias</li>', $seite);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+        self::assertSame(302, $antwort->status);
+
+        $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
+        self::assertSame(['Sporthaus Beispeil'], $daten?->aliases);
+        self::assertSame([self::IBAN], $daten->ibans);
+        self::assertFalse(new SupplierRepository($this->pdo())->find($lieferant)?->needsReview, 'a receipt is no review of the supplier');
+        // supplier_key follows: the next receipt is found in steps 1-4.
+        self::assertSame([$lieferant], $this->supplierService()->idsZuNamen($this->tresor, 'SPORTHAUS BEISPEIL GmbH', [SupplierRole::Lieferant]));
+        $iban = $this->tresor->blindIndex()->forValue(SupplierKeyKind::Iban->purpose(), self::IBAN);
+        self::assertSame([$lieferant], new SupplierRepository($this->pdo())->idsWithKey(SupplierKeyKind::Iban, $iban));
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $lieferant), null, 10);
+        self::assertSame([AuditAction::LieferantGeaendert->value], array_map(static fn(AuditEntry $e): string => $e->action, $zeilen));
+        self::assertSame(['felder' => ['aliases', 'iban'], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor), 'field names only');
+        self::assertStringNotContainsString('Beispeil', $this->rohTabelle('supplier'));
+        self::assertStringNotContainsString('Beispeil', $this->rohTabelle('audit_log'));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Beim Lieferanten ergänzt: Name als Alias, IBAN.', $seite);
+        self::assertStringNotContainsString('name="lieferant_lernen"', $seite, 'offered on the first save only');
+
+        // The next receipt of that supplier is a match now, no suggestion.
+        $naechster = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+        $seite = $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body;
+        self::assertStringContainsString('Lieferant automatisch erkannt (Stufe 2 – IBAN).', $seite);
+        self::assertStringNotContainsString('name="lieferant_lernen"', $seite, 'nothing new to learn');
+    }
+
+    public function testASuggestionReplacedByAnotherSupplierTeachesNothing(): void
+    {
+        $vorschlag = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($vorschlag, $stand), 'lieferant' => (string) $anderer]);
+
+        self::assertSame($anderer, (int) $this->rechnung($id)['supplier_id']);
+        foreach ([$vorschlag, $anderer] as $lieferant) {
+            $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
+            self::assertSame([], $daten?->aliases);
+            self::assertSame([], $daten->ibans);
+        }
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantGeaendert), null, 10);
+        self::assertSame([], $zeilen);
+    }
+
+    public function testUntickingTeachesNothing(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $felder = $this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body));
+        unset($felder['lieferant_lernen']);
+        $this->post('/app/belege/pruefen/' . $id, $felder);
+
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id']);
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
+    }
+
+    public function testARefusedSaveShowsTheOfferAgainAsItWasLeft(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $felder = [...$this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body)), 'brutto' => ''];
+        unset($felder['lieferant_lernen']);
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $felder);
+
+        self::assertSame(422, $antwort->status);
+        self::assertMatchesRegularExpression('/<input type="checkbox" name="lieferant_lernen" value="1" aria-describedby="pruefen-lernen-hilfe">/', $antwort->body, 'still unticked');
+        self::assertStringContainsString('<li>Name „Sporthaus Beispeil“ als Alias</li>', $antwort->body);
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
+    }
+
+    public function testAnIbanOfAnotherSupplierIsNamedAndNotLearnt(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'SH Beispiel', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Lieferant automatisch erkannt (Stufe 1 – USt-ID).', $seite);
+        self::assertStringContainsString('Die IBAN des Belegs ist bereits beim Lieferanten „Getränke Müller“ hinterlegt – nicht übernommen.', $seite);
+        self::assertStringNotContainsString('<li>IBAN', $seite);
+        self::assertStringContainsString('<li>Name „Sporthaus Beispiel GmbH“ als Alias</li>', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
+        self::assertSame(['Sporthaus Beispiel GmbH'], $daten?->aliases);
+        self::assertSame([], $daten->ibans, 'an IBAN belongs to one supplier only');
+    }
+
+    public function testAPlanChangedSinceThePageWasShownTeachesNothing(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        // Meanwhile someone gives the receipt's IBAN to another supplier.
+        $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $stand));
+
+        self::assertSame(302, $antwort->status);
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id'], 'the receipt is saved all the same');
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases, 'not even the alias - the person confirmed something else');
+        self::assertStringContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+    }
+
+    public function testANameOfAnotherSupplierIsNotLearntAsAnAlias(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'SH Beispiel', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertStringContainsString('Der Name „Sporthaus Beispiel GmbH“ gehört bereits zum Lieferanten „Sporthaus Beispiel“ – nicht als Alias übernommen.', $seite);
+        self::assertStringNotContainsString('als Alias</li>', $seite);
+        self::assertStringContainsString('<li>IBAN DE89 3704 0044 0532 0130 00</li>', $seite);
+    }
+
+    public function testTheClubsOwnIbanIsNotLearnt(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $this->vereinskonto(self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Die IBAN des Belegs ist ein Konto des Vereins – nicht übernommen.', $seite);
+        self::assertStringNotContainsString('<li>IBAN', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
+        self::assertSame(['Sporthaus Beispeil'], $daten?->aliases);
+        self::assertSame([], $daten->ibans);
+    }
+
+    public function testLearningNeedsSupplierManage(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+        $rolle = $this->rollen->create('Nur prüfen', false, [
+            Permission::InboxView->value => PermissionScope::Alle,
+            Permission::DocumentEdit->value => PermissionScope::Alle,
+        ]);
+        $this->rollen->assignToUser($this->userId, [$rolle]);
+
+        self::assertStringNotContainsString('name="lieferant_lernen"', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, 'erraten'));
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id']);
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
+    }
+
+    public function testAReceiptSavedBeforeTeachesNothingOnALaterSave(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        $erst = $this->lernFelder($lieferant, $stand);
+        unset($erst['lieferant_lernen']);
+        $this->post('/app/belege/pruefen/' . $id, $erst);
+
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $stand), 'aktion' => 'geprueft']);
+
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases);
+    }
+
+    public function testAMergedSupplierIsNotTaught(): void
+    {
+        $quelle = $this->lieferant('Sporthaus alt', SupplierRole::Lieferant);
+        $ziel = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $this->pdo()->prepare('UPDATE supplier SET merged_into = ? WHERE id = ?')->execute([$ziel, $quelle]);
+        $vorher = $this->rohTabelle('supplier');
+
+        $this->pdo()->beginTransaction();
+        $merkmale = $this->supplierService()->merkmaleErgaenzen($this->tresor, $quelle, ['name' => 'Ganz neu', 'iban' => self::IBAN], '', '', new \DateTimeImmutable());
+        $this->pdo()->commit();
+
+        self::assertNull($merkmale);
+        self::assertSame($vorher, $this->rohTabelle('supplier'));
+        self::assertNull($this->pruefung()->lernbareMerkmale(new DocumentRepository($this->pdo())->find($this->beleg()) ?? self::fail('no document'), $this->tresor, $quelle));
+    }
+
+    /**
+     * The valid form saved ("Speichern") with $lieferant chosen and the
+     * offer to teach it ticked, as the page sends it ($stand: lernStand()).
+     *
+     * @return array<string, string>
+     */
+    private function lernFelder(int $lieferant, string $stand): array
+    {
+        return $this->felder([
+            'lieferant' => (string) $lieferant,
+            'lieferant_lernen' => '1',
+            'lieferant_lernen_fuer' => (string) $lieferant,
+            'lieferant_lernen_stand' => $stand,
+            'aktion' => 'speichern',
+        ]);
+    }
+
+    /** One of the club's own bank accounts (issue #201/M7-6b, E-29). */
+    private function vereinskonto(string $iban): void
+    {
+        new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->anlegen($this->tresor, BankAccountKind::Bank, [
+            'name' => 'Girokonto', 'iban' => $iban, 'opening_balance' => '0,00', 'opening_date' => '2024-01-01',
+        ], new \DateTimeImmutable());
+    }
+
+    /** The fingerprint of what the page offers to teach. */
+    private function lernStand(string $seite): string
+    {
+        self::assertSame(1, preg_match('/name="lieferant_lernen_stand" value="([0-9a-f]{64})"/', $seite, $treffer), 'the page offers to teach');
+
+        return $treffer[1];
+    }
+
     private function kiEinrichten(): void
     {
         $anbieter = new AiProviderRepository($this->pdo(), $this->crypto);
