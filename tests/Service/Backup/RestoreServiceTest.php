@@ -9,6 +9,7 @@ use App\Service\Backup\MysqlDumper;
 use App\Service\Backup\RestoreService;
 use App\Service\Migration\SqlSplitter;
 use App\Service\Migration\SqlStatementStream;
+use App\Tests\Support\RecordingPdo;
 use PHPUnit\Framework\TestCase;
 
 final class RestoreServiceTest extends TestCase
@@ -231,21 +232,11 @@ final class RestoreServiceTest extends TestCase
     }
 
     /**
-     * A PDO stand-in that records what it is asked to run. createStub()
-     * skips the constructor, so no database driver is needed.
-     *
      * @param list<string> $ausgefuehrt
      */
     private function pdo(array &$ausgefuehrt): \PDO
     {
-        $pdo = $this->createStub(\PDO::class);
-        $pdo->method('exec')->willReturnCallback(static function (string $statement) use (&$ausgefuehrt): int {
-            $ausgefuehrt[] = $statement;
-
-            return 0;
-        });
-
-        return $pdo;
+        return RecordingPdo::create($ausgefuehrt);
     }
 
     /**
