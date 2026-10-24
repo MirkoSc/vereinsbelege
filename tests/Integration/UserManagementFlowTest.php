@@ -156,9 +156,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertNotSame(hex2bin($token), $zeile['token_hash']);
         self::assertSame(
             72 * 3600,
-            // Wall-clock difference: in Europe/Berlin the span can contain a DST switch (73 h).
-            new \DateTimeImmutable((string) $zeile['expires_at'], new \DateTimeZone('UTC'))->getTimestamp()
-                - new \DateTimeImmutable((string) $zeile['created_at'], new \DateTimeZone('UTC'))->getTimestamp(),
+            new \DateTimeImmutable((string) $zeile['expires_at'])->getTimestamp() - new \DateTimeImmutable((string) $zeile['created_at'])->getTimestamp(),
         );
     }
 
