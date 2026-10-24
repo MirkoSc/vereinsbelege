@@ -782,7 +782,7 @@ aktivem Worker-Modul.
    Migration 035 für schon ausgewertete Belege) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
 7. `detect_recurring` (Abschnitt 9; seit issue #57/M8-1 `App\Service\Invoice\Serien`,
-   eingereiht von „Geprüft“ in der Prüfansicht und per Migration 037 je Lieferant
+   eingereiht von „Geprüft“ in der Prüfansicht und per Migration 036 je Lieferant
    und Richtung für den neuesten schon geprüften Beleg) – `session`
 8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
    Originaldateien, ein Schritt je Datei, `App\Service\Document\Duplikatindex`;
@@ -1511,7 +1511,7 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
   Mandatsreferenz) wird eine Serie vorgeschlagen – nützlich für
   „Buchung ohne Beleg".
 
-**Stand M8-1** (issue #57, Migration 037, E-26): Erkennung, Vorschlag,
+**Stand M8-1** (issue #57, Migration 036, E-26): Erkennung, Vorschlag,
 Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
 „überfällig" folgt mit M8-2 (#58), Serien aus Bankbuchungen später.
 - *Auslöser:* Jeder Beleg, der in der Prüfansicht „Geprüft“ wird, reiht
@@ -1541,7 +1541,9 @@ Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
   neueste. Ein neuer Lauf aktualisiert den offenen Vorschlag, mit dem er die
   meisten Belege teilt (Bezeichnung/Vertrag bleiben); teilt er keine, wird
   er ein weiterer Vorschlag (Miete und Versicherung desselben Partners).
-  Kein Audit.
+  Belege, die noch an einem anderen offenen Vorschlag hängen (späte Belege
+  schließen eine Lücke), gehen in den gewählten über; ein leer gewordener
+  Vorschlag wird gelöscht. Kein Audit.
 - *Bestätigte Serie:* Ein neuer geprüfter Beleg, der zu keiner Serie gehört,
   wird verknüpft, wenn Währung gleich, Betrag in der Toleranz des erwarteten
   und kein Beleg der Serie näher als ein halber Rhythmus liegt (bei mehreren
@@ -1820,7 +1822,7 @@ Toleranz, Sprung beendet die Serie, Einzelkauf übersprungen, 2 + KI-Hinweis
 samt Rhythmus, Lücke schneidet ab, Währung/Gutschrift, Monatsende;
 `SerienFlowTest`: „Geprüft“ reiht ein, drei Belege → Vorschlag ohne Klartext,
 zweiter Lauf aktualisiert, festgeschriebene zählen und bleiben unverändert,
-Lieferanten getrennt, Toleranz-Setting, Migration 037, Liste/Formular/
+Lieferanten getrennt, Toleranz-Setting, Migration 036, Liste/Formular/
 Bestätigen mit Audit nur Feldnamen, bestätigte Serie übernimmt den nächsten
 Beleg, Verwerfen ohne erneuten Vorschlag, Validierung je Feld, Tresor/CSRF,
 Zusammenführen; `RoutePermissionMatrixTest`);

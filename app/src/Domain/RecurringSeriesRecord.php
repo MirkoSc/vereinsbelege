@@ -6,7 +6,7 @@ namespace App\Domain;
 
 /**
  * One `recurring_series` row as stored (issue #57/M8-1,
- * migrations/037_recurring_series.sql): plaintext structure plus the
+ * migrations/036_recurring_series.sql): plaintext structure plus the
  * ciphertext of App\Domain\SeriesData.
  */
 final readonly class RecurringSeriesRecord

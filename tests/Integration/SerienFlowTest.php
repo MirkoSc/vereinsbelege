@@ -196,6 +196,29 @@ final class SerienFlowTest extends DatabaseTestCase
         self::assertSame(array_map($this->rechnungVon(...), $miete), $this->mitglieder($mieteSerie->id));
     }
 
+    public function testLateReceiptsJoiningTwoSuggestionsMergeThem(): void
+    {
+        foreach (['2024-01-02', '2024-02-01', '2024-03-01'] as $datum) {
+            $this->geprueft($datum, '50,00');
+        }
+        $this->allesAbarbeiten();
+        foreach (['2025-01-02', '2025-02-01', '2025-03-03'] as $datum) {
+            $this->geprueft($datum, '50,00');
+        }
+        $this->allesAbarbeiten();
+        self::assertCount(2, $this->serien(), 'a gap of ten months makes two suggestions');
+
+        // The missing months arrive late and close the gap.
+        foreach (['2024-04-01', '2024-05-02', '2024-06-03', '2024-07-01', '2024-08-01', '2024-09-02', '2024-10-01', '2024-11-04', '2024-12-02'] as $datum) {
+            $this->geprueft($datum, '50,00');
+        }
+        $this->allesAbarbeiten();
+
+        $serien = $this->serien();
+        self::assertCount(1, $serien, 'one suggestion, the emptied one is gone');
+        self::assertCount(15, $this->mitglieder($serien[0]->id));
+    }
+
     public function testAReceiptMovedToAnotherSupplierLeavesItsSeries(): void
     {
         [, , $dritter] = $this->monatlich(3);
@@ -247,7 +270,7 @@ final class SerienFlowTest extends DatabaseTestCase
         $alt = $this->geprueft('2025-01-01', '99,00', $andere);
         $this->pdo()->exec('DELETE FROM job');
 
-        $sql = (string) file_get_contents($this->migrationsDir() . '/037_recurring_series.sql');
+        $sql = (string) file_get_contents($this->migrationsDir() . '/036_recurring_series.sql');
         $this->pdo()->exec(substr($sql, (int) strpos($sql, 'INSERT INTO job')));
 
         $ids = array_map(intval(...), $this->pdo()->query("SELECT ref_id FROM job WHERE typ = 'detect_recurring' ORDER BY ref_id")->fetchAll(\PDO::FETCH_COLUMN));

@@ -11,7 +11,7 @@ use App\Domain\SeriesStatus;
 
 /**
  * The tables `recurring_series` and `recurring_series_invoice` (issue
- * #57/M8-1, migrations/037_recurring_series.sql). SQL only - encrypting and
+ * #57/M8-1, migrations/036_recurring_series.sql). SQL only - encrypting and
  * the rules live in App\Service\Invoice\Serien. Nothing here can read an
  * amount.
  *
@@ -238,6 +238,13 @@ final readonly class RecurringSeriesRepository
         foreach (array_values(array_unique($invoiceIds)) as $invoiceId) {
             $this->verknuepfe($seriesId, $invoiceId);
         }
+    }
+
+    /** Deletes a series; its links go with it (ON DELETE CASCADE). */
+    public function loesche(int $id): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM recurring_series WHERE id = ?');
+        $stmt->execute([$id]);
     }
 
     /** Takes an invoice out of whatever series it is in. */

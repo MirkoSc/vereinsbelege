@@ -40,7 +40,7 @@ use App\Service\Processing\ProcessingException;
  * its suggestions - confirm, change, dismiss.
  *
  * The job runs for every receipt marked "Geprüft" (App\Service\Invoice\
- * Pruefung queues it; migration 037 once for the receipts before). One
+ * Pruefung queues it; migration 036 once for the receipts before). One
  * step, in one transaction under a row lock of the supplier (two receipts
  * of one supplier checked at once do not make two suggestions):
  *
@@ -427,7 +427,22 @@ final readonly class Serien implements JobHandler
                 $now,
             );
         }
+        // Receipts of other pending suggestions go over to this one (late
+        // receipts can join two suggestions); one left empty is removed.
+        $verlassen = [];
+        foreach ($kandidat->invoiceIds as $invoiceId) {
+            $anderer = $zuordnung[$invoiceId] ?? null;
+            if ($anderer !== null && $anderer !== $id && isset($vorschlaege[$anderer])) {
+                $this->serien->loese($invoiceId);
+                $verlassen[$anderer] = true;
+            }
+        }
         $this->serien->setzeMitglieder($id, $kandidat->invoiceIds);
+        foreach (array_keys($verlassen) as $anderer) {
+            if ($this->serien->mitglieder($anderer) === []) {
+                $this->serien->loesche($anderer);
+            }
+        }
     }
 
     /**
