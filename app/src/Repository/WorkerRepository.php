@@ -87,7 +87,7 @@ final readonly class WorkerRepository
     public function sperren(int $id, ?int $userId, \DateTimeImmutable $now): bool
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE worker SET status = ?, secret_enc = NULL, config_sealed = NULL, revoked_at = ?, revoked_by = ?
+            'UPDATE worker SET status = ?, secret_enc = NULL, config_sealed = NULL, config_hash = NULL, revoked_at = ?, revoked_by = ?
              WHERE id = ? AND status <> ?',
         );
         $stmt->execute([WorkerStatus::Gesperrt->value, $now->format(self::FORMAT), $userId, $id, WorkerStatus::Gesperrt->value]);
@@ -112,6 +112,37 @@ final readonly class WorkerRepository
             $id,
             WorkerStatus::Gesperrt->value,
         ]);
+    }
+
+    /** Keyed hash of the configuration last sealed to this worker (issue #52). */
+    public function konfigHash(int $id): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT config_hash FROM worker WHERE id = ?');
+        $stmt->execute([$id]);
+        $wert = $stmt->fetchColumn();
+
+        return is_string($wert) ? $wert : null;
+    }
+
+    /**
+     * Stores a newly sealed configuration with the next version - only if
+     * nobody else stored one since $bisherigeVersion was read, and never
+     * for a revoked worker.
+     */
+    public function setzeKonfiguration(int $id, string $versiegelt, int $bisherigeVersion, string $hash): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE worker SET config_sealed = ?, config_version = config_version + 1, config_hash = ?
+             WHERE id = ? AND config_version = ? AND status = ?',
+        );
+        $stmt->bindValue(1, $versiegelt, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $hash, \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $id, \PDO::PARAM_INT);
+        $stmt->bindValue(4, $bisherigeVersion, \PDO::PARAM_INT);
+        $stmt->bindValue(5, WorkerStatus::Aktiv->value);
+        $stmt->execute();
+
+        return $stmt->rowCount() === 1;
     }
 
     // --------------------------------------------------------------- pairing

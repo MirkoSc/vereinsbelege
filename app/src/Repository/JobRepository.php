@@ -484,6 +484,19 @@ final readonly class JobRepository
     }
 
     /**
+     * Whether a worker job still waits or runs for this row - while one
+     * does, the worker grants of the document stay (issue #52/M7b-2,
+     * docs/spec/07-worker.md section 3).
+     */
+    public function wartetAufWorker(string $refType, int $refId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM job WHERE executor = ? AND ref_type = ? AND ref_id = ? AND status IN (?, ?) LIMIT 1');
+        $stmt->execute([JobExecutor::Worker->value, $refType, $refId, JobStatus::Offen->value, JobStatus::Laeuft->value]);
+
+        return $stmt->fetch() !== false;
+    }
+
+    /**
      * Sends the still pending jobs of one type for one row back to their
      * first step (issue #90: a duplicate index half computed under the old
      * vault key must not be finished under the new one). Returns the rows

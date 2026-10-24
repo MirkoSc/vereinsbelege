@@ -142,6 +142,61 @@ final readonly class BlobService
         return $this->store([$content], $meta, $vault, $storage);
     }
 
+    /**
+     * Stores a blob someone else already encrypted - the worker's result
+     * (docs/spec/07-worker.md section 3, issue #52/M7b-2): its own data key,
+     * already sealed to VK_pub, and the secretstream header come with it.
+     * The web host never sees the plaintext and cannot check it; it checks
+     * the announced checksum of the ciphertext. No `meta_enc`: its AAD binds
+     * it to the row id, which the worker cannot know in advance.
+     *
+     * @param iterable<string> $cipherChunks the ciphertext in pieces of any size
+     *
+     * @throws BlobException when the ciphertext does not match $cipherSha256
+     */
+    public function storeCipher(
+        iterable $cipherChunks,
+        string $dekSealed,
+        string $header,
+        int $plaintextSize,
+        string $cipherSha256,
+        ?BlobStorage $storage = null,
+    ): Blob {
+        $storage ??= $this->defaultStorage;
+        $id = $this->repository->insertDraft(
+            $storage,
+            $storage === BlobStorage::Fs ? FsBlobBackend::newName() : null,
+            $dekSealed,
+            $header,
+            new \DateTimeImmutable(),
+        );
+        $draft = $this->repository->find($id) ?? throw new BlobException('Blob row disappeared.');
+
+        $backend = $this->backendFor($draft->storage);
+        $sink = $backend->open($draft);
+        $hash = hash_init('sha256');
+
+        try {
+            foreach ($cipherChunks as $piece) {
+                $this->emit($sink, $hash, $piece);
+            }
+            $sha = hash_final($hash, true);
+            if (!hash_equals($cipherSha256, $sha)) {
+                throw new BlobException('The ciphertext does not match its checksum.');
+            }
+            $sink->commit();
+            $this->repository->complete($draft->id, $plaintextSize, $sha, null);
+        } catch (\Throwable $e) {
+            $sink->discard();
+            $backend->delete($draft);
+            $this->repository->delete($draft->id);
+
+            throw $e;
+        }
+
+        return $this->repository->find($draft->id) ?? throw new BlobException('Blob row disappeared.');
+    }
+
     public function find(int $id): ?Blob
     {
         return $this->repository->find($id);
