@@ -118,7 +118,7 @@ final readonly class UserKeyRepository
                 (int) $row['kdf_ops'],
                 (int) $row['kdf_mem'],
                 // Missing only between the updater's 'switch' and 'migrate'
-                // steps (migration 032 not applied yet): every row before it
+                // steps (migration 033 not applied yet): every row before it
                 // is Argon2id v1.3, which is also the column's default.
                 (int) ($row['kdf_alg'] ?? KdfParameters::ALGORITHM),
             ),

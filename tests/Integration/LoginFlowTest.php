@@ -217,7 +217,7 @@ final class LoginFlowTest extends DatabaseTestCase
     /**
      * An account wrapped with the INTERACTIVE profile of earlier releases -
      * the row written the way the previous release writes it, without the
-     * `kdf_alg` column migration 032 added - still signs in and unlocks the
+     * `kdf_alg` column migration 033 added - still signs in and unlocks the
      * vault. The login then lifts the wrapping to the current profile, and
      * the lifted row opens the vault at the next login as well.
      */
@@ -286,7 +286,7 @@ final class LoginFlowTest extends DatabaseTestCase
     /**
      * Replaces the installer's wrapping of the account with one of the
      * INTERACTIVE profile, inserted without `kdf_alg` - exactly what the
-     * release before migration 032 leaves behind.
+     * release before migration 033 leaves behind.
      */
     private function schreibeAltesProfil(): UserKey
     {
@@ -311,7 +311,7 @@ final class LoginFlowTest extends DatabaseTestCase
         $stmt->bindValue(6, $alt->kdf()->memLimit, \PDO::PARAM_INT);
         $stmt->execute();
 
-        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, (int) $this->zeile()['kdf_alg'], 'Migration 032 setzt den Vorgabewert.');
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, (int) $this->zeile()['kdf_alg'], 'Migration 033 setzt den Vorgabewert.');
 
         return $alt;
     }

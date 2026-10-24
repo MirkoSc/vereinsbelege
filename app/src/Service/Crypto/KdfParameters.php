@@ -40,7 +40,7 @@ final readonly class KdfParameters
      * Argon2id in version 1.3 (0x13). The identifier names algorithm and
      * Argon2 version together - libsodium has no Argon2id of another version
      * - so `user_key.kdf_alg` is the one column for both. Every row written
-     * before migration 032 used it, which is why the column defaults to it.
+     * before migration 033 used it, which is why the column defaults to it.
      */
     public const int ALGORITHM = SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13;
 

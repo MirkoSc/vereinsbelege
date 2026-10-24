@@ -71,7 +71,7 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   sie ebenso, damit eine Generation ihre Grants findet;
   `vault_grant.vault_version` spiegelt das Byte nur für SQL.
 - Die KDF-Parameter stehen je Benutzer im Klartext daneben
-  (`kdf_salt`, `kdf_ops`, `kdf_mem`, seit Migration 032 auch `kdf_alg`),
+  (`kdf_salt`, `kdf_ops`, `kdf_mem`, seit Migration 033 auch `kdf_alg`),
   damit die Vorgaben später angehoben werden können, ohne bestehende
   Benutzer auszusperren: eine alte Zeile wird mit ihren eigenen Parametern
   geöffnet und bei der nächsten Anmeldung (oder beim nächsten
@@ -175,11 +175,11 @@ vier vor ihrer Transaktion umhüllen; beim Anheben im Login bleibt die alte,
 gültige Umhüllung stehen.
 
 **Versioniert gespeichert** je Benutzer in `user_key`: `kdf_salt`,
-`kdf_ops`, `kdf_mem` und `kdf_alg` (Migration 032). `kdf_alg` ist die
+`kdf_ops`, `kdf_mem` und `kdf_alg` (Migration 033). `kdf_alg` ist die
 libsodium-Kennung, die Algorithmus **und** Argon2-Version zusammen benennt
 (2 = `SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13`, Argon2id v1.3) – libsodium kennt
 kein Argon2id anderer Version, eine eigene Versionsspalte trüge immer
-denselben Wert. Alle Zeilen vor Migration 032 sind Argon2id v1.3, daher der
+denselben Wert. Alle Zeilen vor Migration 033 sind Argon2id v1.3, daher der
 Vorgabewert 2; er hält auch das vorige Release schreibfähig. Eine
 unbekannte Kennung lehnt `KdfParameters` ab, statt einen falschen Schlüssel
 abzuleiten, der wie ein falsches Passwort aussähe. Das Format der Umhüllung
