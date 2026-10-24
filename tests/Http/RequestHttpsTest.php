@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Http;
 
+use App\Http\HttpMethod;
 use App\Http\Request;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -73,5 +74,25 @@ final class RequestHttpsTest extends TestCase
         unset($_SERVER['HTTPS']);
 
         self::assertFalse(Request::httpsFromGlobals());
+    }
+
+    /**
+     * Own origin for requests to itself (update self-test, system check,
+     * issue #101): scheme from the server, host only in the shape of a host
+     * name with an optional port.
+     */
+    public function testOwnOriginAcceptsOnlyAHostName(): void
+    {
+        $_SERVER['HTTPS'] = 'on';
+        $origin = static fn(string $host): string => new Request(HttpMethod::Get, '/', headers: ['host' => $host])->ownOrigin();
+
+        self::assertSame('https://belege.example', $origin('belege.example'));
+        self::assertSame('https://belege.example:8443', $origin('belege.example:8443'));
+        foreach (['evil.example/x', 'user@evil.example', "belege.example\n", 'a b', ''] as $boese) {
+            self::assertSame('https://localhost', $origin($boese), var_export($boese, true));
+        }
+
+        unset($_SERVER['HTTPS']);
+        self::assertSame('http://belege.example', $origin('belege.example'));
     }
 }

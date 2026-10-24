@@ -94,7 +94,9 @@ final readonly class Buchungsregeln
     }
 
     /**
-     * The active rules, decrypted once for a whole import step.
+     * The active rules, decrypted once for a whole import step - and for
+     * the category the review page suggests for a receipt (M7-7, issue #49,
+     * App\Service\Invoice\Kategorisierung).
      *
      * @return list<AssignmentRule>
      */

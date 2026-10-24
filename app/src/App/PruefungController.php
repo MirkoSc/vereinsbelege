@@ -11,6 +11,7 @@ use App\Domain\DuplikatGrund;
 use App\Domain\InboxItem;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceType;
+use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
 use App\Domain\Supplier;
 use App\Domain\Zugriffsbereich;
@@ -31,6 +32,7 @@ use App\Service\Document\ERechnungAuszug;
 use App\Service\Document\KiAuszug;
 use App\Service\Invoice\Festschreibung;
 use App\Service\Invoice\InvoiceRuleViolation;
+use App\Service\Invoice\KategorieVorschlag;
 use App\Service\Invoice\Pruefung;
 use App\View\Area;
 use App\View\FlashArt;
@@ -61,6 +63,9 @@ use App\View\View;
  * The AI's suggestion (issue #47/M7-5) fills the form of a receipt not yet
  * captured, unsure fields marked yellow, its warnings on top; after a
  * failure the page offers "KI erneut versuchen" - same right and scope.
+ *
+ * The category of such a form comes from a rule, the supplier's default or
+ * the AI, in that order (issue #49/M7-7) - the page says which.
  *
  * Nothing of a receipt goes into a URL or a flash message.
  */
@@ -152,6 +157,21 @@ final readonly class PruefungController
             ['felder' => $felder, 'hinweise' => $archivHinweise] = $archiv->ueberlagern($leer, $felder, $eRechnung?->gelesen() === true ? 'E-Rechnung' : 'KI');
         }
 
+        // The category in a fixed order (issue #49/M7-7): a rule of the
+        // club, the supplier's default, then the AI - on partner, direction
+        // and purpose as filled in now. A category from the archive stays,
+        // a person sorted it.
+        $kategorie = null;
+        if ($vorbelegbar && $archiv?->kategorieId === null) {
+            ['felder' => $felder, 'vorschlag' => $kategorie] = $this->pruefung->kategorieVorschlagen($felder, $ki, $tresor, $this->bereich());
+        }
+
+        $unsicher = $ki === null ? [] : self::unsichereFelder($ki->unsicher, $leer, $nachKi, $felder);
+        if ($kategorie !== null && $kategorie->herkunft !== KategorieHerkunft::Ki) {
+            // A rule or the supplier chose it - the AI's doubt does not apply.
+            $unsicher = array_values(array_diff($unsicher, ['kategorie']));
+        }
+
         return $this->seite(
             $eintrag,
             $tresor,
@@ -161,7 +181,8 @@ final readonly class PruefungController
             eRechnungHinweise: $hinweise,
             archivHinweise: $archivHinweise,
             ki: $ki,
-            unsicher: $ki === null ? [] : self::unsichereFelder($ki->unsicher, $leer, $nachKi, $felder),
+            unsicher: $unsicher,
+            kategorieVorschlag: $kategorie,
         );
     }
 
@@ -506,6 +527,7 @@ final readonly class PruefungController
      * @param list<string> $archivHinweise from the archive import (issue #77/M12-3)
      * @param ?KiAuszug $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
      * @param list<string> $unsicher form fields the AI filled in unsure
+     * @param ?KategorieVorschlag $kategorieVorschlag where the category of an unsaved form came from (issue #49/M7-7)
      */
     private function seite(
         InboxItem $eintrag,
@@ -518,6 +540,7 @@ final readonly class PruefungController
         array $archivHinweise = [],
         ?KiAuszug $ki = null,
         array $unsicher = [],
+        ?KategorieVorschlag $kategorieVorschlag = null,
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
@@ -557,6 +580,7 @@ final readonly class PruefungController
             'archivHinweise' => $archivHinweise,
             'ki' => $ki,
             'unsicher' => $unsicher,
+            'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(regelName: $this->berechtigungen()->darf(Permission::BankView)),
             'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
             'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],

@@ -163,6 +163,22 @@ aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
 überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
 getestet wurde (Standard „an“? Einstellung merken?).
 
+## E-21 ✅ Eine Regelliste für Buchungen und Belege (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M7-7 (issue #49), 03 §8, 04 §5*
+
+Die Regeln aus M9-6 (`assignment_rule`) schlagen ihre Kategorie auch für
+Belege vor, statt eine zweite Regelart „Lieferant → Kategorie“ mit eigener
+Seite einzuführen: Wer „Telekom → Telefon“ für Buchungen einrichtet, will
+dasselbe für die Telekom-Rechnung. Stichwort gilt am Beleg für den Zweck,
+Gegenseite für Name/Aliasse/IBANs des Lieferanten. Für reine
+„Lieferant → Kategorie“-Fälle gibt es die Standard-Kategorie des
+Lieferanten. „Gelernt“ heißt: die **zwei neuesten** geprüften Belege des
+Lieferanten haben dieselbe Kategorie (nicht „irgendwann zwei gleiche“) –
+so folgt der Vorschlag einem Wechsel. Herkunft wird nur angezeigt, nicht
+gespeichert. Offen für Mirko: ob Regeln nur für Belege bzw. nur für
+Buchungen gelten können sollen, und ob die Herkunft am gespeicherten Beleg
+festgehalten werden soll (bräuchte eine Migration).
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js
@@ -239,3 +255,25 @@ wird HEIC übersprungen. Details: Spec 03 §1 „HEIC".
   kopiert, damit die Historie ein gelöschtes Profil überlebt.
 - Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
   Bereinigung, kein Filter/Export.
+
+## Issue #91 CAMT.053-Import: Abgrenzungen (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+Details in 04 §2a. Getroffen ohne Rückfrage, jeweils die konservative
+Variante:
+
+- **Sammelbuchung bleibt eine Buchung.** Ein `Ntry` mit mehreren `TxDtls`
+  wird nicht in Einzelposten aufgeteilt – so stimmen Saldo und Abgleich mit
+  dem Kontoauszug überein und MT940 zeigt es genauso. Die Zwecke aller
+  Posten werden verbunden; eine Gegenseite gibt es dann nicht. Damit sie
+  beim Formatwechsel nicht doppelt kommt, gilt eine Buchung ohne
+  Gegen-IBAN auch über Tag + Betrag als vorhanden (Ersatzabgleich, 04 §4) –
+  Restrisiko: zwei verschiedene Buchungen ohne Gegenseite mit gleichem Tag
+  und Betrag aus verschiedenen Formaten werden als eine erkannt. Aufteilen
+  (z. B. für die Zuordnung einzelner Rechnungen) wäre ein eigenes Issue.
+- **Nur gebuchte Einträge.** `PDNG`/`INFO` werden übersprungen und als
+  „vorgemerkt“ gezählt – wie vorgemerkte CSV-Zeilen.
+- **camt.052 (untertägiger Umsatzbericht) und camt.054 werden abgelehnt**
+  mit dem Hinweis, CAMT.053 zu exportieren – sie haben keinen festen
+  Schlusssaldo bzw. sind keine Kontoauszüge.
+- **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
+  Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
+  10 MB entpackt.

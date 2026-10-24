@@ -45,7 +45,9 @@ final readonly class SystemCheckController
 
         // One run for both the table and the JSON: the write probe on
         // shared/var must not happen twice, and the two views must agree.
-        $ergebnisse = $this->check->all();
+        // The origin is where the config exposure check (issue #101)
+        // knocks: the domain this page was opened under.
+        $ergebnisse = $this->check->all($request->ownOrigin());
 
         return Response::html($this->view->render('admin/systemcheck', [
             'title' => 'Systemcheck',

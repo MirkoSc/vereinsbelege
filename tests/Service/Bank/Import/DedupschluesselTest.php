@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\Bank\Import;
 
+use App\Service\Archiv\TextQuelle;
+use App\Service\Archiv\ZipLeser;
 use App\Service\Bank\Import\Dedupschluessel;
 use App\Service\Bank\Import\ImportFormat;
 use App\Service\Bank\Import\KontoauszugLeser;
@@ -103,5 +105,34 @@ final class DedupschluesselTest extends TestCase
 
         self::assertCount(2, $teil);
         self::assertCount(2, array_intersect($alle, $teil));
+    }
+
+    public function testSwitchingFromMt940ToCamtForTheSamePeriodFindsEveryBooking(): void
+    {
+        $leser = new KontoauszugLeser();
+        $mt940 = $leser->lies(ImportTestDaten::datei(ImportTestDaten::MT940 . 'sparkasse.sta'), ImportFormat::mt940(), []);
+        $camt = $leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'), ImportFormat::camt053(), []);
+
+        self::assertSame(Dedupschluessel::fuer($this->index, 1, $mt940->posten), Dedupschluessel::fuer($this->index, 1, $camt->posten));
+    }
+
+    public function testAZipOfDailyCamtStatementsSharesItsKeysWithASingleDay(): void
+    {
+        $leser = new KontoauszugLeser();
+        $zip = ImportTestDaten::datei(ImportTestDaten::CAMT . 'tagesauszuege-053-001-04.zip');
+        $zipLeser = new ZipLeser(new TextQuelle($zip));
+        $tag = null;
+        foreach ($zipLeser->verzeichnis() as $eintrag) {
+            if ($eintrag->dateiname() === '2024-04-03_Kontoauszug.XML') {
+                $tag = implode('', iterator_to_array($zipLeser->inhalt($eintrag), false));
+            }
+        }
+        self::assertNotNull($tag);
+
+        $alle = Dedupschluessel::fuer($this->index, 1, $leser->lies($zip, ImportFormat::camt053(), [])->posten);
+        $einzeln = Dedupschluessel::fuer($this->index, 1, $leser->lies($tag, ImportFormat::camt053(), [])->posten);
+
+        self::assertCount(2, array_unique($alle));
+        self::assertSame([$alle[1]], $einzeln);
     }
 }
