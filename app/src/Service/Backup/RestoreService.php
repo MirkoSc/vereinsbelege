@@ -147,13 +147,27 @@ final readonly class RestoreService
      * that was confirmed instead of running the block again. Only the one
      * statement in flight when the request ends can still run twice.
      *
+     * That one statement is what `$vielleichtSchonAngewendet` is for: the
+     * caller sets it when the step before broke off hard (the installer
+     * keeps a "step running" flag in the session). Then a duplicate key
+     * (1062) or an existing table (1050) on the FIRST statement of this
+     * step means it ran already, and it is counted as done and skipped.
+     * Safe because every statement of the dump is atomic: one CREATE TABLE,
+     * or one multi-row INSERT that InnoDB applies all or nothing. On any
+     * later statement, or without the flag, the error stands.
+     *
      * @param (\Closure(int): void)|null $nachAnweisung
      *
      * @return array{offset: int, gesamt: int, anweisungen: int, gelesen: int} new byte offset, size of the dump,
      *     statements run and bytes read in this step
      */
-    public function anwenden(\PDO $pdo, string $dumpDatei, int $offset, ?\Closure $nachAnweisung = null): array
-    {
+    public function anwenden(
+        \PDO $pdo,
+        string $dumpDatei,
+        int $offset,
+        ?\Closure $nachAnweisung = null,
+        bool $vielleichtSchonAngewendet = false,
+    ): array {
         $stream = new SqlStatementStream($dumpDatei, $offset);
 
         // Every step is a request of its own with a fresh connection, but
@@ -173,7 +187,13 @@ final readonly class RestoreService
             if ($statement === null) {
                 break;
             }
-            $pdo->exec($statement);
+            try {
+                $pdo->exec($statement);
+            } catch (\PDOException $e) {
+                if (!$vielleichtSchonAngewendet || $anweisungen > 0 || !self::schonAngewendet($e)) {
+                    throw $e;
+                }
+            }
             $anweisungen++;
             if ($nachAnweisung !== null) {
                 $nachAnweisung($stream->boundary());
@@ -194,6 +214,17 @@ final readonly class RestoreService
             'anweisungen' => $anweisungen,
             'gelesen' => $stream->bytesRead(),
         ];
+    }
+
+    /**
+     * 1062 duplicate entry, 1050 table exists - what a statement that ran
+     * already says the second time.
+     */
+    private static function schonAngewendet(\PDOException $e): bool
+    {
+        $code = $e->errorInfo[1] ?? null;
+
+        return $code === 1062 || $code === 1050;
     }
 
     /**

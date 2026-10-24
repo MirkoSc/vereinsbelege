@@ -375,12 +375,17 @@ $updates = static fn(): UpdateController => new UpdateController(
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
         migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
-        backups: new BackupService(
+        backups: new BackupErstellung(
+            new BackupService(
+                $connections->pdo(),
+                $paths->backupDir(),
+                $paths->configFile(),
+                $version->value,
+                $paths->blobDir(),
+            ),
             $connections->pdo(),
             $paths->backupDir(),
             $paths->configFile(),
-            $version->value,
-            $paths->blobDir(),
         ),
     ),
     $maintenance,
@@ -485,9 +490,15 @@ $einreichenUploads = static fn(): EinreichungUploadController => new Einreichung
 // Storage administration (issue #12): the backend for new blobs and the step
 // chain that carries the existing ones over. Built lazily like $updates - it
 // needs the database, the public pages must not pay for that.
-$storage = static function () use ($connections, $paths, $view, $auditFor): StorageController {
+$storage = static function () use ($connections, $paths, $view, $auditFor, $version): StorageController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
+    $backupLaeuft = static fn(): bool => new BackupErstellung(
+        new BackupService($pdo, $paths->backupDir(), $paths->configFile(), $version->value, $paths->blobDir()),
+        $pdo,
+        $paths->backupDir(),
+        $paths->configFile(),
+    )->laeuft();
 
     return new StorageController(
         $view,
@@ -496,6 +507,7 @@ $storage = static function () use ($connections, $paths, $view, $auditFor): Stor
             $blobs,
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             new SettingRepository($pdo),
+            $backupLaeuft,
         ),
         $auditFor($pdo),
     );

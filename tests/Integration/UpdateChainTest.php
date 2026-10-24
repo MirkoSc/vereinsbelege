@@ -6,6 +6,7 @@ namespace App\Tests\Integration;
 
 use App\Config\Paths;
 use App\Repository\SettingRepository;
+use App\Service\Backup\BackupErstellung;
 use App\Service\Backup\BackupService;
 use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
@@ -77,8 +78,12 @@ final class UpdateChainTest extends DatabaseTestCase
     /**
      * @param array<string, string> $antworten URL => body
      */
-    private function service(array $antworten, string $version = '1.0.0'): UpdateService
-    {
+    private function service(
+        array $antworten,
+        string $version = '1.0.0',
+        int $dumpBytes = BackupErstellung::DUMP_BYTES,
+        float $backupSekunden = UpdateService::BACKUP_SEKUNDEN,
+    ): UpdateService {
         $downloader = new ReleaseDownloader(function (string $url) use ($antworten): string {
             if (!isset($antworten[$url])) {
                 throw new \RuntimeException('HTTP 404 für ' . $url);
@@ -97,13 +102,21 @@ final class UpdateChainTest extends DatabaseTestCase
                 new MaintenanceMode($this->base . '/shared/maintenance.flag'),
             ),
             migrator: new Migrator($this->pdo(), $this->migrationsDir()),
-            backups: new BackupService(
+            backups: new BackupErstellung(
+                new BackupService(
+                    $this->pdo(),
+                    $this->paths()->backupDir(),
+                    $this->paths()->configFile(),
+                    $version,
+                    $this->paths()->blobDir(),
+                ),
                 $this->pdo(),
                 $this->paths()->backupDir(),
                 $this->paths()->configFile(),
-                $version,
-                $this->paths()->blobDir(),
+                null,
+                $dumpBytes,
             ),
+            backupSekunden: $backupSekunden,
         );
     }
 
@@ -249,6 +262,44 @@ final class UpdateChainTest extends DatabaseTestCase
             $archiv->getFromName('blobs/ab/' . str_repeat('ab', 16)),
             'the automatic backup never carries the blobs',
         );
+        $archiv->close();
+    }
+
+    /**
+     * Issue #208: with storage backend `db` the dump takes many requests.
+     * The backup step answers `weiter` until its chain is through and stays
+     * the open step meanwhile; repeated, it finishes one backup.
+     */
+    public function testTheBackupStepRepeatsUntilItsChainIsThrough(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $this->service($antworten)->check();
+        $this->service($antworten)->download();
+        $this->service($antworten)->extract();
+
+        $aufrufe = 0;
+        do {
+            // One part per call: a byte budget of 1 and no time budget.
+            $state = $this->service($antworten, dumpBytes: 1, backupSekunden: 0.0)->backup();
+            self::assertNull($state->fehler);
+            $aufrufe++;
+            self::assertLessThan(10000, $aufrufe, 'the step ends');
+            if ($state->weiter) {
+                self::assertSame('extract', $state->abgeschlossenerSchritt, 'not through yet');
+                self::assertSame([], glob($this->paths()->backupDir() . '/backup_*.zip') ?: []);
+            }
+        } while ($state->weiter);
+
+        self::assertGreaterThan(2, $aufrufe, 'the dump took several calls');
+        self::assertSame('backup', $state->abgeschlossenerSchritt);
+        self::assertStringStartsWith('Backup erstellt: ', $state->meldungen[count($state->meldungen) - 1]);
+        self::assertFalse($this->service($antworten)->state()?->weiter, 'kept as the state file says');
+        $backups = glob($this->paths()->backupDir() . '/backup_*.zip') ?: [];
+        self::assertCount(1, $backups);
+        $archiv = new \ZipArchive();
+        self::assertTrue($archiv->open($backups[0], \ZipArchive::CHECKCONS));
+        self::assertStringEndsWith("SET FOREIGN_KEY_CHECKS = 1;\n", (string) $archiv->getFromName('dump.sql'));
         $archiv->close();
     }
 

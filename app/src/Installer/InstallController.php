@@ -377,17 +377,33 @@ final readonly class InstallController
                 }
                 $start = (int) $_SESSION['install_restore']['dump_offset'];
 
+                // A step that is still marked running broke off hard (time
+                // limit or a fatal error - PHP still writes the session
+                // then): its last statement may have run without its
+                // boundary being kept. A killed process writes no session
+                // at all; that case stays a restore from the start (E-34).
+                // The mark is set for this
+                // step and cleared when it ends - also with an error, since
+                // then no statement is left half-confirmed.
+                $abgebrochen = ($_SESSION['install_restore']['schritt_laeuft'] ?? false) === true;
+                $_SESSION['install_restore']['schritt_laeuft'] = true;
+
                 // Kept after every statement, not once per block: a request
                 // that breaks off resumes behind the last statement that ran.
-                $fortschritt = $restore->anwenden(
-                    $pdo,
-                    $dumpDatei,
-                    $start,
-                    static function (int $grenze): void {
-                        $_SESSION['install_restore']['dump_offset'] = $grenze;
-                        $_SESSION['install_restore']['anweisungen'] = (int) ($_SESSION['install_restore']['anweisungen'] ?? 0) + 1;
-                    },
-                );
+                try {
+                    $fortschritt = $restore->anwenden(
+                        $pdo,
+                        $dumpDatei,
+                        $start,
+                        static function (int $grenze): void {
+                            $_SESSION['install_restore']['dump_offset'] = $grenze;
+                            $_SESSION['install_restore']['anweisungen'] = (int) ($_SESSION['install_restore']['anweisungen'] ?? 0) + 1;
+                        },
+                        $abgebrochen,
+                    );
+                } finally {
+                    unset($_SESSION['install_restore']['schritt_laeuft']);
+                }
                 $_SESSION['install_restore']['dump_offset'] = $fortschritt['offset'];
                 $anweisungen = (int) ($_SESSION['install_restore']['anweisungen'] ?? 0);
 

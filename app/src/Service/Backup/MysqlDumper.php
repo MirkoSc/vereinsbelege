@@ -38,6 +38,25 @@ final readonly class MysqlDumper
     private const int ROWS_PER_INSERT = 100;
 
     /**
+     * Rows per SELECT of a table with a primary key - one part of a step
+     * (schritt()). With file_blob_chunk that is up to 100 x 256 KiB of
+     * ciphertext, read unbuffered and flushed in INSERTs of BYTES_PER_INSERT.
+     */
+    private const int ROWS_PER_PORTION = 100;
+
+    /**
+     * The only tables read in portions across steps. Every other table goes
+     * in ONE SELECT, a consistent InnoDB snapshot of it, as before issue
+     * #208: tables like supplier_key are rewritten (delete + insert with
+     * new ids) on every save, so two portions could see the same unique
+     * value twice and the dump would not restore (1062). These two only
+     * ever grow or lose whole rows, carry no unique key besides the
+     * primary key, and are the ones that get large (backend `db`: the
+     * receipts; the audit log over the years).
+     */
+    public const array TABLES_IN_PORTIONS = ['file_blob_chunk', 'audit_log'];
+
+    /**
      * Flush an INSERT once the collected rows reach this. A chunk row is
      * 256 KiB of ciphertext and doubles as hex, so a hundred of them in one
      * statement would run into max_allowed_packet on the way back in.
@@ -49,46 +68,130 @@ final readonly class MysqlDumper
     }
 
     /**
+     * The whole dump in one go - for the CLI and the tests, where no request
+     * time limit applies. The admin page and the update chain go through
+     * schritt() instead (issue #208).
+     *
      * @param resource $stream
      */
     public function dump($stream): void
     {
-        fwrite($stream, "-- Vereinsbelege DB dump\n");
-        fwrite($stream, self::SESSION_NAMES . ";\n");
-        fwrite($stream, self::SESSION_FOREIGN_KEYS_OFF . ";\n\n");
-
-        $tables = $this->pdo->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN);
-        foreach ($tables as $table) {
-            $this->dumpTable($stream, (string) $table);
-        }
-
-        fwrite($stream, self::SESSION_FOREIGN_KEYS_ON . ";\n");
+        $stand = null;
+        do {
+            $stand = $this->schritt($stream, $stand, PHP_INT_MAX, INF);
+        } while ($stand['fertig'] !== true);
     }
 
     /**
+     * Writes the next part of the dump and returns where it stopped
+     * (issue #208, docs/spec/06-betrieb.md section 2).
+     *
+     * `$stand` is what the call before returned, or null for the start. It
+     * is plain JSON-safe data, so a step chain can keep it between requests.
+     * A part is a table's DROP/CREATE, all its rows in one SELECT, or - for
+     * the large tables in TABLES_IN_PORTIONS - one portion of its rows, read
+     * by primary key from behind the last key the part before wrote - so a step
+     * that is run again from the same `$stand` writes the same statements
+     * and none of its rows twice or not at all. After every part the budget
+     * is checked; at least one part is always written, so the chain moves on.
+     *
+     * Parts written one after the other with the returned states give the
+     * same statements as one uninterrupted dump: the output is restorable
+     * in one piece by SqlSplitter and in steps by SqlStatementStream.
+     *
      * @param resource $stream
+     * @param array<string, mixed>|null $stand
+     * @param int $maxBytes stop after a part once this much has been written
+     * @param float $maxSekunden stop after a part once this much time has passed
+     *
+     * @return array<string, mixed> the new state; `fertig` is true once the
+     *         dump is complete, `zeilen` counts the rows written so far
      */
-    private function dumpTable($stream, string $table): void
+    public function schritt($stream, ?array $stand, int $maxBytes, float $maxSekunden): array
     {
-        fwrite($stream, sprintf("DROP TABLE IF EXISTS `%s`;\n", $table));
+        $beginn = hrtime(true);
+        $start = (int) ftell($stream);
+        if ($stand === null) {
+            $this->schreibe($stream, "-- Vereinsbelege DB dump\n"
+                . self::SESSION_NAMES . ";\n"
+                . self::SESSION_FOREIGN_KEYS_OFF . ";\n\n");
+            $stand = [
+                'tabellen' => array_values(array_map(
+                    strval(...),
+                    $this->pdo->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN),
+                )),
+                'tabelle' => 0,
+                'kopf' => false,
+                'nach' => null,
+                'zeilen' => 0,
+                'fertig' => false,
+            ];
+        }
+        if ($stand['fertig'] === true) {
+            return $stand;
+        }
 
-        $create = $this->pdo
-            ->query(sprintf('SHOW CREATE TABLE `%s`', $table))
-            ->fetch();
-        fwrite($stream, (string) ($create['Create Table'] ?? '') . ";\n");
+        do {
+            $stand = $this->teil($stream, $stand);
+            $geschrieben = (int) ftell($stream) - $start;
+            $sekunden = (hrtime(true) - $beginn) / 1e9;
+        } while ($stand['fertig'] !== true && $geschrieben < $maxBytes && $sekunden < $maxSekunden);
+
+        return $stand;
+    }
+
+    /**
+     * One part: the head of the current table, one portion of its rows, or
+     * the dump's last line.
+     *
+     * @param resource $stream
+     * @param array<string, mixed> $stand
+     * @return array<string, mixed>
+     */
+    private function teil($stream, array $stand): array
+    {
+        /** @var list<string> $tabellen */
+        $tabellen = $stand['tabellen'];
+        $index = (int) $stand['tabelle'];
+        if ($index >= count($tabellen)) {
+            $this->schreibe($stream, self::SESSION_FOREIGN_KEYS_ON . ";\n");
+
+            return [...$stand, 'fertig' => true];
+        }
+        $table = $tabellen[$index];
+
+        if ($stand['kopf'] !== true) {
+            $create = $this->pdo
+                ->query(sprintf('SHOW CREATE TABLE `%s`', $table))
+                ->fetch();
+            $this->schreibe($stream, sprintf("DROP TABLE IF EXISTS `%s`;\n", $table)
+                . (string) ($create['Create Table'] ?? '') . ";\n");
+
+            return [...$stand, 'kopf' => true, 'nach' => null];
+        }
 
         // Everything the connection needs to know about the table is asked
         // here: nothing else may travel over it while the unbuffered SELECT
         // below is being read. PDO::quote() is client-side and therefore fine.
         $binary = $this->binaryColumns($table);
+        $schluessel = in_array($table, self::TABLES_IN_PORTIONS, true) ? $this->primaryKey($table) : [];
+
+        $nach = is_array($stand['nach']) ? $stand['nach'] : null;
+        [$sql, $parameter] = $this->auswahl($table, $schluessel, $binary, $nach);
 
         $columns = null;
         $batch = [];
         $bytes = 0;
+        $anzahl = 0;
+        $letzte = null;
         $this->rowsUnbuffered(true);
         try {
-            $select = $this->pdo->query(sprintf('SELECT * FROM `%s`', $table));
-            while (($row = $select->fetch()) !== false) {
+            $select = $this->pdo->prepare($sql);
+            foreach ($parameter as $i => $wert) {
+                $select->bindValue($i + 1, $wert, is_int($wert) ? \PDO::PARAM_INT : \PDO::PARAM_STR);
+            }
+            $select->execute();
+            while (($row = $select->fetch(\PDO::FETCH_ASSOC)) !== false) {
                 $columns ??= '`' . implode('`, `', array_keys($row)) . '`';
 
                 $values = [];
@@ -98,6 +201,8 @@ final readonly class MysqlDumper
                 $zeile = '(' . implode(', ', $values) . ')';
                 $batch[] = $zeile;
                 $bytes += strlen($zeile);
+                $anzahl++;
+                $letzte = $row;
 
                 if (count($batch) >= self::ROWS_PER_INSERT || $bytes >= self::BYTES_PER_INSERT) {
                     $this->writeInsert($stream, $table, $columns, $batch);
@@ -114,7 +219,102 @@ final readonly class MysqlDumper
             $this->writeInsert($stream, $table, $columns, $batch);
         }
 
-        fwrite($stream, "\n");
+        // Without portions (TABLES_IN_PORTIONS, or no primary key) the
+        // table went in one SELECT. A portion shorter than the limit was
+        // the table's last.
+        $tabelleFertig = $schluessel === [] || $anzahl < self::ROWS_PER_PORTION;
+        if ($tabelleFertig) {
+            $this->schreibe($stream, "\n");
+
+            return [
+                ...$stand,
+                'tabelle' => $index + 1,
+                'kopf' => false,
+                'nach' => null,
+                'zeilen' => (int) $stand['zeilen'] + $anzahl,
+            ];
+        }
+
+        $nachNeu = [];
+        foreach ($schluessel as $spalte) {
+            $wert = $letzte[$spalte] ?? null;
+            $nachNeu[] = match (true) {
+                is_int($wert) => $wert,
+                isset($binary[$spalte]) => bin2hex((string) $wert),
+                default => (string) $wert,
+            };
+        }
+
+        return [...$stand, 'nach' => $nachNeu, 'zeilen' => (int) $stand['zeilen'] + $anzahl];
+    }
+
+    /**
+     * The SELECT of one portion: the rows behind `$nach` in primary key
+     * order, or the whole table when it has no primary key.
+     *
+     * The keyset condition for a key (a, b) reads
+     * `a >= ? AND (a > ? OR (a = ? AND b > ?))` - the leading `a >= ?`
+     * gives the optimizer a plain range on the primary key, so a portion
+     * deep inside file_blob_chunk costs no more than the first one.
+     *
+     * @param list<string> $schluessel
+     * @param array<string, true> $binary
+     * @param list<int|string>|null $nach
+     * @return array{string, list<int|string>}
+     */
+    private function auswahl(string $table, array $schluessel, array $binary, ?array $nach): array
+    {
+        if ($schluessel === []) {
+            if ($nach !== null) {
+                // The key vanished between two steps: the whole table again
+                // would repeat the rows already written.
+                throw new \RuntimeException('Der Stand des Datenbank-Dumps passt nicht zur Tabelle.');
+            }
+
+            return [sprintf('SELECT * FROM `%s`', $table), []];
+        }
+
+        $platzhalter = static fn(string $spalte): string => isset($binary[$spalte]) ? 'UNHEX(?)' : '?';
+        $sql = sprintf('SELECT * FROM `%s`', $table);
+        $parameter = [];
+        if ($nach !== null) {
+            if (count($nach) !== count($schluessel)) {
+                throw new \RuntimeException('Der Stand des Datenbank-Dumps passt nicht zur Tabelle.');
+            }
+            $oder = [];
+            foreach ($schluessel as $i => $spalte) {
+                $teile = [];
+                for ($j = 0; $j < $i; $j++) {
+                    $teile[] = sprintf('`%s` = %s', $schluessel[$j], $platzhalter($schluessel[$j]));
+                    $parameter[] = $nach[$j];
+                }
+                $teile[] = sprintf('`%s` > %s', $spalte, $platzhalter($spalte));
+                $parameter[] = $nach[$i];
+                $oder[] = '(' . implode(' AND ', $teile) . ')';
+            }
+            $sql .= sprintf(' WHERE `%s` >= %s AND (%s)', $schluessel[0], $platzhalter($schluessel[0]), implode(' OR ', $oder));
+            array_unshift($parameter, $nach[0]);
+        }
+        $sql .= ' ORDER BY `' . implode('`, `', $schluessel) . '` LIMIT ' . self::ROWS_PER_PORTION;
+
+        return [$sql, $parameter];
+    }
+
+    /**
+     * The primary key columns of `$table` in key order, or an empty list.
+     *
+     * @return list<string>
+     */
+    private function primaryKey(string $table): array
+    {
+        $spalten = [];
+        $keys = $this->pdo->query(sprintf("SHOW KEYS FROM `%s` WHERE Key_name = 'PRIMARY'", $table));
+        while (($key = $keys->fetch(\PDO::FETCH_ASSOC)) !== false) {
+            $spalten[(int) $key['Seq_in_index']] = (string) $key['Column_name'];
+        }
+        ksort($spalten);
+
+        return array_values($spalten);
     }
 
     /**
@@ -158,12 +358,31 @@ final readonly class MysqlDumper
      */
     private function writeInsert($stream, string $table, string $columns, array $batch): void
     {
-        fwrite($stream, sprintf(
+        $this->schreibe($stream, sprintf(
             "INSERT INTO `%s` (%s) VALUES\n%s;\n",
             $table,
             $columns,
             implode(",\n", $batch),
         ));
+    }
+
+    /**
+     * fwrite() may write less than asked (a full disk): a dump that silently
+     * lacks a piece must never pass for complete.
+     *
+     * @param resource $stream
+     */
+    private function schreibe($stream, string $daten): void
+    {
+        $laenge = strlen($daten);
+        $geschrieben = 0;
+        while ($geschrieben < $laenge) {
+            $n = fwrite($stream, $geschrieben === 0 ? $daten : substr($daten, $geschrieben));
+            if ($n === false || $n === 0) {
+                throw new \RuntimeException('Der Datenbank-Dump konnte nicht geschrieben werden (Speicher voll?).');
+            }
+            $geschrieben += $n;
+        }
     }
 
     private function quoteValue(mixed $value, bool $binary): string
