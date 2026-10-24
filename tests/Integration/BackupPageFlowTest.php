@@ -346,6 +346,9 @@ final class BackupPageFlowTest extends DatabaseTestCase
             new UserRepository($pdo),
             new PasswordHasher(),
             new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+            // No time limit while the test reads the stream: it would bound
+            // the whole test run.
+            sekundenJeBlock: 0,
         );
     }
 

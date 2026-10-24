@@ -47,7 +47,7 @@ final readonly class BackupController
     private const int BLOCK = 1024 * 1024;
 
     /** Seconds allowed per piece - a stalled client ends the request. */
-    private const int SEKUNDEN_JE_BLOCK = 30;
+    public const int SEKUNDEN_JE_BLOCK = 30;
 
     public function __construct(
         private View $view,
@@ -58,6 +58,11 @@ final readonly class BackupController
         private UserRepository $users,
         private PasswordHasher $passwords,
         private RateLimiter $limits,
+        /**
+         * 0 leaves the time limit alone - for tests, where
+         * set_time_limit() would bound the whole test run (as ZipExport).
+         */
+        private int $sekundenJeBlock = self::SEKUNDEN_JE_BLOCK,
     ) {
     }
 
@@ -222,7 +227,7 @@ final readonly class BackupController
         // download.
         $this->session->schliessen();
 
-        return new StreamResponse(self::stuecke($pfad), [
+        return new StreamResponse(self::stuecke($pfad, $this->sekundenJeBlock), [
             'Content-Type' => 'application/zip',
             // $name passed BackupService::path(): backup_<digits>[_n].zip,
             // nothing that needs quoting.
@@ -241,7 +246,7 @@ final readonly class BackupController
      *
      * @return \Generator<int, string>
      */
-    private static function stuecke(string $pfad): \Generator
+    private static function stuecke(string $pfad, int $sekundenJeBlock): \Generator
     {
         $datei = fopen($pfad, 'rb');
         if ($datei === false) {
@@ -249,8 +254,8 @@ final readonly class BackupController
         }
         try {
             while (!feof($datei)) {
-                if (function_exists('set_time_limit')) {
-                    set_time_limit(self::SEKUNDEN_JE_BLOCK);
+                if ($sekundenJeBlock > 0 && function_exists('set_time_limit')) {
+                    set_time_limit($sekundenJeBlock);
                 }
                 $stueck = fread($datei, self::BLOCK);
                 if ($stueck === false) {
