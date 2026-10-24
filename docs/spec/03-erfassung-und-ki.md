@@ -1279,7 +1279,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   6. sonst **automatisch neu anlegen** mit `created_via=ki`,
      `needs_review=1` (Liste „Neue Lieferanten prüfen")
 - Neu gelernte Merkmale (weitere IBAN, Alias-Name) werden dem Lieferanten
-  nach Bestätigung hinzugefügt.
+  nach Bestätigung hinzugefügt – umgesetzt mit M7-6b, „Stand M7-6b“.
 - Zusammenführen doppelter Lieferanten (alle Belege/Regeln umhängen,
   `merged_into` setzen, Audit). **Festgeschriebene Belege** (01 §7) sind
   unveränderlich und werden nicht umgehängt, sondern über `merged_into`
@@ -1388,7 +1388,50 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     `needs_review = 0`, Audit `lieferant.geprueft` (nur beim ersten Mal).
     Speichern des Formulars gilt ebenfalls als geprüft (geänderte Felder dann
     inkl. `needs_review`); Zusammenführen lässt das Flag des Ziels.
-  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23).
+  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23)
+    – umgesetzt mit M7-6b, siehe unten.
+
+- **Stand M7-6b** (issue #201, keine Migration; vorläufige Details E-29):
+  Bestätigt eine Person den Lieferanten, den die Prüfansicht gewählt hat,
+  lernt er die neuen Merkmale des Belegs.
+  - *Quelle:* nur die Werte des Belegs – der neueste KI-Vorschlag
+    (`supplier`, `payment.mandate_reference`), darüber jeder Wert des
+    Verkäufers einer gelesenen E-Rechnung (dieselbe Überlagerung wie
+    `resolve_supplier`, `LieferantenAufloesung::ueberlagern()`), beim
+    Speichern **neu aus den Artefakten gelesen**, nie aus den Formularfeldern
+    (Freitext, „Neu anlegen“).
+  - *Regeln* (`App\Service\MasterData\LieferantenMerkmale::neue()`, reine
+    Funktion; Ergebnis `Merkmale`): **IBAN** gültig und noch nicht beim
+    Lieferanten; **Name** als Alias, wenn seine normalisierte Form (Stufe 4)
+    weder Name noch Alias ist; **Gläubiger-ID** gültig und nur, wenn der
+    Lieferant keine hat (eine andere → Hinweis, nicht ersetzt);
+    **Mandatsreferenz** nur zusammen mit dieser Gläubiger-ID. Höchstens 20 je
+    Liste, sonst Hinweis. USt-ID/Steuernummer werden nicht gelernt.
+  - *Eindeutigkeit* (`SupplierService::lernbar()`): eine IBAN oder
+    Gläubiger-ID, die schon bei einem **anderen** Lieferanten liegt, wird
+    nicht gelernt; die Seite nennt ihn („bitte zusammenführen“).
+  - *Anzeige vor dem Speichern:* unter der Lieferanten-Auswahl ein
+    Ankreuzfeld „Neue Merkmale beim Lieferanten „…“ ergänzen“,
+    **vorausgewählt**, mit der Liste der Werte und den Hinweisen; dazu das
+    versteckte Feld `lieferant_lernen_fuer` (ID). Angeboten nur, wenn der
+    Beleg noch nicht gespeichert ist, der Lieferant aus KI/E-Rechnung/
+    Auflösung gewählt wurde (nicht aus der Archiv-Vorgabe) und die Person
+    `supplier.manage` hat. `pruefansicht.js` blendet es aus, sobald ein
+    anderer Partner gewählt wird.
+  - *Speichern* (`Pruefung::speichern()`): gelernt wird nur, wenn angekreuzt,
+    beim **ersten** Speichern, mit `supplier.manage`, ohne „Neu anlegen“ und
+    wenn der gespeicherte Lieferant **genau** `lieferant_lernen_fuer` ist –
+    ein durch einen anderen ersetzter Vorschlag lernt nichts. Nach dem
+    Commit des Belegs in **eigener** Transaktion
+    (`SupplierService::merkmaleErgaenzen()`): Zeile `FOR UPDATE`, neu
+    entschlüsselt und neu geplant, unter dem Zeilen-DEK neu verschlüsselt,
+    `supplier_key` neu geschrieben, Eindeutigkeit erneut geprüft;
+    `needs_review` bleibt. Audit `lieferant.geaendert` (Entität Lieferant)
+    mit `{felder, beleg}` – nur Feldnamen und Beleg-ID. Ein inzwischen
+    vergebener Schlüssel verwirft nur das Lernen (Hinweis), nicht den Beleg.
+    Die Meldung nennt nur Feldbezeichnungen („Beim Lieferanten ergänzt: IBAN.“).
+  - *Unberührt:* festgeschriebene Belege (Speichern ist dort gesperrt) und
+    zusammengeführte Lieferanten (weder wählbar noch lernbar).
 
 ## 8. Kategorisierung
 
@@ -1584,7 +1627,14 @@ als Daten, Marken entschärft; `PruefungFlowTest`: Treffer gewählt mit Stufe,
 Vorschlag gelb, Neuanlage mit Link, Rolle passt nicht, Verkäufer der
 E-Rechnung, Archiv gewinnt; `SupplierFlowTest`: Liste „Neue Lieferanten
 prüfen“, „Als geprüft markieren“ einmal mit Audit, Speichern gilt als geprüft,
-Zusammenführen lässt das Flag, Tresor/CSRF; `RoutePermissionMatrixTest`);
+Zusammenführen lässt das Flag, Tresor/CSRF; `RoutePermissionMatrixTest`;
+M7-6b: `LieferantenMerkmaleTest`: neue IBAN/Alias, Bekanntes und Ungültiges
+nicht, Gläubiger-ID nur wenn leer samt Mandat, volle Listen; `PruefungFlowTest`:
+Ankreuzfeld vorausgewählt, Lernen samt `supplier_key` und Audit nur mit
+Feldnamen, nächster Beleg in Stufe 2, ersetzter Vorschlag/abgewählt/ohne
+`supplier.manage`/späteres Speichern lernt nichts, IBAN eines anderen
+Lieferanten genannt und nicht gelernt, abgelehntes Speichern zeigt das Angebot
+wieder, zusammengeführter Lieferant unberührt; `pruefansicht.test.js`);
 Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);
 Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der

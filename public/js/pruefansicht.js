@@ -118,6 +118,30 @@ function filtereAuswahl(select, attribut, passt, richtung) {
     }
 }
 
+/**
+ * Whether the offer to teach the supplier still applies (issue #201/M7-6b):
+ * only while the partner the page chose stays chosen. The server checks it
+ * again.
+ */
+function lernenGilt(gewaehlt, fuer) {
+    return fuer !== '' && gewaehlt === fuer;
+}
+
+function initLernen(formular) {
+    const lieferant = formular.querySelector('#pruefen-lieferant');
+    const block = formular.querySelector('#pruefen-lernen');
+    if (lieferant === null || block === null) {
+        return;
+    }
+
+    function anwenden() {
+        block.hidden = !lernenGilt(lieferant.value, block.getAttribute('data-lieferant') || '');
+    }
+
+    lieferant.addEventListener('change', anwenden);
+    anwenden();
+}
+
 function initRichtung(formular) {
     const kategorie = formular.querySelector('#pruefen-kategorie');
     const lieferant = formular.querySelector('#pruefen-lieferant');
@@ -139,6 +163,7 @@ function initRichtung(formular) {
 function initPruefansicht() {
     document.querySelectorAll('.beleg-betrachter').forEach(initBetrachter);
     document.querySelectorAll('.pruefen-formular').forEach(initRichtung);
+    document.querySelectorAll('.pruefen-formular').forEach(initLernen);
 }
 
 if (typeof document !== 'undefined') {
@@ -152,5 +177,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { ZOOM_STUFEN, seiteKlemmen, seitenText, zoomStufe, kategoriePasst, rollePasst };
+    module.exports = { ZOOM_STUFEN, seiteKlemmen, seitenText, zoomStufe, kategoriePasst, rollePasst, lernenGilt };
 }

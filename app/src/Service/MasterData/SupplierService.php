@@ -55,6 +55,9 @@ final readonly class SupplierService
     /** Per multi-value field: aliases, IBANs, mandate references. */
     public const int LIST_MAX = 20;
 
+    /** A SEPA creditor id, after SupplierKeys::kennung(). */
+    public const string GLAEUBIGER_ID_MUSTER = '/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/';
+
     private const string TABLE = 'supplier';
 
     private const string COLUMN = 'data_enc';
@@ -320,6 +323,84 @@ final readonly class SupplierService
     }
 
     /**
+     * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
+     * LieferantenMerkmale::neue(), minus an IBAN or creditor id that
+     * already belongs to another supplier - learning it would make two
+     * suppliers out of one key; they are merged instead. The hint names
+     * that supplier, for the review page only.
+     *
+     * @param array<mixed> $partner `extract-v1` `supplier`
+     */
+    public function lernbar(Vault $vault, Supplier $lieferant, array $partner, string $mandat): Merkmale
+    {
+        $merkmale = LieferantenMerkmale::neue($lieferant->data, $partner, $mandat);
+        $index = $vault->blindIndex();
+        foreach ([['ibans', SupplierKeyKind::Iban, $merkmale->iban], ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId]] as [$feld, $kind, $wert]) {
+            if ($wert === null) {
+                continue;
+            }
+            $andere = $this->lieferanten->idsWithKey($kind, $index->forValue($kind->purpose(), $wert), $lieferant->id);
+            if ($andere !== []) {
+                $anderer = $this->finde($vault, $andere[0]);
+                $merkmale = $merkmale->ohne($feld, sprintf(
+                    'Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.',
+                    $kind->label(),
+                    $anderer?->data->name ?? '?',
+                ));
+            }
+        }
+
+        return $merkmale;
+    }
+
+    /**
+     * Adds what a confirmed receipt taught (issue #201/M7-6b) to supplier
+     * $id: under a row lock, decrypted again and planned again with
+     * lernbar() - not what the page showed a while ago -, re-encrypted
+     * under the row's data key, `supplier_key` rewritten. `needs_review`
+     * stays: a receipt is no review of the supplier. Opens no transaction
+     * of its own; the caller writes the audit entry in it.
+     *
+     * Null when there is nothing to learn: the supplier is gone, merged
+     * away or knows it all already.
+     *
+     * @param array<mixed> $partner `extract-v1` `supplier`
+     *
+     * @throws SupplierRuleViolation an id that another supplier got in the meantime
+     */
+    public function merkmaleErgaenzen(Vault $vault, int $id, array $partner, string $mandat, \DateTimeImmutable $now): ?Merkmale
+    {
+        if (!$this->pdo->inTransaction()) {
+            throw new \LogicException('merkmaleErgaenzen() runs inside the caller\'s transaction.');
+        }
+
+        $record = $this->lieferanten->sperre($id);
+        if ($record === null || $record->mergedInto !== null) {
+            return null;
+        }
+        $lieferant = $this->entschluesseln($vault, $record);
+        $merkmale = $this->lernbar($vault, $lieferant, $partner, $mandat);
+        if ($merkmale->leer()) {
+            return null;
+        }
+
+        $daten = $merkmale->anwenden($lieferant->data);
+        $keys = $this->keys($vault, $daten);
+        $this->pruefeEindeutig($vault, $keys, [$id]);
+
+        $this->lieferanten->update(
+            $id,
+            $record->role,
+            $record->defaultCategoryId,
+            self::verschluesseln($vault->openDataKey($record->dekSealed), $id, $daten),
+            $now,
+        );
+        $this->lieferanten->replaceKeys($id, $keys);
+
+        return $merkmale;
+    }
+
+    /**
      * @throws SupplierRuleViolation
      */
     public function loeschen(int $id): SupplierRecord
@@ -484,7 +565,7 @@ final readonly class SupplierService
         }
 
         $glaeubigerId = SupplierKeys::kennung($feld('creditor_id'));
-        if ($glaeubigerId !== '' && preg_match('/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/', $glaeubigerId) !== 1) {
+        if ($glaeubigerId !== '' && preg_match(self::GLAEUBIGER_ID_MUSTER, $glaeubigerId) !== 1) {
             throw new SupplierRuleViolation('Die Gläubiger-ID ist ungültig (z. B. DE98ZZZ09999999999).');
         }
 
