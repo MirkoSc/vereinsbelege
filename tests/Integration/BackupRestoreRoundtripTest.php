@@ -486,6 +486,19 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         return $schritte;
     }
 
+    /**
+     * @return array{int, string} row count and CHECKSUM TABLE of a table
+     */
+    private function pruefsumme(string $table): array
+    {
+        $anzahl = (int) $this->pdo()->query(sprintf('SELECT COUNT(*) FROM `%s`', $table))->fetchColumn();
+        $zeile = $this->pdo()->query(sprintf('CHECKSUM TABLE `%s`', $table))->fetch(\PDO::FETCH_NUM);
+        self::assertIsArray($zeile);
+        self::assertNotNull($zeile[1], 'checksum available');
+
+        return [$anzahl, (string) $zeile[1]];
+    }
+
     private static function neueVerbindung(): \PDO
     {
         /** @var array{host: string, port: int, name: string, user: string, password: string} $db */
@@ -526,13 +539,15 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         // Longer than the 1 MiB read buffer, with a semicolon near both ends.
         $insert->execute([30001, ';' . str_repeat("ab'c;d\\", 200000) . ';']);
 
-        $vorher = $this->dumpTable('probe_gross', 'id');
+        // Compared by checksum, not row by row: 30 000 rows fetched twice
+        // would raise the memory the whole test run holds on to.
+        $vorher = $this->pruefsumme('probe_gross');
         $name = $this->service()->create();
         $this->wipeDatabase();
 
         $schritte = $this->restoreDump(new RestoreService(), $this->backupDir . '/' . $name);
 
-        self::assertSame($vorher, $this->dumpTable('probe_gross', 'id'), 'restored byte for byte');
+        self::assertSame($vorher, $this->pruefsumme('probe_gross'), 'restored byte for byte');
         self::assertGreaterThan(1, count($schritte), 'more than one step');
         $anweisungen = array_sum(array_column($schritte, 'anweisungen'));
         self::assertGreaterThan(RestoreService::STATEMENTS_PER_STEP, $anweisungen);
