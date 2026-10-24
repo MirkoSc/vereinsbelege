@@ -1407,6 +1407,12 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     Lieferant keine hat (eine andere → Hinweis, nicht ersetzt);
     **Mandatsreferenz** nur zusammen mit dieser Gläubiger-ID. Höchstens 20 je
     Liste, sonst Hinweis. USt-ID/Steuernummer werden nicht gelernt.
+  - *Vereinskonten* (`SupplierService::istVereinsIban()`, Blind Index
+    `bank_account.iban`): eine IBAN eines eigenen Kontos des Vereins ist nie
+    die eines Lieferanten – bei Lastschrift-Rechnungen und Einnahmen steht oft
+    nur sie auf dem Beleg. Sie wird nicht gelernt („ein Konto des Vereins –
+    nicht übernommen“), bei der Stufe-6-Neuanlage weggelassen und in Stufe 2
+    der Auflösung (wie in der Vorbelegung über Kennungen) ignoriert.
   - *Eindeutigkeit* (`SupplierService::lernbar()`): eine IBAN oder
     Gläubiger-ID, die schon bei einem **anderen** Lieferanten liegt, wird
     nicht gelernt, ebenso kein Name, der Name oder Alias eines anderen ist
@@ -1750,7 +1756,9 @@ nicht, Gläubiger-ID nur wenn leer samt Mandat, volle Listen; `PruefungFlowTest`
 Ankreuzfeld vorausgewählt, Lernen samt `supplier_key` und Audit nur mit
 Feldnamen, nächster Beleg in Stufe 2, ersetzter Vorschlag/abgewählt/ohne
 `supplier.manage`/späteres Speichern/geänderter Plan lernt nichts, IBAN bzw.
-Name eines anderen Lieferanten genannt und nicht gelernt, abgelehntes Speichern zeigt das Angebot
+Name eines anderen Lieferanten genannt und nicht gelernt, Vereins-IBAN nicht
+gelernt (dazu `LieferantenAufloesungJobTest`: Stufe 6 ohne Vereins-IBAN,
+Stufe 2 ignoriert sie), abgelehntes Speichern zeigt das Angebot
 wieder, zusammengeführter Lieferant unberührt; `pruefansicht.test.js`);
 Serienerkennung (monatlich, quartalsweise,
 jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);

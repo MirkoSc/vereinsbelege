@@ -294,6 +294,11 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   Lernen läuft danach in eigener Transaktion und nur, wenn der Plan noch
   genau dem gezeigten entspricht – sonst gar nichts (mit Hinweis), denn die
   Person hat etwas anderes bestätigt.
+- **Vereins-IBAN:** eine IBAN eines eigenen Kontos (`bank_account`) wird nie
+  gelernt, bei der KI-Neuanlage (Stufe 6, #48) weggelassen und in Stufe 2 der
+  Auflösung ignoriert – auf Lastschrift-Rechnungen und Einnahme-Belegen ist sie
+  oft die einzige IBAN; gelernt, würde sie jeden solchen Beleg diesem
+  Lieferanten zuordnen (Hinweis aus dem Koordinator-Review).
 - `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
   bestätigter Beleg ist keine Prüfung seiner Stammdaten.
 

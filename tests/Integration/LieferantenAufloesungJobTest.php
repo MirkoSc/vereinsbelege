@@ -6,6 +6,7 @@ namespace App\Tests\Integration;
 
 use App\Domain\ArtifactKind;
 use App\Domain\AuditAction;
+use App\Domain\BankAccountKind;
 use App\Domain\BlobMeta;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
@@ -17,6 +18,7 @@ use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
 use App\Repository\AiProviderRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankAccountRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\DocumentArtifactRepository;
@@ -29,6 +31,7 @@ use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\BankAccountService;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -326,6 +329,30 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         $this->assertKeinKlartext(['Sporthaus Beispiel', self::IBAN, self::USTID, 'Musterstraße', 'rechnung@sporthaus']);
     }
 
+    public function testStep6LeavesTheClubsOwnIbanOut(): void
+    {
+        $this->vereinskonto(self::IBAN);
+
+        $aufloesung = $this->lesen(['name' => 'Sporthaus Beispiel GmbH', 'iban' => self::IBAN, 'vat_id' => self::USTID]);
+
+        self::assertSame(AufloesungsArt::Angelegt, $aufloesung->art);
+        $neu = $this->service()->finde($this->tresor, (int) $aufloesung->supplierId);
+        self::assertSame([], $neu?->data->ibans, 'a direct debit names the club\'s account, not the supplier\'s');
+        self::assertSame(self::USTID, $neu->data->vatId);
+    }
+
+    public function testTheClubsOwnIbanFindsNoSupplierInStep2(): void
+    {
+        // Entered by hand before E-29 - step 2 must not trust it.
+        $this->lieferant('Sporthaus Beispiel', ['ibans' => self::IBAN]);
+        $richtig = $this->lieferant('Getränke Müller');
+        $this->vereinskonto(self::IBAN);
+
+        $aufloesung = $this->lesen(['name' => 'Getränke Müller', 'vat_id' => '', 'iban' => self::IBAN]);
+
+        self::assertSame([AufloesungsArt::Treffer, 4, $richtig], [$aufloesung->art, $aufloesung->stufe, $aufloesung->supplierId]);
+    }
+
     public function testValuesTheFormWouldRefuseAreLeftOutOfTheNewSupplier(): void
     {
         $aufloesung = $this->lesen([
@@ -534,6 +561,14 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         $huelle['choices'][0]['message']['content'] = json_encode($inhalt, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
 
         return LlmAntwort::ausChatCompletion(json_encode($huelle, JSON_THROW_ON_ERROR), 'gpt-6-luna', 1200);
+    }
+
+    /** One of the club's own bank accounts (issue #201/M7-6b, E-29). */
+    private function vereinskonto(string $iban): void
+    {
+        new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->anlegen($this->tresor, BankAccountKind::Bank, [
+            'name' => 'Girokonto', 'iban' => $iban, 'opening_balance' => '0,00', 'opening_date' => '2024-01-01',
+        ], new \DateTimeImmutable());
     }
 
     /**

@@ -11,8 +11,10 @@ use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierOrigin;
 use App\Domain\SupplierRecord;
 use App\Domain\SupplierRole;
+use App\Repository\BankAccountRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\SupplierRepository;
+use App\Service\Bank\BankAccountService;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -214,8 +216,9 @@ final readonly class SupplierService
      * $felder are the form's fields (name, ibans, vat_id, …) as the AI read
      * them. A value the form would refuse (an IBAN with a wrong check sum, a
      * VAT id that is none) is left out rather than failing the supplier: the
-     * AI may misread one value, the rest is still worth keeping. A name that
-     * is too long is cut.
+     * AI may misread one value, the rest is still worth keeping. An IBAN of
+     * the club's own accounts is left out too (istVereinsIban()). A name
+     * that is too long is cut.
      *
      * @param array<string, string> $felder
      *
@@ -236,6 +239,10 @@ final readonly class SupplierService
         $gueltig = $basis;
         foreach ($felder as $feld => $wert) {
             if (in_array($feld, ['name', 'rolle', 'kategorie', 'notes'], true) || trim($wert) === '') {
+                continue;
+            }
+            // The club's own account is nobody's supplier IBAN (E-29).
+            if ($feld === 'ibans' && $this->istVereinsIban($vault, $wert)) {
                 continue;
             }
             try {
@@ -326,8 +333,23 @@ final readonly class SupplierService
     }
 
     /**
+     * Whether $iban is one of the club's own accounts (`bank_account`,
+     * blind index BankAccountService::IBAN_PURPOSE). On a direct debit
+     * invoice or an income receipt the only IBAN printed is often the
+     * club's: it must never become a supplier's, or step 2 would take any
+     * receipt naming it for that supplier (issue #201/M7-6b, E-29).
+     */
+    public function istVereinsIban(Vault $vault, string $iban): bool
+    {
+        $iban = Iban::normalisieren($iban);
+
+        return $iban !== '' && (new BankAccountRepository($this->pdo))->idWithIban($vault->blindIndex()->forValue(BankAccountService::IBAN_PURPOSE, $iban)) !== null;
+    }
+
+    /**
      * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
-     * LieferantenMerkmale::neue(), minus an IBAN or creditor id that
+     * LieferantenMerkmale::neue(), minus an IBAN of the club's own
+     * (istVereinsIban()), minus an IBAN or creditor id that
      * already belongs to another supplier - learning it would make two
      * suppliers out of one key; they are merged instead - and minus a name
      * that is another supplier's name or alias: it would make step 4 of the
@@ -341,6 +363,9 @@ final readonly class SupplierService
     public function lernbar(Vault $vault, Supplier $lieferant, array $partner, string $mandat, bool $sperren = false): Merkmale
     {
         $merkmale = LieferantenMerkmale::neue($lieferant->data, $partner, $mandat);
+        if ($merkmale->iban !== null && $this->istVereinsIban($vault, $merkmale->iban)) {
+            $merkmale = $merkmale->ohne('iban', 'Die IBAN des Belegs ist ein Konto des Vereins – nicht übernommen.');
+        }
         $index = $vault->blindIndex();
         $pruefen = [
             ['iban', SupplierKeyKind::Iban, $merkmale->iban],

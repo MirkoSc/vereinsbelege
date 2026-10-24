@@ -1027,7 +1027,8 @@ final readonly class Pruefung
         $kennungen = [
             [SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))],
             [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))],
-            [SupplierKeyKind::Iban, Iban::normalisieren($wert('iban'))],
+            // The club's own account names no supplier (issue #201, E-29).
+            [SupplierKeyKind::Iban, $this->lieferanten->istVereinsIban($vault, $wert('iban')) ? '' : Iban::normalisieren($wert('iban'))],
             [SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))],
         ];
         foreach ($kennungen as [$art, $kennung]) {

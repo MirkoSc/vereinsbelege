@@ -9,6 +9,7 @@ use App\Config\Paths;
 use App\Domain\ArtifactKind;
 use App\Domain\AuditAction;
 use App\Domain\AuditEntry;
+use App\Domain\BankAccountKind;
 use App\Domain\BlobMeta;
 use App\Domain\BlobStorage;
 use App\Domain\DocumentSource;
@@ -37,6 +38,7 @@ use App\Http\StreamResponse;
 use App\Repository\AiProviderRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
@@ -58,6 +60,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\BankAccountService;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -1764,6 +1767,24 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('<li>IBAN DE89 3704 0044 0532 0130 00</li>', $seite);
     }
 
+    public function testTheClubsOwnIbanIsNotLearnt(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $this->vereinskonto(self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Die IBAN des Belegs ist ein Konto des Vereins – nicht übernommen.', $seite);
+        self::assertStringNotContainsString('<li>IBAN', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        $daten = $this->supplierService()->finde($this->tresor, $lieferant)?->data;
+        self::assertSame(['Sporthaus Beispeil'], $daten?->aliases);
+        self::assertSame([], $daten->ibans);
+    }
+
     public function testLearningNeedsSupplierManage(): void
     {
         $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
@@ -1829,6 +1850,14 @@ final class PruefungFlowTest extends DatabaseTestCase
             'lieferant_lernen_stand' => $stand,
             'aktion' => 'speichern',
         ]);
+    }
+
+    /** One of the club's own bank accounts (issue #201/M7-6b, E-29). */
+    private function vereinskonto(string $iban): void
+    {
+        new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->anlegen($this->tresor, BankAccountKind::Bank, [
+            'name' => 'Girokonto', 'iban' => $iban, 'opening_balance' => '0,00', 'opening_date' => '2024-01-01',
+        ], new \DateTimeImmutable());
     }
 
     /** The fingerprint of what the page offers to teach. */
