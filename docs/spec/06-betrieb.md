@@ -239,7 +239,7 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   (`RestoreService::serverSchluesselAusConfig()`). Fehlt die Datei oder ist
   der Schlüssel ungültig, folgt der Zugangsschritt (nächster Punkt).
 
-**Restore ohne Server-Schlüssel** (issue #154, E-21 in
+**Restore ohne Server-Schlüssel** (issue #154, E-22 in
 `docs/ENTSCHEIDUNGEN.md` – vorläufig, autonom getroffen). Mit einem frisch
 erzeugten Server-Schlüssel wären `user.email_enc`, `display_name_enc`,
 `mfa_totp.secret_enc` und vor allem der Login-Index `user.email_bi` aller
