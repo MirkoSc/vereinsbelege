@@ -405,7 +405,7 @@ final readonly class Zuordnung
      * The booking direction a receipt is settled by: its own - a credit
      * note the opposite, money flows back.
      */
-    private static function erwarteteRichtung(InvoiceRecord $beleg): string
+    public static function erwarteteRichtung(InvoiceRecord $beleg): string
     {
         $eigene = $beleg->direction->value;
         if ($beleg->docType !== InvoiceType::Gutschrift) {

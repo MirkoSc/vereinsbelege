@@ -573,3 +573,46 @@ harten Prozessabbruch (Session nicht mehr geschrieben) der Rest des Blocks
 kann doppelt laufen – dann hilft nur ein
 Restore von vorn. Ganz schließen ließe sich das nur mit einem
 Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
+
+## E-35 ✅ Punktebewertung und Auto-Zuordnung: konservativ, ohne gespeicherte Vorschläge (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-2 (issue #66), 04 §5 „Punktebewertung“*
+
+- **Automatisch nur, wenn eindeutig – von beiden Seiten:** Score ≥ Schwelle
+  (85), Vorsprung ≥ Abstand (20) vor dem Zweitbesten **sowohl** unter den
+  Kandidaten des Belegs **als auch** unter denen der Buchung (ein
+  Gleichstand ist nie eindeutig), und „Betrag vollständig gedeckt“ heißt:
+  offener Betrag des Belegs **=** noch nicht zugeordneter Betrag der
+  Buchung. Damit sind Sammelzahlung, Rate und Skonto nie automatisch,
+  sondern Vorschläge mit dem Teilbetrag `min(offen Beleg, offen Buchung)`.
+- **Betragssignale am offenen Betrag:** „exakt“ vergleicht mit dem noch
+  offenen Betrag (bei teilbezahlten Belegen dem Rest), „Skonto“ nur nach
+  unten (bis 3 % weniger), nie mehr.
+- **Kennungen im Zweck** (Rechnungs-, Kundennummer): verglichen nach
+  Kleinschreibung, nur Buchstaben/Ziffern, über Verwendungszweck **und**
+  End-to-End-Referenz; mindestens 3 Zeichen mit einer Ziffer, und eine
+  Ziffernkante darf keine weitere Ziffer berühren („815“ steckt nicht in
+  „20260815“).
+- **Kandidaten:** nur Belege mit Dokumentstatus `geprueft`/
+  `festgeschrieben` (KI-Werte sind Vorschläge, ungeprüfte Beträge sollen
+  nichts automatisch ausgleichen), Zahlungsweg `konto`/`erstattung`, noch
+  nicht ausgeglichen; Buchungen jeder Art außer `zugeordnet`. Beides im
+  Zugriffsbereich von `matching.edit`.
+- **Vorschläge werden nicht gespeichert:** Sie werden bei jedem Aufruf der
+  Seite in der Session neu berechnet (keine Migration, kein veralteter
+  Vorschlag). „Übernehmen“ bewertet das Paar neu und schreibt über
+  `Zuordnung` (`vorschlag_bestaetigt`, Score, `rule_trace`). Angezeigt
+  werden je Beleg bis zu drei Paare ab einer Mindestpunktzahl (`vorschlag_ab`,
+  Start 40 – nicht in der Spec-Tabelle).
+- **Parameter** als ein Setting `abgleich_parameter` (JSON), auf der
+  Abgleich-Seite mit `matching.edit` änderbar; fehlende oder ungültige Werte
+  fallen auf die Startwerte zurück.
+- **Ein Request, keine Schrittkette:** wie „Regel anwenden“ (M9-6) läuft
+  die Bewertung in einem Request über alle offenen Belege × Buchungen
+  (Vereinsgröße: wenige hundert je Seite).
+
+Offen für Mirko: „Verwerfen“ eines Vorschlags (braucht eine Tabelle, M10-4);
+Auto-Abgleich direkt nach dem Kontoauszug-Import statt per Knopf; ob
+ungeprüfte Belege wenigstens als Vorschlag erscheinen sollen; Lernen von
+IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
+Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ab welcher
+Datenmenge die Bewertung doch eine Schrittkette braucht.

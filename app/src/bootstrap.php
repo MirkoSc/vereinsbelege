@@ -27,6 +27,7 @@ use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\AbgleichController;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -116,6 +117,7 @@ use App\Service\Archiv\ArchivImport;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupErstellung;
 use App\Service\Backup\BackupService;
+use App\Service\Bank\Abgleich;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungen;
@@ -721,6 +723,30 @@ $buchungsregeln = static function () use ($connections, $view, $auditFor): Buchu
         new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings)),
         $kategorien,
         $auditFor($pdo),
+    );
+};
+
+// Matching receipt <-> booking (M10-2, issue #66): scores decrypted
+// receipts and bookings in the session - only this page opens the connection.
+$abgleichSeite = static function () use ($connections, $view, $auditFor): AbgleichController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+    $audit = $auditFor($pdo);
+    $transaktionen = new BankTransactionRepository($pdo);
+    $rechnungen = new InvoiceRepository($pdo);
+
+    return new AbgleichController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Abgleich(
+            $rechnungen,
+            $transaktionen,
+            new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+            new Zuordnung($pdo, new AllocationRepository($pdo), $rechnungen, $transaktionen, new BankAccountService($pdo, new BankAccountRepository($pdo)), $audit),
+            new SettingRepository($pdo),
+        ),
+        $audit,
     );
 };
 
@@ -1476,6 +1502,7 @@ $router = new Router();
     $nextcloudAdmin,
     $backupsSeite,
     $serienSeite,
+    $abgleichSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

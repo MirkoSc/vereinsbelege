@@ -38,6 +38,10 @@ final readonly class BankTransaction
         public ?int $ruleId = null,
         public BankTransactionSetBy $docSource = BankTransactionSetBy::Standard,
         public ?BankTransactionSetBy $categorySource = null,
+        /** SEPA end-to-end reference, mandate reference, creditor id - '' when the bank sent none (M10-2 scoring). */
+        public string $endToEndRef = '',
+        public string $mandateRef = '',
+        public string $creditorId = '',
     ) {
     }
 

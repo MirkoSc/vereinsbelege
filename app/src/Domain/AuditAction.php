@@ -104,6 +104,8 @@ enum AuditAction: string
     case ZuordnungGeloest = 'zuordnung.geloest';
     case BelegDifferenzAbgeschlossen = 'beleg.differenz_abgeschlossen';
     case BelegDifferenzGeoeffnet = 'beleg.differenz_geoeffnet';
+    // The matching run (M10-2, issue #66): counts only.
+    case AbgleichAusgefuehrt = 'abgleich.ausgefuehrt';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -143,6 +145,8 @@ enum AuditAction: string
     case EinstellungNextcloud = 'einstellung.nextcloud';
     /** Issue #64/M9-6: whether income needs a receipt by default (E-17). */
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
+    /** Issue #66/M10-2: points and thresholds of the matching (field names only). */
+    case EinstellungAbgleich = 'einstellung.abgleich';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -230,6 +234,8 @@ enum AuditAction: string
             self::BelegDifferenzAbgeschlossen => 'Zahlungsdifferenz des Belegs abgeschlossen',
             self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
+            self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
+            self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -311,7 +317,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
-            self::EinstellungNextcloud,
+            self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
             self::ExportErstellt,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen => null,
