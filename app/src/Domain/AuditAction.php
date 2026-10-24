@@ -119,6 +119,8 @@ enum AuditAction: string
     case EinstellungUpdateKanal = 'einstellung.update_kanal';
     case EinstellungEinreichung = 'einstellung.einreichung';
     case EinstellungExport = 'einstellung.export';
+    /** Nextcloud target of the export stored or removed (issue #95). */
+    case EinstellungNextcloud = 'einstellung.nextcloud';
     /** Issue #64/M9-6: whether income needs a receipt by default (E-17). */
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
 
@@ -127,6 +129,8 @@ enum AuditAction: string
     // Export runs (issue #179/M12-4): the run id and the number of receipts.
     case ExportMarkiert = 'export.markiert';
     case ExportZurueckgesetzt = 'export.zurueckgesetzt';
+    /** Every file of an export run filed into the Nextcloud (issue #95). */
+    case ExportNextcloud = 'export.nextcloud';
     // The archive import (issue #77/M12-3): counts and document ids - never a name.
     case ArchivImportiert = 'archiv.importiert';
 
@@ -215,9 +219,11 @@ enum AuditAction: string
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::EinstellungExport => 'Export-Muster geändert',
+            self::EinstellungNextcloud => 'Nextcloud-Ablage eingerichtet/geändert',
             self::ExportErstellt => 'ZIP-Export erstellt',
             self::ExportMarkiert => 'Export als vollständig bestätigt',
             self::ExportZurueckgesetzt => 'Export-Markierung zurückgesetzt',
+            self::ExportNextcloud => 'Export in Nextcloud abgelegt',
             self::ArchivImportiert => 'Archiv importiert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
@@ -252,7 +258,7 @@ enum AuditAction: string
             self::KiAnbieterStandard, self::KiFallbackGewaehlt, self::KiFallbackEntfernt => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
             self::ArchivImportiert => 'archive_import',
-            self::ExportMarkiert, self::ExportZurueckgesetzt => 'export_run',
+            self::ExportMarkiert, self::ExportZurueckgesetzt, self::ExportNextcloud => 'export_run',
             self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,
             self::BuchungEingeordnet => 'bank_transaction',
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
@@ -265,6 +271,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
+            self::EinstellungNextcloud,
             self::ExportErstellt,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben => null,
         };
