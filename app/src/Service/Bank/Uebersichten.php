@@ -60,9 +60,9 @@ final readonly class Uebersichten
 
     /**
      * Receipts the club reimburses (`erstattung`) not yet (fully) paid out,
-     * grouped by submitter - largest open sum first is not possible across
-     * currencies, so by name; receipts without a submission (captured
-     * internally) form a group with an empty name, last.
+     * grouped by submitter name and IBAN, by name; receipts without a
+     * submission (captured internally) form a group with an empty name,
+     * last.
      *
      * @return array{empfaenger: list<Erstattungsempfaenger>, unlesbar: int}
      */
@@ -74,22 +74,37 @@ final readonly class Uebersichten
             $heute,
         );
 
+        // Name AND IBAN: /einreichen is public, so anybody can submit under
+        // somebody else's name with their own IBAN. One group per payee
+        // account keeps a foreign IBAN from standing next to another
+        // person's sum (E-37).
         $gruppen = [];
         foreach ($posten as $p) {
-            $schluessel = self::schluessel($p->einreicher);
-            $gruppen[$schluessel] ??= ['name' => trim($p->einreicher), 'iban' => '', 'posten' => [], 'summen' => []];
+            $iban = self::iban($p->iban);
+            $schluessel = self::schluessel($p->einreicher) . '|' . $iban;
+            $gruppen[$schluessel] ??= ['name' => trim($p->einreicher), 'iban' => $iban, 'posten' => [], 'summen' => []];
             $gruppen[$schluessel]['posten'][] = $p;
             $gruppen[$schluessel]['summen'][$p->waehrung] = ($gruppen[$schluessel]['summen'][$p->waehrung] ?? 0) + $p->offen;
-            // The last IBAN a submission of this person gave, in list order.
-            if ($p->iban !== '') {
-                $gruppen[$schluessel]['iban'] = $p->iban;
-            }
         }
-        uksort($gruppen, static fn(string $a, string $b): int => ($a === '') <=> ($b === '') ?: strcmp($a, $b));
+        uksort($gruppen, static fn(string $a, string $b): int => (str_starts_with($a, '|')) <=> (str_starts_with($b, '|')) ?: strcmp($a, $b));
+
+        // The same name with more than one account (or with and without
+        // one): every such group is marked, so nobody transfers a sum to
+        // an account without checking whose it is.
+        $kontenJeName = [];
+        foreach ($gruppen as $g) {
+            $kontenJeName[self::schluessel($g['name'])][] = $g['iban'];
+        }
 
         return [
             'empfaenger' => array_values(array_map(
-                static fn(array $g): Erstattungsempfaenger => new Erstattungsempfaenger($g['name'], $g['iban'], $g['posten'], $g['summen']),
+                static fn(array $g): Erstattungsempfaenger => new Erstattungsempfaenger(
+                    $g['name'],
+                    $g['iban'],
+                    $g['posten'],
+                    $g['summen'],
+                    $g['name'] !== '' && count($kontenJeName[self::schluessel($g['name'])]) > 1,
+                ),
                 $gruppen,
             )),
             'unlesbar' => $unlesbar,
@@ -200,6 +215,11 @@ final readonly class Uebersichten
         }
 
         return ['posten' => $posten, 'unlesbar' => $unlesbar];
+    }
+
+    private static function iban(string $iban): string
+    {
+        return strtoupper((string) preg_replace('/\s+/', '', $iban));
     }
 
     private static function schluessel(string $name): string

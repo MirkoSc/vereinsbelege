@@ -60,6 +60,7 @@ use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\Serien;
+use App\Service\Mail\MailSettingsRepository;
 use App\Service\MasterData\SupplierService;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
@@ -207,7 +208,7 @@ final class UebersichtFlowTest extends DatabaseTestCase
     public function testOpenReimbursementsAreGroupedPerSubmitterWithTheirSum(): void
     {
         $erste = $this->beleg(1250, weg: Zahlungsweg::Erstattung, einreichung: ['name' => 'Erika Beispiel', 'iban' => 'DE02120300000000202051']);
-        $zweite = $this->beleg(4000, weg: Zahlungsweg::Erstattung, einreichung: ['name' => ' erika  beispiel', 'iban' => '']);
+        $zweite = $this->beleg(4000, weg: Zahlungsweg::Erstattung, einreichung: ['name' => ' erika  beispiel', 'iban' => 'de02 1203 0000 0000 2020 51']);
         $andere = $this->beleg(700, weg: Zahlungsweg::Erstattung, einreichung: ['name' => 'Max Muster', 'iban' => '']);
         $intern = $this->beleg(300, weg: Zahlungsweg::Erstattung);
         $erstattet = $this->beleg(900, weg: Zahlungsweg::Erstattung, einreichung: ['name' => 'Max Muster', 'iban' => '']);
@@ -221,7 +222,8 @@ final class UebersichtFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Offene Erstattungen', $body);
         self::assertSame(1, substr_count($body, '<h3>Erika Beispiel</h3>'), 'one group, case and spacing ignored');
         self::assertStringContainsString('42,50 EUR', $body, '12,50 + (40,00 - 10,00)');
-        self::assertStringContainsString('IBAN laut Einreichung: DE02120300000000202051', $body);
+        self::assertStringContainsString('IBAN laut Einreichung: <strong>DE02120300000000202051</strong>', $body);
+        self::assertStringNotContainsString('hinweis-warnung', $body, 'one name, one account: nothing to warn about');
         self::assertStringContainsString('<h3>Max Muster</h3>', $body);
         self::assertStringContainsString('<h3>Ohne Angabe des Einreichers</h3>', $body);
         self::assertGreaterThan(strpos($body, '<h3>Max Muster</h3>'), strpos($body, '<h3>Ohne Angabe des Einreichers</h3>'), 'without a name last');
@@ -230,6 +232,31 @@ final class UebersichtFlowTest extends DatabaseTestCase
         }
         foreach ([$erstattet, $konto] as $id) {
             self::assertStringNotContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($id) . '"', $body);
+        }
+    }
+
+    public function testAnotherIbanUnderTheSameNameIsItsOwnGroupWithAWarning(): void
+    {
+        // The public submission lets anybody use any name: a second
+        // submission under Erika's name with a foreign account must not end
+        // up next to her sum.
+        $echt = $this->beleg(1250, weg: Zahlungsweg::Erstattung, einreichung: ['name' => 'Erika Beispiel', 'iban' => 'DE02120300000000202051']);
+        $fremd = $this->beleg(99900, weg: Zahlungsweg::Erstattung, einreichung: ['name' => 'Erika Beispiel', 'iban' => 'DE89370400440532013000']);
+
+        $body = $this->get('/app/offen/erstattungen')->body;
+        self::assertSame(2, substr_count($body, '<h3>Erika Beispiel</h3>'), 'one group per account');
+        self::assertSame(2, substr_count($body, 'Unter diesem Namen gibt es Einreichungen mit unterschiedlicher oder ohne IBAN'));
+        $erste = strpos($body, 'DE02120300000000202051');
+        $zweite = strpos($body, 'DE89370400440532013000');
+        self::assertNotFalse($erste);
+        self::assertNotFalse($zweite);
+        // Each sum sits in the card of its own account.
+        $karteEcht = substr($body, (int) strrpos(substr($body, 0, $erste), '<section class="karte">'), 2000);
+        self::assertStringContainsString('12,50 EUR', $karteEcht);
+        self::assertStringNotContainsString('999,00', $karteEcht);
+        self::assertStringNotContainsString('1.011,50', $body, 'never one sum across both accounts');
+        foreach ([$echt, $fremd] as $id) {
+            self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($id) . '"', $body);
         }
     }
 
@@ -257,7 +284,11 @@ final class UebersichtFlowTest extends DatabaseTestCase
         self::assertStringContainsString('href="/app/belege/neu">Beleg hochladen</a>', $body);
         self::assertStringContainsString('<summary>Beleg anfordern</summary>', $body);
         self::assertStringContainsString('02.03.2026, 49,90 EUR, Gartenbau Beispiel – Rasenmäher Wartung', $body);
-        self::assertStringContainsString('/einreichen ein', $body);
+        self::assertStringContainsString('Bitte reiche ihn über unser Formular zur Belegeinreichung ein', $body, 'no checked public URL: no link from the Host header');
+        self::assertStringNotContainsString('localhost', $body);
+
+        new SettingRepository($this->pdo())->set('oeffentliche_url', 'https://belege.example.org');
+        self::assertStringContainsString('Bitte reiche ihn über https://belege.example.org/einreichen ein', $this->get('/app/offen/buchungen')->body);
         foreach ([$einnahme, $nichtNoetig, $belegt] as $id) {
             self::assertStringNotContainsString('href="/app/buchungen/' . $id . '"', $body);
         }
@@ -501,6 +532,7 @@ final class UebersichtFlowTest extends DatabaseTestCase
                     new SettingRepository($pdo),
                     $this->audit,
                 ),
+                new MailSettingsRepository(new SettingRepository($pdo), $crypto),
             );
         };
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');

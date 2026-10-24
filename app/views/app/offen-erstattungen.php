@@ -19,8 +19,8 @@ use App\Service\Processing\Betrag;
     <h2>Offene Erstattungen</h2>
     <?php require __DIR__ . '/../partials/offen-reiter.php'; ?>
     <p class="gedaempft">
-        Belege, die jemand für den Verein ausgelegt hat und die noch nicht (ganz) erstattet sind – je Einreicher mit der
-        offenen Summe. Erstattet ist ein Beleg, sobald ihm die Überweisung an den Einreicher zugeordnet ist.
+        Belege, die jemand für den Verein ausgelegt hat und die noch nicht (ganz) erstattet sind – je Einreicher und
+        IBAN mit der offenen Summe. Erstattet ist ein Beleg, sobald ihm die Überweisung an den Einreicher zugeordnet ist.
     </p>
 </section>
 
@@ -34,11 +34,19 @@ use App\Service\Processing\Betrag;
     <?php foreach ($empfaenger as $g): ?>
         <section class="karte">
             <h3><?= e($g->name !== '' ? $g->name : 'Ohne Angabe des Einreichers') ?></h3>
+            <?php if ($g->mehrdeutig): ?>
+                <p class="hinweis hinweis-warnung">
+                    Unter diesem Namen gibt es Einreichungen mit unterschiedlicher oder ohne IBAN. Die Einreichung ist
+                    öffentlich – jeder kann jeden Namen angeben. Prüfen Sie vor dem Überweisen, wem das Konto gehört.
+                </p>
+            <?php endif; ?>
             <p>
                 <strong>Offen:</strong>
                 <?= e(implode(' + ', array_map(static fn(string $w, int $c): string => Betrag::format($c) . ' ' . $w, array_keys($g->summen), $g->summen))) ?>
-                <?php if ($g->iban !== ''): ?>
-                    <br><span class="gedaempft">IBAN laut Einreichung: <?= e($g->iban) ?></span>
+                <?php if ($g->iban === ''): ?>
+                    <br><span class="gedaempft">Keine IBAN in der Einreichung.</span>
+                <?php else: ?>
+                    <br>IBAN laut Einreichung: <strong><?= e($g->iban) ?></strong>
                 <?php endif; ?>
             </p>
             <div class="tabelle-rahmen">

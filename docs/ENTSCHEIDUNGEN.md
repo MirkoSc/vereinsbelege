@@ -441,11 +441,18 @@ Die Spec (04 §5 „Übersichten“) nennt nur die vier Listen. Umgesetzt (Detai
   (`<details>`, kein JS) – kein Versand über die Mail-Queue: Empfänger ist
   meist kein Benutzer, und die Queue dürfte keine fachlichen Klartexte
   tragen. Ebenso kein `mailto:`-Link (Klartext in einer URL).
-- **Erstattungen je Einreicher** gruppiert nach dem Namen aus der
-  Einreichung, nicht nach IBAN (die fehlt bei „Bar erhalten“). Belege ohne
-  Einreichung bilden eine eigene Gruppe. SEPA-Sammelüberweisung (pain.001)
-  bleibt Backlog; #67 (Erstattungs-Abgleich) und #86 (GiroCode) setzen auf
-  diese Listen auf.
+- **Erstattungen je Einreicher und IBAN:** gruppiert nach Name **und** IBAN
+  aus der Einreichung. Nur nach Name wäre unsicher: `/einreichen` ist
+  öffentlich, jemand könnte unter einem fremden Namen mit eigener IBAN
+  einreichen, und die Gruppe zeigte dann seine IBAN neben der ganzen Summe
+  der echten Person (Befund im Koordinator-Review). Derselbe Name mit
+  verschiedenen oder fehlender IBAN ergibt mehrere Gruppen mit Warnung.
+  Belege ohne Einreichung bilden eine eigene Gruppe. SEPA-Sammelüberweisung
+  (pain.001) bleibt Backlog; #67 (Erstattungs-Abgleich) und #86 (GiroCode)
+  setzen auf diese Listen auf.
+- **Link im Mailtext** über `PublicUrl::resolve()` (konfigurierte öffentliche
+  URL bzw. Host der Absender-Domain), nicht aus dem Host-Header; ohne
+  geprüfte Basis nennt der Text das Formular ohne Link.
 - **Nur Anzeige:** kein Zähler in Navigation/Startseite, keine Mail, kein
   Cron (der Cron kann nicht entschlüsseln).
 

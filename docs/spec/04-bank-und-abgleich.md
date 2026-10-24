@@ -660,18 +660,22 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
   `inbox.view` in den lesenden Posteingang, sonst kein Link.
 - **Offene Erstattungen** (`/app/offen/erstattungen`, `report.view`):
   Zahlungsweg `erstattung`, Status `erstattung_offen`/`teilbezahlt`,
-  gruppiert nach dem Namen aus der Einreichung (Groß-/Kleinschreibung und
-  Leerraum egal; ohne Name: Kontoinhaber; ohne Einreichung eine Gruppe
+  gruppiert nach Name **und IBAN** aus der Einreichung (Groß-/Kleinschreibung
+  und Leerraum egal; ohne Name: Kontoinhaber; ohne Einreichung eine Gruppe
   „Ohne Angabe des Einreichers“ am Ende), je Gruppe offene Summe je Währung
-  und die IBAN laut Einreichung.
+  und deren IBAN. Kommt derselbe Name mit einer anderen oder ohne IBAN vor,
+  warnt jede dieser Gruppen: `/einreichen` ist öffentlich, jeder kann jeden
+  Namen angeben – eine fremde IBAN darf nie neben der Summe eines anderen
+  stehen.
 - **Buchungen ohne Beleg** (`/app/offen/buchungen`, `bank.view` mit Scope):
   `doc_status` `fehlt` und `teilweise` (dann mit dem Teil, den noch kein
   Beleg erklärt), alle Zeiträume, neueste zuerst. Was Regeln oder „kein
   Beleg nötig“ (M9-6) einordnen, ist `nicht_noetig` und fehlt hier. Aktionen:
   „Beleg hochladen“ (`/app/belege/neu`, nur mit `document.submit_internal`)
   und „Beleg anfordern“ – ein Text zum Kopieren in eine eigene Mail mit
-  Datum, Betrag, Gegenseite, Zweck und dem Link auf `/einreichen`; es wird
-  nichts verschickt und nichts in eine URL geschrieben.
+  Datum, Betrag, Gegenseite, Zweck und dem Link auf `/einreichen` (Basis aus
+  `App\Service\Mail\PublicUrl::resolve()` wie in Mails; ohne geprüfte Basis
+  kein Link); es wird nichts verschickt und nichts in eine URL geschrieben.
 - **Erwartete Belege** (`/app/offen/erwartet`, `document.edit` ohne Scope wie
   `/app/serien`, E-26; der Reiter erscheint nur ohne Scope): bestätigte Serien mit Fälligkeit **fällig** oder
   **überfällig** aus `App\Service\Invoice\Serien` (E-33), überfällige
@@ -680,7 +684,8 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
 **Pflicht-Tests M10-5:** `UebersichtFlowTest` (Reihenfolge nach Fälligkeit,
 überfällig/fällig, teilbezahlt mit Rest, Summen je Richtung, bezahlt/bar/
 keine/abgelehnt/Erstattung nicht in „unbezahlt“; Altbestand getrennt;
-Erstattungen je Einreicher mit Summe und IBAN; Buchungen ohne Beleg mit
+Erstattungen je Einreicher und IBAN mit Summe, gleicher Name mit fremder
+IBAN getrennt und gewarnt; Buchungen ohne Beleg mit
 Regel/„nicht nötig“/Einnahme/zugeordnet ausgeschlossen, Sammelüberweisung
 mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
 `SerienFlowTest::testTheWorkListShowsOnlyConfirmedSeriesWhoseReceiptIsMissing`,

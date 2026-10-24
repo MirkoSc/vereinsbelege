@@ -19,6 +19,8 @@ use App\Service\Crypto\Vault;
 use App\Service\Invoice\SerienAnsicht;
 use App\Service\Invoice\SerienFaelligkeit;
 use App\Service\Invoice\Serien;
+use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\PublicUrl;
 use App\View\Area;
 use App\View\View;
 
@@ -45,6 +47,7 @@ final readonly class UebersichtController
         private SessionVault $sessionVault,
         private Uebersichten $uebersichten,
         private Serien $serien,
+        private ?MailSettingsRepository $mailSettings = null,
     ) {
     }
 
@@ -106,7 +109,9 @@ final readonly class UebersichtController
         return $this->seite('offen-buchungen', 'Buchungen ohne Beleg', $tresor !== null, [
             'fehlend' => $tresor === null ? [] : $this->uebersichten->buchungenOhneBeleg($tresor, $this->berechtigungen()->zugriffsbereich(Permission::BankView)),
             'darfHochladen' => $this->berechtigungen()->darf(Permission::DocumentSubmitInternal),
-            'einreichenUrl' => $request->ownOrigin() . '/einreichen',
+            // Only a checked base (configured public URL, or a host of the
+            // sender's domain) goes into a text meant for a mail.
+            'einreichenUrl' => $this->einreichenUrl($request),
         ]);
     }
 
@@ -161,6 +166,15 @@ final readonly class UebersichtController
             'belegPfad' => $b->darf(Permission::DocumentEdit) ? '/app/belege/pruefen/' : ($b->darf(Permission::InboxView) ? '/app/posteingang/' : null),
             ...$daten,
         ], Area::App));
+    }
+
+    private function einreichenUrl(Request $request): ?string
+    {
+        $basis = $this->mailSettings === null
+            ? null
+            : PublicUrl::resolve($this->mailSettings->get(), $request->header('host') ?? '', Request::httpsFromGlobals());
+
+        return $basis === null ? null : rtrim($basis, '/') . '/einreichen';
     }
 
     /** The expected receipts span every cost center and period (E-26): only without a scope. */

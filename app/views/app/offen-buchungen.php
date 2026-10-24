@@ -10,7 +10,7 @@
  * @var bool $entsperrt
  * @var list<\App\Service\Bank\FehlenderBeleg> $fehlend
  * @var bool $darfHochladen
- * @var string $einreichenUrl
+ * @var string|null $einreichenUrl
  */
 
 use App\Domain\BankTransactionDocStatus;
@@ -50,13 +50,13 @@ use App\Service\Processing\Betrag;
                             $b = $f->buchung;
                             $gegenseite = $b->counterpartyName !== '' ? $b->counterpartyName : 'ohne Gegenseite';
                             $vorlage = sprintf(
-                                "Hallo,\n\nzu folgender Buchung fehlt uns noch der Beleg:\n%s, %s %s, %s%s\n\nBitte reiche ihn über %s ein (Foto oder PDF genügt).\n\nVielen Dank!",
+                                "Hallo,\n\nzu folgender Buchung fehlt uns noch der Beleg:\n%s, %s %s, %s%s\n\nBitte reiche ihn %s ein (Foto oder PDF genügt).\n\nVielen Dank!",
                                 $b->bookingDate->format('d.m.Y'),
                                 Betrag::format(abs($b->amount)),
                                 $b->currency,
                                 $gegenseite,
                                 $b->purpose !== '' ? ' – ' . $b->purpose : '',
-                                $einreichenUrl,
+                                $einreichenUrl === null ? 'über unser Formular zur Belegeinreichung' : 'über ' . $einreichenUrl,
                             );
                             ?>
                             <tr>

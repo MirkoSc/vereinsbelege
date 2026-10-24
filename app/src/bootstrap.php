@@ -632,7 +632,7 @@ $serienSeite = static function () use ($connections, $view, $serienFor): SerienC
 
 // The work lists "Offen" (issue #69/M10-5): read-only, they reuse the
 // matching, booking and series services - only they open the connection.
-$offenSeite = static function () use ($connections, $view, $serienFor, $zuordnungFor): UebersichtController {
+$offenSeite = static function () use ($connections, $view, $serienFor, $zuordnungFor, $mailSettingsFor): UebersichtController {
     $pdo = $connections->pdo();
     $lieferanten = new SupplierRepository($pdo);
     $kategorien = new CategoryRepository($pdo);
@@ -649,6 +649,7 @@ $offenSeite = static function () use ($connections, $view, $serienFor, $zuordnun
             new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
         ),
         $serienFor($pdo),
+        $mailSettingsFor($pdo),
     );
 };
 
