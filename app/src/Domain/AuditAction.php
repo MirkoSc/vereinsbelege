@@ -43,6 +43,13 @@ enum AuditAction: string
     case TresorEntzogen = 'tresor.entzogen';
     case TresorWiederhergestellt = 'tresor.wiederhergestellt';
     case TresorWiederherstellungFehlgeschlagen = 'tresor.wiederherstellung_fehlgeschlagen';
+    /**
+     * Issue #154: after a restore without the old server key, the installer
+     * re-linked this account (new address under the new key, grant if it
+     * had none, authenticator reset) - written by the installer, so the
+     * acting user is the account itself.
+     */
+    case ZugangNeuVerknuepft = 'tresor.zugang_neu_verknuepft';
 
     case RolleAngelegt = 'rolle.angelegt';
     case RolleGeaendert = 'rolle.geaendert';
@@ -169,6 +176,7 @@ enum AuditAction: string
             self::TresorEntzogen => 'Tresor-Freigabe entzogen',
             self::TresorWiederhergestellt => 'Tresor mit Wiederherstellungsschlüssel entsperrt',
             self::TresorWiederherstellungFehlgeschlagen => 'Wiederherstellungsschlüssel fehlgeschlagen',
+            self::ZugangNeuVerknuepft => 'Zugang nach Wiederherstellung neu verknüpft',
             self::RolleAngelegt => 'Rolle angelegt',
             self::RolleGeaendert => 'Rolle geändert',
             self::RolleGeloescht => 'Rolle gelöscht',
@@ -255,7 +263,8 @@ enum AuditAction: string
             self::BenutzerEingeladen, self::EinladungErneut, self::EinladungAngenommen,
             self::BenutzerGeaendert, self::BenutzerGesperrt, self::BenutzerEntsperrt,
             self::TresorFreigegeben, self::TresorEntzogen,
-            self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen => 'user',
+            self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen,
+            self::ZugangNeuVerknuepft => 'user',
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',

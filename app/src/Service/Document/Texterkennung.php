@@ -160,6 +160,28 @@ final readonly class Texterkennung implements JobHandler
         return $texte === [] ? null : implode(Textlayer::SEITENWECHSEL, $texte);
     }
 
+    /**
+     * Every page text of the newest run, whether the layer was usable for
+     * the AI or not - for the full-text search (issue #94,
+     * App\Service\Suche\TextlayerQuelle), where a few words are still worth
+     * finding. Empty when the job has stored nothing (yet).
+     *
+     * @return list<string>
+     */
+    public function seitentexte(Document $document, Vault $vault): array
+    {
+        $artefakte = $this->artifacts->fuerDokument($document->id, ArtifactKind::Text);
+        $lauf = max(array_map(static fn (DocumentArtifact $a): int => $a->jobId ?? 0, $artefakte) ?: [0]);
+        $seiten = [];
+        foreach ($artefakte as $artefakt) {
+            if (($artefakt->jobId ?? 0) === $lauf) {
+                array_push($seiten, ...($this->inhalt($artefakt, $vault)['seiten'] ?? []));
+            }
+        }
+
+        return $seiten;
+    }
+
     private function pruefen(Job $job, Vault $vault): JobSchrittErgebnis
     {
         $document = $this->dokument($job);

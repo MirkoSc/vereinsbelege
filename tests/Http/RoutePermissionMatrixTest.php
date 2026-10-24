@@ -431,6 +431,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Finanzen, HttpMethod::Post, '/app/posteingang/7/duplikat-behalten', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/posteingang/7/duplikat-verwerfen', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/posteingang/7/duplikat-behalten', false],
+            // Full-text search (issue #94): inbox.view like the inbox the
+            // hits link to - every shipped role, the Vereinsverantwortlicher
+            // within his cost centers (the scope is the service's job).
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/suche', true],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/suche', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/suche/index', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/suche/neu', true],
             // The job step (M4-7): the route itself only needs a login -
             // per-type rights are JobRunner's job, not the guard's.
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/api/jobs/step', true],
@@ -603,6 +610,7 @@ final class RoutePermissionMatrixTest extends TestCase
             $view,
             $stellvertreter,
             $guard,
+            $stellvertreter,
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,

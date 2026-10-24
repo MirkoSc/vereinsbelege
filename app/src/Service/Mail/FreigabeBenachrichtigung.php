@@ -35,8 +35,14 @@ final readonly class FreigabeBenachrichtigung
     {
         $anzahl = 0;
         foreach ($this->verwaltung->freigeber($now) as $admin) {
+            // An address that does not open (restore without the old server
+            // key, issue #154) cannot be mailed - the admin re-enters it.
+            $email = $this->crypto->decryptOrNull($admin->emailEnc);
+            if ($email === null) {
+                continue;
+            }
             $this->mailer->reiheFreigabeHinweisEin(
-                $this->crypto->decrypt($admin->emailEnc),
+                $email,
                 $basis === null ? null : $basis . '/admin/tresor',
                 $now,
             );

@@ -840,7 +840,7 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
 
         // Every controller closure of app/src/routes.php in order: the
         // guard second, the AI provider pages 32nd.
-        $controller = array_fill(0, 37, $unerreichbar);
+        $controller = array_fill(0, 38, $unerreichbar);
         $controller[1] = $guard;
         $controller[31] = $kiAnbieter;
 
