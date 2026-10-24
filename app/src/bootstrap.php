@@ -715,7 +715,12 @@ $archivImport = static function () use ($connections, $view, $auditFor, $paths, 
 $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
     $view,
     new Session(),
-    new SystemCheck($connections->pdo(), $paths->varDir(), \Closure::fromCallable(new CurlStatusProbe())),
+    new SystemCheck(
+        $connections->pdo(),
+        $paths->varDir(),
+        \Closure::fromCallable(new CurlStatusProbe()),
+        $paths->sharedDir(),
+    ),
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the

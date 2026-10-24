@@ -11,8 +11,9 @@ namespace App\Service\SystemCheck;
  *
  * Only the status code leaves this class - the body is discarded unread, so
  * even a server that did hand out the file leaks nothing into the page or
- * its JSON. Redirects are not followed: the question is what THIS address
- * answers. Short timeouts, because the admin page waits for it.
+ * its JSON. Up to three redirects are followed, so a host that sends plain
+ * HTTP on to HTTPS still yields the final answer. Short timeouts, because
+ * the admin page waits for it.
  *
  * No curl_close(): deprecated since PHP 8.5 and without effect since 8.0
  * (same as App\Service\Update\ReleaseDownloader).
@@ -37,7 +38,8 @@ final readonly class CurlStatusProbe
 
         curl_setopt_array($handle, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
             CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_S,
             CURLOPT_TIMEOUT => self::TIMEOUT_S,
             CURLOPT_USERAGENT => 'Vereinsbelege-Systemcheck',

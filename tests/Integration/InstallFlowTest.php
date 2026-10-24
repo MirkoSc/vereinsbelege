@@ -199,7 +199,8 @@ final class InstallFlowTest extends DatabaseTestCase
 
     /**
      * Issue #101: the installer repeats what setup.php did - a deny-all
-     * .htaccess in shared/ and releases/ - and stays quiet when it worked.
+     * .htaccess in shared/, releases/ and current/ - and stays quiet when it
+     * worked.
      */
     public function testTheInstallerLocksSharedAndReleases(): void
     {
@@ -211,6 +212,7 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertInstanceOf(Response::class, $response);
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/shared/.htaccess'));
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/releases/.htaccess'));
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/current/.htaccess'));
         self::assertFileDoesNotExist($this->base . '/web/.htaccess', 'the docroot stays public');
         self::assertStringNotContainsString('Zugriffssperre fehlt', $response->body);
     }
@@ -228,7 +230,7 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertInstanceOf(Response::class, $response);
         self::assertSame(200, $response->status);
         self::assertStringContainsString('Zugriffssperre fehlt', $response->body);
-        self::assertStringContainsString('shared/', $response->body);
+        self::assertStringContainsString('shared/ (Datei nicht schreibbar', $response->body);
         self::assertStringContainsString('Datenbankname', $response->body, 'the form is still there');
     }
 

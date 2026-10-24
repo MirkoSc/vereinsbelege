@@ -35,13 +35,19 @@ und Schreiblogik stehen in `App\Service\Update\DenyHtaccess`, das
 `bin/build_setup.php` wie den `ReleaseDownloader` in `setup.php` einbettet.
 `current/` ist ein umbenanntes Release; eine dort geschriebene Datei wäre mit
 dem nächsten Update weg. Darum liegt dieselbe Datei im Repo-Wurzelverzeichnis
-und damit in jedem Release-ZIP (`DenyHtaccessTest` hält beide gleich). Eine
-vorhandene `.htaccess` wird nie überschrieben; sie zählt als Schutz, wenn sie
-selbst eine nicht auskommentierte Sperrzeile enthält. Gelingt das Schreiben
-nicht, bricht nichts ab: `setup.php` zeigt vor dem Weiterleiten einen
-Hinweis, jede `/install`-Seite versucht es erneut und warnt sichtbar, und der
-`finish`-Schritt des Updaters holt es für ältere Installationen nach (Hinweis
-im Update-Log). Ob die Sperre im Betrieb greift, prüft der Systemcheck (§5).
+und damit in jedem Release-ZIP (`DenyHtaccessTest` hält beide gleich) –
+`current/` ist ab dem Umschalten gesperrt. Zusätzlich schreiben Installer und
+Updater sie auch nach `current/`, falls sie fehlt (Rollback auf ein Release
+von vor #101). Eine vorhandene `.htaccess` wird nie überschrieben; sie zählt
+nur als Schutz, wenn sie das ganze Verzeichnis sperrt: eine Sperrzeile
+außerhalb von `<Files>`, `<FilesMatch>` & Co. (nur `<IfModule>` ist erlaubt)
+und nichts, was wieder freigibt (`Require all granted`, `Allow from`,
+`Satisfy any`). Gelingt das nicht, bricht nichts ab: `setup.php` zeigt vor
+dem Weiterleiten einen Hinweis mit Grund (Verzeichnis fehlt / nicht
+schreibbar / vorhandene Datei sperrt nicht), das `/install`-Formular versucht
+es erneut und warnt sichtbar, und der `finish`-Schritt des Updaters sowie
+ein Rollback holen es nach (Hinweis im Update-Log). Ob die Sperre im Betrieb
+greift, prüft der Systemcheck (§5).
 
 Erweiterungen im `/install`-Flow:
 1. DB-Zugangsdaten + Verbindungstest (wie gehabt)
@@ -124,8 +130,8 @@ Skript der Schrittkette an.
 
 **Pflicht-Tests:** `DenyHtaccessTest` (Inhalt mit `Require all denied` und
 Apache-2.2-Fallback, Repo-Wurzel-`.htaccess` ≡ Konstante und im Release-ZIP,
-Schreiben, Idempotenz, fremde Datei bleibt stehen, nicht schreibbar wird
-gemeldet statt abzubrechen, `setup.php` bettet die Klasse ein und sperrt vor
+Schreiben, Idempotenz, fremde Datei bleibt stehen und zählt nur, wenn sie das
+ganze Verzeichnis sperrt, Grund statt Abbruch bei Fehlschlag, `setup.php` bettet die Klasse ein und sperrt vor
 dem Download); `ShimContentTest` (Konstante ≡ `docker/web/index.php`,
 Shim ist gültiges PHP, beide Sperrbedingungen und die Ausnahmen für
 `/css/` und `/js/` vorhanden, `setup.php` kopiert die drei Docroot-Dateien
@@ -659,15 +665,18 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
   `warn`), `upload_max_filesize` und `post_max_size` (je ≥ 2 MiB, ein Chunk),
   die Erweiterungen sodium, gd, zip und curl, `PASSWORD_ARGON2ID` und die
   Schreibrechte auf `shared/var/` (echter Schreibversuch mit einer
-  Prüfdatei, die sofort wieder verschwindet). Dazu (issue #101), ob
-  `shared/config.php` über die eigene Domain abrufbar ist: ein GET auf
-  `<Schema>://<Host>/shared/config.php` – der Ort, an dem die Datei läge,
-  wenn die Domain eine Ebene über `web/` zeigt. 2xx ist `fail`, 401/403/404/410
-  `ok`, alles andere (Weiterleitung, Serverfehler, keine Antwort) `warn`, weil
-  es nichts beweist. Weiterleitungen werden nicht verfolgt, nur der Statuscode
-  wird ausgewertet, der Inhalt verworfen. Der Host kommt wie beim Selbsttest
-  des Updaters aus dem Host-Header und wird nur in Form eines Hostnamens
-  übernommen. Alles Weitere – Erreichbarkeit externer Hosts, Dauer-Messungen,
+  Prüfdatei, die sofort wieder verschwindet). Dazu zwei Punkte aus issue
+  #101: ob `shared/`, `releases/` und `current/` eine sperrende `.htaccess`
+  tragen (nur lesend, fehlt sie: `warn`), und ob `shared/config.php` über die
+  eigene Domain abrufbar ist – ein GET auf `<Schema>://<Host>/shared/config.php`,
+  der Ort, an dem die Datei läge, wenn diese Domain eine Ebene über `web/`
+  zeigt. 2xx ist `fail`, 401/403/404/410 `ok`, alles andere (Serverfehler,
+  keine Antwort) `warn`, weil es nichts beweist. Bis zu drei Weiterleitungen
+  werden verfolgt (HTTP → HTTPS), nur der Statuscode wird ausgewertet, der
+  Inhalt verworfen. Der Host kommt wie beim Selbsttest des Updaters aus dem
+  Host-Header (`Request::ownOrigin()`, nur in Form eines Hostnamens). Eine
+  *andere* Domain desselben Hosting-Kontos, die höher zeigt, sieht die Probe
+  nicht – dafür ist die Dateiprüfung da. Alles Weitere – Erreichbarkeit externer Hosts, Dauer-Messungen,
   allgemeine `.htaccess`-Auswertung – bleibt dem Hosting-Check vorbehalten.
 - **Recht `admin.system`**, wie Update und Wartung; nur lesend, deshalb
   weder CSRF noch Audit-Eintrag. Der Tresor muss nicht entsperrt sein: kein
@@ -683,7 +692,8 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
 **Pflicht-Tests:** `tests/Service/SystemCheck/SystemCheckTest.php` (Bewertung
 der Mindestwerte, `parseBytes`/`formatBytes`, Erweiterungen, Argon2id,
 Schreibprobe samt Aufräumen, schlechtester Status, JSON ohne Geheimnisse und
-ohne Serverpfad, Bewertung der `config.php`-Probe je Statuscode), `tests/Integration/SystemCheckWaitTimeoutTest.php`
+ohne Serverpfad, Bewertung der `config.php`-Probe je Statuscode, Sperrdateien
+nur lesend geprüft), `tests/Integration/SystemCheckWaitTimeoutTest.php`
 (`wait_timeout` gegen einen echten Server), `tests/Admin/SystemCheckPageTest.php`
 (Tabelle, `data-label` für die Kartenansicht, Gesamtstatus, JSON, externes
 Skript statt Inline-JS, abrufbare `config.php` als Fehler, gefälschter

@@ -45,7 +45,9 @@ final readonly class SystemCheckController
 
         // One run for both the table and the JSON: the write probe on
         // shared/var must not happen twice, and the two views must agree.
-        $ergebnisse = $this->check->all($this->origin($request));
+        // The origin is where the config exposure check (issue #101)
+        // knocks: the domain this page was opened under.
+        $ergebnisse = $this->check->all($request->ownOrigin());
 
         return Response::html($this->view->render('admin/systemcheck', [
             'title' => 'Systemcheck',
@@ -56,22 +58,5 @@ final readonly class SystemCheckController
             'gesamt' => SystemCheck::worstOf($ergebnisse),
             'json' => SystemCheck::toJson($ergebnisse),
         ], Area::Admin));
-    }
-
-    /**
-     * Where the config exposure check (issue #101) knocks: the domain this
-     * page was opened under. Same rule as UpdateController::baseUrl(): the
-     * Host header is client controlled, so it is accepted only in the shape
-     * of a host name with an optional port; the request is a GET whose body
-     * is discarded, and the route needs `admin.system`.
-     */
-    private function origin(Request $request): string
-    {
-        $host = (string) ($request->header('host') ?? '');
-        if (preg_match('/^[A-Za-z0-9.-]+(:\d{1,5})?$/', $host) !== 1) {
-            $host = 'localhost';
-        }
-
-        return (Request::httpsFromGlobals() ? 'https://' : 'http://') . $host;
     }
 }

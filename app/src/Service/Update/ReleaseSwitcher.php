@@ -314,12 +314,14 @@ final class ReleaseSwitcher
     }
 
     /**
-     * Deny-all .htaccess in shared/ and releases/ (issue #101), for
-     * installations whose setup.php predates it. Runs in the finish step
-     * like refreshDocrootFiles(); an existing file is never touched.
+     * Deny-all .htaccess in shared/, releases/ and current/ (issue #101),
+     * for installations whose setup.php predates it and after a rollback to
+     * a release built before it. Runs in the finish step like
+     * refreshDocrootFiles() and after a rollback; an existing file is never
+     * touched.
      *
-     * @return list<string> German notes for the update log, empty when both
-     *         directories are protected
+     * @return list<string> German notes for the update log, empty when every
+     *         directory is protected
      */
     public function lockPrivateDirectories(): array
     {
@@ -328,10 +330,7 @@ final class ReleaseSwitcher
             return [];
         }
 
-        return [sprintf(
-            'Hinweis: In %s konnte keine .htaccess-Sperre angelegt werden – bitte Schreibrechte prüfen.',
-            implode(', ', $ungeschuetzt),
-        )];
+        return ['Hinweis: Keine .htaccess-Sperre in ' . DenyHtaccess::describe($ungeschuetzt) . '.'];
     }
 
     private static function removeTree(string $dir): void

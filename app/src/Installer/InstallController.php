@@ -76,7 +76,18 @@ final readonly class InstallController
             return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
         }
 
-        return $this->render(['errors' => [], 'values' => ['kanal' => $this->channelFromSetup()]]);
+        // Deny-all .htaccess in shared/, releases/ and current/ (issue #101).
+        // setup.php already wrote them; the form repeats it so an
+        // installation whose setup.php could not write them gets a second
+        // try - and a visible warning instead of a silently unprotected
+        // config.php. Idempotent, never overwrites.
+        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
+
+        return $this->render([
+            'errors' => [],
+            'values' => ['kanal' => $this->channelFromSetup()],
+            'ungeschuetzt' => $ungeschuetzt === [] ? '' : DenyHtaccess::describe($ungeschuetzt),
+        ]);
     }
 
     public function submit(Request $request): ResponseInterface
@@ -579,20 +590,12 @@ final readonly class InstallController
      */
     private function render(array $data, int $status = 200): Response
     {
-        // Deny-all .htaccess in shared/ and releases/ (issue #101). setup.php
-        // already wrote them; this repeats it on every installer page so an
-        // installation that predates it or whose setup.php could not write
-        // them gets a second try - and a visible warning instead of a
-        // silently unprotected config.php. Idempotent, never overwrites.
-        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
-
         return Response::html(
             $this->view->render('install', [
                 'title' => 'Installation',
                 'csrf' => $this->session->csrfToken(),
                 'scripts' => ['/js/install.js'],
                 'setupUebrig' => is_file($this->paths->webDir() . '/setup.php'),
-                'ungeschuetzt' => $ungeschuetzt,
                 ...$data,
             ]),
             $status,

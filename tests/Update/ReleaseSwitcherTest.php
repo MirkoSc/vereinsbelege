@@ -242,6 +242,7 @@ final class ReleaseSwitcherTest extends TestCase
         self::assertSame([], $meldungen);
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/shared/.htaccess'));
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/releases/.htaccess'));
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/current/.htaccess'));
     }
 
     public function testLockPrivateDirectoriesReportsWhatItCouldNotWrite(): void
@@ -251,7 +252,7 @@ final class ReleaseSwitcherTest extends TestCase
         $meldungen = new ReleaseSwitcher($this->base)->lockPrivateDirectories();
 
         self::assertCount(1, $meldungen);
-        self::assertStringContainsString('releases/', $meldungen[0]);
+        self::assertStringContainsString('releases/ (Datei nicht schreibbar', $meldungen[0]);
         self::assertStringNotContainsString($this->base, $meldungen[0], 'no server path in the update log');
     }
 

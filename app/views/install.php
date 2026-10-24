@@ -2,7 +2,7 @@
 /**
  * @var array<string, string> $errors
  * @var array<string, string> $values
- * @var list<string> $ungeschuetzt directories without a deny-all .htaccess (issue #101)
+ * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
  * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
  */
 $schritt = $schritt ?? '';
@@ -10,12 +10,12 @@ $schritt = $schritt ?? '';
 <section class="schmal">
     <h2>Vereinsbelege installieren</h2>
 
-    <?php if (($ungeschuetzt ?? []) !== []): ?>
+    <?php if (($ungeschuetzt ?? '') !== ''): ?>
         <p class="hinweis hinweis-warnung">
-            <strong>Zugriffssperre fehlt:</strong> In <?= e(implode(', ', $ungeschuetzt)) ?> konnte keine
-            <code>.htaccess</code> mit <code>Require all denied</code> angelegt werden. Solange die Domain
-            auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie eine Ebene höher, wären
-            Konfiguration und Belegdateien abrufbar. Bitte Schreibrechte prüfen oder die Datei per FTP anlegen.
+            <strong>Zugriffssperre fehlt:</strong> Keine <code>.htaccess</code> mit
+            <code>Require all denied</code> in <?= e($ungeschuetzt) ?>. Solange die Domain auf den
+            <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie eine Ebene höher, wären
+            Konfiguration und Belegdateien abrufbar. Die Datei lässt sich auch per FTP anlegen.
         </p>
     <?php endif; ?>
 

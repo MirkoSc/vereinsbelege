@@ -285,12 +285,11 @@ try {
     }
 
     if ($ungeschuetzt !== []) {
-        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> In '
-            . htmlspecialchars(implode(', ', $ungeschuetzt), ENT_QUOTES)
-            . ' konnte keine .htaccess-Sperre angelegt werden. Solange die Domain auf den'
-            . ' <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie eine Ebene höher, wären'
-            . ' Konfiguration und Belegdateien abrufbar. Bitte Schreibrechte prüfen;'
-            . ' die Installation versucht es erneut.</p>'
+        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> Keine'
+            . ' .htaccess-Sperre in ' . htmlspecialchars(DenyHtaccess::describe($ungeschuetzt), ENT_QUOTES)
+            . '. Solange die Domain auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie'
+            . ' eine Ebene höher, wären Konfiguration und Belegdateien abrufbar.'
+            . ' Die Installation versucht es erneut.</p>'
             . '<p><a href="/install">Weiter zur Installation</a></p>');
     }
 

@@ -333,16 +333,18 @@ final class ReleaseDownloader
  * The ".htaccess that denies everything" for the directories next to the
  * docroot (issue #101, docs/spec/06-betrieb.md section 1).
  *
- * shared/ and releases/ are unreachable as long as the domain points at
- * web/ - but that is a setting in the hoster's customer menu. Should a domain
- * ever point one level higher, config.php (server key, database password)
- * and every blob would be public. The hosting check proved that the target
- * host evaluates .htaccess, so this costs nothing.
+ * shared/, releases/ and current/ are unreachable as long as the domain
+ * points at web/ - but that is a setting in the hoster's customer menu.
+ * Should a domain ever point one level higher, config.php (server key,
+ * database password), every blob and the code would be public. The hosting
+ * check proved that the target host evaluates .htaccess, so this costs
+ * nothing.
  *
- * current/ is covered by the copy of CONTENT at the root of every release
- * (repository root `.htaccess`, part of the release ZIP; DenyHtaccessTest
- * keeps both identical): current/ is a renamed release directory, a file
- * written into it would be gone with the next update.
+ * current/ is a renamed release directory, so the same content also sits at
+ * the root of every release (repository root `.htaccess`, part of the
+ * release ZIP; DenyHtaccessTest keeps both identical): that way current/ is
+ * locked the moment it is switched in. Writing it here as well covers a
+ * rollback to a release built before issue #101.
  *
  * Dependency-free on purpose: bin/build_setup.php inlines this class into
  * setup.php, which runs before there is an autoloader.
@@ -369,60 +371,122 @@ final class DenyHtaccess
 
         HTACCESS;
 
-    /** Directories next to the docroot that get the file written by the installer and the updater. */
-    public const array DIRECTORIES = ['shared', 'releases'];
+    /** Directories next to the docroot that must never be served. */
+    public const array DIRECTORIES = ['shared', 'releases', 'current'];
+
+    public const string PROBLEM_MISSING_DIR = 'Verzeichnis fehlt';
+    public const string PROBLEM_NOT_WRITABLE = 'Datei nicht schreibbar – bitte Schreibrechte prüfen';
+    public const string PROBLEM_FOREIGN_FILE = 'vorhandene .htaccess sperrt nicht vollständig – bitte von Hand prüfen';
 
     /**
      * Makes sure $dir carries a denying .htaccess. A file that is already
      * there is never overwritten - it may have been tuned by hand - and
-     * counts as fine as long as it denies access itself.
+     * counts as fine only when denies() says it locks the whole directory.
      *
-     * @return bool false when the directory stays unprotected: missing,
-     *         not writable, or a foreign .htaccess without a deny rule
+     * @return string|null null when the directory is protected, otherwise
+     *         one of the PROBLEM_* texts (German, shown to the admin)
      */
-    public static function ensure(string $dir): bool
+    public static function ensure(string $dir): ?string
     {
         if (!is_dir($dir)) {
-            return false;
+            return self::PROBLEM_MISSING_DIR;
         }
 
         $file = rtrim($dir, '/') . '/.htaccess';
-        if (is_file($file)) {
-            return self::denies((string) @file_get_contents($file));
+        if (file_exists($file)) {
+            if (!is_file($file)) {
+                return self::PROBLEM_NOT_WRITABLE;
+            }
+
+            return self::denies((string) @file_get_contents($file)) ? null : self::PROBLEM_FOREIGN_FILE;
         }
 
-        return @file_put_contents($file, self::CONTENT, LOCK_EX) === strlen(self::CONTENT);
+        return @file_put_contents($file, self::CONTENT, LOCK_EX) === strlen(self::CONTENT)
+            ? null
+            : self::PROBLEM_NOT_WRITABLE;
     }
 
     /**
      * ensure() for every directory in DIRECTORIES below $baseDir (the parent
-     * of web/ and current/). A directory that does not exist yet is skipped:
-     * there is nothing in it to protect, and whoever creates it calls this
-     * again.
+     * of web/). A directory that does not exist yet is skipped: there is
+     * nothing in it to protect, and whoever creates it calls this again.
      *
-     * @return list<string> the directories (relative names, never server
-     *         paths) that stay unprotected - for a visible warning
+     * @return array<string, string> unprotected directory (relative name,
+     *         never a server path) => problem, empty when all are locked
      */
     public static function ensureAll(string $baseDir): array
     {
-        $failed = [];
+        $problems = [];
         foreach (self::DIRECTORIES as $name) {
             $dir = rtrim($baseDir, '/') . '/' . $name;
-            if (is_dir($dir) && !self::ensure($dir)) {
-                $failed[] = $name . '/';
+            if (!is_dir($dir)) {
+                continue;
+            }
+            $problem = self::ensure($dir);
+            if ($problem !== null) {
+                $problems[$name . '/'] = $problem;
             }
         }
 
-        return $failed;
+        return $problems;
     }
 
     /**
-     * Whether an existing .htaccess denies access on its own: a "Require all
-     * denied" or "Deny from all" line that is not commented out.
+     * "shared/ (reason), releases/ (reason)" - for setup.php, the installer
+     * and the update log.
+     *
+     * @param array<string, string> $problems what ensureAll() returned
+     */
+    public static function describe(array $problems): string
+    {
+        $parts = [];
+        foreach ($problems as $dir => $problem) {
+            $parts[] = $dir . ' (' . $problem . ')';
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /**
+     * Whether an existing .htaccess locks the whole directory on its own -
+     * deliberately strict, a false "protected" is the expensive mistake:
+     *
+     *  - a "Require all denied" or "Deny from all" line outside any section
+     *    other than <IfModule> (inside <Files>, <FilesMatch>, <If> ... it
+     *    only covers some requests);
+     *  - and nothing that grants access again (Require all granted, Allow
+     *    from, Satisfy any).
      */
     public static function denies(string $content): bool
     {
-        return preg_match('/^\s*(Require\s+all\s+denied|Deny\s+from\s+all)\s*$/mi', $content) === 1;
+        $depth = 0;
+        $denies = false;
+        foreach (preg_split('/\R/', $content) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
+            if (preg_match('#^</\s*([A-Za-z]+)#', $line, $m) === 1) {
+                if (strcasecmp($m[1], 'IfModule') !== 0) {
+                    --$depth;
+                }
+                continue;
+            }
+            if (preg_match('#^<\s*([A-Za-z]+)#', $line, $m) === 1) {
+                if (strcasecmp($m[1], 'IfModule') !== 0) {
+                    ++$depth;
+                }
+                continue;
+            }
+            if (preg_match('/^(Require\s+all\s+granted|Allow\s+from|Satisfy\s+any)\b/i', $line) === 1) {
+                return false;
+            }
+            if ($depth === 0 && preg_match('/^(Require\s+all\s+denied|Deny\s+from\s+all)$/i', $line) === 1) {
+                $denies = true;
+            }
+        }
+
+        return $denies;
     }
 }
 }
@@ -692,12 +756,11 @@ try {
     }
 
     if ($ungeschuetzt !== []) {
-        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> In '
-            . htmlspecialchars(implode(', ', $ungeschuetzt), ENT_QUOTES)
-            . ' konnte keine .htaccess-Sperre angelegt werden. Solange die Domain auf den'
-            . ' <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie eine Ebene höher, wären'
-            . ' Konfiguration und Belegdateien abrufbar. Bitte Schreibrechte prüfen;'
-            . ' die Installation versucht es erneut.</p>'
+        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> Keine'
+            . ' .htaccess-Sperre in ' . htmlspecialchars(DenyHtaccess::describe($ungeschuetzt), ENT_QUOTES)
+            . '. Solange die Domain auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie'
+            . ' eine Ebene höher, wären Konfiguration und Belegdateien abrufbar.'
+            . ' Die Installation versucht es erneut.</p>'
             . '<p><a href="/install">Weiter zur Installation</a></p>');
     }
 

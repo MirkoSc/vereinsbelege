@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service\SystemCheck;
 
+use App\Service\Update\DenyHtaccess;
+
 /**
  * The runtime counterpart to tools/hosting-check.php: that script is run once
  * by hand before the installation, this one answers "is it still true?" on a
@@ -64,11 +66,14 @@ final readonly class SystemCheck
      * @param (\Closure(string): ?int)|null $statusProbe HTTP status of a URL,
      *        null without an answer (CurlStatusProbe); without it, or without
      *        an origin for all(), the config exposure check is left out
+     * @param ?string $sharedDir absolute path of shared/; its parent holds
+     *        the directories whose deny-all .htaccess is checked
      */
     public function __construct(
         private ?\PDO $pdo = null,
         private ?string $varDir = null,
         private ?\Closure $statusProbe = null,
+        private ?string $sharedDir = null,
     ) {
     }
 
@@ -100,8 +105,12 @@ final readonly class SystemCheck
             $results[] = $this->varWritable($this->varDir);
         }
 
+        if ($this->sharedDir !== null) {
+            $results[] = $this->directoryLocks(dirname($this->sharedDir));
+        }
+
         if ($origin !== null && $this->statusProbe !== null) {
-            $results[] = $this->configExposure($origin, $this->statusProbe);
+            $results[] = $this->configExposure($origin);
         }
 
         return $results;
@@ -333,23 +342,59 @@ final readonly class SystemCheck
     }
 
     /**
+     * Issue #101, from the file system: do shared/, releases/ and current/
+     * still carry a .htaccess that locks them? Read only - the installer and
+     * the updater write the files, this page only looks. A gap is a warning,
+     * not a failure: as long as the domain points at web/ nothing is
+     * exposed, but the second line of defence is gone. The directory names
+     * are relative, no server path reaches the output.
+     */
+    public function directoryLocks(string $baseDir): CheckResult
+    {
+        $offen = [];
+        foreach (DenyHtaccess::DIRECTORIES as $name) {
+            $dir = rtrim($baseDir, '/') . '/' . $name;
+            if (!is_dir($dir)) {
+                continue;
+            }
+            $file = $dir . '/.htaccess';
+            if (!is_file($file) || !DenyHtaccess::denies((string) @file_get_contents($file))) {
+                $offen[] = $name . '/';
+            }
+        }
+
+        return new CheckResult(
+            key: 'directory_locks',
+            label: 'Zugriffssperre (.htaccess) neben dem Web-Verzeichnis',
+            expected: implode(', ', array_map(static fn(string $d): string => $d . '/', DenyHtaccess::DIRECTORIES)),
+            actual: $offen === [] ? 'gesperrt' : 'fehlt in ' . implode(', ', $offen),
+            status: $offen === [] ? CheckStatus::Ok : CheckStatus::Warn,
+            detail: $offen === []
+                ? 'Auch eine Domain, die eine Ebene zu hoch zeigt, bekäme nichts ausgeliefert.'
+                : 'Die Installation und jedes Update legen die Datei an. Fehlt sie weiter: Schreibrechte '
+                    . 'prüfen oder eine .htaccess mit „Require all denied“ per FTP anlegen.',
+        );
+    }
+
+    /**
      * Issue #101: is shared/config.php served under the installation's own
      * domain? It is not as long as the domain points at web/ - but that is a
-     * setting in the hoster's customer menu, and the .htaccess the installer
-     * puts into shared/ is the only other line of defence. Any 2xx means the
-     * file (server key, database password) is out in the open: fail.
+     * setting in the hoster's customer menu. Any 2xx means the file (server
+     * key, database password) is out in the open: fail.
      *
-     * 401/403/404/410 are the expected answers. Anything else - a redirect,
-     * a server error, no answer at all - proves neither, so it warns rather
-     * than claiming safety. Only the status code is shown; the URL is built
-     * from the origin alone and holds no server path.
+     * The probe can only see the domain this page was opened under; another
+     * domain of the same hosting account that points higher up stays
+     * invisible to it - that is what directoryLocks() is for.
      *
-     * @param \Closure(string): ?int $probe
+     * 401/403/404/410 are the expected answers. Anything else - a server
+     * error, no answer at all - proves neither, so it warns rather than
+     * claiming safety. Only the status code is shown; the URL is built from
+     * the origin alone and holds no server path.
      */
-    public function configExposure(string $origin, \Closure $probe): CheckResult
+    public function configExposure(string $origin): CheckResult
     {
         $url = rtrim($origin, '/') . self::CONFIG_PROBE_PATH;
-        $status = $probe($url);
+        $status = $this->statusProbe === null ? null : ($this->statusProbe)($url);
 
         $result = static fn(string $actual, CheckStatus $rating, string $detail): CheckResult => new CheckResult(
             key: 'config_exposure',

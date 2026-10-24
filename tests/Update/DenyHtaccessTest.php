@@ -70,7 +70,7 @@ final class DenyHtaccessTest extends TestCase
 
     public function testEnsureWritesTheFile(): void
     {
-        self::assertTrue(DenyHtaccess::ensure($this->base));
+        self::assertNull(DenyHtaccess::ensure($this->base));
 
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/.htaccess'));
     }
@@ -79,7 +79,7 @@ final class DenyHtaccessTest extends TestCase
     {
         DenyHtaccess::ensure($this->base);
 
-        self::assertTrue(DenyHtaccess::ensure($this->base));
+        self::assertNull(DenyHtaccess::ensure($this->base));
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/.htaccess'));
     }
 
@@ -92,22 +92,45 @@ final class DenyHtaccessTest extends TestCase
         $eigene = "# eigene Sperre\nRequire all denied\n";
         file_put_contents($this->base . '/.htaccess', $eigene);
 
-        self::assertTrue(DenyHtaccess::ensure($this->base));
+        self::assertNull(DenyHtaccess::ensure($this->base));
         self::assertSame($eigene, file_get_contents($this->base . '/.htaccess'));
 
         $offen = "Options -Indexes\n# Require all denied\n";
         file_put_contents($this->base . '/.htaccess', $offen);
 
-        self::assertFalse(DenyHtaccess::ensure($this->base), 'a commented-out rule protects nothing');
+        self::assertSame(
+            DenyHtaccess::PROBLEM_FOREIGN_FILE,
+            DenyHtaccess::ensure($this->base),
+            'a commented-out rule protects nothing - and the reason is not "permissions"',
+        );
         self::assertSame($offen, file_get_contents($this->base . '/.htaccess'));
     }
 
     public function testAMissingDirectoryIsReportedAsUnprotected(): void
     {
-        self::assertFalse(DenyHtaccess::ensure($this->base . '/gibt-es-nicht'));
+        self::assertSame(DenyHtaccess::PROBLEM_MISSING_DIR, DenyHtaccess::ensure($this->base . '/gibt-es-nicht'));
     }
 
-    public function testEnsureAllCoversSharedAndReleasesAndSkipsWhatDoesNotExist(): void
+    /**
+     * A false "protected" is the expensive mistake, so a deny line counts
+     * only when it covers the whole directory and nothing grants access
+     * again.
+     */
+    public function testOnlyAFileThatLocksTheWholeDirectoryCounts(): void
+    {
+        self::assertTrue(DenyHtaccess::denies("Require all denied\n"));
+        self::assertTrue(DenyHtaccess::denies("<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n"));
+        self::assertTrue(DenyHtaccess::denies("Order deny,allow\r\nDeny from all\r\n"));
+
+        self::assertFalse(DenyHtaccess::denies(''), 'empty');
+        self::assertFalse(DenyHtaccess::denies("<Files \".ht*\">\n  Require all denied\n</Files>\n"), 'only some files');
+        self::assertFalse(DenyHtaccess::denies("<FilesMatch \"\\.log$\">\nDeny from all\n</FilesMatch>\n"), 'only some files');
+        self::assertFalse(DenyHtaccess::denies("Order deny,allow\nDeny from all\nAllow from all\n"), 'granted again');
+        self::assertFalse(DenyHtaccess::denies("Require all denied\nRequire all granted\n"), 'granted again');
+        self::assertFalse(DenyHtaccess::denies("Require all denied env=x\n"), 'conditional');
+    }
+
+    public function testEnsureAllCoversSharedReleasesAndCurrentAndSkipsWhatDoesNotExist(): void
     {
         mkdir($this->base . '/shared');
         mkdir($this->base . '/releases');
@@ -118,8 +141,8 @@ final class DenyHtaccessTest extends TestCase
 
         self::assertFileExists($this->base . '/shared/.htaccess');
         self::assertFileExists($this->base . '/releases/.htaccess');
+        self::assertFileExists($this->base . '/current/.htaccess', 'e.g. after a rollback to an older release');
         self::assertFileDoesNotExist($this->base . '/web/.htaccess', 'the docroot must stay public');
-        self::assertFileDoesNotExist($this->base . '/current/.htaccess', 'current/ brings its own');
 
         self::removeTree($this->base . '/releases');
         self::assertSame([], DenyHtaccess::ensureAll($this->base), 'nothing to protect yet');
@@ -136,8 +159,17 @@ final class DenyHtaccessTest extends TestCase
         mkdir($this->base . '/shared/.htaccess', 0775, true);
         mkdir($this->base . '/releases');
 
-        self::assertSame(['shared/'], DenyHtaccess::ensureAll($this->base));
-        self::assertFileExists($this->base . '/releases/.htaccess');
+        file_put_contents($this->base . '/releases/.htaccess', "Options -Indexes\n");
+
+        $problems = DenyHtaccess::ensureAll($this->base);
+
+        self::assertSame([
+            'shared/' => DenyHtaccess::PROBLEM_NOT_WRITABLE,
+            'releases/' => DenyHtaccess::PROBLEM_FOREIGN_FILE,
+        ], $problems);
+        self::assertSame("Options -Indexes\n", file_get_contents($this->base . '/releases/.htaccess'));
+        self::assertStringStartsWith('shared/ (Datei nicht schreibbar', DenyHtaccess::describe($problems));
+        self::assertStringNotContainsString($this->base, DenyHtaccess::describe($problems), 'no server path');
     }
 
     /**
