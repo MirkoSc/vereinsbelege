@@ -132,7 +132,7 @@ Benutzer in `user_key` (`kdf_ops`, `kdf_mem`, `kdf_alg`); ältere Konten
 angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
 auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
 Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
-## E-21 ✅ (vorläufig) Nextcloud-Ablage: einzelne Dateien statt ZIP, Ziel im Tresor
+## E-22 ✅ (vorläufig) Nextcloud-Ablage: einzelne Dateien statt ZIP, Ziel im Tresor
 *Betrifft: issue #95 (Backlog) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
 
 Der Export kann direkt in einen Ordner der Vereins-Nextcloud gelegt werden
