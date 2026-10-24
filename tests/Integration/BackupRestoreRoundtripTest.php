@@ -423,8 +423,8 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         $namen = array_column($service->list(), 'name');
         self::assertSame('backup_20261001_120000_11.zip', $namen[0]);
         self::assertSame('backup_20261001_120000_10.zip', $namen[1]);
-        self::assertSame($erstes, $namen[array_key_last($namen)]);
         self::assertCount(BackupService::KEEP, $namen, 'rotation kept the newest ten');
+        self::assertSame($zweites, $namen[array_key_last($namen)], 'the oldest survivor is _2');
         self::assertFileDoesNotExist($this->backupDir . '/' . $erstes, 'the oldest of the second is the one rotated out');
     }
 
