@@ -25,9 +25,11 @@ use App\Service\Crypto\Vault;
  *   6. otherwise a new supplier, `created_via = ki`, `needs_review`
  *
  * Only suppliers whose role fits the receipt's direction count (a payer is
- * no match for an expense). An id or name that belongs to one of the other
- * role stops the resolution without a choice and without a new supplier -
- * that would be the same partner twice; the review page says so.
+ * no match for an expense). An id that belongs to one of the other role
+ * lets the later ids still find the right one; when none does - or the
+ * name belongs to one of the other role - the resolution stops without a
+ * choice and without a new supplier: that would be the same partner twice.
+ * The review page says so.
  *
  * Also the blind-index preselection of known suppliers for the prompt
  * (vorauswahl()). Both need the vault: the blind indexes are keyed from it.
@@ -80,7 +82,14 @@ final readonly class SupplierAufloesung
             4 => [[SupplierKeyKind::Name, SupplierKeys::name($wert('name'))]],
         ];
         $index = $vault->blindIndex();
+        // An id of a partner of the other role does not stop the ids that
+        // follow: the right supplier may carry another one (step 1-3). Only
+        // when none does, the resolution ends there - before the name.
+        $anderRolle = null;
         foreach ($stufen as $stufe => $kennungen) {
+            if ($stufe === 4 && $anderRolle !== null) {
+                return $anderRolle;
+            }
             foreach ($kennungen as [$art, $kennung]) {
                 if ($kennung === '') {
                     continue;
@@ -91,18 +100,28 @@ final readonly class SupplierAufloesung
                 }
                 $passend = array_values(array_filter($ids, fn(int $id): bool => $this->passt($this->lieferanten->find($id), $richtung)));
 
-                return match (count($passend)) {
-                    0 => new Aufloesung(AufloesungsArt::RollePasstNicht, $stufe, $art, $ids[0]),
-                    1 => new Aufloesung(AufloesungsArt::Treffer, $stufe, $art, $passend[0]),
-                    default => new Aufloesung(
-                        AufloesungsArt::Mehrdeutig,
-                        $stufe,
-                        $art,
-                        null,
-                        array_map(static fn(int $id): array => ['id' => $id, 'aehnlichkeit' => 1.0], $passend),
-                    ),
-                };
+                switch (count($passend)) {
+                    case 0:
+                        $anderRolle ??= new Aufloesung(AufloesungsArt::RollePasstNicht, $stufe, $art, $ids[0]);
+                        if ($stufe === 4) {
+                            return $anderRolle;
+                        }
+                        break;
+                    case 1:
+                        return new Aufloesung(AufloesungsArt::Treffer, $stufe, $art, $passend[0]);
+                    default:
+                        return new Aufloesung(
+                            AufloesungsArt::Mehrdeutig,
+                            $stufe,
+                            $art,
+                            null,
+                            array_map(static fn(int $id): array => ['id' => $id, 'aehnlichkeit' => 1.0], $passend),
+                        );
+                }
             }
+        }
+        if ($anderRolle !== null) {
+            return $anderRolle;
         }
 
         $name = SupplierKeys::name($wert('name'));

@@ -1339,9 +1339,10 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     gelesenen E-Rechnung. Übersprungen, wenn der Beleg nicht (mehr)
     `ausgewertet` ist oder die Archiv-Vorgabe schon einen Lieferanten nennt.
   - *Rolle:* es zählen nur Partner, deren Rolle zur Richtung passt
-    (`InvoiceDirection::passtZuLieferant()`). Trifft eine Kennung oder der
-    Name (Stufen 1–4) nur einen Partner der anderen Rolle, endet die Auflösung
-    mit „Rolle passt nicht“ – keine Wahl, keine Neuanlage (die Kennung gehört
+    (`InvoiceDirection::passtZuLieferant()`). Trifft eine Kennung (Stufen
+    1–3) nur einen Partner der anderen Rolle, dürfen die folgenden Kennungen
+    noch den passenden finden; findet keine ihn – oder trifft der Name (Stufe
+    4) nur die andere Rolle –, endet die Auflösung mit „Rolle passt nicht“ – keine Wahl, keine Neuanlage (die Kennung gehört
     schon ihm). Mehrere gleichnamige Partner der Rolle (Stufe 4) →
     „mehrdeutig“, ebenso ohne Wahl und Neuanlage.
   - *Stufe 5:* `App\Service\MasterData\LieferantenAehnlichkeit` – das
@@ -1354,7 +1355,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     nur mit Gläubiger-ID) – Werte, die das Formular ablehnen würde, fallen weg,
     ein zu langer Name wird gekürzt; Rolle aus der Richtung, keine
     Standard-Kategorie, `created_via = ki`, `needs_review = 1`. Audit
-    `lieferant.angelegt` ohne Benutzer, Details `{herkunft: ki, beleg, felder}`.
+    `lieferant.angelegt` in derselben Transaktion, ohne Benutzer, Details `{herkunft: ki, beleg, felder}`.
   - *Ergebnis* (`App\Service\MasterData\Aufloesung`, Schema `lieferant-v1`):
     `{art, stufe, merkmal, supplier_id, kandidaten[{id, aehnlichkeit}], felder}` –
     nur IDs –, als `document_artifact` `kind = lieferant` (seq 0) unter eigenem
@@ -1364,8 +1365,9 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     Lieferanten in Stufe 4 wieder.
   - *Gleichzeitig:* mit Neuanlage liest die Auflösung die Schlüssel mit
     `FOR UPDATE` (`idsWithKey(sperren: true)`); verliert ein paralleler Lauf
-    (Deadlock bzw. Kennung inzwischen vergeben), rollt er zurück und wartet
-    5 s (`warten`), nach zwei Versuchen löst er ohne Neuanlage auf.
+    (Deadlock/Sperr-Timeout bzw. Kennung inzwischen vergeben), rollt er
+    zurück und wartet 5 s (`warten`), nach zwei Versuchen löst er ohne
+    Neuanlage auf; jeder andere Fehler ist ein Jobfehler.
   - *Prüfansicht* (`Pruefung::lieferantVorbelegen()`): Treffer und Neuanlage
     werden gewählt, ein Vorschlag gewählt **und** gelb markiert („KI
     unsicher“); unter der Auswahl steht, wie der Partner gefunden wurde

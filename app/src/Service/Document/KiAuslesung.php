@@ -367,8 +367,9 @@ final readonly class KiAuslesung implements ExternerJobHandler
             null,
             $now,
         );
-        // Next: which supplier the suggestion names (issue #48/M7-6).
-        if ($gueltig && $gewechselt) {
+        // Next: which supplier the suggestion names (issue #48/M7-6) - also
+        // when a repeated step finds the status already moved by the first.
+        if ($gueltig && ($gewechselt || $this->documents->find($document->id)?->status === DocumentStatus::Ausgewertet)) {
             LieferantenAufloesung::einreihen($this->jobs, $document->id, $now);
         }
 

@@ -354,7 +354,7 @@ final readonly class Pruefung
             return true;
         };
         $name = static fn(Supplier $lieferant): string => '„' . $lieferant->data->name . '“';
-        $prozent = static fn(float $wert): string => sprintf('%d %%', (int) floor($wert * 100));
+        $prozent = static fn(float $wert): string => sprintf('%d %%', (int) floor(round($wert * 100, 6)));
         $gefunden = $finde($aufloesung->supplierId);
         $verschwunden = sprintf('Der damals gefundene %s passt nicht mehr (gelöscht oder andere Rolle) – bitte selbst wählen.', $richtung->partner());
 
@@ -368,7 +368,10 @@ final readonly class Pruefung
                     : $verschwunden;
                 break;
             case AufloesungsArt::Angelegt:
-                if ($waehle($gefunden)) {
+                $zusammengefuehrt = $aufloesung->supplierId !== null && $this->lieferantenRepository->find($aufloesung->supplierId)?->mergedInto !== null;
+                if ($zusammengefuehrt && $waehle($gefunden)) {
+                    $hinweis = sprintf('Die KI hatte diesen %s neu angelegt (%s); er wurde inzwischen mit %s zusammengeführt.', $richtung->partner(), $aufloesung->stufeText(), $name($gefunden));
+                } elseif ($waehle($gefunden)) {
                     $pruefen = $gefunden !== null && $gefunden->needsReview;
                     $hinweis = sprintf('Die KI hat %s neu angelegt (%s)%s', $name($gefunden), $aufloesung->stufeText(), $pruefen ? ' – bitte unter „Neue Lieferanten prüfen“ kontrollieren.' : '.');
                 } else {
@@ -399,6 +402,7 @@ final readonly class Pruefung
             case AufloesungsArt::Mehrdeutig:
                 // The name is known already - offering it as a new partner
                 // would invite a third one of the same name.
+                $felder['lieferant'] = '';
                 $felder['lieferant_neu_name'] = '';
                 $felder['lieferant_neu_iban'] = '';
                 $namen = [];
@@ -413,6 +417,7 @@ final readonly class Pruefung
             case AufloesungsArt::RollePasstNicht:
                 // The id or name belongs to that partner: a new one would be
                 // the same partner twice (and its IBAN would be refused).
+                $felder['lieferant'] = '';
                 $felder['lieferant_neu_name'] = '';
                 $felder['lieferant_neu_iban'] = '';
                 $hinweis = $gefunden === null

@@ -57,11 +57,13 @@ use App\Service\Processing\ProcessingException;
  * - Two requests creating the same supplier at once: the locks of the
  *   lookups make one of them fail (deadlock, or an id already taken) - it
  *   rolls back and waits a few seconds; the next try finds the new
- *   supplier. After VERSUCHE_MAX tries it resolves without creating.
+ *   supplier. After VERSUCHE_MAX tries it resolves without creating. Any
+ *   other error fails the job.
  *
- * Audit `lieferant.angelegt` for a created supplier, without a user (the
- * job created it, not the person whose browser ran the step): details
- * `herkunft` = `ki`, the document id, the names of the fields filled.
+ * Audit `lieferant.angelegt` for a created supplier, in the same
+ * transaction, without a user (the job created it, not the person whose
+ * browser ran the step): details `herkunft` = `ki`, the document id, the
+ * names of the fields filled.
  */
 final readonly class LieferantenAufloesung implements JobHandler
 {
@@ -143,36 +145,44 @@ final readonly class LieferantenAufloesung implements JobHandler
             $ergebnis = $this->aufloesung->aufloesen($vault, $extraktion, $versuch < self::VERSUCHE_MAX, $now);
             $this->speichern($document, $job->id, $vault, $now, $ergebnis);
             $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Lieferant, $job->id);
+            // In the same transaction: a supplier is never there without its line.
+            if ($ergebnis->art === AufloesungsArt::Angelegt && $ergebnis->supplierId !== null) {
+                $this->audit->record(
+                    AuditAction::LieferantAngelegt,
+                    null,
+                    '',
+                    $ergebnis->supplierId,
+                    ['herkunft' => 'ki', 'beleg' => $document->id, 'felder' => $ergebnis->felder],
+                    $now,
+                );
+            }
             $this->pdo->commit();
-        } catch (\PDOException | SupplierRuleViolation $e) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            if ($versuch >= self::VERSUCHE_MAX) {
-                throw $e;
-            }
-
-            return JobSchrittErgebnis::warten('', ['versuch' => $versuch + 1], self::WARTEN_SEKUNDEN);
         } catch (\Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
+            if ($versuch >= self::VERSUCHE_MAX || !self::parallelVerloren($e)) {
+                throw $e;
+            }
 
-            throw $e;
-        }
-
-        if ($ergebnis->art === AufloesungsArt::Angelegt && $ergebnis->supplierId !== null) {
-            $this->audit->record(
-                AuditAction::LieferantAngelegt,
-                null,
-                '',
-                $ergebnis->supplierId,
-                ['herkunft' => 'ki', 'beleg' => $document->id, 'felder' => $ergebnis->felder],
-                $now,
-            );
+            return JobSchrittErgebnis::warten('', ['versuch' => $versuch + 1], self::WARTEN_SEKUNDEN);
         }
 
         return JobSchrittErgebnis::fertig();
+    }
+
+    /**
+     * Whether $e is what losing against a parallel resolution looks like:
+     * a deadlock or lock wait timeout of the locked lookups, or an id a new
+     * supplier was given in the meantime. Anything else is a real error.
+     */
+    private static function parallelVerloren(\Throwable $e): bool
+    {
+        if ($e instanceof SupplierRuleViolation) {
+            return $e->konfliktId !== null;
+        }
+
+        return $e instanceof \PDOException && in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213], true);
     }
 
     /**

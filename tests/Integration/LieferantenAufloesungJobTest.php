@@ -224,6 +224,16 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         self::assertSame(1, $this->anzahlLieferanten(), 'and no second partner with the same IBAN');
     }
 
+    public function testAnIdOfTheOtherRoleLetsALaterIdFindTheRightSupplier(): void
+    {
+        $this->lieferant('Sponsor Beispiel', ['vat_id' => self::USTID], SupplierRole::Zahler);
+        $lieferant = $this->lieferant('Beispiel Handel', ['ibans' => self::IBAN]);
+
+        $aufloesung = $this->lesen(['name' => 'Beispiel', 'vat_id' => self::USTID, 'iban' => self::IBAN]);
+
+        self::assertSame([AufloesungsArt::Treffer, 2, $lieferant], [$aufloesung->art, $aufloesung->stufe, $aufloesung->supplierId]);
+    }
+
     public function testAnIncomeFindsThePayer(): void
     {
         $zahler = $this->lieferant('Förderverein Musterstadt', ['ibans' => self::IBAN], SupplierRole::Zahler);
