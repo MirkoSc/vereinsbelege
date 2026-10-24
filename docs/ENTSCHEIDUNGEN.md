@@ -133,7 +133,19 @@ angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
 auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
 Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
 
-## E-20 ✅ Eine Regelliste für Buchungen und Belege (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+## E-20 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
+Der Kameradialog zeigt das live erkannte Viereck und „Beleg erkannt.“, löst
+aber **ab Werk nicht selbst aus** – ein Ankreuzfeld im Dialog schaltet das
+ein; es gilt bis zum Neuladen der Seite (nicht gespeichert). Grund: die Trefferquote der
+Kantenerkennung ist noch nicht belegt (E-03, #142); ein Fehlauslösen auf
+eine Tischkante wäre ärgerlicher als ein Tipp auf „Auslösen“. Eckwerte:
+Erkennung höchstens alle 400 ms auf 320 px Breite, „stabil“ = 3
+aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
+überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
+getestet wurde (Standard „an“? Einstellung merken?).
+
+## E-21 ✅ Eine Regelliste für Buchungen und Belege (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: M7-7 (issue #49), 03 §8, 04 §5*
 
 Die Regeln aus M9-6 (`assignment_rule`) schlagen ihre Kategorie auch für

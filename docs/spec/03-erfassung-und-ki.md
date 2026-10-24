@@ -353,6 +353,57 @@ der **Server-Fallback** in `pdf_erzeugen` (Abschnitt 3):
 Kein Entzerren, keine adaptive Schwelle – das bleibt dem Browser. Eine
 A4-Seite braucht so in PHP unter 1 s.
 
+### Live-Kantenerkennung im Kamerabild (issue #146)
+
+Der Kameradialog (`public/js/scanner/kamera.js`,
+`app/views/partials/kamera-dialog.php`) zeigt zusätzlich zum A4-Rahmen das
+**live erkannte Viereck** über dem Video. Reine, mit `node --test`
+geprüfte Funktionen (`tests/js/kamera.test.js`):
+
+- **Drosselung:** `kantenErkennen()` (M5-2, unverändert) läuft auf einer
+  auf `LIVE_BREITE` = 320 px Breite (lange Kante höchstens 500 px, die
+  Arbeitsgröße von `kantenErkennen`) verkleinerten Kopie des Frames
+  (`vorschauGroesse`, nie hochskaliert). Nächster Start frühestens nach
+  `LIVE_INTERVALL_MS` = 400 ms, und danach mindestens so lange Pause, wie
+  die Erkennung selbst brauchte (`naechsteErkennungIn`) – auf einem
+  langsamen Handy bleibt der Hauptthread so höchstens zur Hälfte belegt.
+  Keine Erkennung bei verstecktem Tab, ungeladenem Frame oder laufender
+  Aufnahme. Ein Fehler in der Erkennung gilt als „nichts gefunden“.
+- **Stabilität:** `liveFortschreiben` – „stabil“ sind
+  `LIVE_STABIL_ANZAHL` = 3 aufeinanderfolgende Treffer, von denen sich
+  **jedes Paar** um höchstens `LIVE_STABIL_TOLERANZ` = 2 % der
+  Bilddiagonale unterscheidet (`eckenAbweichung`, größte Eckverschiebung) –
+  paarweise, damit langsames Wandern nicht als Stillhalten gilt. Ein
+  Fehlschlag oder ein geänderter Frame (Drehen des Handys) beginnt von vorn.
+- **Overlay:** ein `<svg class="kamera-overlay">` über dem ganzen Video
+  mit einem `<polygon>`; die Punkte setzt `overlayPunkte` als **Attribut**
+  (kleiner Frame → Videopixel → Elementpixel unter `object-fit: contain`,
+  `anzeigeAbbildung`), kein Inline-Style, kein Inline-Skript (CSP).
+  Gestrichelt gelb, solange das Viereck wandert, durchgezogen grün, sobald
+  es stabil ist; dazu die Statuszeile „Beleg erkannt.“ (`role=status`,
+  `liveHinweis`).
+- **Auslösen:** manuell immer möglich, auch ohne Viereck. Automatisches
+  Auslösen ist ein Ankreuzfeld im Dialog (E-20), **standardmäßig aus**, gilt bis zum
+  Neuladen der Seite (nicht gespeichert, `autocomplete="off"`); angekreuzt
+  löst die erste stabile Erkennung aus. Nach einem Klick auf „Kamera-App
+  verwenden“ (dessen Dateiauswahl offen sein kann) löst der Dialog nicht
+  mehr selbst aus, nach einer gescheiterten Aufnahme erst wieder, wenn das
+  Viereck einmal verloren war (keine Wiederholungsschleife).
+- **Startecken:** beim Auslösen gehen die Ecken nur eines **stabilen**
+  Vierecks (`startEckenAusLive`, auf Videopixel hochgerechnet und
+  geklemmt) mit dem Foto mit: `eckenVormerken(datei, ecken)` in
+  `scanner.js` (eine `WeakMap` am `File`-Objekt, nichts verlässt die
+  Seite). `scannerOeffnen()`/`automatischAufbereiten()` erkennen zuerst
+  wie bisher auf dem aufgenommenen Foto selbst (genau dieser Frame, feiner
+  als die Vorschau); nur wenn das nichts findet, nehmen sie die vorgemerkten
+  Live-Ecken statt Standardrahmen bzw. ganzem Bild (`erkannteEcken`). Im
+  Normalfall stimmen beide überein. Das ganze Kamerabild bleibt das
+  Original (E-10).
+
+Der Nutzen hängt an der Trefferquote der Kantenerkennung (E-03, #142).
+Prüfung auf einem echten Mittelklasse-Handy (ruckelt das Video? wie oft
+„Beleg erkannt“?) steht noch aus.
+
 ## 3. PDF-Erzeugung und PDF-Eingang
 
 - Aus den aufbereiteten Seitenbildern erzeugt der Server **ein PDF**
@@ -1269,7 +1320,7 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 `assignment_rule` gibt es seit M9-6 für Buchungen (04 §5 „Stand M9-6“,
 Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
 
-**Stand M7-7** (issue #49, ohne Migration, E-20):
+**Stand M7-7** (issue #49, ohne Migration, E-21):
 - *Regeln:* Es gibt **eine** Regelliste (`/app/buchungen/regeln`). Eine Regel
   mit Kategorie schlägt diese Kategorie auch für Belege vor
   (`App\Service\Bank\Regelabgleich::trifftBeleg()`): *Stichwort* enthalten
@@ -1330,7 +1381,10 @@ Farbmodus-Anwendung je Modus); Scanner-Einbau (`tests/js/scanner.test.js`:
 Fähigkeitsprüfung, Startecken, Upload-Reihenfolge Original → Fassung, Abbruch
 ohne Upload, Fallback nur mit Original; `tests/js/kamera.test.js`:
 Verfügbarkeit nur im sicheren Kontext, Rahmen A4 innerhalb des Videos,
-Fehlertexte); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
+Fehlertexte; Live-Erkennung #146: Drosselung, Vorschaugröße, Stabilität
+über 3 Frames inkl. Fehlschlag/Wandern, Startecken nur aus stabilem
+Viereck, Overlay-Abbildung unter `object-fit: contain`; `scanner.test.js`:
+vorgemerkte Startecken je Datei); GD-Fallback (`SchwarzweissFallbackTest`: reines Schwarzweiß,
 dunkles Foto nicht schwarz, lange Kante gedeckelt, EXIF-Drehung,
 PNG-Transparenz, Pixel-Obergrenze); Original + aufbereitete Fassung
 (`PdfErzeugungTest`: Fassung unverändert eingebettet, Originale
