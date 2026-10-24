@@ -185,3 +185,13 @@ bräuchte. Wo der Browser HEIC nicht lesen kann, wird die Seite vor dem Upload
 abgelehnt (bisherige Fehlermeldung plus iPhone-Tipp); ein HEIC-Original wird
 nur zusammen mit dem im Browser erzeugten JPEG angenommen. Im Archiv-Import
 wird HEIC übersprungen. Details: Spec 03 §1 „HEIC".
+
+## M7-8 KI-Protokoll: Umfang (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+- Protokolliert werden die Aufrufe des `ai_extract`-Jobs (inkl. Reparatur und
+  Fallback), nicht der „Verbindung testen“-Probe.
+- Die Tabelle `ai_call_log` ist Klartext (Betriebsdaten ohne Belegbezug – auch
+  keine Beleg-ID), damit sie ohne Tresor lesbar ist; Anbieter und Modell werden
+  kopiert, damit die Historie ein gelöschtes Profil überlebt.
+- Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
+  Bereinigung, kein Filter/Export.
