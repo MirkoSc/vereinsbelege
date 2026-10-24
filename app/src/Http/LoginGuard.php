@@ -209,7 +209,7 @@ final readonly class LoginGuard
         }
 
         return match ($zugriff->art) {
-            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Angemeldet => true,
+            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Worker, ZugriffArt::Angemeldet => true,
             ZugriffArt::AdminBereich => $berechtigungen->darfAdminBereich(),
             ZugriffArt::Recht => $zugriff->recht !== null && $berechtigungen->darf($zugriff->recht),
         };
