@@ -162,7 +162,7 @@ Erkennung höchstens alle 400 ms auf 320 px Breite, „stabil“ = 3
 aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
 überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
 getestet wurde (Standard „an“? Einstellung merken?).
-## E-22 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
+## E-25 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #154)*
 
 Befund: `user.email_bi` (Login-Index), `email_enc`, `display_name_enc` und
