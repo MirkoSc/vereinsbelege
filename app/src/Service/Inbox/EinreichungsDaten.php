@@ -41,7 +41,17 @@ final readonly class EinreichungsDaten
      */
     public static function entschluesseln(InboxItem $item, Vault $vault): ?self
     {
-        if ($item->document->submissionId === null || $item->submissionDekSealed === null || $item->payloadEnc === null) {
+        return self::ausChiffrat($item->document->submissionId, $item->submissionDekSealed, $item->payloadEnc, $vault);
+    }
+
+    /**
+     * The same from the bare `submission` columns - for lists that join the
+     * submission to a receipt (the open reimbursements, M10-5) without
+     * loading an inbox entry.
+     */
+    public static function ausChiffrat(?int $submissionId, ?string $dekSealed, ?string $payloadEnc, Vault $vault): ?self
+    {
+        if ($submissionId === null || $dekSealed === null || $payloadEnc === null) {
             return null;
         }
 
