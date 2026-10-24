@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\Tests\Service\Backup;
 
 use App\Installer\ConfigWriter;
+use App\Service\Backup\MysqlDumper;
 use App\Service\Backup\RestoreService;
+use App\Service\Migration\SqlSplitter;
+use App\Service\Migration\SqlStatementStream;
+use App\Tests\Support\RecordingPdo;
 use PHPUnit\Framework\TestCase;
 
 final class RestoreServiceTest extends TestCase
@@ -225,5 +229,224 @@ final class RestoreServiceTest extends TestCase
 
         $kaputt = $this->zip(['dump.sql' => '', 'manifest.json' => 'kein json']);
         self::assertSame([], $service->manifestAusZip($kaputt));
+    }
+
+    /**
+     * @param list<string> $ausgefuehrt
+     */
+    private function pdo(array &$ausgefuehrt): \PDO
+    {
+        return RecordingPdo::create($ausgefuehrt);
+    }
+
+    /**
+     * The log without the session settings, which every resumed step
+     * repeats - for comparing the order of the dump's own statements.
+     *
+     * @param list<string> $log
+     *
+     * @return list<string>
+     */
+    private static function ohneSitzung(array $log): array
+    {
+        $sitzung = [
+            MysqlDumper::SESSION_NAMES,
+            MysqlDumper::SESSION_FOREIGN_KEYS_OFF,
+            MysqlDumper::SESSION_FOREIGN_KEYS_ON,
+        ];
+
+        return array_values(array_filter($log, static fn(string $s): bool => !in_array($s, $sitzung, true)));
+    }
+
+    /**
+     * A synthetic dump in the dumper's shape, with the values that trip a
+     * splitter.
+     */
+    private function dump(int $inserts): string
+    {
+        $sql = "-- Vereinsbelege DB dump\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n";
+        $sql .= "DROP TABLE IF EXISTS `t`;\nCREATE TABLE `t` (`id` int, `v` text, `b` blob);\n";
+        for ($i = 0; $i < $inserts; $i++) {
+            $sql .= sprintf(
+                "INSERT INTO `t` (`id`, `v`, `b`) VALUES (%d, 'a;b -- c /* d */ # e \\' f\\\\', 0x%s), (%d, NULL, '');\n",
+                $i,
+                bin2hex(chr($i % 256)),
+                -$i,
+            );
+        }
+
+        return $sql . "SET FOREIGN_KEY_CHECKS = 1;\n";
+    }
+
+    /**
+     * Issue #120: the chain runs every statement exactly once, in order, each
+     * step resuming at the byte offset the step before returned - not at
+     * byte 0.
+     */
+    public function testTheDumpRunsInStepsFromByteOffsets(): void
+    {
+        $sql = $this->dump(1000);
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, $sql);
+        $ausgefuehrt = [];
+        $pdo = $this->pdo($ausgefuehrt);
+        $service = new RestoreService();
+
+        $offset = 0;
+        $schritte = [];
+        do {
+            $fortschritt = $service->anwenden($pdo, $datei, $offset);
+            self::assertGreaterThan($offset, $fortschritt['offset']);
+            self::assertSame(strlen($sql), $fortschritt['gesamt'], 'the total is the size of the dump');
+            self::assertLessThanOrEqual(RestoreService::STATEMENTS_PER_STEP, $fortschritt['anweisungen']);
+            // Step n reads from its own offset on, not from byte 0: its
+            // share of the file plus at most one read buffer ahead.
+            self::assertLessThanOrEqual(
+                $fortschritt['offset'] - $offset + SqlStatementStream::READ_BYTES,
+                $fortschritt['gelesen'],
+            );
+            self::assertLessThanOrEqual($fortschritt['gesamt'] - $offset, $fortschritt['gelesen']);
+            $schritte[] = $fortschritt;
+            $offset = $fortschritt['offset'];
+        } while ($offset < $fortschritt['gesamt']);
+
+        self::assertSame(self::ohneSitzung(SqlSplitter::split($sql)), self::ohneSitzung($ausgefuehrt));
+        self::assertCount(6, $schritte, '1005 statements in blocks of 200');
+        self::assertSame(1005, array_sum(array_column($schritte, 'anweisungen')));
+    }
+
+    /**
+     * A request that breaks off mid-block - here: after any statement -
+     * resumes behind the last statement it reported, so nothing runs twice
+     * and nothing is left out.
+     */
+    public function testABrokenOffStepResumesBehindTheLastStatement(): void
+    {
+        $sql = $this->dump(30);
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, $sql);
+        $erwartet = SqlSplitter::split($sql);
+        $service = new RestoreService();
+
+        for ($abbruchNach = 1; $abbruchNach <= count($erwartet); $abbruchNach++) {
+            $ausgefuehrt = [];
+            $pdo = $this->pdo($ausgefuehrt);
+            $gemerkt = 0;
+            $gezaehlt = 0;
+            try {
+                $service->anwenden($pdo, $datei, 0, static function (int $grenze) use (&$gemerkt, &$gezaehlt, $abbruchNach): void {
+                    $gemerkt = $grenze;
+                    if (++$gezaehlt === $abbruchNach) {
+                        throw new \RuntimeException('Abbruch');
+                    }
+                });
+            } catch (\RuntimeException $e) {
+                self::assertSame('Abbruch', $e->getMessage());
+            }
+            self::assertCount($abbruchNach, $ausgefuehrt, 'the first step starts at 0, without extra settings');
+
+            $offset = $gemerkt;
+            while ($offset < strlen($sql)) {
+                $offset = $service->anwenden($pdo, $datei, $offset)['offset'];
+            }
+
+            self::assertSame(self::ohneSitzung($erwartet), self::ohneSitzung($ausgefuehrt), 'broken off after statement ' . $abbruchNach);
+        }
+    }
+
+    public function testLargeStatementsEndAStepByTheByteBudget(): void
+    {
+        // 20 INSERTs of about 1 MiB each: the byte budget, not the count of
+        // 200, ends a step.
+        $zeile = "INSERT INTO c VALUES (0x" . str_repeat('ab', 512 * 1024) . ");\n";
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, str_repeat($zeile, 20));
+        $ausgefuehrt = [];
+
+        $erster = new RestoreService()->anwenden($this->pdo($ausgefuehrt), $datei, 0);
+
+        $proSchritt = intdiv(RestoreService::DUMP_BYTES_PER_STEP, strlen($zeile)) + 1;
+        self::assertSame($proSchritt, $erster['anweisungen']);
+        self::assertSame($proSchritt * strlen($zeile) - 1, $erster['offset'], 'just behind the semicolon');
+    }
+
+    public function testAStatementLargerThanTheBudgetStillRuns(): void
+    {
+        $zeile = "INSERT INTO c VALUES (0x" . str_repeat('ab', RestoreService::DUMP_BYTES_PER_STEP / 2 + 16) . ");\n";
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, $zeile . 'SELECT 1;');
+        $ausgefuehrt = [];
+
+        $erster = new RestoreService()->anwenden($this->pdo($ausgefuehrt), $datei, 0);
+
+        self::assertSame(1, $erster['anweisungen'], 'the chain moves on');
+        self::assertSame(strlen($zeile) - 1, $erster['offset']);
+    }
+
+    public function testTrailingCommentsFinishTheChain(): void
+    {
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, "SELECT 1;\n-- Ende\n");
+        $ausgefuehrt = [];
+
+        $fortschritt = new RestoreService()->anwenden($this->pdo($ausgefuehrt), $datei, 0);
+
+        self::assertSame(['SELECT 1'], $ausgefuehrt);
+        self::assertSame($fortschritt['gesamt'], $fortschritt['offset']);
+    }
+
+    /**
+     * A restore session of a version before issue #120 counts statements:
+     * the count turns into the byte offset behind exactly that statement.
+     */
+    public function testAStatementCountTurnsIntoTheMatchingByteOffset(): void
+    {
+        $sql = $this->dump(500);
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, $sql);
+        $alle = SqlSplitter::split($sql);
+        $service = new RestoreService();
+
+        foreach ([0, 1, 200, 400, count($alle) - 1, count($alle), count($alle) + 5] as $bisher) {
+            $umgerechnet = $service->byteOffsetNachAnweisungen($datei, $bisher);
+            self::assertSame(min($bisher, count($alle)), $umgerechnet['anweisungen']);
+            $offset = $umgerechnet['offset'];
+            $rest = [];
+            $pdo = $this->pdo($rest);
+            while ($offset < strlen($sql)) {
+                $offset = $service->anwenden($pdo, $datei, $offset)['offset'];
+            }
+            self::assertSame(self::ohneSitzung(array_slice($alle, $bisher)), self::ohneSitzung($rest), 'after ' . $bisher . ' statements');
+        }
+    }
+
+    /**
+     * Each step is a new request with a new connection: a resumed step
+     * repeats the dump's session settings first, and the step that reaches
+     * the end turns foreign key checks back on for the migrations after it.
+     */
+    public function testAResumedStepRepeatsTheSessionSettingsOfTheDump(): void
+    {
+        $datei = $this->dir . '/dump.sql';
+        file_put_contents($datei, "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\nSELECT 1;\nSELECT 2;\nSET FOREIGN_KEY_CHECKS = 1;\n");
+        $service = new RestoreService();
+        $nachEins = strpos((string) file_get_contents($datei), 'SELECT 1;') + strlen('SELECT 1;');
+
+        $log = [];
+        $service->anwenden($this->pdo($log), $datei, $nachEins);
+        self::assertSame([
+            'SET NAMES utf8mb4',
+            'SET FOREIGN_KEY_CHECKS = 0',
+            'SELECT 2',
+            'SET FOREIGN_KEY_CHECKS = 1',
+            'SET FOREIGN_KEY_CHECKS = 1',
+        ], $log);
+
+        // Only the trailing newline left: still back to checks on.
+        $log = [];
+        $groesse = (int) filesize($datei);
+        $fortschritt = $service->anwenden($this->pdo($log), $datei, $groesse - 1);
+        self::assertSame($groesse, $fortschritt['offset']);
+        self::assertSame(['SET NAMES utf8mb4', 'SET FOREIGN_KEY_CHECKS = 0', 'SET FOREIGN_KEY_CHECKS = 1'], $log);
     }
 }

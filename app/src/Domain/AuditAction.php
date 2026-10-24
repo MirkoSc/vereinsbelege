@@ -105,6 +105,13 @@ enum AuditAction: string
     case RegelDeaktiviert = 'regel.deaktiviert';
     case RegelAngewendet = 'regel.angewendet';
 
+    // Matching receipt <-> booking (M10-1, issue #65): ids and method only,
+    // never an amount.
+    case ZuordnungAngelegt = 'zuordnung.angelegt';
+    case ZuordnungGeloest = 'zuordnung.geloest';
+    case BelegDifferenzAbgeschlossen = 'beleg.differenz_abgeschlossen';
+    case BelegDifferenzGeoeffnet = 'beleg.differenz_geoeffnet';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -228,6 +235,10 @@ enum AuditAction: string
             self::RegelAktiviert => 'Buchungsregel aktiviert',
             self::RegelDeaktiviert => 'Buchungsregel deaktiviert',
             self::RegelAngewendet => 'Buchungsregel angewendet',
+            self::ZuordnungAngelegt => 'Beleg einer Buchung zugeordnet',
+            self::ZuordnungGeloest => 'Zuordnung Beleg ↔ Buchung gelöst',
+            self::BelegDifferenzAbgeschlossen => 'Zahlungsdifferenz des Belegs abgeschlossen',
+            self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
@@ -300,11 +311,13 @@ enum AuditAction: string
             self::BuchungEingeordnet => 'bank_transaction',
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
             self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
+            self::ZuordnungAngelegt, self::ZuordnungGeloest => 'allocation',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
             self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben,
-            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut => 'document',
+            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut,
+            self::BelegDifferenzAbgeschlossen, self::BelegDifferenzGeoeffnet => 'document',
             self::SerieBestaetigt, self::SerieGeaendert, self::SerieVerworfen,
             self::SerieBelegVerknuepft => 'recurring_series',
             self::LoginFehlgeschlagen,
@@ -338,6 +351,7 @@ enum AuditAction: string
             'export_run' => 'Export',
             'bank_transaction' => 'Buchung',
             'assignment_rule' => 'Buchungsregel',
+            'allocation' => 'Zuordnung Beleg ↔ Buchung',
             'document' => 'Beleg',
             'vault' => 'Tresor-Generation',
             default => $entity,

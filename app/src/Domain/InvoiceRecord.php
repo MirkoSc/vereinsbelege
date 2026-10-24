@@ -8,7 +8,9 @@ namespace App\Domain;
  * One `invoice` row as stored (issue #37/M6-3): the plaintext structure plus
  * the sealed data key and the ciphertext. What App\Repository\
  * InvoiceRepository returns; App\Service\Invoice\Pruefung opens `dataEnc`
- * once a vault is at hand.
+ * once a vault is at hand. Since M10-1 (issue #65) also the payment side:
+ * `paymentKind` (chosen), `paymentStatus` and `differenceReason` (derived
+ * and written by App\Service\Bank\Zuordnung).
  */
 final readonly class InvoiceRecord
 {
@@ -33,6 +35,9 @@ final readonly class InvoiceRecord
         public ?string $numberBi,
         public \DateTimeImmutable $createdAt,
         public \DateTimeImmutable $updatedAt,
+        public Zahlungsweg $paymentKind = Zahlungsweg::Konto,
+        public PaymentStatus $paymentStatus = PaymentStatus::Offen,
+        public ?Differenzgrund $differenceReason = null,
     ) {
     }
 
@@ -65,6 +70,9 @@ final readonly class InvoiceRecord
             numberBi: $row['number_bi'] === null ? null : (string) $row['number_bi'],
             createdAt: new \DateTimeImmutable((string) $row['created_at']),
             updatedAt: new \DateTimeImmutable((string) $row['updated_at']),
+            paymentKind: Zahlungsweg::from((string) $row['payment_kind']),
+            paymentStatus: PaymentStatus::from((string) $row['payment_status']),
+            differenceReason: $row['difference_reason'] === null ? null : Differenzgrund::from((string) $row['difference_reason']),
         );
     }
 }
