@@ -102,7 +102,7 @@ final readonly class JobRepository
 
         $now ??= new \DateTimeImmutable();
         $jetzt = $now->format(self::FORMAT);
-        $bis = $now->modify(sprintf('+%d seconds', $lockSeconds))->format(self::FORMAT);
+        $bis = $now->setTimestamp($now->getTimestamp() + $lockSeconds)->format(self::FORMAT);
 
         $sql = 'SELECT id FROM job
                 WHERE status IN (?, ?) AND executor = ? AND (locked_until IS NULL OR locked_until <= ?)';
@@ -158,7 +158,7 @@ final readonly class JobRepository
              WHERE id = ? AND status = ? AND locked_by = ? AND locked_until > ?',
         );
         $stmt->execute([
-            $now->modify(sprintf('+%d seconds', $lockSeconds))->format(self::FORMAT),
+            $now->setTimestamp($now->getTimestamp() + $lockSeconds)->format(self::FORMAT),
             $now->format(self::FORMAT),
             $id,
             JobStatus::Laeuft->value,
@@ -205,7 +205,7 @@ final readonly class JobRepository
         // A step that waits (JobSchrittErgebnis::warten()) parks the job in
         // `locked_until` without a holder - claim() skips it until then.
         $wartenBis = $ergebnis->wartenSekunden > 0
-            ? $now->modify(sprintf('+%d seconds', $ergebnis->wartenSekunden))->format(self::FORMAT)
+            ? $now->setTimestamp($now->getTimestamp() + $ergebnis->wartenSekunden)->format(self::FORMAT)
             : null;
         $stmt = $this->pdo->prepare(
             'UPDATE job
@@ -333,7 +333,7 @@ final readonly class JobRepository
         );
         $stmt->execute([
             json_encode($state, JSON_THROW_ON_ERROR),
-            $now->modify(sprintf('+%d seconds', $lockSeconds))->format(self::FORMAT),
+            $now->setTimestamp($now->getTimestamp() + $lockSeconds)->format(self::FORMAT),
             $now->format(self::FORMAT),
             $id,
             JobStatus::Laeuft->value,
