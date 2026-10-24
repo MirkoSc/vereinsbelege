@@ -571,8 +571,15 @@ und Einreichung).
   offenen Beleg keine); beides im
   Zugriffsbereich von `matching.edit` (Kostenstellen-Scope sieht keine
   Buchung).
+- **Laufzeit** (CLAUDE.md §1): kein Kreuzprodukt – `Kandidatenindex`
+  nennt je Beleg nur Buchungen mit gemeinsamem Anker (Betrag exakt/Skonto,
+  IBAN, Mandat/Gläubiger-ID, Rechnungs-/Kundennummer im Zweck); ein Betrag
+  mit > 25 Buchungen ist kein Anker. Nicht bewertete Paare gehen mit ihrer
+  Obergrenze in die Abstandsprüfung ein. Gleiche Währung Pflicht. Jede
+  Zeile einmal entschlüsselt, Summen gebündelt.
 - **Seite** `/app/abgleich` (`matching.edit`, CSRF auf allen POST, ohne
-  entsperrten Tresor nichts): Knopf „N eindeutige Zuordnungen anlegen“,
+  entsperrten Tresor nichts; der Aufruf rechnet nichts, erst „Abgleich
+  berechnen“ `?berechnen=1`): Knopf „N eindeutige Zuordnungen anlegen“,
   Vorschlagsliste, Formular „Punktebewertung“. Parameter als Setting
   `abgleich_parameter` (JSON, `App\Service\Bank\Abgleichsparameter`,
   ungültig → Startwert).
@@ -582,7 +589,8 @@ und Einreichung).
 
 **Pflicht-Tests M10-2:** `PunktebewertungTest` (jedes Signal einzeln,
 Auto-Schwelle, Abstandsregel von Beleg- und Buchungsseite, Sammelzahlung,
-Ratenzahlung, Skonto, Mindestpunkte, Parameter/Formular),
+Ratenzahlung, Skonto, Mindestpunkte, Parameter/Formular, Währung,
+Obergrenze nicht bewerteter Paare, gekappter Betrag, Volumen 600 × 2.500),
 `AbgleichFlowTest` (Auto mit Score/Trace ohne Werte, Lösen und erneut,
 mehrdeutig → Vorschlag, Übernehmen bewertet neu, Sammelzahlung über zwei
 Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),

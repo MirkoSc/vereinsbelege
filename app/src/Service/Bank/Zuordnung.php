@@ -307,6 +307,32 @@ final readonly class Zuordnung
         );
     }
 
+    /**
+     * The allocated sum of many receipts at once, by invoice id - each
+     * allocation decrypted once, one query per 500 receipts (the matching,
+     * issue #66). Receipts without allocation are left out (0).
+     *
+     * @param list<int> $invoiceIds
+     *
+     * @return array<int, int>
+     */
+    public function summenJeBeleg(Vault $vault, array $invoiceIds): array
+    {
+        return array_map(fn(array $liste): int => $this->summe($vault, $liste), $this->zuordnungen->forInvoices($invoiceIds));
+    }
+
+    /**
+     * The same for bookings, by transaction id.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, int>
+     */
+    public function summenJeBuchung(Vault $vault, array $transactionIds): array
+    {
+        return array_map(fn(array $liste): int => $this->summe($vault, $liste), $this->zuordnungen->forTransactions($transactionIds));
+    }
+
     public function hatZuordnungen(int $invoiceId): bool
     {
         return $this->zuordnungen->countForInvoice($invoiceId) > 0;

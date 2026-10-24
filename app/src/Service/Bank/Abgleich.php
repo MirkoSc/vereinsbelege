@@ -7,9 +7,11 @@ namespace App\Service\Bank;
 use App\Domain\BankTransaction;
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionRecord;
+use App\Domain\Belegstand;
 use App\Domain\InvoiceData;
 use App\Domain\InvoiceRecord;
 use App\Domain\Supplier;
+use App\Domain\Zahlungsstand;
 use App\Domain\Zugriffsbereich;
 use App\Domain\ZuordnungMethode;
 use App\Repository\BankTransactionRepository;
@@ -28,6 +30,9 @@ use App\Service\MasterData\SupplierService;
  * the only place that writes one.
  *
  * Only in a user's session (the amounts are vault data), never in the cron.
+ * Each row is decrypted once, the allocated sums are read in batches, and
+ * Punktebewertung scores candidate pairs from an index, not the cross
+ * product - the run stays short (E-35).
  * Nothing is stored about a suggestion: they are scored afresh on every
  * page view, so a suggestion never outlives what it was based on.
  */
@@ -68,11 +73,17 @@ final readonly class Abgleich
         $records = $this->belege->abgleichKandidaten($bereich);
         $belege = $this->belegeLaden($vault, $records);
         // Without an open receipt there is nothing to score - no booking is
-        // decrypted. A booking from before the earliest open receipt's
-        // window is out of every window and stays unread as well.
+        // decrypted; only the directions some open receipt expects are read,
+        // and none from before the earliest open receipt's window.
+        $richtungen = [];
+        foreach ($belege as [$eingabe]) {
+            $richtungen[$eingabe->buchungsrichtung->value] = $eingabe->buchungsrichtung;
+        }
         $buchungen = $records === [] ? [] : $this->buchungenLaden($vault, $this->buchungen->abgleichKandidaten(
             $bereich,
             $records[0]->invoiceDate->modify(sprintf('-%d days', $parameter->fensterVorTage)),
+            null,
+            array_values($richtungen),
         ));
 
         $belegAnzeige = [];
@@ -150,9 +161,10 @@ final readonly class Abgleich
         /** @var array<int, ?Supplier> $lieferanten */
         $lieferanten = [];
         $liste = [];
+        $summen = $this->zuordnung->summenJeBeleg($vault, array_map(static fn(InvoiceRecord $r): int => $r->id, $records));
         foreach ($records as $record) {
             $daten = Pruefung::entschluesseln($vault, $record);
-            $offen = $this->zuordnung->zahlungsstand($vault, $record)->offen();
+            $offen = (new Zahlungsstand($record->paymentKind, $daten->gross, $summen[$record->id] ?? 0, $record->differenceReason))->offen();
             $lieferant = null;
             if ($record->supplierId !== null) {
                 if (!array_key_exists($record->supplierId, $lieferanten)) {
@@ -178,6 +190,7 @@ final readonly class Abgleich
                     kundennummer: $s === null ? '' : $s->customerNumber,
                     // The submitter's IBAN arrives with the reimbursements (M10-3, issue #67).
                     einreicherIban: null,
+                    waehrung: $daten->currency,
                 ),
                 $record,
                 $daten,
@@ -196,9 +209,10 @@ final readonly class Abgleich
     private function buchungenLaden(Vault $vault, array $records): array
     {
         $liste = [];
+        $summen = $this->zuordnung->summenJeBuchung($vault, array_map(static fn(BankTransactionRecord $r): int => $r->id, $records));
         foreach ($records as $record) {
             $buchung = Buchungen::entschluesseln($vault, $record);
-            $offen = $this->zuordnung->belegstand($vault, $record)->offen();
+            $offen = (new Belegstand($record->docRequired, $buchung->amount, $summen[$record->id] ?? 0))->offen();
             $liste[] = [
                 new AbgleichBuchung(
                     id: $record->id,
@@ -211,6 +225,7 @@ final readonly class Abgleich
                     endToEndReferenz: $buchung->endToEndRef,
                     mandatsreferenz: $buchung->mandateRef,
                     glaeubigerId: $buchung->creditorId,
+                    waehrung: $buchung->currency,
                 ),
                 $buchung,
             ];

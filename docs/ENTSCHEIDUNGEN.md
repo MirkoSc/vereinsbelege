@@ -651,13 +651,26 @@ Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
 - **Parameter** als ein Setting `abgleich_parameter` (JSON), auf der
   Abgleich-Seite mit `matching.edit` änderbar; fehlende oder ungültige Werte
   fallen auf die Startwerte zurück.
-- **Ein Request, keine Schrittkette:** wie „Regel anwenden“ (M9-6) läuft
-  die Bewertung in einem Request über alle offenen Belege × Buchungen
-  (Vereinsgröße: wenige hundert je Seite).
+- **Kandidatenindex statt Kreuzprodukt, ein kurzer Request:** bewertet
+  wird nur, was mit dem Beleg einen Anker teilt – offener Betrag exakt oder
+  in der Skonto-Spanne, Lieferanten-/Einreicher-IBAN, Mandat/Gläubiger-ID,
+  Rechnungs- oder Kundennummer im Zweck (Hash-Maps bzw. eine Textsuche je
+  Lauf, `App\Service\Bank\Kandidatenindex`). Ein Betrag, den mehr als 25
+  Buchungen teilen (Beiträge, Gebühren), ist kein Anker. Für alle nicht
+  bewerteten Paare einer Seite steht die **Obergrenze**, die sie höchstens
+  erreichen könnten (Name + Datum, bei gekapptem Betrag + Betragspunkte),
+  in der Abstandsprüfung – so macht das Weglassen kein Paar eindeutiger,
+  als es ist. Folge: Ein Paar ganz ohne Anker (nur Name/Datum) erscheint nie
+  als Vorschlag. Jede Zeile wird einmal entschlüsselt, Zuordnungssummen
+  gebündelt gelesen, Buchungen nur in den Richtungen offener Belege und
+  in deren Währung verglichen. Der Seitenaufruf rechnet nichts; erst
+  „Abgleich berechnen“ (`?berechnen=1`). Gemessen ohne DB: 600 Belege ×
+  2.500 Buchungen < 0,5 s (Test-Grenze 5 s). Eine Schrittkette ist damit
+  nicht nötig.
 
 Offen für Mirko: „Verwerfen“ eines Vorschlags (braucht eine Tabelle, M10-4);
 Auto-Abgleich direkt nach dem Kontoauszug-Import statt per Knopf; ob
 ungeprüfte Belege wenigstens als Vorschlag erscheinen sollen; Lernen von
 IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
-Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ab welcher
-Datenmenge die Bewertung doch eine Schrittkette braucht.
+Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ob Paare
+nur mit Namensähnlichkeit (ohne Anker) doch als Vorschlag erscheinen sollen.

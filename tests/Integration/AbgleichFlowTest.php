@@ -202,8 +202,9 @@ final class AbgleichFlowTest extends DatabaseTestCase
         $this->beleg(5000);
         $buchung = $this->buchung(-5000, '', 'Getränke Müller', self::IBAN_LIEFERANT);
         $this->pdo()->prepare('UPDATE bank_transaction SET doc_required = 0, doc_status = ? WHERE id = ?')->execute([BankTransactionDocStatus::NichtNoetig->value, $buchung]);
+        $this->buchung(5000, 'Beitrag', 'Mitglied', '');
 
-        self::assertSame([], $this->abgleich()->planen($this->tresor, Zugriffsbereich::unbeschraenkt())->buchungen);
+        self::assertSame([], $this->abgleich()->planen($this->tresor, Zugriffsbereich::unbeschraenkt())->buchungen, 'and no income is read while no outgoing invoice is open');
     }
 
     public function testOnlyCheckedReceiptsExpectingABookingWithinTheScopeTakePart(): void

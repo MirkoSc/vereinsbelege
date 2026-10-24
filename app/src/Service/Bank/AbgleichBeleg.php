@@ -5,15 +5,28 @@ declare(strict_types=1);
 namespace App\Service\Bank;
 
 use App\Domain\BankTransactionDirection;
+use App\Domain\Iban;
 use App\Domain\Zahlungsweg;
+use App\Service\MasterData\SupplierKeys;
 
 /**
  * What the scoring knows of one receipt - decrypted, in the session only
  * (M10-2, issue #66). Built by App\Service\Bank\Abgleich, consumed by the
- * pure App\Service\Bank\Punktebewertung.
+ * pure App\Service\Bank\Punktebewertung; the search keys are derived once
+ * here, not per pair.
  */
 final readonly class AbgleichBeleg
 {
+    /** @var list<string> */
+    public array $ibansNorm;
+
+    /** @var list<string> */
+    public array $mandateNorm;
+
+    public string $glaeubigerNorm;
+
+    public string $einreicherIbanNorm;
+
     /**
      * @param list<string> $lieferantNamen name and aliases of the supplier
      * @param list<string> $lieferantIbans
@@ -37,6 +50,11 @@ final readonly class AbgleichBeleg
         public string $kundennummer = '',
         /** Reimbursements (M10-3): the IBAN the submitter gave, null when unknown. */
         public ?string $einreicherIban = null,
+        public string $waehrung = 'EUR',
     ) {
+        $this->ibansNorm = array_values(array_filter(array_map(Iban::normalisieren(...), $lieferantIbans), static fn(string $i): bool => $i !== ''));
+        $this->mandateNorm = array_values(array_filter(array_map(SupplierKeys::kennung(...), $mandatsreferenzen), static fn(string $m): bool => $m !== ''));
+        $this->glaeubigerNorm = SupplierKeys::kennung($glaeubigerId);
+        $this->einreicherIbanNorm = $einreicherIban === null ? '' : Iban::normalisieren($einreicherIban);
     }
 }

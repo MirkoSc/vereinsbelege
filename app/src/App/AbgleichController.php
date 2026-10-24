@@ -41,6 +41,8 @@ final readonly class AbgleichController
 {
     private const string ZIEL = '/app/abgleich';
 
+    private const string BERECHNET = '/app/abgleich?berechnen=1';
+
     private const string TRESOR_GESPERRT = 'Ihr Tresor ist in dieser Sitzung nicht entsperrt. Bitte melden Sie sich neu an.';
 
     public function __construct(
@@ -55,8 +57,11 @@ final readonly class AbgleichController
     public function seite(Request $request): ResponseInterface
     {
         $this->session->start();
+        // Opening the page scores nothing; only "Abgleich berechnen"
+        // (?berechnen=1, also where the writes return to) decrypts and scores.
+        $berechnen = ($request->query['berechnen'] ?? '') === '1';
 
-        return $this->anzeigen($request, $this->abgleich->parameter(), null, []);
+        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], berechnen: $berechnen);
     }
 
     public function ausfuehren(Request $request): ResponseInterface
@@ -78,7 +83,7 @@ final readonly class AbgleichController
             default => $ergebnis['angelegt'] . ' Zuordnungen wurden automatisch angelegt.',
         } . ($ergebnis['uebersprungen'] > 0 ? ' ' . $ergebnis['uebersprungen'] . ' wurden inzwischen anderweitig geändert und übersprungen.' : ''));
 
-        return Response::redirect(self::ZIEL);
+        return Response::redirect(self::BERECHNET);
     }
 
     public function uebernehmen(Request $request): ResponseInterface
@@ -105,7 +110,7 @@ final readonly class AbgleichController
             $this->session->flash($e->getMessage(), FlashArt::Fehler);
         }
 
-        return Response::redirect(self::ZIEL);
+        return Response::redirect(self::BERECHNET);
     }
 
     public function einstellungen(Request $request): ResponseInterface
@@ -148,7 +153,7 @@ final readonly class AbgleichController
     /**
      * @param array<string, string> $felder what was sent, shown again after an error
      */
-    private function anzeigen(Request $request, Abgleichsparameter $parameter, ?BankRuleViolation $fehler, array $felder, int $status = 200): ResponseInterface
+    private function anzeigen(Request $request, Abgleichsparameter $parameter, ?BankRuleViolation $fehler, array $felder, int $status = 200, bool $berechnen = false): ResponseInterface
     {
         $tresor = $this->tresor($request);
 
@@ -156,7 +161,7 @@ final readonly class AbgleichController
             'title' => 'Abgleich',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
-            'stand' => $tresor === null ? null : $this->abgleich->planen($tresor, $this->bereich()),
+            'stand' => $tresor === null || !$berechnen ? null : $this->abgleich->planen($tresor, $this->bereich()),
             'parameter' => $parameter,
             'fehler' => $fehler,
             'felder' => $felder,

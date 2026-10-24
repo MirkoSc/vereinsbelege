@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Service\Bank;
 
-use App\Domain\Iban;
 use App\Domain\Zahlungsweg;
 use App\Service\MasterData\LieferantenAehnlichkeit;
 use App\Service\MasterData\SupplierKeys;
@@ -16,7 +15,7 @@ use App\Service\MasterData\SupplierKeys;
  * no database -, so every signal and every threshold is tested on its own.
  *
  * - A pair is only scored when it could be allocated at all: the booking
- *   runs in the direction the receipt expects and both still have something
+ *   runs in the direction and currency the receipt expects and both still have something
  *   open. Everything else is not a candidate (null).
  * - Automatic only when the score reaches the threshold, both sides lead
  *   their runner-up by the distance - seen from the receipt AND from the
@@ -41,7 +40,11 @@ final class Punktebewertung
 
     public static function bewerten(AbgleichBeleg $beleg, AbgleichBuchung $buchung, Abgleichsparameter $p): ?Bewertung
     {
-        if ($buchung->richtung !== $beleg->buchungsrichtung || $beleg->offen <= 0 || $buchung->offen <= 0) {
+        if ($buchung->richtung !== $beleg->buchungsrichtung
+            || strtoupper($buchung->waehrung) !== strtoupper($beleg->waehrung)
+            || $beleg->offen <= 0
+            || $buchung->offen <= 0
+        ) {
             return null;
         }
 
@@ -53,21 +56,21 @@ final class Punktebewertung
         // Amount: exact, or a little less (cash discount) - never more.
         if ($buchung->offen === $beleg->offen) {
             $setze(Signal::BetragExakt);
-        } elseif ($buchung->offen < $beleg->offen && $buchung->offen * 100 >= $beleg->offen * (100 - $p->skontoProzent)) {
+        } elseif ($buchung->offen < $beleg->offen && $buchung->offen >= self::skontoUntergrenze($beleg->offen, $p)) {
             $setze(Signal::BetragSkonto);
         }
 
-        $zweck = self::suchtext($buchung->verwendungszweck . ' ' . $buchung->endToEndReferenz);
-        if (self::enthaeltKennung($zweck, $beleg->rechnungsnummer)) {
+        if (self::enthaeltKennung($buchung->suchtext, $beleg->rechnungsnummer)) {
             $setze(Signal::Rechnungsnummer);
         }
 
-        $iban = Iban::normalisieren($buchung->gegenseiteIban);
-        if ($iban !== '' && in_array($iban, array_map(Iban::normalisieren(...), $beleg->lieferantIbans), true)) {
+        if ($buchung->ibanNorm !== '' && in_array($buchung->ibanNorm, $beleg->ibansNorm, true)) {
             $setze(Signal::Iban);
         }
 
-        if (self::mandatBekannt($beleg, $buchung)) {
+        if (($buchung->mandatNorm !== '' && in_array($buchung->mandatNorm, $beleg->mandateNorm, true))
+            || ($buchung->glaeubigerNorm !== '' && $buchung->glaeubigerNorm === $beleg->glaeubigerNorm)
+        ) {
             $setze(Signal::Mandat);
         }
 
@@ -75,7 +78,7 @@ final class Punktebewertung
             $setze(Signal::Name);
         }
 
-        if (self::enthaeltKennung($zweck, $beleg->kundennummer)) {
+        if (self::enthaeltKennung($buchung->suchtext, $beleg->kundennummer)) {
             $setze(Signal::Kundennummer);
         }
 
@@ -85,9 +88,8 @@ final class Punktebewertung
         $setze($tag >= $von && $tag <= $bis ? Signal::DatumImFenster : Signal::DatumAusserhalb);
 
         if ($beleg->zahlungsweg === Zahlungsweg::Erstattung
-            && $beleg->einreicherIban !== null
-            && $iban !== ''
-            && Iban::normalisieren($beleg->einreicherIban) === $iban
+            && $beleg->einreicherIbanNorm !== ''
+            && $beleg->einreicherIbanNorm === $buchung->ibanNorm
             && $buchung->offen === $beleg->brutto
         ) {
             $setze(Signal::Erstattung);
@@ -103,30 +105,65 @@ final class Punktebewertung
         );
     }
 
+    /** The least a booking may bring to count as "Skonto" for $offen. */
+    public static function skontoUntergrenze(int $offen, Abgleichsparameter $p): int
+    {
+        return intdiv($offen * (100 - $p->skontoProzent) + 99, 100);
+    }
+
     /**
-     * Scores every pair and splits them into automatic allocations and
-     * suggestions.
+     * Scores the candidate pairs and splits them into automatic allocations
+     * and suggestions.
+     *
+     * Not every receipt is scored against every booking: Kandidatenindex
+     * names the bookings sharing an anchor with the receipt (amount exact or
+     * within the discount, IBAN, mandate/creditor id, invoice or customer
+     * number in the purpose). A pair without an anchor can only collect the
+     * name and the date signal; that ceiling stands in for all unscored
+     * pairs of a side when the distance to the runner-up is checked, so
+     * leaving them out never makes a pair look more unambiguous than it is.
+     * An amount shared by too many bookings is not used as an anchor; the
+     * ceiling of both sides then includes the amount points.
      *
      * @param list<AbgleichBeleg> $belege
      * @param list<AbgleichBuchung> $buchungen
      */
     public static function planen(array $belege, array $buchungen, Abgleichsparameter $p): Abgleichsplan
     {
+        $index = new Kandidatenindex($buchungen, $p);
+        $nachId = [];
+        foreach ($buchungen as $buchung) {
+            $nachId[$buchung->id] = $buchung;
+        }
+        $basis = max(0, $p->punkte(Signal::Name)) + max($p->punkte(Signal::DatumImFenster), $p->punkte(Signal::DatumAusserhalb));
+        $betragPunkte = max(0, $p->punkte(Signal::BetragExakt), $p->punkte(Signal::BetragSkonto));
+
         /** @var list<Bewertung> $alle */
         $alle = [];
-        /** @var array<int, list<int>> $jeBeleg */
         $jeBeleg = [];
-        /** @var array<int, list<int>> $jeBuchung */
         $jeBuchung = [];
+        $obergrenzeBeleg = [];
+        $belegeJeSchluessel = [];
+        $betragGekappt = [];
         foreach ($belege as $beleg) {
-            foreach ($buchungen as $buchung) {
-                $bewertung = self::bewerten($beleg, $buchung, $p);
+            if ($beleg->offen <= 0) {
+                continue;
+            }
+            $schluessel = Kandidatenindex::schluessel($beleg->buchungsrichtung, $beleg->waehrung);
+            $belegeJeSchluessel[$schluessel] = ($belegeJeSchluessel[$schluessel] ?? 0) + 1;
+            [$kandidaten, $gekappt] = $index->kandidaten($beleg, $betragGekappt);
+            $jeBeleg[$beleg->id] = [];
+            foreach ($kandidaten as $id) {
+                $bewertung = self::bewerten($beleg, $nachId[$id], $p);
                 if ($bewertung === null) {
                     continue;
                 }
                 $alle[] = $bewertung;
                 $jeBeleg[$beleg->id][] = $bewertung->score;
-                $jeBuchung[$buchung->id][] = $bewertung->score;
+                $jeBuchung[$id][] = $bewertung->score;
+            }
+            if ($index->anzahl($schluessel) > count($jeBeleg[$beleg->id])) {
+                $obergrenzeBeleg[$beleg->id] = $basis + ($gekappt ? $betragPunkte : 0);
             }
         }
         usort($alle, self::reihenfolge(...));
@@ -141,8 +178,17 @@ final class Punktebewertung
             if (!$b->vollGedeckt || isset($vergebeneBelege[$b->invoiceId]) || isset($vergebeneBuchungen[$b->transactionId])) {
                 continue;
             }
-            if (!self::fuehrtMitAbstand($jeBeleg[$b->invoiceId], $b->score, $p->autoAbstand)
-                || !self::fuehrtMitAbstand($jeBuchung[$b->transactionId], $b->score, $p->autoAbstand)
+            $buchung = $nachId[$b->transactionId];
+            $belegSeite = $jeBeleg[$b->invoiceId];
+            if (isset($obergrenzeBeleg[$b->invoiceId])) {
+                $belegSeite[] = $obergrenzeBeleg[$b->invoiceId];
+            }
+            $buchungSeite = $jeBuchung[$b->transactionId];
+            if (($belegeJeSchluessel[Kandidatenindex::schluessel($buchung->richtung, $buchung->waehrung)] ?? 0) > count($buchungSeite)) {
+                $buchungSeite[] = $basis + (isset($betragGekappt[$b->transactionId]) ? $betragPunkte : 0);
+            }
+            if (!self::fuehrtMitAbstand($belegSeite, $b->score, $p->autoAbstand)
+                || !self::fuehrtMitAbstand($buchungSeite, $b->score, $p->autoAbstand)
             ) {
                 continue;
             }
@@ -168,7 +214,8 @@ final class Punktebewertung
 
     /**
      * Whether $score leads every other candidate of the same side by at
-     * least $abstand. $scores holds $score itself once; a tie never leads.
+     * least $abstand. $scores holds $score itself once (and possibly the
+     * ceiling of the unscored pairs); a tie never leads.
      *
      * @param list<int> $scores
      */
@@ -221,17 +268,6 @@ final class Punktebewertung
         $danach = ctype_digit($nadel[strlen($nadel) - 1]) ? '(?![0-9])' : '';
 
         return preg_match('/' . $davor . $muster . $danach . '/', $text) === 1;
-    }
-
-    private static function mandatBekannt(AbgleichBeleg $beleg, AbgleichBuchung $buchung): bool
-    {
-        $mandat = SupplierKeys::kennung($buchung->mandatsreferenz);
-        if ($mandat !== '' && in_array($mandat, array_map(SupplierKeys::kennung(...), $beleg->mandatsreferenzen), true)) {
-            return true;
-        }
-        $glaeubiger = SupplierKeys::kennung($buchung->glaeubigerId);
-
-        return $glaeubiger !== '' && $glaeubiger === SupplierKeys::kennung($beleg->glaeubigerId);
     }
 
     /**

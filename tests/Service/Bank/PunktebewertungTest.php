@@ -10,6 +10,7 @@ use App\Service\Bank\AbgleichBeleg;
 use App\Service\Bank\AbgleichBuchung;
 use App\Service\Bank\Abgleichsparameter;
 use App\Service\Bank\BankRuleViolation;
+use App\Service\Bank\Kandidatenindex;
 use App\Service\Bank\Punktebewertung;
 use App\Service\Bank\Signal;
 use PHPUnit\Framework\TestCase;
@@ -252,6 +253,79 @@ final class PunktebewertungTest extends TestCase
         self::assertSame([1, 2, 3], array_map(static fn($b): int => $b->transactionId, $plan->vorschlaege));
     }
 
+    // ------------------------------------------------- candidates, volume
+
+    public function testAnotherCurrencyIsNoCandidate(): void
+    {
+        self::assertNull(Punktebewertung::bewerten($this->beleg(offen: 5000), $this->buchung(offen: 5000, waehrung: 'CHF'), new Abgleichsparameter()));
+    }
+
+    public function testUnscoredPairsCountWithTheirCeiling(): void
+    {
+        // The second booking shares no anchor with the receipt and is not scored -
+        // but with 70 points for a similar name it could reach 80.
+        $p = Abgleichsparameter::ausWerten(['punkte' => [Signal::Name->value => 70]]);
+        $beleg = $this->beleg(id: 1, offen: 5000);
+        $passend = $this->buchung(id: 9, offen: 5000, iban: self::IBAN_LIEFERANT);   // 45 + 30 + 10 = 85
+        $fremd = $this->buchung(id: 8, offen: 1234, name: 'Stadtwerke');
+
+        self::assertCount(1, Punktebewertung::planen([$beleg], [$passend], $p)->auto);
+        self::assertSame([], Punktebewertung::planen([$beleg], [$passend, $fremd], $p)->auto, '85 - 80 < 20');
+        self::assertCount(1, Punktebewertung::planen([$beleg], [$passend, $fremd], new Abgleichsparameter())->auto, 'with 15 for the name the ceiling is 25');
+    }
+
+    public function testATooCommonAmountIsNoAnchorButCountsInTheCeiling(): void
+    {
+        $buchungen = [$this->buchung(id: 1000, offen: 5000, iban: self::IBAN_LIEFERANT)];
+        for ($i = 1; $i <= Kandidatenindex::BETRAG_MAX + 5; $i++) {
+            $buchungen[] = $this->buchung(id: $i, offen: 5000);
+        }
+        $plan = Punktebewertung::planen([$this->beleg(id: 1, offen: 5000)], $buchungen, new Abgleichsparameter());
+
+        self::assertSame([], $plan->auto, '85 points, but any of the 5000-cent bookings could reach 45 + 15 + 10 = 70');
+        self::assertSame([1000], array_map(static fn($b): int => $b->transactionId, $plan->vorschlaege), 'only the IBAN anchor was scored');
+    }
+
+    public function testAThousandsOfOpenItemsRunStaysFast(): void
+    {
+        mt_srand(66);
+        $belege = [];
+        for ($i = 1; $i <= 600; $i++) {
+            $belege[] = new AbgleichBeleg(
+                id: $i,
+                buchungsrichtung: BankTransactionDirection::Ausgabe,
+                zahlungsweg: Zahlungsweg::Konto,
+                brutto: $betrag = mt_rand(500, 300000),
+                offen: $betrag,
+                rechnungsnummer: 'RE-' . (100000 + $i),
+                rechnungsdatum: new \DateTimeImmutable('2026-01-01')->modify('+' . mt_rand(0, 300) . ' days'),
+                faelligkeit: null,
+                lieferantNamen: ['Lieferant ' . ($i % 80)],
+                lieferantIbans: [sprintf('DE00%018d', $i % 80)],
+            );
+        }
+        $buchungen = [];
+        for ($i = 1; $i <= 2500; $i++) {
+            $ausgabe = $i <= 1500;
+            $buchungen[] = new AbgleichBuchung(
+                $i,
+                $ausgabe ? BankTransactionDirection::Ausgabe : BankTransactionDirection::Einnahme,
+                $ausgabe ? ($i % 3 === 0 ? $belege[$i % 600]->offen : mt_rand(500, 300000)) : 5000,
+                new \DateTimeImmutable('2026-01-01')->modify('+' . mt_rand(0, 330) . ' days'),
+                $ausgabe ? 'Lieferant ' . ($i % 80) : 'Mitglied ' . $i,
+                $ausgabe ? sprintf('DE00%018d', $i % 80) : '',
+                $ausgabe ? 'Rechnung RE-' . (100000 + ($i % 600)) . ' Kd ' . $i : 'Beitrag 2026',
+            );
+        }
+
+        $start = hrtime(true);
+        $plan = Punktebewertung::planen($belege, $buchungen, new Abgleichsparameter());
+        $sekunden = (hrtime(true) - $start) / 1e9;
+
+        self::assertNotSame([], $plan->vorschlaege);
+        self::assertLessThan(5.0, $sekunden, '600 receipts x 2500 bookings must not approach the 30 s limit');
+    }
+
     // ------------------------------------------------------- parameters
 
     public function testParametersFallBackToTheStartValues(): void
@@ -331,7 +405,8 @@ final class PunktebewertungTest extends TestCase
         string $mref = '',
         string $cred = '',
         BankTransactionDirection $richtung = BankTransactionDirection::Ausgabe,
+        string $waehrung = 'EUR',
     ): AbgleichBuchung {
-        return new AbgleichBuchung($id, $richtung, $offen, new \DateTimeImmutable($datum), $name, $iban, $zweck, $eref, $mref, $cred);
+        return new AbgleichBuchung($id, $richtung, $offen, new \DateTimeImmutable($datum), $name, $iban, $zweck, $eref, $mref, $cred, $waehrung);
     }
 }

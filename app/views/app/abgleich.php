@@ -12,7 +12,7 @@
  *
  * @var string $csrf
  * @var bool $entsperrt
- * @var \App\Service\Bank\Abgleichsstand|null $stand null without an unlocked vault
+ * @var \App\Service\Bank\Abgleichsstand|null $stand null without an unlocked vault or before "Abgleich berechnen"
  * @var \App\Service\Bank\Abgleichsparameter $parameter
  * @var \App\Service\Bank\BankRuleViolation|null $fehler of the settings form
  * @var array<string, string> $felder the settings form as sent, after an error
@@ -58,10 +58,16 @@ $weitere = [
         Jede Zuordnung lässt sich wieder lösen.
     </p>
 
-    <?php if (!$entsperrt || $stand === null): ?>
+    <?php if (!$entsperrt): ?>
         <p class="hinweis hinweis-info">
             Belege und Buchungen sind verschlüsselt. Melden Sie sich neu an, um den Abgleich zu nutzen.
         </p>
+    <?php elseif ($stand === null): ?>
+        <form method="get" action="/app/abgleich" class="knopfreihe">
+            <input type="hidden" name="berechnen" value="1">
+            <button type="submit" class="knopf knopf-primaer">Abgleich berechnen</button>
+        </form>
+        <p class="gedaempft">Bewertet die offenen Belege und Buchungen – angelegt wird dabei noch nichts.</p>
     <?php else: ?>
         <form method="post" action="/app/abgleich/ausfuehren" class="knopfreihe">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">

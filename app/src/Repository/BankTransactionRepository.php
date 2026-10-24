@@ -350,15 +350,18 @@ final readonly class BankTransactionRepository
      * cost-center scope sees none), booked on or after $ab. An expense
      * marked "kein Beleg nötig" is left out - someone decided it gets no
      * receipt -, income is not (it needs none by default, E-17, yet an
-     * outgoing invoice is settled by it). $ids narrows to those rows.
+     * outgoing invoice is settled by it). $richtungen: only these
+     * directions (null = both) - no open outgoing invoice, no income read.
+     * $ids narrows to those rows.
      *
      * @param list<int>|null $ids
+     * @param list<BankTransactionDirection>|null $richtungen
      *
      * @return list<BankTransactionRecord>
      */
-    public function abgleichKandidaten(Zugriffsbereich $bereich, ?\DateTimeImmutable $ab = null, ?array $ids = null): array
+    public function abgleichKandidaten(Zugriffsbereich $bereich, ?\DateTimeImmutable $ab = null, ?array $ids = null, ?array $richtungen = null): array
     {
-        if ($ids === []) {
+        if ($ids === [] || $richtungen === []) {
             return [];
         }
         [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
@@ -370,6 +373,10 @@ final readonly class BankTransactionRepository
             BankTransactionDocStatus::NichtNoetig->value,
             BankTransactionDirection::Ausgabe->value,
         );
+        if ($richtungen !== null) {
+            $sql .= sprintf(' AND t.direction IN (%s)', implode(',', array_fill(0, count($richtungen), '?')));
+            array_push($parameter, ...array_map(static fn(BankTransactionDirection $r): string => $r->value, $richtungen));
+        }
         if ($ab !== null) {
             $sql .= ' AND t.booking_date >= ?';
             $parameter[] = $ab->format('Y-m-d');
