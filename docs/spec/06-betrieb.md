@@ -243,10 +243,17 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
     (1 h) nicht fortgesetzte darf ein neuer Start verwerfen;
     `POST /admin/backups/abbrechen` räumt auf.
   - *Dump in Schritten (#208, E-34 – vorläufig):* `MysqlDumper::schritt()`
-    schreibt je Aufruf Teile – Kopf einer Tabelle (`DROP`/`CREATE`) oder
-    **eine Portion von 100 Zeilen nach Primärschlüssel** ab dem zuletzt
-    geschriebenen Schlüssel (Keyset: `k1 >= ? AND (k1 > ? OR (k1 = ? AND
-    k2 > ?))`, `ORDER BY` Schlüssel, `LIMIT 100`), bis das Budget des
+    schreibt je Aufruf Teile – Kopf einer Tabelle (`DROP`/`CREATE`), alle
+    Zeilen einer Tabelle in **einem** `SELECT` (konsistenter
+    InnoDB-Snapshot der Tabelle, wie vor #208) oder – nur für die großen,
+    nur wachsenden Tabellen `MysqlDumper::TABLES_IN_PORTIONS`
+    (`file_blob_chunk`, `audit_log`; kein Unique-Schlüssel außer dem
+    Primärschlüssel) – **eine Portion von 100 Zeilen nach Primärschlüssel**
+    ab dem zuletzt geschriebenen Schlüssel (Keyset: `k1 >= ? AND (k1 > ? OR
+    (k1 = ? AND k2 > ?))`, `ORDER BY` Schlüssel, `LIMIT 100`). Tabellen wie
+    `supplier_key`, die bei jedem Speichern gelöscht und mit neuen IDs neu
+    eingefügt werden, könnten in Portionen denselben Unique-Wert zweimal in
+    den Dump bringen (Restore 1062). Geschrieben wird, bis das Budget des
     Schritts erreicht ist: **32 MiB Dump-Text oder 8 s** (nach dem Teil,
     der es überschreitet; mindestens ein Teil je Schritt). Der Stand
     (Tabellenliste vom Start, Index, letzter Schlüssel – binäre Schlüssel
@@ -262,8 +269,7 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
     dieselben Anweisungen: keine Zeile doppelt, keine fehlt. Die Teile
     hintereinander sind **byte-gleich** mit `MysqlDumper::dump()` am Stück
     (CLI/`create()`), also einspielbar wie bisher (`SqlSplitter` und
-    strömend, #120). Tabellen ohne Primärschlüssel (im Schema keine) gehen
-    in einem Teil wie vor #208. Kein konsistenter Schnappschuss: wer während
+    strömend, #120). Kein konsistenter Schnappschuss: wer während
     der Kette schreibt, kann zwischen Tabellen bzw. Portionen einen anderen
     Stand sehen (vorher genauso, nur über einen kürzeren Zeitraum; Hinweis
     in E-34). Damit dabei keine Belege fehlen, **verschiebt der
@@ -498,7 +504,8 @@ nachgeholt); `DumpInSchrittenTest` (#208: großer synthetischer
 `file_blob_chunk`-Bestand über mehrere Portionen und Blob-IDs, Teile mit
 wiederholten Schritten byte-gleich zum Dump am Stück, Kette mit
 abgebrochenen Dump-Schritten ergibt ein Backup, das strömend eingespielt
-`file_blob_chunk` identisch zurückbringt, 1062/1050 nur bei der ersten
+`file_blob_chunk` identisch zurückbringt, eine zwischen den Schritten
+umgeschriebene Tabelle mit Unique-Schlüssel bleibt einspielbar, 1062/1050 nur bei der ersten
 Anweisung nach hartem Abbruch übersprungen); `UpdateChainTest` (Schritt
 `backup` antwortet `weiter`, bis seine Kette fertig ist);
 `BackupPageFlowTest` (Seite mit Checkbox – Standard aus – und Warnung,

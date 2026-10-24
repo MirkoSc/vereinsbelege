@@ -623,10 +623,14 @@ Mit Backend `db` liegen die Belege als `file_blob_chunk`-Zeilen im Dump; ein
 Dump in einem Request blieb bei einigen GB im Zeitlimit hängen – eine nicht
 erklärte dritte Ausnahme von CLAUDE.md §1. Getroffen ohne Rückfrage:
 
-- **Portionen nach Primärschlüssel (Keyset), nicht nach `OFFSET`:** jede
-  Portion kostet gleich viel, auch tief in `file_blob_chunk`; der Stand
-  ist der letzte geschriebene Schlüssel. Alle Tabellen des Schemas haben
-  einen Primärschlüssel; eine ohne ginge in einem Teil (wie bisher).
+- **Portionen nur für `file_blob_chunk` und `audit_log`, nach
+  Primärschlüssel (Keyset), nicht nach `OFFSET`:** jede Portion kostet
+  gleich viel, auch tief in `file_blob_chunk`; der Stand ist der letzte
+  geschriebene Schlüssel. Alle anderen Tabellen in einem `SELECT` je Teil
+  (konsistent je Tabelle wie vorher): Tabellen wie `supplier_key` oder mit
+  `uq_allocation_pair` werden per Löschen + Neu-Einfügen gepflegt, über
+  mehrere Portionen könnte derselbe Unique-Wert doppelt in den Dump kommen
+  und das Backup wäre nicht einspielbar (Hinweis aus dem Review).
 - **Budget je Schritt: 32 MiB Dump-Text oder 8 s**, geprüft nach jedem Teil
   (Tabellenkopf oder 100 Zeilen), mindestens ein Teil. Eine Portion
   `file_blob_chunk` ist bis zu ~50 MiB Hex – gelesen ungepuffert und in

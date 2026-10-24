@@ -45,6 +45,18 @@ final readonly class MysqlDumper
     private const int ROWS_PER_PORTION = 100;
 
     /**
+     * The only tables read in portions across steps. Every other table goes
+     * in ONE SELECT, a consistent InnoDB snapshot of it, as before issue
+     * #208: tables like supplier_key are rewritten (delete + insert with
+     * new ids) on every save, so two portions could see the same unique
+     * value twice and the dump would not restore (1062). These two only
+     * ever grow or lose whole rows, carry no unique key besides the
+     * primary key, and are the ones that get large (backend `db`: the
+     * receipts; the audit log over the years).
+     */
+    public const array TABLES_IN_PORTIONS = ['file_blob_chunk', 'audit_log'];
+
+    /**
      * Flush an INSERT once the collected rows reach this. A chunk row is
      * 256 KiB of ciphertext and doubles as hex, so a hundred of them in one
      * statement would run into max_allowed_packet on the way back in.
@@ -76,8 +88,9 @@ final readonly class MysqlDumper
      *
      * `$stand` is what the call before returned, or null for the start. It
      * is plain JSON-safe data, so a step chain can keep it between requests.
-     * A part is a table's DROP/CREATE or one portion of its rows, read by
-     * primary key from behind the last key the part before wrote - so a step
+     * A part is a table's DROP/CREATE, all its rows in one SELECT, or - for
+     * the large tables in TABLES_IN_PORTIONS - one portion of its rows, read
+     * by primary key from behind the last key the part before wrote - so a step
      * that is run again from the same `$stand` writes the same statements
      * and none of its rows twice or not at all. After every part the budget
      * is checked; at least one part is always written, so the chain moves on.
@@ -161,7 +174,7 @@ final readonly class MysqlDumper
         // here: nothing else may travel over it while the unbuffered SELECT
         // below is being read. PDO::quote() is client-side and therefore fine.
         $binary = $this->binaryColumns($table);
-        $schluessel = $this->primaryKey($table);
+        $schluessel = in_array($table, self::TABLES_IN_PORTIONS, true) ? $this->primaryKey($table) : [];
 
         $nach = is_array($stand['nach']) ? $stand['nach'] : null;
         [$sql, $parameter] = $this->auswahl($table, $schluessel, $binary, $nach);
@@ -206,9 +219,9 @@ final readonly class MysqlDumper
             $this->writeInsert($stream, $table, $columns, $batch);
         }
 
-        // Without a primary key the table went in one portion, as before
-        // issue #208 (every table of the schema has one). A portion shorter
-        // than the limit was the table's last.
+        // Without portions (TABLES_IN_PORTIONS, or no primary key) the
+        // table went in one SELECT. A portion shorter than the limit was
+        // the table's last.
         $tabelleFertig = $schluessel === [] || $anzahl < self::ROWS_PER_PORTION;
         if ($tabelleFertig) {
             $this->schreibe($stream, "\n");

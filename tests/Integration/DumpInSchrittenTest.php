@@ -9,6 +9,7 @@ use App\Service\Backup\BackupService;
 use App\Service\Backup\MysqlDumper;
 use App\Service\Backup\RestoreService;
 use App\Service\Migration\Migrator;
+use App\Service\Migration\SqlSplitter;
 use App\Tests\Support\DatabaseTestCase;
 
 /**
@@ -185,6 +186,57 @@ final class DumpInSchrittenTest extends DatabaseTestCase
         } while ($offset < $fortschritt['gesamt']);
 
         self::assertSame($vorher, $this->pruefsumme('file_blob_chunk'), 'no row doubled or lost');
+    }
+
+    /**
+     * A table that is rewritten while the chain runs - like supplier_key,
+     * deleted and inserted again with new ids on every save - must not land
+     * in the dump with a unique value twice: only TABLES_IN_PORTIONS are
+     * read across steps, every other table in one SELECT.
+     */
+    public function testATableRewrittenBetweenStepsStillRestores(): void
+    {
+        $this->grosserChunkBestand();
+        $pdo = $this->pdo();
+        $pdo->exec('CREATE TABLE probe_umschreiben (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            schluessel VARCHAR(20) NOT NULL,
+            UNIQUE KEY uq_probe_schluessel (schluessel)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+        $umschreiben = static function () use ($pdo): void {
+            $pdo->exec('DELETE FROM probe_umschreiben');
+            $insert = $pdo->prepare('INSERT INTO probe_umschreiben (schluessel) VALUES (?)');
+            for ($i = 0; $i < 250; $i++) {
+                $insert->execute(['k' . $i]);
+            }
+        };
+        $umschreiben();
+
+        $dumper = new MysqlDumper($pdo);
+        $strom = fopen('php://temp', 'w+b');
+        self::assertIsResource($strom);
+        $stand = null;
+        $schritte = 0;
+        do {
+            $stand = $dumper->schritt($strom, $stand, 1, INF);
+            // Between every two requests the table is saved again.
+            $umschreiben();
+            self::assertLessThan(100000, ++$schritte);
+        } while ($stand['fertig'] !== true);
+        rewind($strom);
+        $dump = (string) stream_get_contents($strom);
+        fclose($strom);
+
+        self::assertGreaterThan(
+            1,
+            substr_count($dump, 'INSERT INTO `file_blob_chunk`'),
+            'file_blob_chunk still goes in portions',
+        );
+        $this->tabellenLoeschen();
+        foreach (SqlSplitter::split($dump) as $anweisung) {
+            $pdo->exec($anweisung);
+        }
+        self::assertSame(250, (int) $pdo->query('SELECT COUNT(*) FROM probe_umschreiben')->fetchColumn());
     }
 
     public function testTheFirstStatementOfAStepAfterAHardBreakOffMayHaveRunAlready(): void
