@@ -153,32 +153,56 @@ final readonly class DocumentArtifactRepository
     }
 
     /**
-     * The next artifact rows of $kinds after id $nachId, in id order, of
-     * documents within $bereich (scope on the document like the inbox:
-     * `created_at`, `cost_center_id`) - what the full-text index (issue
-     * #94, App\Service\Suche\Volltextsuche) takes in next. Ids and
-     * document ids only; nothing is decrypted here.
+     * The next documents within $bereich (scope on the document like the
+     * inbox: `created_at`, `cost_center_id`) that have artifacts of $kinds
+     * after id $nachId, in the order of their newest such artifact (`bis`) -
+     * what the full-text index (issue #94, App\Service\Suche\Volltextsuche)
+     * takes in next. Ids only; nothing is decrypted here.
      *
      * @param list<ArtifactKind> $kinds
      *
-     * @return list<array{id: int, document_id: int}>
+     * @return list<array{document_id: int, bis: int}>
      */
-    public function suchquellenNach(int $nachId, array $kinds, Zugriffsbereich $bereich, int $limit): array
+    public function naechsteSuchdokumente(int $nachId, array $kinds, Zugriffsbereich $bereich, int $limit): array
     {
         if ($kinds === []) {
             return [];
         }
-        [$sql, $parameter] = self::suchquellenBedingung($nachId, $kinds, $bereich);
+        [$sql, $parameter] = self::suchquellenBedingung('a.id > ?', $nachId, $kinds, $bereich);
         $stmt = $this->pdo->prepare(
-            'SELECT a.id, a.document_id FROM document_artifact a JOIN document d ON d.id = a.document_id
-             WHERE ' . $sql . ' ORDER BY a.id LIMIT ' . max(1, $limit),
+            'SELECT a.document_id, MAX(a.id) AS bis FROM document_artifact a JOIN document d ON d.id = a.document_id
+             WHERE ' . $sql . ' GROUP BY a.document_id ORDER BY bis LIMIT ' . max(1, $limit),
         );
         $stmt->execute($parameter);
 
         return array_map(
-            static fn(array $row): array => ['id' => (int) $row['id'], 'document_id' => (int) $row['document_id']],
+            static fn(array $row): array => ['document_id' => (int) $row['document_id'], 'bis' => (int) $row['bis']],
             $stmt->fetchAll(),
         );
+    }
+
+    /**
+     * Which documents within $bereich have artifacts of $kinds up to id
+     * $bisId, as a short signature (count and sum of their ids) - the full-
+     * text index compares it to notice an old document entering or leaving
+     * a cost-center scope (issue #94).
+     *
+     * @param list<ArtifactKind> $kinds
+     */
+    public function suchdokumenteBis(int $bisId, array $kinds, Zugriffsbereich $bereich): string
+    {
+        if ($kinds === []) {
+            return '0:0';
+        }
+        [$sql, $parameter] = self::suchquellenBedingung('a.id <= ?', $bisId, $kinds, $bereich);
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(DISTINCT a.document_id), COALESCE(SUM(DISTINCT a.document_id), 0)
+             FROM document_artifact a JOIN document d ON d.id = a.document_id WHERE ' . $sql,
+        );
+        $stmt->execute($parameter);
+        $row = $stmt->fetch(\PDO::FETCH_NUM);
+
+        return $row === false ? '0:0' : (int) $row[0] . ':' . (int) $row[1];
     }
 
     /**
@@ -192,7 +216,7 @@ final readonly class DocumentArtifactRepository
         if ($kinds === []) {
             return 0;
         }
-        [$sql, $parameter] = self::suchquellenBedingung($nachId, $kinds, $bereich);
+        [$sql, $parameter] = self::suchquellenBedingung('a.id > ?', $nachId, $kinds, $bereich);
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(DISTINCT a.document_id) FROM document_artifact a JOIN document d ON d.id = a.document_id WHERE ' . $sql,
         );
@@ -202,17 +226,19 @@ final readonly class DocumentArtifactRepository
     }
 
     /**
+     * @param string $grenze the cursor condition, `a.id > ?` or `a.id <= ?` -
+     *        from code only, never from a request
      * @param list<ArtifactKind> $kinds
      *
      * @return array{0: string, 1: list<int|string>}
      */
-    private static function suchquellenBedingung(int $nachId, array $kinds, Zugriffsbereich $bereich): array
+    private static function suchquellenBedingung(string $grenze, int $id, array $kinds, Zugriffsbereich $bereich): array
     {
         [$scope, $scopeParameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
 
         return [
-            'a.id > ? AND a.kind IN (' . implode(', ', array_fill(0, count($kinds), '?')) . ') AND ' . $scope,
-            [$nachId, ...array_map(static fn(ArtifactKind $k): string => $k->value, $kinds), ...$scopeParameter],
+            $grenze . ' AND a.kind IN (' . implode(', ', array_fill(0, count($kinds), '?')) . ') AND ' . $scope,
+            [$id, ...array_map(static fn(ArtifactKind $k): string => $k->value, $kinds), ...$scopeParameter],
         ];
     }
 }

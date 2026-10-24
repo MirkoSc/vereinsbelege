@@ -49,6 +49,7 @@ $heute ??= new \DateTimeImmutable('today');
 
         <?php if ($stand !== null && !$stand->aktuell()): ?>
             <div id="suche-index" data-csrf="<?= e($csrf) ?>" data-offen="<?= e((string) $stand->offen) ?>"
+                 data-schritt="<?= e((string) \App\Service\Suche\Volltextsuche::SCHRITT_DOKUMENTE) ?>"
                  data-erneut="<?= $anfrage !== null && !$anfrage->leer() ? '1' : '0' ?>">
                 <p class="hinweis hinweis-info" id="suche-stand" aria-live="polite">
                     Der Suchindex dieser Sitzung wird aufgebaut – noch

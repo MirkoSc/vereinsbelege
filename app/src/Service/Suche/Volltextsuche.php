@@ -39,21 +39,16 @@ use App\Service\Crypto\Vault;
  * Scope (01 section 4): only documents within the viewer's `inbox.view`
  * Zugriffsbereich are indexed, and every hit is checked against it again in
  * SQL before it is shown - a scope that narrowed since keeps hiding rows. A
- * scope that changed at all, another account or a vault that no longer
- * opens the key throws the index away and starts over.
+ * scope that changed at all, an old document that entered or left a
+ * cost-center scope, another account or a vault that no longer opens the
+ * key throws the index away and starts over.
  */
 final readonly class Volltextsuche
 {
     /** Documents per step: decrypting their artifacts stays well within a short request. */
     public const int SCHRITT_DOKUMENTE = 40;
 
-    /** Artifact rows read per step to find SCHRITT_DOKUMENTE documents. */
-    private const int SCHRITT_ZEILEN = 400;
-
     public const int MAX_TREFFER = 50;
-
-    /** Matches beyond this are not collected: the list shows the newest anyway. */
-    private const int MAX_KANDIDATEN = 2000;
 
     /** Parts are padded to a multiple of this, so their size says little about the text in them. */
     private const int BLOCK = 4096;
@@ -85,12 +80,7 @@ final readonly class Volltextsuche
 
     public function stand(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): SuchindexStand
     {
-        $zustand = $this->zustand($benutzerId, $bereich, $vault);
-
-        return new SuchindexStand(
-            $zustand['fertig'] ?? false,
-            $this->artifacts->zaehleSuchquellenNach($zustand['cursor'] ?? 0, $this->arten(), $bereich),
-        );
+        return $this->standVon($this->zustand($benutzerId, $bereich, $vault), $bereich);
     }
 
     /**
@@ -100,42 +90,9 @@ final readonly class Volltextsuche
      */
     public function schritt(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): SuchindexStand
     {
-        $zustand = $this->zustand($benutzerId, $bereich, $vault) ?? $this->neu($benutzerId, $bereich, $vault);
+        $zustand = $this->zustand($benutzerId, $bereich, $vault) ?? $this->neu($benutzerId, $bereich);
 
-        $zeilen = $this->artifacts->suchquellenNach($zustand['cursor'], $this->arten(), $bereich, self::SCHRITT_ZEILEN);
-        $dokumente = [];
-        $cursor = $zustand['cursor'];
-        $abgebrochen = false;
-        foreach ($zeilen as $zeile) {
-            if (!isset($dokumente[$zeile['document_id']])) {
-                if (count($dokumente) >= self::SCHRITT_DOKUMENTE) {
-                    $abgebrochen = true;
-                    break;
-                }
-                $dokumente[$zeile['document_id']] = true;
-            }
-            $cursor = $zeile['id'];
-        }
-
-        if ($dokumente !== []) {
-            $eintraege = [];
-            foreach (array_keys($dokumente) as $id) {
-                $eintraege[] = [$id, $this->text($id, $vault)];
-            }
-            $teil = $zustand['teile'] + 1;
-            $this->speicher->schreibe($zustand['id'], $teil, $this->verschluesseln($zustand['schluessel'], $teil, $eintraege));
-            $zustand['teile'] = $teil;
-            $zustand['cursor'] = $cursor;
-        }
-        if (!$abgebrochen && count($zeilen) < self::SCHRITT_ZEILEN) {
-            $zustand['fertig'] = true;
-        }
-        $this->merke($zustand, $vault);
-
-        return new SuchindexStand(
-            $zustand['fertig'],
-            $this->artifacts->zaehleSuchquellenNach($zustand['cursor'], $this->arten(), $bereich),
-        );
+        return $this->standVon($this->schrittMit($zustand, $bereich, $vault), $bereich);
     }
 
     /**
@@ -145,9 +102,10 @@ final readonly class Volltextsuche
      */
     public function nachziehen(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): SuchindexStand
     {
-        $stand = $this->stand($benutzerId, $bereich, $vault);
+        $zustand = $this->zustand($benutzerId, $bereich, $vault);
+        $stand = $this->standVon($zustand, $bereich);
         if (!$stand->aktuell() && $stand->offen <= self::SCHRITT_DOKUMENTE) {
-            $stand = $this->schritt($benutzerId, $bereich, $vault);
+            $stand = $this->standVon($this->schrittMit($zustand ?? $this->neu($benutzerId, $bereich), $bereich, $vault), $bereich);
         }
 
         return $stand;
@@ -158,6 +116,10 @@ final readonly class Volltextsuche
      * (the caller runs the chain first). A part that is missing or does not
      * decrypt throws the index away: it is a cache, rebuilt rather than
      * trusted.
+     *
+     * Two passes: every part is read once to find the matching documents
+     * (their ids only); the excerpt is then cut only for the hits shown,
+     * from the parts that hold them.
      */
     public function suche(int $benutzerId, Zugriffsbereich $bereich, Vault $vault, Suchanfrage $anfrage): ?Suchergebnis
     {
@@ -181,39 +143,102 @@ final readonly class Volltextsuche
             // Newest part first, so a document's newest entry is the one
             // that counts.
             foreach ($eintraege as [$id, $text]) {
-                if (isset($gesehen[$id])) {
-                    continue;
-                }
-                $gesehen[$id] = true;
-                if (count($kandidaten) < self::MAX_KANDIDATEN && $anfrage->passt($text)) {
-                    $kandidaten[$id] = $anfrage->ausschnitt($text);
+                if (!isset($gesehen[$id])) {
+                    $gesehen[$id] = true;
+                    if ($anfrage->passt($text)) {
+                        $kandidaten[$id] = $teil;
+                    }
                 }
             }
         }
 
+        // Newest documents first, checked against the scope in SQL.
         krsort($kandidaten);
-        $treffer = [];
+        $gezeigt = [];
         $mehr = false;
         foreach (array_chunk(array_keys($kandidaten), 200) as $ids) {
             foreach ($this->documents->inboxItems($ids, $bereich) as $item) {
-                if (count($treffer) >= self::MAX_TREFFER) {
+                if (count($gezeigt) >= self::MAX_TREFFER) {
                     $mehr = true;
                     break 2;
                 }
-                $treffer[] = new Suchtreffer($item, $kandidaten[$item->document->id]);
+                $gezeigt[] = $item;
             }
         }
 
-        return new Suchergebnis($treffer, $mehr || count($kandidaten) >= self::MAX_KANDIDATEN);
+        $texte = [];
+        $treffer = [];
+        foreach ($gezeigt as $item) {
+            $teil = $kandidaten[$item->document->id];
+            if (!isset($texte[$teil])) {
+                $texte[$teil] = [];
+                foreach ($this->teil($zustand, $teil) ?? [] as [$id, $text]) {
+                    $texte[$teil][$id] = $text;
+                }
+            }
+            $treffer[] = new Suchtreffer($item, $anfrage->ausschnitt($texte[$teil][$item->document->id] ?? ''));
+        }
+
+        return new Suchergebnis($treffer, $mehr);
     }
 
     /** Throws this session's index away - logout, "neu aufbauen", a broken part. */
     public function verwerfen(): void
     {
-        $id = $this->sitzung->vergiss();
-        if ($id !== null) {
-            $this->speicher->loesche($id);
+        $this->sitzung->verwerfen($this->speicher);
+    }
+
+    /**
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
+     *
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}
+     */
+    private function schrittMit(array $zustand, Zugriffsbereich $bereich, Vault $vault): array
+    {
+        // Documents in the order of their newest artifact: the new cursor
+        // is the newest artifact of the last one, and every document not
+        // taken has a newer one - so each is indexed once per change.
+        $dokumente = $this->artifacts->naechsteSuchdokumente($zustand['cursor'], $this->arten(), $bereich, self::SCHRITT_DOKUMENTE);
+
+        if ($dokumente !== []) {
+            $eintraege = [];
+            foreach ($dokumente as $dokument) {
+                $eintraege[] = [$dokument['document_id'], $this->text($dokument['document_id'], $vault)];
+            }
+            $teil = $zustand['teile'] + 1;
+            $this->speicher->schreibe($zustand['id'], $teil, $this->verschluesseln($zustand['schluessel'], $teil, $eintraege));
+            $zustand['teile'] = $teil;
+            $zustand['cursor'] = $dokumente[array_key_last($dokumente)]['bis'];
         }
+        if (count($dokumente) < self::SCHRITT_DOKUMENTE) {
+            $zustand['fertig'] = true;
+        }
+        $zustand['mitglieder'] = $this->mitglieder($zustand['cursor'], $bereich);
+        $this->merke($zustand, $vault);
+
+        return $zustand;
+    }
+
+    /**
+     * @param array{fertig: bool, cursor: int}|null $zustand
+     */
+    private function standVon(?array $zustand, Zugriffsbereich $bereich): SuchindexStand
+    {
+        return new SuchindexStand(
+            $zustand['fertig'] ?? false,
+            $this->artifacts->zaehleSuchquellenNach($zustand['cursor'] ?? 0, $this->arten(), $bereich),
+        );
+    }
+
+    /**
+     * Which documents up to the cursor are in the scope - only for a
+     * cost-center scope, the one scope whose members change with an old
+     * document (its cost center is set later). A period scope is on
+     * `created_at`, which never changes; no scope has nothing to change.
+     */
+    private function mitglieder(int $cursor, Zugriffsbereich $bereich): string
+    {
+        return $bereich->kostenstellen === null ? '' : $this->artifacts->suchdokumenteBis($cursor, $this->arten(), $bereich);
     }
 
     /**
@@ -221,7 +246,7 @@ final readonly class Volltextsuche
      * usable for this account, this scope and this vault (it is thrown
      * away then).
      *
-     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool}|null
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}|null
      */
     private function zustand(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): ?array
     {
@@ -229,10 +254,7 @@ final readonly class Volltextsuche
         if ($gespeichert === null) {
             // Nothing, or an entry in a format this release does not write:
             // its files go too.
-            $alt = $this->sitzung->vergiss();
-            if ($alt !== null) {
-                $this->speicher->loesche($alt);
-            }
+            $this->sitzung->verwerfen($this->speicher);
 
             return null;
         }
@@ -248,17 +270,25 @@ final readonly class Volltextsuche
 
             return null;
         }
+        // An old document entered or left a cost-center scope: what the
+        // index holds no longer matches what the viewer may see - start over.
+        if (!hash_equals($gespeichert['mitglieder'], $this->mitglieder($gespeichert['cursor'], $bereich))) {
+            $this->verwerfen();
+
+            return null;
+        }
 
         return [...$gespeichert, 'schluessel' => $schluessel];
     }
 
     /**
-     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool}
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}
      */
-    private function neu(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): array
+    private function neu(int $benutzerId, Zugriffsbereich $bereich): array
     {
         $this->verwerfen();
-        $zustand = [
+
+        return [
             'id' => SuchindexSpeicher::neueId(),
             'schluessel' => DataKey::generate(),
             'benutzer' => $benutzerId,
@@ -266,14 +296,12 @@ final readonly class Volltextsuche
             'cursor' => 0,
             'teile' => 0,
             'fertig' => false,
+            'mitglieder' => '',
         ];
-        $this->merke($zustand, $vault);
-
-        return $zustand;
     }
 
     /**
-     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool} $zustand
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
      */
     private function merke(array $zustand, Vault $vault): void
     {
@@ -323,7 +351,7 @@ final readonly class Volltextsuche
     /**
      * One part, decrypted - null when it is missing or not readable.
      *
-     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool} $zustand
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
      *
      * @return list<array{0: int, 1: string}>|null
      */

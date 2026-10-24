@@ -5,11 +5,13 @@ const assert = require('node:assert/strict');
 const { maxSchritte, weiter, standText } = require('../../public/js/suche.js');
 
 test('the chain has an upper bound that grows with the open documents', () => {
-    assert.equal(maxSchritte(0), 25);
-    assert.equal(maxSchritte(40), 26);
-    assert.equal(maxSchritte(41), 27);
-    assert.equal(maxSchritte(undefined), 25);
-    assert.equal(maxSchritte(-5), 25);
+    assert.equal(maxSchritte(0, 40), 25);
+    assert.equal(maxSchritte(40, 40), 26);
+    assert.equal(maxSchritte(41, 40), 27);
+    assert.equal(maxSchritte(41, '20'), 28);
+    assert.equal(maxSchritte(undefined, 40), 25);
+    assert.equal(maxSchritte(-5, 40), 25);
+    assert.equal(maxSchritte(3, undefined), 28, 'without a step size every document counts as a step');
 });
 
 test('the first step always runs, then until the index is up to date', () => {

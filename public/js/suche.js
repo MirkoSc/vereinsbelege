@@ -7,15 +7,20 @@
 //
 // Its own file rather than an inline script: the CSP is script-src 'self'
 // without 'unsafe-inline' (CLAUDE.md section 4). The CSRF token comes from a
-// data-* attribute on #suche-index, like the number of documents still open.
+// data-* attribute on #suche-index, like the number of documents still open
+// and the step size.
 
-/** Steps per documents still open, plus slack for receipts that arrive meanwhile. */
-const SCHRITT_DOKUMENTE = 40;
+/** Extra steps beyond what the open documents need, for receipts that arrive meanwhile. */
 const SPIELRAUM = 25;
 
-/** Upper bound of steps for a build that starts with `offen` documents. */
-function maxSchritte(offen) {
-    return Math.ceil(Math.max(offen || 0, 0) / SCHRITT_DOKUMENTE) + SPIELRAUM;
+/**
+ * Upper bound of steps for a build that starts with `offen` documents, at
+ * `jeSchritt` documents per step (the server's own number, data-schritt).
+ */
+function maxSchritte(offen, jeSchritt) {
+    const groesse = Math.max(Number(jeSchritt) || 1, 1);
+
+    return Math.ceil(Math.max(offen || 0, 0) / groesse) + SPIELRAUM;
 }
 
 /**
@@ -60,7 +65,13 @@ function initSuche() {
             headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
             body: '',
         });
-        const daten = await antwort.json();
+        let daten = null;
+        try {
+            daten = await antwort.json();
+        } catch (problem) {
+            // An HTML error page (maintenance, a fatal error) is no answer.
+            throw new Error('HTTP ' + antwort.status);
+        }
 
         if (!antwort.ok || daten.fehler) {
             throw new Error(daten.fehler || 'HTTP ' + antwort.status);
@@ -70,7 +81,7 @@ function initSuche() {
     }
 
     async function laufe() {
-        const grenze = maxSchritte(Number(wurzel.dataset.offen || '0'));
+        const grenze = maxSchritte(Number(wurzel.dataset.offen || '0'), wurzel.dataset.schritt);
         let antwort = null;
         let schritte = 0;
         while (weiter(antwort, schritte, grenze)) {

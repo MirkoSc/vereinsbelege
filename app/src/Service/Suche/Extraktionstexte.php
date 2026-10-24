@@ -12,7 +12,8 @@ namespace App\Service\Suche;
  * are what the lists filter by, not what one types).
  *
  * The gross amount is added in German notation ("1234,56"), the way it is
- * printed on a receipt and typed into a search field.
+ * printed on a receipt and typed into a search field: always with two
+ * decimals.
  */
 final class Extraktionstexte
 {
@@ -43,8 +44,9 @@ final class Extraktionstexte
         $texte[] = is_array($extraktion['recurring'] ?? null) ? ($extraktion['recurring']['evidence'] ?? null) : null;
 
         $brutto = $extraktion['total_gross'] ?? null;
-        if (is_string($brutto) && preg_match('/^-?[0-9]+(\.[0-9]{1,2})?$/', $brutto) === 1) {
-            $texte[] = str_replace('.', ',', $brutto);
+        if (is_string($brutto) && preg_match('/^(-?[0-9]+)(?:\.([0-9]{1,2}))?$/', $brutto, $teile) === 1) {
+            // Always two decimals, as printed: "12.5" is found as "12,50".
+            $texte[] = $teile[1] . ',' . str_pad($teile[2] ?? '', 2, '0');
         }
 
         return array_values(array_filter($texte, static fn(mixed $t): bool => is_string($t) && trim($t) !== ''));

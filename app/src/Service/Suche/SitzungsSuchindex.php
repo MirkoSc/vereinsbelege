@@ -16,7 +16,7 @@ namespace App\Service\Suche;
  * No state of its own, like SessionVault: everything is in $_SESSION.
  *
  *     $_SESSION['suchindex'] = [v, id, schluessel, benutzer, bereich,
- *                               cursor, teile, fertig]
+ *                               cursor, teile, fertig, mitglieder]
  */
 final class SitzungsSuchindex
 {
@@ -25,7 +25,7 @@ final class SitzungsSuchindex
     private const string SESSION_KEY = 'suchindex';
 
     /**
-     * @return array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool}|null
+     * @return array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}|null
      *         null when there is none or it is not in a format this release writes
      */
     public function lies(): ?array
@@ -36,7 +36,7 @@ final class SitzungsSuchindex
         }
         if (!is_string($wert['id'] ?? null) || !is_string($wert['schluessel'] ?? null) || !is_string($wert['bereich'] ?? null)
             || !is_int($wert['benutzer'] ?? null) || !is_int($wert['cursor'] ?? null) || !is_int($wert['teile'] ?? null)
-            || !is_bool($wert['fertig'] ?? null)) {
+            || !is_bool($wert['fertig'] ?? null) || !is_string($wert['mitglieder'] ?? null)) {
             return null;
         }
 
@@ -48,15 +48,29 @@ final class SitzungsSuchindex
             'cursor' => $wert['cursor'],
             'teile' => $wert['teile'],
             'fertig' => $wert['fertig'],
+            'mitglieder' => $wert['mitglieder'],
         ];
     }
 
     /**
-     * @param array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool} $zustand
+     * @param array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
      */
     public function schreibe(array $zustand): void
     {
         $_SESSION[self::SESSION_KEY] = ['v' => self::VERSION, ...$zustand];
+    }
+
+    /**
+     * Forgets the entry and removes the index files it pointed to - the one
+     * way an index is thrown away (logout, "neu aufbauen", a broken part).
+     * Needs no database and no key.
+     */
+    public function verwerfen(SuchindexSpeicher $speicher): void
+    {
+        $id = $this->vergiss();
+        if ($id !== null) {
+            $speicher->loesche($id);
+        }
     }
 
     /** Forgets the entry and returns the index id it pointed to, if any. */

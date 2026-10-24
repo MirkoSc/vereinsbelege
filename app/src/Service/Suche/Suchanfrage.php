@@ -46,7 +46,8 @@ final readonly class Suchanfrage
                 $begriffe[$begriff] = true;
             }
         }
-        $begriffe = array_slice(array_keys($begriffe), 0, self::MAX_BEGRIFFE);
+        // array_keys(): a numeric term ("4711") came back as an int key.
+        $begriffe = array_slice(array_map(strval(...), array_keys($begriffe)), 0, self::MAX_BEGRIFFE);
         // Longest first: the highlighting then prefers "rechnung 4711" over
         // "rechnung" where both start at the same place.
         usort($begriffe, static fn(string $a, string $b): int => strlen($b) <=> strlen($a));

@@ -102,7 +102,7 @@ final class VolltextsucheTest extends DatabaseTestCase
     public function testALargeArchiveIsBuiltInShortSteps(): void
     {
         $ids = [];
-        for ($i = 0; $i < Volltextsuche::SCHRITT_DOKUMENTE + 5; $i++) {
+        for ($i = 0; $i < Volltextsuche::MAX_TREFFER + 5; $i++) {
             $ids[] = $id = $this->dokument();
             $this->textlayer($id, ['Beleg Vereinsheim Nummer ' . $i]);
         }
@@ -111,7 +111,7 @@ final class VolltextsucheTest extends DatabaseTestCase
 
         $stand = $suche->schritt(self::BENUTZER, $bereich, $this->tresor);
         self::assertFalse($stand->fertig);
-        self::assertSame(5, $stand->offen);
+        self::assertSame(Volltextsuche::MAX_TREFFER + 5 - Volltextsuche::SCHRITT_DOKUMENTE, $stand->offen);
 
         $stand = $suche->schritt(self::BENUTZER, $bereich, $this->tresor);
         self::assertTrue($stand->aktuell());
@@ -204,6 +204,48 @@ final class VolltextsucheTest extends DatabaseTestCase
         self::assertDirectoryDoesNotExist($this->verzeichnis . '/' . $alt);
         $suche->schritt(self::BENUTZER, $weiter, $this->tresor);
         self::assertSame([$fremde, $eigene], $this->gefunden($suche, 'trikots', $weiter));
+    }
+
+    public function testAnOldDocumentEnteringTheScopeRebuildsTheIndex(): void
+    {
+        $kostenstellen = new CostCenterRepository($this->pdo());
+        $jugend = $kostenstellen->create('Jugend');
+        $eigene = $this->dokument(kostenstelle: $jugend);
+        $this->textlayer($eigene, ['Trikots Jugend']);
+        $spaeter = $this->dokument();
+        $this->textlayer($spaeter, ['Trikots nachträglich zugeordnet']);
+
+        $suche = $this->suche();
+        $bereich = new Zugriffsbereich([$jugend]);
+        $suche->schritt(self::BENUTZER, $bereich, $this->tresor);
+        self::assertSame([$eigene], $this->gefunden($suche, 'trikots', $bereich));
+
+        // Assigned to the cost center after the build - no new artifact.
+        $this->pdo()->prepare('UPDATE document SET cost_center_id = ? WHERE id = ?')->execute([$jugend, $spaeter]);
+        $stand = $suche->nachziehen(self::BENUTZER, $bereich, $this->tresor);
+
+        self::assertTrue($stand->aktuell());
+        self::assertSame([$spaeter, $eigene], $this->gefunden($suche, 'trikots', $bereich));
+    }
+
+    public function testEachDocumentIsIndexedOncePerChange(): void
+    {
+        $ids = [];
+        for ($i = 0; $i < 3; $i++) {
+            $ids[] = $id = $this->dokument();
+            $this->textlayer($id, ['Textebene ' . $i]);
+        }
+        // A second wave of artifacts for the same documents, before the build.
+        foreach ($ids as $id) {
+            $this->kiExtraktion($id, ['purpose_short' => 'Zweck']);
+        }
+
+        $suche = $this->suche();
+        $bereich = Zugriffsbereich::unbeschraenkt();
+        self::assertSame(3, $suche->stand(self::BENUTZER, $bereich, $this->tresor)->offen);
+        self::assertTrue($suche->schritt(self::BENUTZER, $bereich, $this->tresor)->aktuell());
+        self::assertSame(1, $this->teile());
+        self::assertSame(array_reverse($ids), $this->gefunden($suche, 'zweck textebene'));
     }
 
     public function testAnotherAccountOrVaultStartsOver(): void

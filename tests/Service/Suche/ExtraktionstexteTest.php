@@ -32,9 +32,15 @@ final class ExtraktionstexteTest extends TestCase
         ]);
 
         self::assertSame(
-            ['Getränke Becker', 'Hauptstr. 1', 'DE89370400440532013000', 'RE-2026-17', 'Getränke Sommerfest', 'M-9', 'Abschlag Mai', '1234,5'],
+            ['Getränke Becker', 'Hauptstr. 1', 'DE89370400440532013000', 'RE-2026-17', 'Getränke Sommerfest', 'M-9', 'Abschlag Mai', '1234,50'],
             $texte,
         );
+    }
+
+    public function testTheAmountAlwaysHasTwoDecimals(): void
+    {
+        self::assertSame(['12,00'], Extraktionstexte::aus(['total_gross' => '12']));
+        self::assertSame(['-3,05'], Extraktionstexte::aus(['total_gross' => '-3.05']));
     }
 
     public function testAnythingMalformedIsSkipped(): void

@@ -1006,12 +1006,7 @@ $auth = static fn(): AuthController => new AuthController(
     static fn(): AuditLog => $auditFor($connections->pdo()),
     // The session's full-text index (issue #94) goes with the session -
     // its files only; no database needed for that.
-    static function () use ($paths): void {
-        $id = new SitzungsSuchindex()->vergiss();
-        if ($id !== null) {
-            new SuchindexSpeicher($paths->suchindexDir())->loesche($id);
-        }
-    },
+    static fn() => new SitzungsSuchindex()->verwerfen(new SuchindexSpeicher($paths->suchindexDir())),
 );
 
 // The second factor's own confirmation controller (M3-4, issue #17): built

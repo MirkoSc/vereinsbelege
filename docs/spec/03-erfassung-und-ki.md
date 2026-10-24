@@ -1276,7 +1276,7 @@ liegt (CLAUDE.md §5, E-19).
   einer Extraktion (`Extraktionstexte`, Format `extract-v1`) zählen
   Lieferantenangaben, Rechnungs-/Kunden-/Vertragsnummer, Zweck,
   Mandatsreferenz, Hinweis auf Wiederkehr und der Bruttobetrag in deutscher
-  Schreibweise („1234,50“). Der OCR-Text des Workers (07, #51–#55) kommt ohne
+  Schreibweise mit zwei Nachkommastellen („1234,50“, auch aus „1234.5“). Der OCR-Text des Workers (07, #51–#55) kommt ohne
   Umbau dazu: als Artefakt `text` deckt ihn `TextlayerQuelle` schon ab,
   sonst als eigene Quelle mit eigener Artefakt-Art.
 - *Normalisierung* (`Suchtext`): Kleinschreibung, Leerraum zu einem
@@ -1299,12 +1299,18 @@ liegt (CLAUDE.md §5, E-19).
   (`Volltextsuche::schritt()`, JSON `{fertig, offen}`) nimmt bis zu 40
   Dokumente (`SCHRITT_DOKUMENTE`) auf und schreibt sie als einen Teil;
   `public/js/suche.js` wiederholt das, bis der Index aktuell ist, und schickt
-  dann das Suchformular erneut ab. Welche Dokumente dran sind, sagt der
-  **Cursor = höchste aufgenommene `document_artifact.id`** der Arten, die die
-  Quellen lesen (`text`, `e_rechnung`, `extraction`): Ein neuer Joblauf
-  schreibt neue Zeilen, sein Dokument kommt in den nächsten Schritt; beim
-  Suchen werden die Teile vom neuesten her gelesen, so gilt je Dokument der
-  neueste Eintrag (auch ein leerer). Der erste Aufbau ist dasselbe ab Cursor 0.
+  dann das Suchformular erneut ab (Schrittgröße und offene Belege als
+  `data-*`). Welche Dokumente dran sind, sagt der **Cursor = höchste
+  aufgenommene `document_artifact.id`** der Arten, die die Quellen lesen
+  (`text`, `e_rechnung`, `extraction`): Ein Schritt nimmt die Dokumente mit
+  Artefakten über dem Cursor in der Reihenfolge ihres jeweils neuesten
+  Artefakts (`DocumentArtifactRepository::naechsteSuchdokumente()`), der neue
+  Cursor ist das neueste Artefakt des letzten – so wird jedes Dokument je
+  Änderung genau einmal aufgenommen, und `offen` sinkt je Schritt um die
+  Schrittgröße. Ein neuer Joblauf schreibt neue Zeilen, sein Dokument kommt
+  in den nächsten Schritt; beim Suchen werden die Teile vom neuesten her
+  gelesen, so gilt je Dokument der neueste Eintrag (auch ein leerer). Der
+  erste Aufbau ist dasselbe ab Cursor 0.
   Sind höchstens 40 Dokumente offen (kleiner Verein, ein paar neue Belege seit
   der letzten Suche), erledigt die Seite das gleich selbst
   (`Volltextsuche::nachziehen()`), ohne Kette. Gebaut wird beim ersten Aufruf
@@ -1314,7 +1320,9 @@ liegt (CLAUDE.md §5, E-19).
   Begriffe an Leerraum getrennt, „in Anführungszeichen“ als Phrase, alle
   müssen vorkommen (UND), mindestens 2 Zeichen, höchstens 8 Begriffe und
   200 Zeichen (`Suchanfrage`); Treffer neueste zuerst (Dokument-ID), höchstens
-  50 (`MAX_TREFFER`, darüber „weitere Treffer – bitte eingrenzen“), je Treffer
+  50 (`MAX_TREFFER`, darüber „weitere Treffer – bitte eingrenzen“; erst
+  werden alle Teile nach passenden Dokument-IDs durchsucht, der Ausschnitt
+  nur für die angezeigten Treffer gebildet), je Treffer
   Referenz (Link auf `/app/posteingang/{id}`), Eingang, Status,
   Mannschaft/Bereich und ein Ausschnitt um die erste Fundstelle mit
   `<mark>` (Segmente, in der View escaped). Gesucht wird nur in einem Index,
@@ -1326,7 +1334,13 @@ liegt (CLAUDE.md §5, E-19).
   `document.created_at`/`cost_center_id`), und jeder Treffer wird vor der
   Anzeige erneut in SQL gegen den Scope geprüft
   (`DocumentRepository::inboxItems()`): Ein Dokument, das den Scope
-  inzwischen verlassen hat, steht noch im Index, erscheint aber nicht.
+  inzwischen verlassen hat, steht noch im Index, erscheint aber nicht. Bei
+  einem Kostenstellen-Scope merkt sich die Session zusätzlich eine Signatur
+  der aufgenommenen Dokumente (Anzahl und Summe ihrer IDs bis zum Cursor,
+  `suchdokumenteBis()`); bekommt ein altes Dokument nachträglich eine
+  Kostenstelle des Scopes (oder verliert sie), passt die Signatur nicht mehr
+  und der Index wird neu gebaut. Ein Zeitraum-Scope hängt an
+  `created_at`, das sich nie ändert.
 - *Verwerfen und Neuaufbau:* anderer Benutzer, geänderter Scope, ein Tresor,
   der den Schlüssel nicht öffnet, ein unbekanntes Session-Format, ein
   fehlender oder manipulierter Teil → Index weg (Dateien und Session-Eintrag),
@@ -1338,6 +1352,10 @@ liegt (CLAUDE.md §5, E-19).
 - *Bekannte Grenzen:* Ein Artefakt, dessen `data_enc` erst nach dem Lesen
   eines Schritts gesetzt wird (Einfügen und Füllen liegen im selben Request
   von Millisekunden), fehlt im Index bis zum nächsten Lauf oder Neuaufbau.
+  Jede Suche entschlüsselt alle Teile in einem Request; bei einigen
+  Tausend Belegen je Jahr (typisch wenige KiB Text je Beleg) sind das einige
+  MiB und damit kurz – sehr große Archive mit langen PDF-Texten machen die
+  Suche entsprechend langsamer.
   Kompression vor Verschlüsselung verrät über die (auf 4 KiB gerundete)
   Größe eines Teils grob, wie gut sich sein Text packen lässt; ausnutzbar
   wäre das nur mit Lesezugriff auf `var/tmp` und vielen gezielten
