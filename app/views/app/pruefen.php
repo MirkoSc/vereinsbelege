@@ -48,6 +48,8 @@
  * @var list<string> $archivHinweise what the archive import read, and where it differs (issue #77/M12-3)
  * @var \App\Service\Document\KiAuszug|null $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
  * @var list<string> $unsicher form fields the AI filled in unsure (confidence below 0.7)
+ * @var string $lieferantHinweis how the supplier was resolved - step and value (issue #48/M7-6)
+ * @var bool $lieferantPruefen the chosen supplier was created by the AI and is still to review
  * @var bool $kiLaeuft an AI run for this document is queued or running
  * @var bool $kiAnstossbar the page may offer to ask the AI (again)
  * @var string $csrf
@@ -338,6 +340,14 @@ $rollenGruppe = [
                         <?php endforeach; ?>
                     </select>
                 </label>
+                <?php if (($lieferantHinweis ?? '') !== '' && $bearbeitbar): ?>
+                    <p class="feld-hilfe" id="pruefen-lieferant-herkunft">
+                        <?= e($lieferantHinweis) ?>
+                        <?php if (($lieferantPruefen ?? false) && $darfLieferantAnlegen): ?>
+                            <a href="/app/lieferanten?pruefen=1">Neue Lieferanten prüfen</a>
+                        <?php endif; ?>
+                    </p>
+                <?php endif; ?>
                 <?php if ($darfLieferantAnlegen && $bearbeitbar): ?>
                     <p class="feld-hilfe">Noch nicht vorhanden? Dann hier neu anlegen – als Lieferant bei einer Ausgabe, als Zahler bei einer Einnahme.</p>
                     <label for="pruefen-lieferant-neu-name">Neu anlegen: Name<?= $unsicherMarke('lieferant_neu_name') ?>

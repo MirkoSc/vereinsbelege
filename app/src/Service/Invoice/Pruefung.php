@@ -35,8 +35,11 @@ use App\Service\Crypto\Vault;
 use App\Service\Document\ERechnungAuszug;
 use App\Service\Document\KiAuslesung;
 use App\Service\Document\KiAuszug;
+use App\Service\Document\LieferantenAufloesung;
 use App\Service\Document\Texterkennung;
 use App\Service\Inbox\Posteingang;
+use App\Service\MasterData\Aufloesung;
+use App\Service\MasterData\AufloesungsArt;
 use App\Service\MasterData\SupplierKeys;
 use App\Service\MasterData\SupplierRuleViolation;
 use App\Service\MasterData\SupplierService;
@@ -68,9 +71,10 @@ use App\Service\Upload\MagicBytes;
  *   automatically filled in - vorbelegen(), in the shape of `extract-v1`:
  *   the AI's suggestion (issue #47/M7-5, App\Service\Document\
  *   KiAuslesung::auszug()), and over it the fields of a read e-invoice
- *   (issue #46/M7-4, App\Service\Document\Texterkennung::eRechnung()).
- *   Nothing is saved before a person does. kiErneut() queues the AI again
- *   after it failed.
+ *   (issue #46/M7-4, App\Service\Document\Texterkennung::eRechnung()), and
+ *   the supplier as the resolution found it (issue #48/M7-6,
+ *   lieferantVorbelegen()). Nothing is saved before a person does.
+ *   kiErneut() queues the AI again after it failed.
  *
  * Framework-free like the other services: no Http, no Session. Nothing
  * decrypted leaves through an exception message or the audit log - the log
@@ -110,6 +114,7 @@ final readonly class Pruefung
         private Posteingang $posteingang,
         private AuditLog $audit,
         private KiAuslesung $kiAuslesung,
+        private LieferantenAufloesung $lieferantenAufloesung,
     ) {
     }
 
@@ -301,6 +306,127 @@ final readonly class Pruefung
     public function kiAuszug(Document $document, Vault $vault): ?KiAuszug
     {
         return $this->kiAuslesung->auszug($document, $vault);
+    }
+
+    /**
+     * How `resolve_supplier` resolved the supplier of the AI's suggestion
+     * (issue #48/M7-6), or null when it has not (yet).
+     */
+    public function lieferantenAufloesung(Document $document, Vault $vault): ?Aufloesung
+    {
+        return $this->lieferantenAufloesung->ergebnis($document, $vault);
+    }
+
+    /**
+     * The supplier field filled from the resolution (issue #48/M7-6,
+     * docs/spec/03-erfassung-und-ki.md section 7), laid over what the AI
+     * and an e-invoice put there: a match (steps 1-4) and a supplier the AI
+     * created (step 6) are chosen, a similar name (step 5) is chosen but
+     * marked unsure - it is a suggestion. An ambiguous name or one of the
+     * other role chooses nothing and offers no new partner either. The supplier must still exist, not be
+     * merged away (it stands for its target then) and fit the direction
+     * the form now has. $hinweis says which step decided and by what - with
+     * names, for the page only.
+     *
+     * @param array<string, string> $felder
+     *
+     * @return array{felder: array<string, string>, hinweis: string, unsicher: bool, pruefen: bool}
+     */
+    public function lieferantVorbelegen(array $felder, Aufloesung $aufloesung, Vault $vault): array
+    {
+        $richtung = InvoiceDirection::tryFrom($felder['richtung'] ?? '') ?? InvoiceDirection::Ausgabe;
+        $finde = function (?int $id) use ($vault): ?Supplier {
+            $lieferant = $id === null ? null : $this->lieferanten->finde($vault, $this->lieferantenRepository->aufgeloest($id));
+
+            return $lieferant?->mergedInto === null ? $lieferant : null;
+        };
+        $waehle = static function (?Supplier $lieferant) use (&$felder, $richtung): bool {
+            if ($lieferant === null || !$richtung->passtZuLieferant($lieferant->role)) {
+                return false;
+            }
+            $felder['lieferant'] = (string) $lieferant->id;
+            $felder['lieferant_neu_name'] = '';
+            $felder['lieferant_neu_iban'] = '';
+
+            return true;
+        };
+        $name = static fn(Supplier $lieferant): string => '„' . $lieferant->data->name . '“';
+        $prozent = static fn(float $wert): string => sprintf('%d %%', (int) floor($wert * 100));
+        $gefunden = $finde($aufloesung->supplierId);
+        $verschwunden = sprintf('Der damals gefundene %s passt nicht mehr (gelöscht oder andere Rolle) – bitte selbst wählen.', $richtung->partner());
+
+        $hinweis = '';
+        $unsicher = false;
+        $pruefen = false;
+        switch ($aufloesung->art) {
+            case AufloesungsArt::Treffer:
+                $hinweis = $waehle($gefunden)
+                    ? sprintf('%s automatisch erkannt (%s).', $richtung->partner(), $aufloesung->stufeText())
+                    : $verschwunden;
+                break;
+            case AufloesungsArt::Angelegt:
+                if ($waehle($gefunden)) {
+                    $pruefen = $gefunden !== null && $gefunden->needsReview;
+                    $hinweis = sprintf('Die KI hat %s neu angelegt (%s)%s', $name($gefunden), $aufloesung->stufeText(), $pruefen ? ' – bitte unter „Neue Lieferanten prüfen“ kontrollieren.' : '.');
+                } else {
+                    $hinweis = sprintf('Der von der KI angelegte %s wurde inzwischen gelöscht oder passt nicht mehr – bitte selbst wählen.', $richtung->partner());
+                }
+                break;
+            case AufloesungsArt::Vorschlag:
+                if ($waehle($gefunden)) {
+                    $unsicher = true;
+                    $weitere = [];
+                    foreach (array_slice($aufloesung->kandidaten, 1) as $kandidat) {
+                        $anderer = $finde($kandidat['id']);
+                        if ($anderer !== null) {
+                            $weitere[] = $name($anderer) . ' (' . $prozent($kandidat['aehnlichkeit']) . ')';
+                        }
+                    }
+                    $hinweis = sprintf(
+                        'Kein genauer Treffer (Stufe %d) – Vorschlag nach ähnlichem Namen: %s (%s)%s. Bitte prüfen.',
+                        $aufloesung->stufe,
+                        $name($gefunden),
+                        $prozent($aufloesung->kandidaten[0]['aehnlichkeit'] ?? 0.0),
+                        $weitere === [] ? '' : '; ebenfalls ähnlich: ' . implode(', ', $weitere),
+                    );
+                } else {
+                    $hinweis = $verschwunden;
+                }
+                break;
+            case AufloesungsArt::Mehrdeutig:
+                // The name is known already - offering it as a new partner
+                // would invite a third one of the same name.
+                $felder['lieferant_neu_name'] = '';
+                $felder['lieferant_neu_iban'] = '';
+                $namen = [];
+                foreach ($aufloesung->kandidaten as $kandidat) {
+                    $anderer = $finde($kandidat['id']);
+                    if ($anderer !== null) {
+                        $namen[] = $name($anderer);
+                    }
+                }
+                $hinweis = sprintf('Mehrere Partner tragen diesen Namen (Stufe %d)%s – bitte den richtigen wählen.', $aufloesung->stufe, $namen === [] ? '' : ': ' . implode(', ', $namen));
+                break;
+            case AufloesungsArt::RollePasstNicht:
+                // The id or name belongs to that partner: a new one would be
+                // the same partner twice (and its IBAN would be refused).
+                $felder['lieferant_neu_name'] = '';
+                $felder['lieferant_neu_iban'] = '';
+                $hinweis = $gefunden === null
+                    ? $verschwunden
+                    : sprintf(
+                        'Gefunden über %s: %s – ist aber als %s hinterlegt und passt nicht zu einer %s. Bitte die Rolle unter „Lieferanten & Zahler“ anpassen oder selbst wählen.',
+                        $aufloesung->stufeText(),
+                        $name($gefunden),
+                        $gefunden->role->label(),
+                        $richtung->label(),
+                    );
+                break;
+            case AufloesungsArt::Ohne:
+                break;
+        }
+
+        return ['felder' => $felder, 'hinweis' => $hinweis, 'unsicher' => $unsicher, 'pruefen' => $pruefen];
     }
 
     /** Whether the AI is reading the document right now (a run is queued or running). */

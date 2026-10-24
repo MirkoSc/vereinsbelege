@@ -32,6 +32,7 @@ use App\Service\Ki\KiAbfrage;
 use App\Service\Ki\KiAnbieter;
 use App\Service\Ki\KiErgebnis;
 use App\Service\Ki\KiVersuch;
+use App\Service\MasterData\SupplierAufloesung;
 use App\Service\Processing\KiAuslese\AusleseEingabe;
 use App\Service\Processing\KiAuslese\AusleseVorschlag;
 use App\Service\Processing\KiAuslese\Auslesung;
@@ -74,7 +75,11 @@ use App\Service\Upload\MagicBytes;
  * job's own `state` holds only the counter `n`. The last step drops older
  * runs and moves the document to `ausgewertet` or `ki_fehler` - only from
  * `bereit_zur_auswertung`: a receipt a person has already taken up keeps its
- * status, a fixed one (01 section 7) is never touched.
+ * status, a fixed one (01 section 7) is never touched. A document that
+ * reached `ausgewertet` gets the supplier resolution queued next
+ * (`resolve_supplier`, issue #48/M7-6, App\Service\Document\
+ * LieferantenAufloesung); the prompt carries the blind-index preselection of
+ * known suppliers (App\Service\MasterData\SupplierAufloesung::vorauswahl()).
  *
  * Queued by accepting a document in the inbox (App\Service\Inbox\
  * Posteingang), by the archive import, by "KI erneut versuchen" in the
@@ -116,6 +121,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         private AiProviderRepository $anbieter,
         private KiAbfrage $abfrage,
         private Auslesung $auslesung,
+        private SupplierAufloesung $lieferanten,
     ) {
     }
 
@@ -347,7 +353,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Extraction, $job->id);
         // Only from `bereit_zur_auswertung` (UPDATE ... WHERE status = ?): a
         // receipt someone took up meanwhile keeps its status.
-        $this->documents->wechsleStatus(
+        $gewechselt = $this->documents->wechsleStatus(
             $document->id,
             DocumentStatus::BereitZurAuswertung,
             $gueltig ? DocumentStatus::Ausgewertet : DocumentStatus::KiFehler,
@@ -356,6 +362,10 @@ final readonly class KiAuslesung implements ExternerJobHandler
             null,
             $now,
         );
+        // Next: which supplier the suggestion names (issue #48/M7-6).
+        if ($gueltig && $gewechselt) {
+            LieferantenAufloesung::einreihen($this->jobs, $document->id, $now);
+        }
 
         return JobSchrittErgebnis::fertig();
     }
@@ -363,7 +373,8 @@ final readonly class KiAuslesung implements ExternerJobHandler
     /**
      * What the AI gets for $document. The page images only when the text
      * layer does not reach (`ocr_status` other than `fertig`), and loaded
-     * only $mitBildern - step '' needs just their number.
+     * only $mitBildern - step '' needs just their number; the same for the
+     * preselection of known suppliers.
      */
     private function eingabe(Document $document, Vault $vault, KiAnbieter $profil, bool $mitBildern): AusleseEingabe
     {
@@ -373,14 +384,22 @@ final readonly class KiAuslesung implements ExternerJobHandler
             : $this->seitenbilder($document, $vault, $mitBildern ? Auslesung::bilderGrenze($profil) : 0);
         $item = $document->submissionId === null ? null : $this->documents->inboxItem($document->id, Zugriffsbereich::unbeschraenkt());
 
+        $text = $this->texterkennung->textFuerKi($document, $vault);
+        $eRechnungDaten = $eRechnung !== null && $eRechnung->gelesen() ? $eRechnung->extraktion : null;
+        $freitext = $item === null ? '' : (EinreichungsDaten::entschluesseln($item, $vault)?->freitext ?? '');
+
         return new AusleseEingabe(
-            $this->texterkennung->textFuerKi($document, $vault),
-            $eRechnung !== null && $eRechnung->gelesen() ? $eRechnung->extraktion : null,
+            $text,
+            $eRechnungDaten,
             $bilder,
             $seiten,
-            $item === null ? '' : (EinreichungsDaten::entschluesseln($item, $vault)?->freitext ?? ''),
+            $freitext,
             array_values(array_filter($this->kategorien->all(), static fn(Category $k): bool => $k->active)),
             $this->kostenstellen->active(),
+            // Only for the request itself - step '' just checks.
+            $mitBildern
+                ? $this->lieferanten->vorauswahl($vault, [$text ?? '', $freitext], is_array($eRechnungDaten['supplier'] ?? null) ? $eRechnungDaten['supplier'] : [])
+                : [],
         );
     }
 

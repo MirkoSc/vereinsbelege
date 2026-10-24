@@ -475,6 +475,8 @@ return static function (
     $get('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->bearbeiten($r, $params));
     $post('/app/lieferanten/{id:\d+}', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->speichern($r, $params));
     $post('/app/lieferanten/{id:\d+}/loeschen', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->loeschen($r, $params));
+    // Issue #48/M7-6: a supplier the AI created leaves "Neue Lieferanten prüfen".
+    $post('/app/lieferanten/{id:\d+}/geprueft', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->geprueft($r, $params));
     // Merging a duplicate (M6-5, issue #39): preview, then the merge.
     $get('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehrenVorschau($r, $params));
     $post('/app/lieferanten/{id:\d+}/zusammenfuehren', $lieferantenPflege, static fn(Request $r, array $params) => $lieferanten()->zusammenfuehren($r, $params));

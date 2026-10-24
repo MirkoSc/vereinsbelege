@@ -1295,6 +1295,94 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Archiv: Datum 14.09.2026, KI: 12.09.2026 – Archivwert übernommen.', $seite);
     }
 
+    // ------------------------------- supplier resolution (M7-6, #48)
+
+    public function testASupplierFoundByItsIbanIsChosenAndThePageSaysHow(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'SH Beispiel', 'vat_id' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>Sporthaus Beispiel<\/option>/', $seite);
+        self::assertMatchesRegularExpression('/name="lieferant_neu_name"[^>]*value=""/', $seite, 'a choice, not a new one');
+        self::assertStringContainsString('Lieferant automatisch erkannt (Stufe 2 – IBAN).', $seite);
+        self::assertDoesNotMatchRegularExpression('/name="lieferant"[^>]*class="feld-unsicher"/', $seite);
+    }
+
+    public function testASimilarNameIsChosenButMarkedAsASuggestion(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'vat_id' => '', 'iban' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite);
+        self::assertMatchesRegularExpression('/<select id="pruefen-lieferant" name="lieferant" class="feld-unsicher">/', $seite);
+        self::assertMatchesRegularExpression('/Kein genauer Treffer \(Stufe 5\) – Vorschlag nach ähnlichem Namen: „Sporthaus Beispiel“ \(\d\d %\)\. Bitte prüfen\./', $seite);
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM supplier')->fetchColumn(), 'a suggestion creates nothing');
+    }
+
+    public function testASupplierTheAiCreatedIsChosenAndPointsToTheReviewList(): void
+    {
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        $neu = (int) $this->pdo()->query("SELECT id FROM supplier WHERE created_via = 'ki' AND needs_review = 1")->fetchColumn();
+        self::assertGreaterThan(0, $neu);
+        self::assertMatchesRegularExpression('/<option value="' . $neu . '" selected>Sporthaus Beispiel GmbH<\/option>/', $seite);
+        self::assertStringContainsString('Die KI hat „Sporthaus Beispiel GmbH“ neu angelegt (Stufe 6 – neu angelegt) – bitte unter „Neue Lieferanten prüfen“ kontrollieren.', $seite);
+        self::assertStringContainsString('<a href="/app/lieferanten?pruefen=1">Neue Lieferanten prüfen</a>', $seite);
+
+        // Saved with it, the receipt points at the new supplier.
+        $this->post('/app/belege/pruefen/' . $id, $this->felder(['lieferant' => (string) $neu, 'aktion' => 'speichern']));
+        self::assertSame($neu, (int) $this->pdo()->query('SELECT supplier_id FROM invoice')->fetchColumn());
+    }
+
+    public function testAPartnerOfTheOtherRoleIsNamedButNotChosen(): void
+    {
+        $this->lieferant('Förderverein Musterstadt', SupplierRole::Zahler, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['vat_id' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertDoesNotMatchRegularExpression('/<option value="\d+" selected>Förderverein/', $seite);
+        self::assertMatchesRegularExpression('/name="lieferant_neu_name"[^>]*value=""/', $seite, 'no second partner with that IBAN offered');
+        self::assertStringContainsString('Gefunden über Stufe 2 – IBAN: „Förderverein Musterstadt“ – ist aber als Zahler hinterlegt und passt nicht zu einer Ausgabe.', $seite);
+    }
+
+    public function testTheResolutionUsesTheSellerOfAReadEInvoice(): void
+    {
+        $id = $this->beleg(seiten: [[self::eRechnung('xrechnung-cii.xml'), MagicBytes::XML]]);
+        $this->eRechnungLesen();
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        $neu = (int) $this->pdo()->query("SELECT id FROM supplier WHERE created_via = 'ki'")->fetchColumn();
+        self::assertMatchesRegularExpression('/<option value="' . $neu . '" selected>Muster Sportartikel GmbH<\/option>/', $seite, 'the invoice\'s seller, not the AI\'s reading');
+    }
+
+    public function testTheArchiveStillWinsOverTheResolution(): void
+    {
+        $archiv = $this->lieferant('Muster Sport', SupplierRole::Lieferant);
+        $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg(quelle: DocumentSource::Archiv);
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+        // Written after the resolution ran - as if the path were read later.
+        $this->vorgabe($id, new ArchivVorgabe(pfad: 'Muster Sport 14.09.2026.pdf', lieferantId: $archiv, lieferantName: 'Muster Sport'));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/<option value="' . $archiv . '" selected>/', $seite);
+        self::assertStringNotContainsString('automatisch erkannt', $seite, 'no word on a choice the page does not show');
+    }
+
     public function testAFailedAiSaysWhyAndCanBeAskedAgain(): void
     {
         $id = $this->beleg();
@@ -1386,11 +1474,12 @@ final class PruefungFlowTest extends DatabaseTestCase
     /**
      * Runs `ai_extract` for every document waiting for it, with these
      * recorded answers - as a signed-in session would (App\Api\
-     * JobController: a step waiting on the AI finishes after the call).
+     * JobController: a step waiting on the AI finishes after the call) -
+     * and with $aufloesen the supplier resolution it queues.
      *
      * @param list<LlmAntwort|\Throwable> $antworten
      */
-    private function kiLesen(array $antworten): void
+    private function kiLesen(array $antworten, bool $aufloesen = false): void
     {
         $this->kiEinrichten();
         $this->kiClient = new FakeLlmClient($antworten);
@@ -1399,7 +1488,11 @@ final class PruefungFlowTest extends DatabaseTestCase
             KiAuslesung::einreihen($jobs, (int) $id, new \DateTimeImmutable());
         }
         $berechtigungen = new UserAccessRepository($this->pdo())->berechtigungen($this->userId);
-        $runner = fn(): JobRunner => new JobRunner(new JobRepository($this->pdo()), [KiAuslesungFabrik::bauen($this->pdo(), $this->blobService(), $this->crypto, $this->kiClient)]);
+        $runner = fn(): JobRunner => new JobRunner(new JobRepository($this->pdo()), [
+            KiAuslesungFabrik::bauen($this->pdo(), $this->blobService(), $this->crypto, $this->kiClient),
+            // `resolve_supplier` (issue #48/M7-6) only where a test asks for it.
+            ...($aufloesen ? [KiAuslesungFabrik::lieferanten($this->pdo(), $this->blobService(), $this->crypto, $this->audit)] : []),
+        ]);
         for ($i = 0; $i < 30; $i++) {
             $lauf = $runner()->schritt($berechtigungen, $this->tresor, new \DateTimeImmutable());
             if ($lauf->aufrufAusstehend()) {
@@ -1425,6 +1518,20 @@ final class PruefungFlowTest extends DatabaseTestCase
         $huelle['choices'][0]['message']['content'] = json_encode($inhalt, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
 
         return LlmAntwort::ausChatCompletion(json_encode($huelle, JSON_THROW_ON_ERROR), 'gpt-6-luna', 1200);
+    }
+
+    /**
+     * The recorded answer's `supplier` with $aenderungen laid over it.
+     *
+     * @param array<string, string> $aenderungen
+     *
+     * @return array<string, string>
+     */
+    private static function partner(array $aenderungen): array
+    {
+        $huelle = json_decode(FakeChatHttp::fixture('extract-v1/gueltig.json')->body, true, flags: JSON_THROW_ON_ERROR);
+
+        return [...json_decode($huelle['choices'][0]['message']['content'], true, flags: JSON_THROW_ON_ERROR)['supplier'], ...$aenderungen];
     }
 
     private function offeneKiJobs(int $documentId): int
@@ -1559,6 +1666,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
             $this->audit,
             KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto, $this->kiClient),
+            KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
         );
     }
 

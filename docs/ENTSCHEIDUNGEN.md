@@ -119,6 +119,39 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ❓ Lieferanten-Auflösung: Schwelle, Vorschlag, Rollen
+*M7-6 (issue #48) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
+- **Ähnlichkeit (Stufe 5):** der bessere von Levenshtein (auf Buchstaben)
+  und Trigramm-Dice nach der Normalisierung aus Stufe 4; **Schwelle 0,8**.
+  Namen unter 4 Buchstaben gelten nur bei Gleichheit als ähnlich („OBI“ ≠
+  „ABI“). Beispiele: „Getränke Müller GmbH“/„Getraenke Muller“ 0,94 →
+  Vorschlag; „Sporthaus Nord“/„Sporthaus Süd“ 0,79 → kein Vorschlag;
+  „Ballsport Meier“/„Ballsport Maier“ 0,93 → Vorschlag (ein Mensch prüft).
+- **Vorschlag in der Prüfansicht:** der ähnlichste Lieferant ist
+  **vorausgewählt, aber gelb markiert** („KI unsicher“) mit Hinweis und
+  Prozentwert; bis zu zwei weitere Kandidaten werden genannt. Angelegt wird
+  bei einem Vorschlag nichts.
+- **Falsche Rolle:** trifft eine Kennung oder der Name einen Partner der
+  anderen Rolle (Zahler bei einer Ausgabe), wird **nichts gewählt und nichts
+  angelegt** – es wäre derselbe Partner doppelt; die Seite nennt ihn und
+  bittet, die Rolle anzupassen. Ebenso bei **mehreren gleichnamigen**
+  Lieferanten (Stufe 4): keine Wahl, keine Anlage.
+- **Automatische Anlage** nur nach einem gültigen KI-Vorschlag (Job
+  `resolve_supplier` nach `ai_extract`), nicht für E-Rechnungen ohne KI;
+  übernommen wird, was die KI zum Lieferanten las, **unbrauchbare Einzelwerte
+  (falsche IBAN-Prüfziffer, ungültige USt-ID/E-Mail) werden weggelassen**
+  statt die Anlage scheitern zu lassen; keine Standard-Kategorie. Belege aus
+  dem Archiv-Import, deren Pfad schon einen Lieferanten nennt, werden nicht
+  aufgelöst.
+- **„Geprüft“:** Speichern des Lieferanten-Formulars gilt als geprüft;
+  zusätzlich „Als geprüft markieren“ ohne Änderung. Zusammenführen ändert
+  `needs_review` des Ziels nicht (M6-5).
+- **Noch nicht umgesetzt:** „Neu gelernte Merkmale (weitere IBAN,
+  Alias-Name) werden nach Bestätigung hinzugefügt“ (03 §7) – kein
+  Abnahmekriterium von #48, eigenes Folge-Issue.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

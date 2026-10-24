@@ -799,6 +799,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
                 $this->audit,
                 KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto),
+                KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
             ),
             new Festschreibung($pdo, $documents, new InvoiceRepository($pdo), $this->audit),
             new CategoryRepository($pdo),

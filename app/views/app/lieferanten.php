@@ -17,6 +17,8 @@
  * @var list<\App\Domain\Supplier> $lieferanten
  * @var \App\Domain\SupplierRole|null $rolle
  * @var string $suche
+ * @var bool $pruefen only the suppliers the AI created, still to review (issue #48/M7-6)
+ * @var int $zuPruefen how many those are
  * @var array<int, string> $kategorien id => name
  */
 
@@ -25,9 +27,24 @@ use App\Domain\SupplierRole;
 
 ?>
 <section>
-    <h2>Lieferanten &amp; Zahler</h2>
+    <h2><?= $pruefen ? 'Neue Lieferanten prüfen' : 'Lieferanten &amp; Zahler' ?></h2>
 
-    <p class="gedaempft">
+    <?php if ($pruefen): ?>
+        <p><a href="/app/lieferanten">← Alle Lieferanten</a></p>
+        <p class="gedaempft">
+            Diese Lieferanten und Zahler hat die KI beim Auslesen von Belegen neu angelegt, weil sie keinen
+            vorhandenen fand. Bitte je Eintrag prüfen: Angaben korrigieren, als geprüft markieren – oder, wenn
+            es ihn schon gibt, mit dem vorhandenen zusammenführen.
+        </p>
+    <?php elseif ($zuPruefen > 0): ?>
+        <p class="hinweis hinweis-warnung">
+            <?= e((string) $zuPruefen) ?> <?= $zuPruefen === 1 ? 'Lieferant wurde' : 'Lieferanten wurden' ?> von der KI neu angelegt und
+            <?= $zuPruefen === 1 ? 'wartet' : 'warten' ?> auf eine Prüfung.
+            <a href="/app/lieferanten?pruefen=1">Neue Lieferanten prüfen</a>
+        </p>
+    <?php endif; ?>
+
+    <p class="gedaempft"<?= $pruefen ? ' hidden' : '' ?>>
         Stammdaten der Geschäftspartner: Lieferanten schicken Rechnungen, Zahler (Sponsoren, Gemeinde,
         Verband) zahlen an den Verein. IBANs, USt-ID und Aliasse helfen später, Belege und Buchungen
         automatisch zuzuordnen. Eine IBAN oder USt-ID gehört zu genau einem Lieferanten.
@@ -44,6 +61,9 @@ use App\Domain\SupplierRole;
         </p>
 
         <form method="get" action="/app/lieferanten" class="formular">
+            <?php if ($pruefen): ?>
+                <input type="hidden" name="pruefen" value="1">
+            <?php endif; ?>
             <label for="lieferanten-suche">Suche
                 <input type="search" id="lieferanten-suche" name="q" value="<?= e($suche) ?>"
                        aria-describedby="lieferanten-suche-hilfe">
@@ -62,13 +82,17 @@ use App\Domain\SupplierRole;
             <p class="knopfreihe">
                 <button type="submit" class="knopf">Filtern</button>
                 <?php if ($suche !== '' || $rolle !== null): ?>
-                    <a class="knopf knopf-still" href="/app/lieferanten">Zurücksetzen</a>
+                    <a class="knopf knopf-still" href="/app/lieferanten<?= $pruefen ? '?pruefen=1' : '' ?>">Zurücksetzen</a>
                 <?php endif; ?>
             </p>
         </form>
 
         <?php if ($lieferanten === []): ?>
-            <div class="leer"><?= $suche !== '' || $rolle !== null ? 'Keine Lieferanten zu diesem Filter.' : 'Noch keine Lieferanten angelegt.' ?></div>
+            <div class="leer"><?= match (true) {
+                $suche !== '' || $rolle !== null => 'Keine Lieferanten zu diesem Filter.',
+                $pruefen => 'Keine neuen Lieferanten zu prüfen.',
+                default => 'Noch keine Lieferanten angelegt.',
+            } ?></div>
         <?php else: ?>
             <div class="tabelle-rahmen">
                 <table class="tabelle">
@@ -79,6 +103,10 @@ use App\Domain\SupplierRole;
                             <th scope="col">Rolle</th>
                             <th scope="col">IBAN</th>
                             <th scope="col">Standard-Kategorie</th>
+                            <?php if ($pruefen): ?>
+                                <th scope="col">Angelegt</th>
+                                <th scope="col">Aktion</th>
+                            <?php endif; ?>
                         </tr>
                     </thead>
                     <tbody>
@@ -105,6 +133,16 @@ use App\Domain\SupplierRole;
                                     <?php endif; ?>
                                 </td>
                                 <td><?= $lieferant->defaultCategoryId === null ? '<span class="gedaempft">–</span>' : e($kategorien[$lieferant->defaultCategoryId] ?? '?') ?></td>
+                                <?php if ($pruefen): ?>
+                                    <td><?= e($lieferant->createdAt->format('d.m.Y')) ?></td>
+                                    <td>
+                                        <form method="post" action="/app/lieferanten/<?= e((string) $lieferant->id) ?>/geprueft">
+                                            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                                            <input type="hidden" name="zurueck" value="pruefen">
+                                            <button type="submit" class="knopf">Als geprüft markieren</button>
+                                        </form>
+                                    </td>
+                                <?php endif; ?>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
