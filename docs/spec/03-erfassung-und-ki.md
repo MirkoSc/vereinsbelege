@@ -779,7 +779,7 @@ aktivem Worker-Modul.
 5. `resolve_supplier` (Abschnitt 7; seit issue #48/M7-6
    `App\Service\Document\LieferantenAufloesung`, eingereiht von `ai_extract`,
    sobald es einen Beleg mit gültigem Ergebnis auf `ausgewertet` setzt, und per
-   Migration 034 für schon ausgewertete Belege) – immer `session`
+   Migration 035 für schon ausgewertete Belege) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
 7. `detect_recurring` (Abschnitt 9) – `session`
 8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
@@ -1059,7 +1059,7 @@ das Fallback-Profil.
   Ausweich-Aufruf; `KiErgebnis::meldung()` hängt „Das Fallback-Profil wurde
   verwendet.“ an.
 
-**Umsetzung (M7-8, issue #50, Migration 034):** das **KI-Protokoll**.
+**Umsetzung (M7-8, issue #50, Migration 032):** das **KI-Protokoll**.
 - *Daten:* `ai_call_log` (Betriebsdaten im Klartext, kein Tresor): Zeitpunkt,
   Anbieter (ID + kopierter Name/Modell), Prompt-Version, Reparatur/Fallback,
   Status (`KiAufrufStatus`, das „Ergebnis“), Tokens, Dauer, HTTP-Status –
@@ -1331,7 +1331,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     in der Prüfansicht. Nicht mit sich selbst, nicht in einen bereits
     zusammengeführten.
 
-- **Stand M7-6** (issue #48, Migration 034; vorläufige Details E-22): Job
+- **Stand M7-6** (issue #48, Migration 035; vorläufige Details E-23): Job
   `resolve_supplier` (`App\Service\Document\LieferantenAufloesung`, Recht
   `document.edit`, Executor `session`), Stufen in
   `App\Service\MasterData\SupplierAufloesung::aufloesen()`:
@@ -1387,7 +1387,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     `needs_review = 0`, Audit `lieferant.geprueft` (nur beim ersten Mal).
     Speichern des Formulars gilt ebenfalls als geprüft (geänderte Felder dann
     inkl. `needs_review`); Zusammenführen lässt das Flag des Ziels.
-  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-22).
+  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23).
 
 ## 8. Kategorisierung
 
@@ -1577,7 +1577,7 @@ Anlage, Stufe 6 mit `created_via = ki`/`needs_review`, Schlüsseln, Audit ohne
 Benutzer und ohne Klartext, unbrauchbare Werte weggelassen, ohne Lieferant
 nichts, zweiter Lauf legt nicht doppelt an, wiederholter Schritt, übernommener
 Beleg, gescheiterte KI, Archiv-Vorgabe, E-Rechnung über KI, Vorauswahl im
-Prompt bzw. ohne Text keine, Migration 034; `LieferantenAehnlichkeitTest`;
+Prompt bzw. ohne Text keine, Migration 035; `LieferantenAehnlichkeitTest`;
 `LieferantenKandidatenTest`; `KiAusleseTest`: Vorauswahl höchstens 10 Namen,
 als Daten, Marken entschärft; `PruefungFlowTest`: Treffer gewählt mit Stufe,
 Vorschlag gelb, Neuanlage mit Link, Rolle passt nicht, Verkäufer der

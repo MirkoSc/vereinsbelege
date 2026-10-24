@@ -179,7 +179,7 @@ gespeichert. Offen für Mirko: ob Regeln nur für Belege bzw. nur für
 Buchungen gelten können sollen, und ob die Herkunft am gespeicherten Beleg
 festgehalten werden soll (bräuchte eine Migration).
 
-## E-22 ❓ Lieferanten-Auflösung: Schwelle, Vorschlag, Rollen
+## E-23 ❓ Lieferanten-Auflösung: Schwelle, Vorschlag, Rollen
 *M7-6 (issue #48) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
 
 Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
