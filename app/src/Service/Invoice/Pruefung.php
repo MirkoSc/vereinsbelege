@@ -208,6 +208,9 @@ final readonly class Pruefung
                 $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => $seite['pdf'] ? 'Aufbereitetes PDF' : 'PDF (Seite ' . $seite['seite'] . ')'];
             } elseif ($seite['mime'] === MagicBytes::XML) {
                 $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => 'E-Rechnung (XML, Seite ' . $seite['seite'] . ')'];
+            } elseif ($seite['mime'] === MagicBytes::HEIC) {
+                // Only Safari draws HEIC: a link instead of a broken image.
+                $pdfs[] = ['blobId' => $seite['blobId'], 'titel' => 'HEIC-Foto (Seite ' . $seite['seite'] . ')'];
             } else {
                 $bilder[] = ['blobId' => $seite['blobId'], 'titel' => 'Seite ' . $seite['seite'] . ($seite['originalId'] !== null ? ' (aufbereitet)' : ''), 'originalId' => $seite['originalId']];
             }

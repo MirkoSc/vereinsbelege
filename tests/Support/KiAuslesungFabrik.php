@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Support;
 
+use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -41,6 +42,7 @@ final class KiAuslesungFabrik
             new AiProviderRepository($pdo, $crypto),
             new KiAbfrage($client ?? new FakeLlmClient([]), $prompts),
             new Auslesung($prompts),
+            new AiCallLogRepository($pdo),
         );
     }
 }

@@ -12,10 +12,12 @@ use App\Http\Session;
 use App\Repository\MailQueueRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Mail\Mailer;
+use App\Service\Mail\MailSettings;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\PublicUrl;
 use App\Service\Mail\SmtpSecurity;
 use App\View\Area;
+use App\View\Flash;
 use App\View\FlashArt;
 use App\View\View;
 
@@ -50,14 +52,29 @@ final readonly class MailController
     {
         $this->session->start();
 
+        return $this->render($this->session->pullFlash(), $this->settingsRepo->get());
+    }
+
+    /**
+     * @param MailSettings $einstellungen what the form shows: the stored
+     *        settings, or - after a validation error - what was just typed
+     */
+    private function render(
+        ?Flash $flash,
+        MailSettings $einstellungen,
+        int $status = 200,
+        bool $passwortLoeschen = false,
+    ): ResponseInterface
+    {
         return Response::html($this->view->render('admin/mail', [
             'title' => 'Mail',
             'csrf' => $this->session->csrfToken(),
-            'flash' => $this->session->pullFlash(),
-            'einstellungen' => $this->settingsRepo->get(),
+            'flash' => $flash,
+            'einstellungen' => $einstellungen,
+            'passwortLoeschen' => $passwortLoeschen,
             'sicherheiten' => SmtpSecurity::cases(),
             'warteschlange' => $this->queue->recent(),
-        ], Area::Admin));
+        ], Area::Admin), $status);
     }
 
     public function save(Request $request): ResponseInterface
@@ -92,9 +109,27 @@ final readonly class MailController
             $fehler = 'Die Adresse der Installation muss mit https:// beginnen und darf nur aus Schema, Host und ggf. Port bestehen.';
         }
         if ($fehler !== null) {
-            $this->session->flash($fehler, FlashArt::Fehler);
+            // Render instead of redirecting, so the person keeps what they
+            // typed. The password is never put back (the field stays empty,
+            // see below); the stored one is shown as before.
+            $gespeichert = $this->settingsRepo->get();
+            // A flash still waiting from an earlier request would otherwise
+            // show up out of context on the next page.
+            $this->session->pullFlash();
 
-            return Response::redirect('/admin/mail');
+            return $this->render(new Flash($fehler, FlashArt::Fehler), new MailSettings(
+                transport: $transport,
+                host: $host,
+                port: $port,
+                sicherheit: $sicherheit ?? $gespeichert->sicherheit,
+                benutzer: $benutzer,
+                passwort: '',
+                passwortGesetzt: $gespeichert->passwortGesetzt,
+                absender: $absender,
+                antwortAn: $antwortAn,
+                vereinsname: $vereinsname,
+                oeffentlicheUrl: $oeffentlicheUrlEingabe,
+            ), 422, (string) ($request->post['passwort_loeschen'] ?? '') === '1');
         }
 
         // The form never carries the stored password back (page() never
