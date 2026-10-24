@@ -66,7 +66,8 @@ Der Worker erhält **nie** den Tresor-Private-Key.
 - **Stand M7b-2 (issue #52, Migration 040, E-39):** `worker_grant` je Blob
   (worker_id, document_id, blob_id, `sealed_dek` = `crypto_box_seal(DEK,
   W_pub)`, expires_at = +3 Tage) und `worker_context` je Dokument
-  (`{freitext, kostenstelle_hinweis}` an `W_pub`). Erteilt von
+  (`{freitext, kostenstelle_hinweis}` an `W_pub`, Freitext auf 1000 Zeichen
+  gekürzt). Erteilt von
   `App\Service\Worker\WorkerFreigaben`: `ausSession(InboxItem, Vault)`
   („an den Worker übergeben“ – alle Blobs aus `Document::blobIds()`, nur
   für den aktiven, bestätigten Worker; **verweigert während einer

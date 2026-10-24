@@ -61,8 +61,10 @@ final readonly class WorkerKonfiguration
             ];
         }
         $json = json_encode(['format' => self::FORMAT, 'ki_anbieter' => $profile], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        // Bound to the worker's key as well: a re-paired worker gets its own envelope.
-        $hash = $this->crypto->blindIndex()->forValue(self::HASH_ZWECK, $worker->publicKey . $json);
+        // Bound to the worker's key as well: a re-paired worker gets its own
+        // envelope. The keyed hash goes over a hex digest: forValue()
+        // normalises case and whitespace, which must not hide a changed key.
+        $hash = $this->crypto->blindIndex()->forValue(self::HASH_ZWECK, hash('sha256', $worker->publicKey . $json));
 
         $bisher = $this->workers->konfigHash($worker->id);
         if ($bisher !== null && hash_equals($bisher, $hash) && $worker->configSealed !== null) {

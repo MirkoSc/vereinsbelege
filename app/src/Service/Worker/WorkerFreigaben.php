@@ -84,6 +84,12 @@ final readonly class WorkerFreigaben
 
         $document = $item->document;
         $bis = $now->modify(sprintf('+%d seconds', self::GUELTIG_SEKUNDEN));
+        // Sealed first: if anything about it fails, no grant is written.
+        $einreichung = EinreichungsDaten::entschluesseln($item, $vault);
+        $kontext = $einreichung !== null && ($einreichung->freitext !== '' || $einreichung->kostenstelleHinweis !== null)
+            // Only these two fields - never name, e-mail address or IBAN.
+            ? WorkerKrypto::kontextVersiegeln($einreichung->freitext, $einreichung->kostenstelleHinweis, $worker->publicKey)
+            : null;
         $anzahl = 0;
         foreach ($document->blobIds() as $blobId) {
             $blob = $this->blobs->find($blobId);
@@ -101,16 +107,8 @@ final readonly class WorkerFreigaben
             ++$anzahl;
         }
 
-        $einreichung = EinreichungsDaten::entschluesseln($item, $vault);
-        if ($einreichung !== null && ($einreichung->freitext !== '' || $einreichung->kostenstelleHinweis !== null)) {
-            // Only these two fields - never name, e-mail address or IBAN.
-            $this->grants->kontextSpeichern(
-                $worker->id,
-                $document->id,
-                WorkerKrypto::kontextVersiegeln($einreichung->freitext, $einreichung->kostenstelleHinweis, $worker->publicKey),
-                $bis,
-                $now,
-            );
+        if ($kontext !== null) {
+            $this->grants->kontextSpeichern($worker->id, $document->id, $kontext, $bis, $now);
         }
 
         return $anzahl;

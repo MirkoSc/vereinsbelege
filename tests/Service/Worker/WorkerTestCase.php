@@ -18,6 +18,7 @@ use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\JobRepository;
 use App\Repository\RateLimitRepository;
+use App\Repository\SettingRepository;
 use App\Repository\VaultRepository;
 use App\Repository\WorkerGrantRepository;
 use App\Repository\WorkerNonceRepository;
@@ -97,6 +98,8 @@ abstract class WorkerTestCase extends DatabaseTestCase
             new UploadService($this->tmp . '/upload', UploadService::CHUNK_BYTES, WorkerArtefakte::BLOB_MAX_BYTES),
             $this->blobService,
             $vaults,
+            $this->jobs,
+            new SettingRepository($this->pdo()),
         );
         $this->freigaben = new WorkerFreigaben(
             $this->workers,

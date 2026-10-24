@@ -402,6 +402,8 @@ $workerArtefakteFor = static function (\PDO $pdo) use ($paths): WorkerArtefakte 
         new UploadService($paths->uploadDir() . '/worker', UploadService::CHUNK_BYTES, WorkerArtefakte::BLOB_MAX_BYTES),
         new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
         new VaultRepository($pdo),
+        new JobRepository($pdo),
+        new SettingRepository($pdo),
     );
 };
 $workerFreigabenFor = static function (\PDO $pdo) use ($workerArtefakteFor): WorkerFreigaben {
@@ -415,7 +417,8 @@ $workerFreigabenFor = static function (\PDO $pdo) use ($workerArtefakteFor): Wor
         new BlobRepository($pdo),
         $vaults,
         // No new grants from a session while a vault key rotation runs
-        // (issue #90). Until that rotation exists, there is none to wait for.
+        // (issue #90, PR #209 brings VaultRepository::rotationInProgress()).
+        // Until that rotation exists, there is none to wait for.
         static fn(): bool => method_exists($vaults, 'rotationInProgress') && $vaults->rotationInProgress() === true,
         $workerArtefakteFor($pdo),
     );

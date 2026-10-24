@@ -52,7 +52,7 @@ CREATE TABLE worker_grant (
 CREATE TABLE worker_context (
     worker_id BIGINT UNSIGNED NOT NULL,
     document_id BIGINT UNSIGNED NOT NULL,
-    sealed_payload VARBINARY(4096) NOT NULL,
+    sealed_payload VARBINARY(8192) NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME NOT NULL,
     PRIMARY KEY (worker_id, document_id),

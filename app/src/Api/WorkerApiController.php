@@ -395,7 +395,7 @@ final readonly class WorkerApiController
             return $geprueft;
         }
         [$job, , $daten] = $geprueft;
-        if ($job->status !== JobStatus::Laeuft) {
+        if (!self::haeltJob($job, $worker, new \DateTimeImmutable())) {
             return self::sperreVerloren();
         }
         $header = self::text($daten, 'header');
@@ -467,7 +467,7 @@ final readonly class WorkerApiController
             return $geprueft;
         }
         [$job] = $geprueft;
-        if ($job->status !== JobStatus::Laeuft) {
+        if (!self::haeltJob($job, $worker, new \DateTimeImmutable())) {
             return self::sperreVerloren();
         }
 

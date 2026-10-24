@@ -27,7 +27,7 @@ final readonly class WorkerGrantRepository
         $stmt = $this->pdo->prepare(
             'INSERT INTO worker_grant (worker_id, document_id, blob_id, sealed_dek, expires_at, created_at)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE sealed_dek = VALUES(sealed_dek), expires_at = VALUES(expires_at)',
+             ON DUPLICATE KEY UPDATE sealed_dek = VALUES(sealed_dek), expires_at = VALUES(expires_at), created_at = VALUES(created_at)',
         );
         $stmt->execute([$workerId, $documentId, $blobId, $sealedDek, $gueltigBis->format(self::FORMAT), $now->format(self::FORMAT)]);
     }
@@ -37,7 +37,7 @@ final readonly class WorkerGrantRepository
         $stmt = $this->pdo->prepare(
             'INSERT INTO worker_context (worker_id, document_id, sealed_payload, expires_at, created_at)
              VALUES (?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE sealed_payload = VALUES(sealed_payload), expires_at = VALUES(expires_at)',
+             ON DUPLICATE KEY UPDATE sealed_payload = VALUES(sealed_payload), expires_at = VALUES(expires_at), created_at = VALUES(created_at)',
         );
         $stmt->execute([$workerId, $documentId, $sealedPayload, $gueltigBis->format(self::FORMAT), $now->format(self::FORMAT)]);
     }

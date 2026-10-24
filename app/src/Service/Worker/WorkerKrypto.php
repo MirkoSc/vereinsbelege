@@ -38,8 +38,15 @@ final class WorkerKrypto
     /** A `dek_sealed` for the vault: version byte + sealed data key. */
     public const int DEK_SEALED_BYTES = 1 + self::GRANT_BYTES;
 
-    /** Upper bound of the sealed context (free text up to 2000 characters, UTF-8). */
-    public const int KONTEXT_MAX_BYTES = 4096;
+    /** Upper bound of the sealed context (migrations/040: VARBINARY(8192)). */
+    public const int KONTEXT_MAX_BYTES = 8192;
+
+    /**
+     * Free text beyond this is cut for the worker (the public form allows
+     * 1000 characters): at most 6 bytes per character once JSON-escaped,
+     * so the envelope always fits KONTEXT_MAX_BYTES.
+     */
+    public const int KONTEXT_FREITEXT_ZEICHEN = 1000;
 
     private const int FELD_MIN_BYTES = 1 + SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES + SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_ABYTES;
 
@@ -74,8 +81,8 @@ final class WorkerKrypto
     {
         self::pruefePublicKey($workerPublicKey);
         $json = json_encode(
-            ['freitext' => $freitext, 'kostenstelle_hinweis' => $kostenstelleHinweis],
-            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+            ['freitext' => mb_substr($freitext, 0, self::KONTEXT_FREITEXT_ZEICHEN, 'UTF-8'), 'kostenstelle_hinweis' => $kostenstelleHinweis],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE,
         );
         $sealed = sodium_crypto_box_seal($json, $workerPublicKey);
         sodium_memzero($json);
@@ -156,6 +163,10 @@ final class WorkerKrypto
             return null;
         }
         $bloecke = intdiv($cipherBytes - $tag, BlobCipher::BLOCK_BYTES) + 1;
+        // The final block carries at most CHUNK_BYTES of plaintext.
+        if ($cipherBytes - ($bloecke - 1) * BlobCipher::BLOCK_BYTES > BlobCipher::BLOCK_BYTES) {
+            return null;
+        }
 
         return $cipherBytes - $bloecke * $tag;
     }

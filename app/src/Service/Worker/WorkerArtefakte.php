@@ -10,6 +10,8 @@ use App\Domain\JobStatus;
 use App\Domain\Worker;
 use App\Domain\WorkerUpload;
 use App\Repository\DocumentArtifactRepository;
+use App\Repository\JobRepository;
+use App\Repository\SettingRepository;
 use App\Repository\VaultRepository;
 use App\Repository\WorkerUploadRepository;
 use App\Service\Storage\BlobException;
@@ -65,6 +67,8 @@ final readonly class WorkerArtefakte
         private UploadService $ablage,
         private BlobService $blobs,
         private VaultRepository $vaults,
+        private JobRepository $jobs,
+        private SettingRepository $settings,
     ) {
     }
 
@@ -184,6 +188,15 @@ final readonly class WorkerArtefakte
             }
         }
 
+        // Uploads of claims the worker no longer holds (lock ran out, job
+        // went elsewhere) are dead weight - they must not use up its quota.
+        foreach ($this->uploads->fuerWorker($worker->id) as $alt) {
+            $altJob = $this->jobs->find($alt->jobId);
+            if ($altJob === null || $altJob->status !== JobStatus::Laeuft || $altJob->attempts !== $alt->attempt
+                || !str_starts_with($altJob->lockedBy ?? '', $worker->lockPraefix())) {
+                $this->verwerfen($alt);
+            }
+        }
         if ($this->uploads->zaehleFuerWorker($worker->id) >= self::MAX_OFFENE) {
             throw new WorkerArtefaktFehler('zu_viele_uploads', 429);
         }
@@ -268,7 +281,14 @@ final readonly class WorkerArtefakte
         if ($upload->art === WorkerUpload::ART_BLOB) {
             $groesse = WorkerKrypto::klartextGroesse($upload->cipherSize) ?? throw new WorkerArtefaktFehler('groesse_ungueltig', 422);
             try {
-                $blob = $this->blobs->storeCipher($this->ablage->chunks($upload->uploadId), $zeile['dek_sealed'], (string) $upload->header, $groesse, $upload->cipherSha256);
+                $blob = $this->blobs->storeCipher(
+                    $this->ablage->chunks($upload->uploadId),
+                    $zeile['dek_sealed'],
+                    (string) $upload->header,
+                    $groesse,
+                    $upload->cipherSha256,
+                    BlobService::configuredStorage($this->settings),
+                );
             } catch (BlobException) {
                 $this->verwerfen($upload);
 
