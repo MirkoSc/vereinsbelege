@@ -21,6 +21,7 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Migration\Migrator;
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -194,6 +195,41 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertInstanceOf(Response::class, $response);
         self::assertSame(200, $response->status);
         self::assertStringContainsString('Datenbankname', $response->body);
+    }
+
+    /**
+     * Issue #101: the installer repeats what setup.php did - a deny-all
+     * .htaccess in shared/ and releases/ - and stays quiet when it worked.
+     */
+    public function testTheInstallerLocksSharedAndReleases(): void
+    {
+        mkdir($this->base . '/shared', 0775, true);
+        mkdir($this->base . '/releases', 0775, true);
+
+        $response = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/shared/.htaccess'));
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/releases/.htaccess'));
+        self::assertFileDoesNotExist($this->base . '/web/.htaccess', 'the docroot stays public');
+        self::assertStringNotContainsString('Zugriffssperre fehlt', $response->body);
+    }
+
+    /**
+     * ... and when it cannot write the file it does not stop, but says so
+     * (a directory in the file's place stands in for missing write access).
+     */
+    public function testAMissingLockIsAVisibleWarningNotAnAbort(): void
+    {
+        mkdir($this->base . '/shared/.htaccess', 0775, true);
+
+        $response = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+
+        self::assertInstanceOf(Response::class, $response);
+        self::assertSame(200, $response->status);
+        self::assertStringContainsString('Zugriffssperre fehlt', $response->body);
+        self::assertStringContainsString('shared/', $response->body);
+        self::assertStringContainsString('Datenbankname', $response->body, 'the form is still there');
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Update;
 
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\ReleaseSwitcher;
 use PHPUnit\Framework\TestCase;
 
@@ -228,6 +229,30 @@ final class ReleaseSwitcherTest extends TestCase
 
         self::assertSame([], new ReleaseSwitcher($this->base)->refreshDocrootFiles());
         self::assertDirectoryDoesNotExist($this->base . '/web');
+    }
+
+    /**
+     * Issue #101: an installation whose setup.php predates the deny-all
+     * .htaccess gets it in the finish step of its next update.
+     */
+    public function testLockPrivateDirectoriesWritesTheDenyFiles(): void
+    {
+        $meldungen = new ReleaseSwitcher($this->base)->lockPrivateDirectories();
+
+        self::assertSame([], $meldungen);
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/shared/.htaccess'));
+        self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/releases/.htaccess'));
+    }
+
+    public function testLockPrivateDirectoriesReportsWhatItCouldNotWrite(): void
+    {
+        mkdir($this->base . '/releases/.htaccess');
+
+        $meldungen = new ReleaseSwitcher($this->base)->lockPrivateDirectories();
+
+        self::assertCount(1, $meldungen);
+        self::assertStringContainsString('releases/', $meldungen[0]);
+        self::assertStringNotContainsString($this->base, $meldungen[0], 'no server path in the update log');
     }
 
     public function testMaintenanceFlagCarriesItsReason(): void

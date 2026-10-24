@@ -94,6 +94,51 @@ final class SystemCheckPageTest extends TestCase
         }
     }
 
+    /**
+     * Issue #101: the page asks the own domain for shared/config.php - built
+     * from the Host header of the request - and a served file is an error.
+     */
+    public function testAServedConfigShowsUpAsAnErrorForTheOwnDomain(): void
+    {
+        $gefragt = [];
+        $probe = static function (string $url) use (&$gefragt): ?int {
+            $gefragt[] = $url;
+
+            return 200;
+        };
+        $view = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test');
+        $view->setCurrentPath(self::PFAD);
+        $controller = new SystemCheckController($view, new Session(), new SystemCheck(null, null, $probe));
+
+        $antwort = $controller->page(new Request(HttpMethod::Get, self::PFAD, headers: ['host' => 'belege.example']));
+
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame(['http://belege.example/shared/config.php'], $gefragt);
+        self::assertStringContainsString('shared/config.php von außen gesperrt', $antwort->body);
+        self::assertStringContainsString('abrufbar (HTTP 200)', $antwort->body);
+        self::assertStringContainsString('Gesamtstatus: Fehler', $antwort->body);
+    }
+
+    /**
+     * A Host header that is not a host name never becomes part of the URL.
+     */
+    public function testAForgedHostHeaderFallsBackToLocalhost(): void
+    {
+        $gefragt = [];
+        $probe = static function (string $url) use (&$gefragt): ?int {
+            $gefragt[] = $url;
+
+            return 404;
+        };
+        $view = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test');
+        $view->setCurrentPath(self::PFAD);
+        $controller = new SystemCheckController($view, new Session(), new SystemCheck(null, null, $probe));
+
+        $controller->page(new Request(HttpMethod::Get, self::PFAD, headers: ['host' => 'evil.example/x?']));
+
+        self::assertSame(['http://localhost/shared/config.php'], $gefragt);
+    }
+
     public function testTheResultIsOfferedAsJsonToCopy(): void
     {
         $html = $this->seite();

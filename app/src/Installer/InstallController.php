@@ -14,6 +14,7 @@ use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Migration\Migrator;
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\View\View;
 
@@ -578,12 +579,20 @@ final readonly class InstallController
      */
     private function render(array $data, int $status = 200): Response
     {
+        // Deny-all .htaccess in shared/ and releases/ (issue #101). setup.php
+        // already wrote them; this repeats it on every installer page so an
+        // installation that predates it or whose setup.php could not write
+        // them gets a second try - and a visible warning instead of a
+        // silently unprotected config.php. Idempotent, never overwrites.
+        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
+
         return Response::html(
             $this->view->render('install', [
                 'title' => 'Installation',
                 'csrf' => $this->session->csrfToken(),
                 'scripts' => ['/js/install.js'],
                 'setupUebrig' => is_file($this->paths->webDir() . '/setup.php'),
+                'ungeschuetzt' => $ungeschuetzt,
                 ...$data,
             ]),
             $status,

@@ -240,7 +240,12 @@ final class UpdateService
             // .htaccess and .user.ini travel with the release too, and a
             // tightened CSP would otherwise never reach an existing
             // installation. Hand-edited files are kept and only reported.
-            $docrootMeldungen = $this->switcher->refreshDocrootFiles();
+            // shared/ and releases/ get their deny-all .htaccess here when
+            // setup.php was older than issue #101.
+            $docrootMeldungen = [
+                ...$this->switcher->refreshDocrootFiles(),
+                ...$this->switcher->lockPrivateDirectories(),
+            ];
 
             try {
                 $this->selfTest($baseUrl);

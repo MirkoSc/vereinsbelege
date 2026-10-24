@@ -1,0 +1,10 @@
+# Written by Vereinsbelege - do not remove. Nothing in this directory
+# may ever be served by the web server, even if a domain is pointed
+# one level too high (docs/spec/06-betrieb.md section 1).
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

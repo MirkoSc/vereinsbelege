@@ -55,20 +55,31 @@ final readonly class SystemCheck
         'curl' => 'Ausgehende Aufrufe: KI-Anbieter, Update-Suche, Mail.',
     ];
 
+    /** Where shared/config.php would be if a domain pointed one level above web/. */
+    public const string CONFIG_PROBE_PATH = '/shared/config.php';
+
     /**
      * @param ?string $varDir absolute path of shared/var; without it the
      *        write check is left out, like the database check without a PDO
+     * @param (\Closure(string): ?int)|null $statusProbe HTTP status of a URL,
+     *        null without an answer (CurlStatusProbe); without it, or without
+     *        an origin for all(), the config exposure check is left out
      */
     public function __construct(
         private ?\PDO $pdo = null,
         private ?string $varDir = null,
+        private ?\Closure $statusProbe = null,
     ) {
     }
 
     /**
+     * @param ?string $origin scheme, host and port this installation is
+     *        reached under ("https://belege.example"), for the config
+     *        exposure check
+     *
      * @return list<CheckResult>
      */
-    public function all(): array
+    public function all(?string $origin = null): array
     {
         $results = [$this->exceptionIgnoreArgs()];
 
@@ -87,6 +98,10 @@ final readonly class SystemCheck
 
         if ($this->varDir !== null) {
             $results[] = $this->varWritable($this->varDir);
+        }
+
+        if ($origin !== null && $this->statusProbe !== null) {
+            $results[] = $this->configExposure($origin, $this->statusProbe);
         }
 
         return $results;
@@ -315,6 +330,60 @@ final readonly class SystemCheck
                 ? 'Blobs, Backups, Log und temporäre Dateien lassen sich ablegen.'
                 : 'Ohne Schreibrechte scheitern Uploads, Backups und das Log.',
         );
+    }
+
+    /**
+     * Issue #101: is shared/config.php served under the installation's own
+     * domain? It is not as long as the domain points at web/ - but that is a
+     * setting in the hoster's customer menu, and the .htaccess the installer
+     * puts into shared/ is the only other line of defence. Any 2xx means the
+     * file (server key, database password) is out in the open: fail.
+     *
+     * 401/403/404/410 are the expected answers. Anything else - a redirect,
+     * a server error, no answer at all - proves neither, so it warns rather
+     * than claiming safety. Only the status code is shown; the URL is built
+     * from the origin alone and holds no server path.
+     *
+     * @param \Closure(string): ?int $probe
+     */
+    public function configExposure(string $origin, \Closure $probe): CheckResult
+    {
+        $url = rtrim($origin, '/') . self::CONFIG_PROBE_PATH;
+        $status = $probe($url);
+
+        $result = static fn(string $actual, CheckStatus $rating, string $detail): CheckResult => new CheckResult(
+            key: 'config_exposure',
+            label: 'shared/config.php von außen gesperrt',
+            expected: 'nicht abrufbar (403/404)',
+            actual: $actual,
+            status: $rating,
+            detail: $detail,
+        );
+
+        return match (true) {
+            $status === null => $result(
+                'keine Antwort',
+                CheckStatus::Warn,
+                'Der Server hat auf ' . self::CONFIG_PROBE_PATH . ' nicht geantwortet – die Prüfung ist '
+                    . 'ohne Ergebnis. Von außen im Browser nachprüfen.',
+            ),
+            $status >= 200 && $status < 300 => $result(
+                'abrufbar (HTTP ' . $status . ')',
+                CheckStatus::Fail,
+                'Die Konfiguration mit Server-Schlüssel und Datenbank-Zugang ist über die Domain erreichbar. '
+                    . 'Sofort die Domain im Kundenmenü auf den web-Ordner legen und die .htaccess in shared/ prüfen.',
+            ),
+            in_array($status, [401, 403, 404, 410], true) => $result(
+                'gesperrt (HTTP ' . $status . ')',
+                CheckStatus::Ok,
+                'Die Domain liefert ' . self::CONFIG_PROBE_PATH . ' nicht aus.',
+            ),
+            default => $result(
+                'unklar (HTTP ' . $status . ')',
+                CheckStatus::Warn,
+                'Weder ausgeliefert noch eindeutig gesperrt. Von außen im Browser nachprüfen.',
+            ),
+        };
     }
 
     /**
