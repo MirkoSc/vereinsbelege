@@ -310,16 +310,18 @@ final class SchluesselrotationTest extends DatabaseTestCase
         // The public submission keeps sealing - to the old, confirmed key.
         self::assertSame(1, Vault::sealedVersion(new VaultRepository($this->pdo())->current()?->sealDataKey(DataKey::generate()) ?? ''));
 
+        self::assertNotNull(new VaultRepository($this->pdo())->rollbackHindernis(), 'Kein Rollback auf ein Release vor 039, solange eine Rotation läuft.');
         self::assertSame(1, $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable()));
 
         self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertNotNull(new VaultRepository($this->pdo())->generationOf(2)?->retiredAt, 'Zurückgezogen, nicht gelöscht.');
+        self::assertNull(new VaultRepository($this->pdo())->generationOf(2), 'Die nie benutzte Generation ist weg - ein älteres Release nach einem Rollback sähe sie sonst als neuesten Schlüssel.');
+        self::assertNull(new VaultRepository($this->pdo())->rollbackHindernis());
         self::assertSame([], new VaultGrantRepository($this->pdo())->holdersOf(2));
         self::assertSame(1, new UserRepository($this->pdo())->findById($this->kassiererId)?->sessionEpoch, 'Alle Sitzungen enden.');
         self::assertSame('Sportbedarf Müller GmbH', $this->supplierService()->finde($this->alt, $d['lieferant'])?->data->name);
-        // ... and a new rotation can start again - with a fresh number.
+        // ... and a new rotation can start again.
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
-        self::assertSame(3, $ring->version);
+        self::assertSame(2, $ring->version);
         $this->bestaetigen($rotation, $ring);
         $this->expectException(RotationException::class);
         $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable());

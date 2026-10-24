@@ -158,6 +158,14 @@ nicht Bytes, Liste vorhanden); `tests/js/update.test.js` (Reihenfolge der
 Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.js`
 (welches Formularfeld je nach `modus` sichtbar ist).
 
+**Rollback und Tresor-Schlüsselrotation** (issue #90): Ein Release vor
+Migration 039 nimmt die neueste `vault`-Zeile als Schlüssel. Der Rollback
+(`UpdateService::rollback()`) wird deshalb abgelehnt, solange eine Rotation
+läuft oder die neueste Generation unbestätigt bzw. zurückgezogen ist
+(`VaultRepository::rollbackHindernis()`, Meldung „Rotation erst abschließen
+oder abbrechen“). Ein Abbruch löscht die nie benutzte vorgemerkte
+Generation, damit danach auch ein Rollback wieder geht.
+
 ## 2. Backup & Restore
 
 - Backup-ZIP = DB-Dump (reines PHP, übernommen) + bei Storage `fs` der

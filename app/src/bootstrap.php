@@ -384,6 +384,7 @@ $updates = static fn(): UpdateController => new UpdateController(
             $version->value,
             $paths->blobDir(),
         ),
+        rollbackHindernis: static fn(): ?string => new VaultRepository($connections->pdo())->rollbackHindernis(),
     ),
     $maintenance,
     $auditFor($connections->pdo()),

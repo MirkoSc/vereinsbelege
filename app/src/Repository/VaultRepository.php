@@ -123,6 +123,23 @@ final readonly class VaultRepository
         return array_values(array_filter($this->all(), static fn(VaultGeneration $g): bool => $g->aktiv()));
     }
 
+    /**
+     * Why a release before migration 039 must not run on this database, or
+     * null (issue #90, docs/spec/06-betrieb.md section 1 "Rollback"): it
+     * takes the newest `vault` row as the key, so the newest row must be a
+     * confirmed generation in use, and no rotation may run.
+     */
+    public function rollbackHindernis(): ?string
+    {
+        $alle = $this->all();
+        $neueste = $alle === [] ? null : $alle[count($alle) - 1];
+        if ($this->rotationInProgress() || ($neueste !== null && (!$neueste->aktiv() || !$neueste->schluesselBestaetigt()))) {
+            return 'Rollback nicht möglich, solange eine Tresor-Schlüsselrotation läuft. Bitte die Rotation erst abschließen oder abbrechen.';
+        }
+
+        return null;
+    }
+
     public function rotationInProgress(): bool
     {
         try {
@@ -221,8 +238,9 @@ final readonly class VaultRepository
      * (docs/spec/01-sicherheit.md section 2): the browser was closed before
      * the recovery key was confirmed, so the half-finished generation - this
      * row plus, via the foreign keys in migrations/006_user.sql, its user and
-     * grant - is removed. Safe only before config.php exists: nothing else
-     * ever deletes a vault generation.
+     * grant - is removed. Safe only before config.php exists. The one other
+     * caller: abandoning a vault key rotation (issue #90) removes its
+     * pending generation, which nothing was ever sealed to.
      */
     public function delete(int $version): void
     {

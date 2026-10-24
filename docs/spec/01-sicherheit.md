@@ -349,8 +349,9 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   schaltet `current()` auf N+1 und das Umschlüsseln ist erlaubt (serverseitig
   geprüft). **Vorher** lässt sich die Rotation folgenlos abbrechen
   (`abbrechen()`, kein Schlüssel nötig, unter Zeilensperre gegen eine
-  gleichzeitige Bestätigung: Freigaben von N+1 gelöscht, N+1 als
-  `retired_at` zurückgezogen – die Nummer wird nie wieder vergeben –, alle
+  gleichzeitige Bestätigung: N+1 und seine Freigaben werden gelöscht – an
+  N+1 wurde nie etwas versiegelt, und ein älteres Release nach einem
+  Rollback hielte eine Restzeile für den neuesten Schlüssel (06 §1) –, alle
   Sitzungen beendet, denn eine zwischendurch angemeldete hielte N+1 als
   neuesten Schlüssel);
   danach geht es nur noch vorwärts – dann gibt es für beide Generationen einen

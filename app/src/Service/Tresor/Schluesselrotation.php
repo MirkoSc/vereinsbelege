@@ -31,8 +31,8 @@ use App\Service\Crypto\VaultGrant;
  *                   key - proof it was written down, as in the installer.
  *                   Only from here on is N+1 in use (current(), the public
  *                   submission included) and re-sealing allowed.
- *   abbrechen()     before the confirmation only: N+1 is retired unused,
- *                   its grants deleted, every session ended.
+ *   abbrechen()     before the confirmation only: N+1 and its grants are
+ *                   deleted unused, every session ended.
  *   umschluesseln() one step: re-seals the data keys (`dek_sealed`) of a
  *                   batch of rows from N to N+1 and recomputes their blind
  *                   indexes, row by row, each row in its own transaction.
@@ -134,8 +134,7 @@ final readonly class Schluesselrotation
         if (!$sitzung->isUnlocked() || $sitzung->version !== $alt->version || !hash_equals($alt->publicKey, $sitzung->publicKey())) {
             throw new RotationException('Ihr Tresor ist in dieser Sitzung nicht entsperrt. Bitte neu anmelden.');
         }
-        // Above every generation ever created: an abandoned one keeps its
-        // number, so a version byte never names two different keys.
+        // Above every generation that exists (retired ones included).
         $naechste = max(array_map(static fn(VaultGeneration $g): int => $g->version, $this->vaults->all())) + 1;
         if ($naechste > Vault::MAX_VERSION) {
             throw new RotationException('Die Anzahl möglicher Tresor-Generationen ist ausgeschöpft.');
@@ -312,8 +311,12 @@ final readonly class Schluesselrotation
                 throw new RotationException('Nach der Bestätigung des neuen Schlüssels lässt sich die Rotation nicht mehr abbrechen.');
             }
             $this->grants->deleteVersion($neu->version);
-            // Retired, not deleted: the number is never handed out again.
-            $this->vaults->retire($neu->version, $now);
+            // Deleted, not retired: nothing was ever sealed to it (current()
+            // never returned it), and a release before migration 039 - after
+            // a rollback - would take a leftover row for the newest key.
+            // Its number may be handed out again; every session that could
+            // hold the key ends below.
+            $this->vaults->delete($neu->version);
             // A session that logged in meanwhile holds N+1 as its newest
             // key and would seal with it - every session ends.
             $this->users->bumpSessionEpochAll();
