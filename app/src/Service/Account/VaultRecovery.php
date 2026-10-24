@@ -9,6 +9,7 @@ use App\Repository\VaultRepository;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\RecoveryKeyException;
 use App\Service\Crypto\RecoveryKeyProblem;
+use App\Service\Crypto\Vault;
 use App\Service\RateLimiter;
 
 /**
@@ -68,16 +69,26 @@ final readonly class VaultRecovery
         }
 
         try {
-            $tresor = RecoveryKey::parse($eingabe)->openVault($aktuell->publicKey(), $aktuell->version);
+            $schluessel = RecoveryKey::parse($eingabe);
+            // During a key rotation (issue #90) the paper key of either active
+            // generation restores access to that generation - the old one
+            // still opens what is not re-sealed yet, the new one what is.
+            foreach ($this->vaults->active() as $generation) {
+                if (hash_equals($generation->publicKey, $schluessel->publicKey())) {
+                    $aktuell = Vault::locked($generation->publicKey, $generation->version);
+                }
+            }
+            $tresor = $schluessel->openVault($aktuell->publicKey(), $aktuell->version);
         } catch (RecoveryKeyException $e) {
             $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
+            $problem = self::problemFuer($e, $eingabe, $this->vaults);
 
-            return VaultRecoveryResult::fehler(self::meldungFuer($e->problem), $e->problem->value);
+            return VaultRecoveryResult::fehler(self::meldungFuer($problem), $problem->value);
         }
 
         $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
 
-        $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($aktuell->version, $now), true);
+        $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($tresor->version, $now), true);
         if (!$bereitsFreigegeben) {
             try {
                 $this->verwaltung->freigeben($userId, $tresor, $userId, $now);
@@ -87,6 +98,24 @@ final readonly class VaultRecovery
         }
 
         return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben);
+    }
+
+    /** Whether $tresor is a generation still in use (not retired, not foreign). */
+    public function istAktiv(Vault $tresor): bool
+    {
+        foreach ($this->vaults->active() as $generation) {
+            if ($generation->version === $tresor->version && hash_equals($generation->publicKey, $tresor->publicKey())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Whether a vault key rotation runs (issue #90) - then two paper keys may be needed. */
+    public function rotationLaeuft(): bool
+    {
+        return $this->vaults->rotationInProgress();
     }
 
     /**
@@ -104,6 +133,31 @@ final readonly class VaultRecovery
             RecoveryKeyProblem::Pruefsumme => 'Der Schlüssel ist an einer Stelle falsch eingegeben. '
                 . 'Bitte Gruppe für Gruppe mit dem Ausdruck vergleichen.',
             RecoveryKeyProblem::FremderTresor => 'Dieser Schlüssel gehört nicht zu dieser Installation.',
+            RecoveryKeyProblem::Abgeloest => 'Dieser Wiederherstellungsschlüssel wurde durch eine Schlüsselrotation abgelöst. '
+                . 'Er gilt nur noch für Backups von vor der Rotation – hier bitte den neueren Schlüssel eingeben.',
         };
+    }
+
+    /**
+     * The problem to report: a key of "another vault" that is in fact an
+     * earlier generation of this one (issue #90) says so instead.
+     */
+    public static function problemFuer(RecoveryKeyException $e, #[\SensitiveParameter] string $eingabe, VaultRepository $vaults): RecoveryKeyProblem
+    {
+        if ($e->problem !== RecoveryKeyProblem::FremderTresor) {
+            return $e->problem;
+        }
+
+        try {
+            $version = $vaults->versionForPublicKey(RecoveryKey::parse($eingabe)->publicKey());
+        } catch (RecoveryKeyException) {
+            return $e->problem;
+        }
+
+        // Only a generation that was actually retired: during a rotation the
+        // old key is still in use, the rotation is not finished.
+        return $version !== null && $vaults->generationOf($version)?->retiredAt !== null
+            ? RecoveryKeyProblem::Abgeloest
+            : $e->problem;
     }
 }

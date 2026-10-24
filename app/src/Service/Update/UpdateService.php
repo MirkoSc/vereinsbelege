@@ -49,6 +49,15 @@ final class UpdateService
         private readonly Migrator $migrator,
         private readonly BackupErstellung $backups,
         private readonly float $backupSekunden = self::BACKUP_SEKUNDEN,
+        /**
+         * Why a rollback must not happen right now, or null (issue #90):
+         * a release before migration 040 reads `vault` as "newest row is
+         * the key" and would seal to a vault key rotation's pending key.
+         * Asked lazily - the update pages must work without a database.
+         *
+         * @var (\Closure(): ?string)|null
+         */
+        private readonly ?\Closure $rollbackHindernis = null,
     ) {
     }
 
@@ -311,6 +320,14 @@ final class UpdateService
     public function rollback(): UpdateState
     {
         $state = $this->state() ?? new UpdateState(aktuelleVersion: $this->currentVersion);
+
+        $hindernis = $this->rollbackHindernis === null ? null : ($this->rollbackHindernis)();
+        if ($hindernis !== null) {
+            $state = $state->mit(fehler: $hindernis);
+            $this->save($state);
+
+            return $state;
+        }
 
         try {
             $this->switcher->rollback();

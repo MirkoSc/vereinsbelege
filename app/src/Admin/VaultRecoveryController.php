@@ -84,6 +84,15 @@ final readonly class VaultRecoveryController
 
         $vault = $ergebnis->vault;
         assert($vault !== null);
+        // During a key rotation (issue #90) the two paper keys can be entered
+        // one after the other: the session keeps both generations as a ring.
+        // Only a generation still in use joins: a ring left over from an
+        // abandoned rotation must never become the sealing key.
+        $bisher = $this->entsperrterTresor($request);
+        if ($bisher !== null && $bisher->version !== $vault->version && $this->recovery->istAktiv($bisher)) {
+            $bisher = $bisher->withoutPrevious();
+            $vault = $bisher->version > $vault->version ? $bisher->withPrevious($vault) : $vault->withPrevious($bisher);
+        }
 
         $this->audit->record(AuditAction::TresorWiederhergestellt, $userId, $request->ip, $userId, [
             'tresor_version' => $vault->version,
@@ -93,7 +102,7 @@ final readonly class VaultRecoveryController
 
         $this->session->flash('Der Tresor wurde mit dem Wiederherstellungsschlüssel entsperrt.', FlashArt::Ok);
 
-        return Response::redirect('/admin/tresor')->withCookie(
+        return Response::redirect($this->recovery->rotationLaeuft() ? '/admin/tresor/rotation' : '/admin/tresor')->withCookie(
             Cookie::vaultKey($this->sessionVault->store($vault), Request::httpsFromGlobals()),
         );
     }
@@ -112,12 +121,23 @@ final readonly class VaultRecoveryController
         ], Area::Admin));
     }
 
+    /**
+     * Unlocked and nothing left to recover: during a key rotation a session
+     * may hold one generation and still need the paper key of the other.
+     */
     private function istEntsperrt(Request $request): bool
     {
+        $tresor = $this->entsperrterTresor($request);
+
+        return $tresor !== null && ($tresor->previousVersions() !== [] || !$this->recovery->rotationLaeuft());
+    }
+
+    private function entsperrterTresor(Request $request): ?\App\Service\Crypto\Vault
+    {
         try {
-            return $this->sessionVault->unlock(Cookie::vaultKeyFrom($request)) !== null;
+            return $this->sessionVault->unlock(Cookie::vaultKeyFrom($request));
         } catch (CryptoException) {
-            return false;
+            return null;
         }
     }
 

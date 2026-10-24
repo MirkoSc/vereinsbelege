@@ -29,4 +29,10 @@ enum RecoveryKeyProblem: string
 
     /** Decodes and checksums fine, but does not match this vault. */
     case FremderTresor = 'fremder_tresor';
+
+    /**
+     * A key of an earlier generation of THIS installation, replaced by a key
+     * rotation (issue #90) - still the right key for backups made before it.
+     */
+    case Abgeloest = 'abgeloest';
 }

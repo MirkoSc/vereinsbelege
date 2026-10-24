@@ -50,6 +50,14 @@ enum AuditAction: string
      * acting user is the account itself.
      */
     case ZugangNeuVerknuepft = 'tresor.zugang_neu_verknuepft';
+    /**
+     * Vault key rotation (issue #90, docs/spec/01-sicherheit.md section 2
+     * "Schlüsselrotation"): entity is the vault generation (`vault.version`).
+     */
+    case TresorRotationGestartet = 'tresor.rotation_gestartet';
+    case TresorRotationSchluesselBestaetigt = 'tresor.rotation_schluessel_bestaetigt';
+    case TresorRotationAbgeschlossen = 'tresor.rotation_abgeschlossen';
+    case TresorRotationAbgebrochen = 'tresor.rotation_abgebrochen';
 
     case RolleAngelegt = 'rolle.angelegt';
     case RolleGeaendert = 'rolle.geaendert';
@@ -202,6 +210,10 @@ enum AuditAction: string
             self::TresorWiederhergestellt => 'Tresor mit Wiederherstellungsschlüssel entsperrt',
             self::TresorWiederherstellungFehlgeschlagen => 'Wiederherstellungsschlüssel fehlgeschlagen',
             self::ZugangNeuVerknuepft => 'Zugang nach Wiederherstellung neu verknüpft',
+            self::TresorRotationGestartet => 'Tresor-Schlüsselrotation gestartet',
+            self::TresorRotationSchluesselBestaetigt => 'Neuer Wiederherstellungsschlüssel bestätigt',
+            self::TresorRotationAbgeschlossen => 'Tresor-Schlüsselrotation abgeschlossen',
+            self::TresorRotationAbgebrochen => 'Tresor-Schlüsselrotation abgebrochen',
             self::RolleAngelegt => 'Rolle angelegt',
             self::RolleGeaendert => 'Rolle geändert',
             self::RolleGeloescht => 'Rolle gelöscht',
@@ -304,6 +316,8 @@ enum AuditAction: string
             self::TresorFreigegeben, self::TresorEntzogen,
             self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen,
             self::ZugangNeuVerknuepft => 'user',
+            self::TresorRotationGestartet, self::TresorRotationSchluesselBestaetigt,
+            self::TresorRotationAbgeschlossen, self::TresorRotationAbgebrochen => 'vault',
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
@@ -368,6 +382,7 @@ enum AuditAction: string
             'transfer' => 'Umbuchung',
             'document' => 'Beleg',
             'worker' => 'Worker',
+            'vault' => 'Tresor-Generation',
             default => $entity,
         };
     }

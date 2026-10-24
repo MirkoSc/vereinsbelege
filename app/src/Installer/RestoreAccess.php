@@ -167,7 +167,7 @@ final readonly class RestoreAccess
         } catch (RecoveryKeyException $e) {
             $limits->registerFailure(self::LIMIT_IP, $ip, $now);
 
-            throw new RestoreAccessException(VaultRecovery::meldungFuer($e->problem));
+            throw new RestoreAccessException(VaultRecovery::meldungFuer(VaultRecovery::problemFuer($e, $recoveryKeyInput, $vaults)));
         }
 
         // Which account? The one that may manage accounts (it has to fix the

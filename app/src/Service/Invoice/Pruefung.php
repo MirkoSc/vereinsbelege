@@ -115,7 +115,8 @@ final readonly class Pruefung
 
     private const string COLUMN = 'data_enc';
 
-    private const string NUMMER_ZWECK = 'invoice.number';
+    /** Purpose of `invoice.number_bi` - never rename. */
+    public const string NUMMER_ZWECK = 'invoice.number';
 
     public function __construct(
         private \PDO $pdo,
