@@ -310,6 +310,7 @@ final readonly class BackupController
             'phase' => $stand['phase'],
             'fertig' => $stand['phase'] === BackupErstellung::PHASE_FERTIG,
             'name' => $stand['name'],
+            'dump_zeilen' => (int) ($stand['dump_zeilen'] ?? 0),
             'blob_dateien' => $stand['blob_dateien'],
             'blob_gesamt' => $stand['blob_gesamt'],
         ];

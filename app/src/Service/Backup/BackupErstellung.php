@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\Service\Backup;
 
 /**
- * "Backup jetzt erstellen" on /admin/backups as a step chain of short
- * requests (issue #112, CLAUDE.md section 1, docs/spec/06-betrieb.md
- * section 2): one request writes the dump, the next ones append the blob
- * files in portions, the last one writes manifest and central directory and
- * hands the finished ZIP over under a name from BackupService::reserveName().
+ * "Backup jetzt erstellen" on /admin/backups and the update's backup step
+ * as a step chain of short requests (issue #112, CLAUDE.md section 1,
+ * docs/spec/06-betrieb.md section 2): the first requests write the database
+ * dump in parts (issue #208, MysqlDumper::schritt()) straight into the open
+ * ZIP entry dump.sql, the next ones append the blob files in portions, the
+ * last one writes manifest and central directory and hands the finished ZIP
+ * over under a name from BackupService::reserveName().
  *
  * The result is the same backup BackupService::create() makes (dump.sql,
  * optionally config.php, blobs/, manifest.json), so the installer restores
@@ -29,6 +31,18 @@ final readonly class BackupErstellung
 
     /** Bytes of blob files per step (at least one file). */
     public const int PORTION_BYTES = 16 * 1024 * 1024;
+
+    /**
+     * Dump text per step: the step writes it to a work file and then packs
+     * it into the archive, both within the request.
+     */
+    public const int DUMP_BYTES = 32 * 1024 * 1024;
+
+    /** Seconds of dumping per step - well inside max_execution_time = 30. */
+    public const float DUMP_SEKUNDEN = 8.0;
+
+    /** Marks a chain the update started (UpdateService::backup()). */
+    public const string ZWECK_UPDATE = 'update';
 
     /** A chain nobody has advanced for this long may be discarded by a new start. */
     public const int VERWAIST_NACH_SEKUNDEN = 3600;
@@ -50,6 +64,8 @@ final readonly class BackupErstellung
         private string $backupDir,
         private string $configFile,
         private ?\Closure $clock = null,
+        private int $dumpBytes = self::DUMP_BYTES,
+        private float $dumpSekunden = self::DUMP_SEKUNDEN,
     ) {
     }
 
@@ -84,13 +100,18 @@ final readonly class BackupErstellung
     /**
      * Starts a new chain; nothing is written to the archive yet.
      *
+     * @param bool $mitBlobs false leaves the files of backend `fs` out (the
+     *        update's backup: an update never touches them)
+     * @param string|null $zweck who started it, so that caller can tell its
+     *        own chain from one an admin started (ZWECK_UPDATE)
+     *
      * @return array<string, mixed>
      *
      * @throws BackupLaeuftBereits when another chain is still running
      */
-    public function starten(bool $mitConfig): array
+    public function starten(bool $mitConfig, bool $mitBlobs = true, ?string $zweck = null): array
     {
-        return $this->gesperrt(function () use ($mitConfig): array {
+        return $this->gesperrt(function () use ($mitConfig, $mitBlobs, $zweck): array {
             if ($this->laeuft()) {
                 throw new BackupLaeuftBereits('Es wird bereits ein Backup erstellt.');
             }
@@ -101,6 +122,11 @@ final readonly class BackupErstellung
                 'id' => bin2hex(random_bytes(8)),
                 'phase' => self::PHASE_DUMP,
                 'mit_config' => $mitConfig,
+                'mit_blobs' => $mitBlobs,
+                'zweck' => $zweck,
+                'dump' => null,
+                'dump_eintrag' => null,
+                'dump_zeilen' => 0,
                 'config_enthalten' => false,
                 'gestartet' => $jetzt->format('Y-m-d H:i:s'),
                 'aktualisiert' => $jetzt->getTimestamp(),
@@ -141,7 +167,11 @@ final readonly class BackupErstellung
 
             $archivPfad = $this->arbeitsdatei($stand, 'zip.part');
             $zentralPfad = $this->arbeitsdatei($stand, 'zentral.part');
-            if ($stand['phase'] !== self::PHASE_DUMP && (!is_file($archivPfad) || !is_file($zentralPfad))) {
+            // Once dump.sql is open (or the dump is through) the archive
+            // has committed bytes: a missing work file must not be recreated
+            // empty and padded to the old length.
+            $begonnen = $stand['phase'] !== self::PHASE_DUMP || is_array($stand['dump_eintrag'] ?? null);
+            if ($begonnen && (!is_file($archivPfad) || !is_file($zentralPfad))) {
                 $gerettet = $this->nachAbbruchDerUebergabe($stand);
                 if ($gerettet !== null) {
                     return $gerettet;
@@ -199,6 +229,14 @@ final readonly class BackupErstellung
      */
     private function dump(array $stand, ZipAnhang $zip): array
     {
+        // The open entry dump.sql and the dumper's position travel with the
+        // committed lengths of the work files: a step that died is run again
+        // from exactly here, its bytes in the archive cut off by oeffnen().
+        $eintrag = is_array($stand['dump_eintrag'] ?? null)
+            ? $stand['dump_eintrag']
+            : $zip->eintragBeginnen('dump.sql', ZipAnhang::DEFLATE);
+        $dumpStand = is_array($stand['dump'] ?? null) ? $stand['dump'] : null;
+
         $dumpPfad = $this->arbeitsdatei($stand, 'dump.part');
         try {
             $strom = fopen($dumpPfad, 'w+b');
@@ -206,11 +244,11 @@ final readonly class BackupErstellung
                 throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
             }
             try {
-                new MysqlDumper($this->pdo)->dump($strom);
+                $dumpStand = new MysqlDumper($this->pdo)->schritt($strom, $dumpStand, $this->dumpBytes, $this->dumpSekunden);
                 rewind($strom);
                 // Level 1: the dump is mostly hex literals of ciphertext;
                 // a higher level costs CPU time for little gain.
-                $zip->eintrag('dump.sql', $strom, ZipAnhang::DEFLATE, 1);
+                $eintrag = $zip->eintragFortsetzen($eintrag, $strom, 1);
             } finally {
                 fclose($strom);
             }
@@ -219,6 +257,16 @@ final readonly class BackupErstellung
                 unlink($dumpPfad);
             }
         }
+
+        if ($dumpStand['fertig'] !== true) {
+            return [
+                ...$stand,
+                'dump' => $dumpStand,
+                'dump_eintrag' => $eintrag,
+                'dump_zeilen' => (int) $dumpStand['zeilen'],
+            ];
+        }
+        $zip->eintragBeenden($eintrag);
         $eintraege = 1;
 
         $configDabei = $stand['mit_config'] === true && is_file($this->configFile);
@@ -240,8 +288,9 @@ final readonly class BackupErstellung
         // where the last one stopped instead of listing the tree again.
         $liste = '';
         $anzahl = 0;
-        foreach ($this->backups->blobFiles() as $eintrag => $pfad) {
-            $liste .= $eintrag . "\t" . $pfad . "\n";
+        $dateien = ($stand['mit_blobs'] ?? true) === false ? [] : $this->backups->blobFiles();
+        foreach ($dateien as $zipName => $pfad) {
+            $liste .= $zipName . "\t" . $pfad . "\n";
             $anzahl++;
         }
         if (file_put_contents($this->arbeitsdatei($stand, 'liste.part'), $liste) === false) {
@@ -251,6 +300,9 @@ final readonly class BackupErstellung
         return [
             ...$stand,
             'phase' => self::PHASE_BLOBS,
+            'dump' => null,
+            'dump_eintrag' => null,
+            'dump_zeilen' => (int) $dumpStand['zeilen'],
             'config_enthalten' => $configDabei,
             'eintraege' => $eintraege,
             'liste_offset' => 0,

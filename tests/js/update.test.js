@@ -6,7 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { naechsteSchritte, abSchritt, letzteMeldung } = require('../../public/js/update.js');
+const { naechsteSchritte, abSchritt, letzteMeldung, nochmal } = require('../../public/js/update.js');
 
 const SCHRITTE = ['check', 'download', 'extract', 'backup', 'switch', 'migrate', 'finish'];
 
@@ -54,4 +54,14 @@ test('naechsteSchritte does not modify the list it was given', () => {
     const kopie = SCHRITTE.slice();
     naechsteSchritte(kopie, 'check');
     assert.deepEqual(kopie, SCHRITTE);
+});
+
+// Issue #208: the backup step answers `weiter` while its dump is not
+// through; the page then calls the same step again.
+test('a step answering weiter is called again, any other answer moves on', () => {
+    assert.equal(nochmal({ weiter: true, fehler: null }), true);
+    assert.equal(nochmal({ weiter: false, fehler: null }), false);
+    assert.equal(nochmal({ fehler: null }), false, 'an older server never says weiter');
+    assert.equal(nochmal({ weiter: true, fehler: 'kaputt' }), false, 'an error ends the step');
+    assert.equal(nochmal(null), false);
 });
