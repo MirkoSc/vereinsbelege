@@ -752,6 +752,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
             KiAuslesungFabrik::bauen($pdo, $this->blobs(), $this->crypto),
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
             KiAuslesungFabrik::lieferanten($pdo, $this->blobs(), $this->crypto, $this->audit),
+            new JobRepository($pdo),
             $this->zuordnung(),
         );
     }

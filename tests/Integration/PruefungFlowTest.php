@@ -2140,6 +2140,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto, $this->kiClient),
             $this->regeln(),
             KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
+            new JobRepository($pdo),
             ZuordnungFabrik::bauen($pdo, $this->audit),
         );
     }
