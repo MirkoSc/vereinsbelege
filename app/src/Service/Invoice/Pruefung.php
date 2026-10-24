@@ -861,7 +861,7 @@ final readonly class Pruefung
                 // takes too: an allocation made since the first check counts.
                 $gesperrt = $this->invoices->find($invoiceId, sperren: true)
                     ?? throw new InvoiceRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
-                $this->pruefeGegenZuordnungen($vault, $gesperrt, $struktur, $daten);
+                $this->pruefeGegenZuordnungen($vault, $gesperrt, $struktur, $daten, sperren: true);
                 $key = $vault->openDataKey($vorher->dekSealed);
                 if ($geaendert !== []) {
                     $this->invoices->update($invoiceId, $struktur, self::verschluesseln($key, $invoiceId, $daten), $numberBi, $userId, $now);
@@ -971,9 +971,11 @@ final readonly class Pruefung
      *
      * @throws InvoiceRuleViolation
      */
-    private function pruefeGegenZuordnungen(Vault $vault, InvoiceRecord $vorher, InvoiceStructure $struktur, InvoiceData $daten): void
+    private function pruefeGegenZuordnungen(Vault $vault, InvoiceRecord $vorher, InvoiceStructure $struktur, InvoiceData $daten, bool $sperren = false): void
     {
-        if (!$this->zuordnung->hatZuordnungen($vorher->id)) {
+        // Under the row lock the allocations are read with a locking read:
+        // a plain one would see the transaction's snapshot (REPEATABLE READ).
+        if (!$this->zuordnung->hatZuordnungen($vorher->id, $sperren)) {
             return;
         }
         if (!$struktur->paymentKind->erwartetBuchung()) {
@@ -983,7 +985,7 @@ final readonly class Pruefung
         if ($struktur->direction !== $vorher->direction || $gutschriftWechselt) {
             throw new InvoiceRuleViolation('Dem Beleg sind Buchungen zugeordnet – Richtung und Belegart lassen sich erst ändern, wenn die Zuordnungen gelöst sind.', 'richtung');
         }
-        if ($daten->gross < $this->zuordnung->zahlungsstand($vault, $vorher)->zugeordnet) {
+        if ($daten->gross < $this->zuordnung->zahlungsstand($vault, $vorher, $sperren)->zugeordnet) {
             throw new InvoiceRuleViolation('Dem Beleg ist bereits mehr zugeordnet als dieser Bruttobetrag – erst die Zuordnungen lösen.', 'brutto');
         }
     }
