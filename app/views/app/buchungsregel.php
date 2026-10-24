@@ -105,7 +105,8 @@ foreach ($kategorieAuswahl as $kategorie) {
                     <?php endforeach; ?>
                 </select>
             </label>
-            <p class="feld-hilfe">Eine Ausgaben-Kategorie braucht „nur Ausgaben“, eine Einnahmen-Kategorie „nur Einnahmen“.</p>
+            <p class="feld-hilfe">Eine Ausgaben-Kategorie braucht „nur Ausgaben“, eine Einnahmen-Kategorie „nur Einnahmen“.
+                Die Kategorie wird auch passenden Belegen beim Prüfen vorgeschlagen – das Stichwort sucht dort im Zweck, die Gegenseite beim Lieferanten bzw. Zahler.</p>
         </fieldset>
 
         <?php if ($darfBuchen): ?>

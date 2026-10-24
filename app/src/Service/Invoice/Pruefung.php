@@ -6,6 +6,7 @@ namespace App\Service\Invoice;
 
 use App\Domain\ArtifactKind;
 use App\Domain\AuditAction;
+use App\Domain\Belegmerkmale;
 use App\Domain\Document;
 use App\Domain\DocumentArtifact;
 use App\Domain\DocumentSource;
@@ -28,6 +29,7 @@ use App\Repository\InvoiceRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Archiv\ArchivVorgabe;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -71,6 +73,10 @@ use App\Service\Upload\MagicBytes;
  *   (issue #46/M7-4, App\Service\Document\Texterkennung::eRechnung()).
  *   Nothing is saved before a person does. kiErneut() queues the AI again
  *   after it failed.
+ * - The category of such a form comes in a fixed order (issue #49/M7-7,
+ *   kategorieVorschlagen()): a rule of the club, the supplier's default,
+ *   what its checked receipts had, the AI - App\Service\Invoice\
+ *   Kategorisierung. The page says where it came from.
  *
  * Framework-free like the other services: no Http, no Session. Nothing
  * decrypted leaves through an exception message or the audit log - the log
@@ -110,6 +116,7 @@ final readonly class Pruefung
         private Posteingang $posteingang,
         private AuditLog $audit,
         private KiAuslesung $kiAuslesung,
+        private Buchungsregeln $regeln,
     ) {
     }
 
@@ -494,6 +501,64 @@ final readonly class Pruefung
         }
 
         return ['felder' => $felder, 'hinweise' => $hinweise];
+    }
+
+    /**
+     * The category of a form not yet saved (issue #49/M7-7, docs/spec/
+     * 03-erfassung-und-ki.md section 8), on the form as filled in so far
+     * (vorbelegen()): the oldest matching rule, the supplier's default
+     * category, what its newest checked receipts share, then the AI's
+     * suggestion - App\Service\Invoice\Kategorisierung. Only a category
+     * that is active and fits the direction counts. Without any the field
+     * stays empty. The person confirms or changes it by saving.
+     *
+     * @param array<string, string> $felder after vorbelegen()
+     * @param Zugriffsbereich $bereich the reader's scope - only receipts within it are learnt from
+     *
+     * @return array{felder: array<string, string>, vorschlag: ?KategorieVorschlag}
+     */
+    public function kategorieVorschlagen(array $felder, ?KiAuszug $ki, Vault $vault, Zugriffsbereich $bereich): array
+    {
+        $richtung = InvoiceDirection::tryFrom($felder['richtung'] ?? '') ?? InvoiceDirection::Ausgabe;
+        $lieferantId = $felder['lieferant'] ?? '';
+        // A supplier merged away since counts as the one it went into
+        // (issue #39/M6-5) - its default and its receipts.
+        $lieferant = ctype_digit($lieferantId) ? $this->lieferanten->finde($vault, $this->lieferantenRepository->aufgeloest((int) $lieferantId)) : null;
+        if ($lieferant !== null) {
+            $namen = [$lieferant->data->name, ...$lieferant->data->aliases];
+            $ibans = $lieferant->data->ibans;
+        } else {
+            $namen = [$felder['lieferant_neu_name'] ?? ''];
+            $ibans = [$felder['lieferant_neu_iban'] ?? ''];
+        }
+        $beleg = new Belegmerkmale(
+            $richtung,
+            $felder['zweck'] ?? '',
+            array_values(array_filter($namen, static fn(string $n): bool => trim($n) !== '')),
+            array_values(array_filter($ibans, static fn(string $i): bool => trim($i) !== '')),
+        );
+
+        $extraktion = $ki?->extraktion ?? [];
+        $kiKategorie = is_int($extraktion['category_id'] ?? null) ? $extraktion['category_id'] : null;
+        $konfidenz = is_array($extraktion['confidence'] ?? null) ? ($extraktion['confidence']['category'] ?? null) : null;
+
+        $kategorien = [];
+        foreach ($this->kategorien->all() as $kategorie) {
+            $kategorien[$kategorie->id] = $kategorie;
+        }
+
+        $vorschlag = Kategorisierung::vorschlagen(
+            $this->regeln->fuerImport($vault),
+            $beleg,
+            $lieferant?->defaultCategoryId,
+            fn(): array => $lieferant === null ? [] : $this->invoices->letzteGeprueftenKategorien($lieferant->id, Kategorisierung::GELERNT_AB, $bereich),
+            $kiKategorie,
+            is_int($konfidenz) || is_float($konfidenz) ? (float) $konfidenz : null,
+            static fn(int $id): bool => isset($kategorien[$id]) && $kategorien[$id]->active && $richtung->passtZuKategorie($kategorien[$id]->direction),
+        );
+        $felder['kategorie'] = $vorschlag === null ? '' : (string) $vorschlag->kategorieId;
+
+        return ['felder' => $felder, 'vorschlag' => $vorschlag];
     }
 
     /**
