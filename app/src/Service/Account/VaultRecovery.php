@@ -89,7 +89,12 @@ final readonly class VaultRecovery
         return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben);
     }
 
-    private static function meldungFuer(RecoveryKeyProblem $problem): string
+    /**
+     * The German message for a refused recovery key - shared with the
+     * installer's access step after a restore (App\Installer\RestoreAccess),
+     * which parses the same key.
+     */
+    public static function meldungFuer(RecoveryKeyProblem $problem): string
     {
         return match ($problem) {
             RecoveryKeyProblem::Laenge => 'Der Schlüssel hat nicht die richtige Länge. '

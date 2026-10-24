@@ -39,6 +39,7 @@ use App\App\MfaController;
 use App\App\PasswordController;
 use App\App\PruefungController;
 use App\App\SecurityController;
+use App\App\SucheController;
 use App\App\SupplierController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
@@ -171,6 +172,8 @@ use App\View\View;
  * @param \Closure(): ArchivImportController $archivImport built lazily, same
  *        reason as $mail: only the archive import needs the database (issue
  *        #77/M12-3).
+ * @param \Closure(): SucheController $suche built lazily, same reason as
+ *        $mail: only the full-text search needs the database (issue #94).
  * @param (\Closure(): NextcloudSettingsController)|null $nextcloudAdmin
  *        built lazily, same reason as $mail (issue #95). Optional and last,
  *        so route tables built for other pages need not name it; without it
@@ -216,6 +219,7 @@ return static function (
     \Closure $buchungsregeln,
     \Closure $export,
     \Closure $archivImport,
+    \Closure $suche,
     ?\Closure $nextcloudAdmin = null,
     ?\Closure $workerAuth = null,
     ?\Closure $workerApi = null,
@@ -493,6 +497,17 @@ return static function (
     // inbox scope, CSRF, the unlocked vault (App\App\InboxController).
     $post('/app/posteingang/{id:\d+}/duplikat-verwerfen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->duplikatVerwerfen($r, $params));
     $post('/app/posteingang/{id:\d+}/duplikat-behalten', $documentEdit, static fn(Request $r, array $params) => $posteingang()->duplikatBehalten($r, $params));
+
+    // Full-text search (issue #94, docs/spec/03-erfassung-und-ki.md
+    // section 10). Permission: `inbox.view` with its scope, like the inbox
+    // the hits link to - indexed and shown is only what that scope allows
+    // (App\Service\Suche\Volltextsuche). The search is a POST with CSRF so
+    // the terms stay out of URLs and logs; the index step is fetch()-driven
+    // (JSON 401/403), "neu aufbauen" a plain form.
+    $get('/app/suche', $inboxView, static fn(Request $r) => $suche()->seite($r));
+    $post('/app/suche', $inboxView, static fn(Request $r) => $suche()->suchen($r));
+    $post('/app/suche/index', $inboxView->alsApi(), static fn(Request $r) => $suche()->schritt($r));
+    $post('/app/suche/neu', $inboxView, static fn(Request $r) => $suche()->neu($r));
 
     // Internal capture (M4-6, issue #28, docs/spec/03-erfassung-und-ki.md
     // section 1): several receipts in one pass, straight into the inbox.

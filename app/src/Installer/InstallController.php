@@ -51,9 +51,28 @@ use App\View\View;
  * for a backup with blobs, the ZIP itself - in shared/var/ and the progress
  * in the session, the page's JavaScript then calls restoreStep() until it
  * reports "fertig".
+ *
+ * A backup WITHOUT config.php (the default of bin/backup.php and of the
+ * update chain) adds one more step before config.php is written (issue
+ * #154, docs/spec/06-betrieb.md section 2): with a fresh server key no
+ * account could be found at the login - `user.email_bi` is keyed from the
+ * server key - so the admin either hands in the old key (the separately
+ * kept config.php) or re-links their account with the recovery key and
+ * their password (App\Installer\RestoreAccess). Until then
+ * $_SESSION['install_restore'] stays in phase `zugang`, the installer stays
+ * open, and neither the recovery key nor the password ever enters the
+ * session: both are used within the request that receives them.
+ *
+ *   serverKey()  POST /install/serverschluessel - old key pasted or
+ *                config.php uploaded; accepted only if it opens the data.
+ *   access()     POST /install/zugang - recovery key + address, name and
+ *                password of the admin's own account.
  */
 final readonly class InstallController
 {
+    /** $_SESSION['install_restore']['phase'] while the access step is open. */
+    public const string PHASE_ZUGANG = 'zugang';
+
     public function __construct(
         private View $view,
         private Paths $paths,
@@ -74,6 +93,9 @@ final readonly class InstallController
 
         if (is_array($_SESSION['install_admin'] ?? null)) {
             return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+        }
+        if ($this->pendingAccess() !== null) {
+            return $this->renderAccess();
         }
 
         // Deny-all .htaccess in shared/, releases/ and current/ (issue #101).
@@ -106,6 +128,11 @@ final readonly class InstallController
         // again instead of processing the form a second time.
         if (is_array($_SESSION['install_admin'] ?? null)) {
             return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+        }
+        // Likewise a restore that only waits for its access step: the data
+        // is in, submitting the form again must not start another one.
+        if ($this->pendingAccess() !== null) {
+            return $this->renderAccess();
         }
 
         $values = [
@@ -267,6 +294,17 @@ final readonly class InstallController
             ], 403);
         }
 
+        // A restore waiting for its access step: nothing to remove - the
+        // restored tables stay (the next restore drops them anyway, and a
+        // fresh install refuses a database with a vault) - only the state
+        // goes, so the form can be submitted again.
+        if ($this->pendingAccess() !== null) {
+            $kanal = (string) ($_SESSION['install_restore']['values']['kanal'] ?? $this->channelFromSetup());
+            unset($_SESSION['install_restore']);
+
+            return $this->render(['errors' => [], 'values' => ['kanal' => $kanal === 'beta' ? 'beta' : 'stable']]);
+        }
+
         $stand = $_SESSION['install_admin'] ?? null;
         if (!is_array($stand) || !is_array($stand['db'] ?? null)) {
             return $this->render([
@@ -315,7 +353,7 @@ final readonly class InstallController
         }
 
         $stand = $_SESSION['install_restore'] ?? null;
-        if (!is_array($stand) || !is_array($stand['values'] ?? null)) {
+        if (!is_array($stand) || !is_array($stand['values'] ?? null) || ($stand['phase'] ?? null) === self::PHASE_ZUGANG) {
             return Response::json(['fehler' => 'Keine Wiederherstellung aktiv.'], 409);
         }
         /** @var array<string, string> $values */
@@ -373,23 +411,31 @@ final readonly class InstallController
             $migriert = new Migrator($pdo, $this->paths->migrationsDir())->migrate();
             new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
-            $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
-            ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
-
             @unlink($dumpDatei);
             if ($zipDatei !== null) {
                 @unlink($zipDatei);
             }
-            unset($_SESSION['install_restore']);
-            $this->cleanUpSetupLeftovers();
 
-            return Response::json([
+            $antwort = [
                 'fertig' => true,
                 'phase' => $phase,
                 'offset' => $gesamt,
                 'gesamt' => $gesamt,
                 'migrationen' => count($migriert->applied),
-            ]);
+            ];
+
+            $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
+            if ($serverSchluessel === null) {
+                // No key in the backup: config.php waits for the access step
+                // (serverKey()/access()), the page moves on to its form.
+                $_SESSION['install_restore'] = ['values' => $values, 'phase' => self::PHASE_ZUGANG];
+
+                return Response::json([...$antwort, 'weiter' => '/install']);
+            }
+
+            $this->finishRestore($values, $serverSchluessel);
+
+            return Response::json($antwort);
         } catch (\PDOException $e) {
             // Deliberately not getMessage(): a failed INSERT quotes a part
             // of the statement, and that is the row data of the backup.
@@ -405,6 +451,170 @@ final readonly class InstallController
                 'fehler' => $e instanceof \RuntimeException ? $e->getMessage() : 'Unerwarteter Fehler beim Einspielen.',
             ], 500);
         }
+    }
+
+    /**
+     * Access step, alternative 1: the old server key - pasted, or as the
+     * separately kept config.php (read with the same regular expression as
+     * a config.php inside the backup, never included). Taken only when it
+     * opens the restored accounts: a key that merely looks right would lock
+     * the installation exactly like a missing one.
+     */
+    public function serverKey(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->renderAccess(['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'], 403);
+        }
+        $values = $this->pendingAccess();
+        if ($values === null) {
+            return $this->render(['errors' => [], 'values' => ['kanal' => $this->channelFromSetup()]], 409);
+        }
+
+        $schluessel = null;
+        $datei = $this->uploadedFile($request, 'config');
+        if ($datei !== null) {
+            // A config.php is a few hundred bytes; whatever is bigger than
+            // this is not one, and is not read into memory any further.
+            $inhalt = file_get_contents($datei['tmp_name'], false, null, 0, 64 * 1024);
+            $schluessel = $inhalt === false ? null : RestoreService::serverSchluesselAusConfig($inhalt);
+            if ($schluessel === null) {
+                return $this->renderAccess(['server_key' => 'In der hochgeladenen Datei steht kein gültiger Server-Schlüssel (erwartet wird die config.php des Installers).'], 422);
+            }
+        } else {
+            $eingabe = trim((string) ($request->post['server_key'] ?? ''));
+            if ($eingabe === '') {
+                return $this->renderAccess(['server_key' => 'Bitte den Server-Schlüssel eintragen oder die config.php hochladen.'], 422);
+            }
+            if (!RestoreService::gueltigerServerSchluessel($eingabe)) {
+                return $this->renderAccess(['server_key' => 'Das ist kein Server-Schlüssel (erwartet werden 44 Zeichen Base64 aus der config.php).'], 422);
+            }
+            $schluessel = $eingabe;
+        }
+
+        try {
+            $passt = new RestoreAccess($this->connect($values))->serverKeyFits($schluessel);
+        } catch (\PDOException $e) {
+            // The PDO message names host and database, never the password.
+            return $this->renderAccess(['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()], 422);
+        }
+        if (!$passt) {
+            return $this->renderAccess(['server_key' => 'Dieser Schlüssel passt nicht zu den eingespielten Daten: kein Benutzerkonto lässt sich damit lesen. Bitte die config.php der Installation verwenden, von der das Backup stammt.'], 422);
+        }
+
+        $this->finishRestore($values, $schluessel);
+
+        return $this->render(['fertig' => true, 'restore' => true, 'errors' => [], 'values' => []]);
+    }
+
+    /**
+     * Access step, alternative 2: recovery key plus the admin's own address,
+     * name and password (App\Installer\RestoreAccess::relink()). A new
+     * server key is generated here, used for the re-linked row and written
+     * to config.php in the same request; the recovery key and the password
+     * live only in this request.
+     */
+    public function access(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->renderAccess(['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'], 403);
+        }
+        $values = $this->pendingAccess();
+        if ($values === null) {
+            return $this->render(['errors' => [], 'values' => ['kanal' => $this->channelFromSetup()]], 409);
+        }
+
+        $eingabe = [
+            'admin_email' => trim((string) ($request->post['admin_email'] ?? '')),
+            'admin_name' => trim((string) ($request->post['admin_name'] ?? '')),
+        ];
+        $neuerSchluessel = ConfigWriter::generateServerKey();
+
+        try {
+            $zugang = new RestoreAccess($this->connect($values));
+            $ergebnis = $zugang->relink(
+                (string) ($request->post['schluessel'] ?? ''),
+                $eingabe['admin_email'],
+                $eingabe['admin_name'],
+                (string) ($request->post['admin_password'] ?? ''),
+                $neuerSchluessel,
+                $request->ip,
+                // Inside relink()'s transaction: a config.php that cannot be
+                // written rolls the re-link back instead of leaving the one
+                // readable account under a key that exists nowhere.
+                fn() => ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel),
+            );
+            $unlesbar = $zugang->unreadableAccounts($neuerSchluessel, $ergebnis->userId);
+        } catch (RestoreAccessException $e) {
+            return $this->renderAccess(['zugang' => $e->getMessage()], 422, $eingabe);
+        } catch (\PDOException $e) {
+            return $this->renderAccess(['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()], 422, $eingabe);
+        }
+
+        $this->closeInstaller();
+
+        return $this->render([
+            'fertig' => true,
+            'restore' => true,
+            'zugangVerknuepft' => [
+                'email' => $eingabe['admin_email'],
+                'freigabeErteilt' => $ergebnis->freigabeErteilt,
+                'mfaZurueckgesetzt' => $ergebnis->mfaZurueckgesetzt,
+                'unlesbareKonten' => $unlesbar,
+            ],
+            'errors' => [],
+            'values' => [],
+        ]);
+    }
+
+    /**
+     * The last request of every restore: config.php (which closes
+     * /install), the leftovers of setup.php, the session state.
+     *
+     * @param array<string, string> $values
+     */
+    private function finishRestore(array $values, string $serverSchluessel): void
+    {
+        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
+        $this->closeInstaller();
+    }
+
+    /** What follows a written config.php: the leftovers of setup.php, the session state. */
+    private function closeInstaller(): void
+    {
+        unset($_SESSION['install_restore']);
+        $this->cleanUpSetupLeftovers();
+    }
+
+    /**
+     * The form values of a restore that waits for its access step, or null
+     * when none does.
+     *
+     * @return array<string, string>|null
+     */
+    private function pendingAccess(): ?array
+    {
+        $stand = $_SESSION['install_restore'] ?? null;
+        if (!is_array($stand) || ($stand['phase'] ?? null) !== self::PHASE_ZUGANG || !is_array($stand['values'] ?? null)) {
+            return null;
+        }
+
+        /** @var array<string, string> $values */
+        $values = $stand['values'];
+
+        return $values;
+    }
+
+    /**
+     * @param array<string, string> $errors
+     * @param array<string, string> $eingabe address and name to show again - never the password or the key
+     */
+    private function renderAccess(array $errors = [], int $status = 200, array $eingabe = []): Response
+    {
+        return $this->render(['schritt' => 'zugang', 'errors' => $errors, 'values' => $eingabe], $status);
     }
 
     /**
@@ -504,7 +714,15 @@ final readonly class InstallController
      */
     private function uploadedBackup(Request $request): ?array
     {
-        $datei = $request->files['backup'] ?? null;
+        return $this->uploadedFile($request, 'backup');
+    }
+
+    /**
+     * @return array{tmp_name: string}|null
+     */
+    private function uploadedFile(Request $request, string $feld): ?array
+    {
+        $datei = $request->files[$feld] ?? null;
         if (!is_array($datei) || ($datei['error'] ?? \UPLOAD_ERR_NO_FILE) !== \UPLOAD_ERR_OK) {
             return null;
         }

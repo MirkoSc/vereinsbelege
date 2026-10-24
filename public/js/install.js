@@ -20,6 +20,9 @@ function fortschrittProzent(offset, gesamt) {
  * of dump.sql first, then the encrypted files of the blob storage.
  */
 function statusText(antwort) {
+    if (antwort && antwort.fertig && zielNachAbschluss(antwort) !== null) {
+        return 'Fertig. Das Backup ist eingespielt – weiter zum Zugang …';
+    }
     if (antwort && antwort.fertig) {
         return 'Fertig. Das Backup ist eingespielt.';
     }
@@ -31,6 +34,21 @@ function statusText(antwort) {
     }
 
     return 'Anweisung ' + antwort.offset + ' von ' + antwort.gesamt + ' …';
+}
+
+/**
+ * Where the page goes once the restore is through: the server names a
+ * `weiter` path when config.php is not written yet because the backup had no
+ * server key and the access step follows (docs/spec/06-betrieb.md section
+ * 2, issue #154); null means the restore is complete.
+ */
+function zielNachAbschluss(antwort) {
+    if (!antwort || !antwort.fertig || typeof antwort.weiter !== 'string' || antwort.weiter === '') {
+        return null;
+    }
+    // Only a path on this host - never a destination the response could
+    // point elsewhere.
+    return antwort.weiter.startsWith('/') && !antwort.weiter.startsWith('//') ? antwort.weiter : null;
 }
 
 async function restoreStep(csrf) {
@@ -69,6 +87,17 @@ async function initRestore() {
             status.textContent = statusText(antwort);
         }
         balken.value = 100;
+        const ziel = zielNachAbschluss(antwort);
+        if (ziel !== null) {
+            const weiter = wurzel.querySelector('#wiederherstellung-weiter');
+            if (weiter !== null) {
+                weiter.href = ziel;
+                weiter.textContent = 'Weiter: Zugang einrichten';
+            }
+            fertig.hidden = false;
+            window.location.assign(ziel);
+            return;
+        }
         fertig.hidden = false;
     } catch (problem) {
         status.textContent = 'Abgebrochen.';
@@ -139,5 +168,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { fortschrittProzent, statusText, feldgruppenFuer };
+    module.exports = { fortschrittProzent, statusText, feldgruppenFuer, zielNachAbschluss };
 }

@@ -162,6 +162,58 @@ Erkennung höchstens alle 400 ms auf 320 px Breite, „stabil“ = 3
 aufeinanderfolgende Treffer mit ≤ 2 % Abweichung (Bilddiagonale). Zu
 überprüfen, sobald E-03 entschieden ist und ein echtes Mittelklasse-Handy
 getestet wurde (Standard „an“? Einstellung merken?).
+## E-25 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #154)*
+
+Befund: `user.email_bi` (Login-Index), `email_enc`, `display_name_enc` und
+TOTP-Geheimnisse hängen am Server-Schlüssel aus `config.php`. Das
+Standard-Backup enthält ihn bewusst nicht (E-01: Chiffrat darf den Server
+verlassen, der Schlüssel nicht). Nach dem Einspielen auf einem neuen Server
+konnte sich deshalb niemand mehr anmelden – auch nicht mit dem
+Wiederherstellungsschlüssel, der einen angemeldeten Admin voraussetzte.
+
+Gewählt (Kombination aus Weg 3 und Weg 1 des Issues, dazu ein Stück Weg 2):
+- **Weg 3, Warnen:** `bin/backup.php` warnt bei jedem Backup ohne
+  `--mit-config` auf STDERR; der Installer warnt vor dem Einspielen eines
+  Backups ohne Schlüssel unübersehbar; Spec 06 §2 verlangt, `config.php`
+  getrennt neben dem Wiederherstellungsschlüssel zu sichern.
+- **Weg 1, Neuverknüpfung:** Der Installer schreibt `config.php` ohne alten
+  Schlüssel nicht mehr still, sondern verlangt einen Zugangsschritt. Dort
+  verknüpft der Admin sein **bestehendes** Konto neu: Wiederherstellungs-
+  schlüssel (Berechtigung des Vereins; muss zum Tresor des Dumps passen)
+  **plus bisheriges Passwort** (bestimmt das Konto – Namen und Adressen sind
+  unlesbar, das Passwort ist das einzige Merkmal; Schlüsselpaar und Freigabe
+  bleiben so erhalten). Adresse und Name werden unter dem neuen Schlüssel
+  neu gesetzt, TOTP zurückgesetzt, ein fehlender Grant aus dem Tresor
+  erzeugt, alles auditiert. Der Wiederherstellungsschlüssel erhält dadurch
+  keine Befugnis, die er nicht hat: er enthält `VK_priv` und öffnet ohnehin
+  jede fachliche Zeile. Ohne ihn kommt niemand hinein – ein geleaktes
+  Backup allein führt weiterhin zu nichts.
+- **Weg 2, nur als Angebot:** Wer `config.php` getrennt gesichert hat, lädt
+  sie im selben Schritt hoch (oder trägt den Schlüssel ein); übernommen wird
+  sie nur, wenn sie ein Konto des Dumps entschlüsselt. Als **Zwang**
+  (Restore ohne alten Schlüssel ablehnen) verworfen: dann wäre ein Verein,
+  der nur Backup und Papierschlüssel hat, endgültig ausgesperrt – genau das
+  Szenario, das der Wiederherstellungsschlüssel abdecken soll.
+
+Bewusst in Kauf genommen:
+- Die Adressen der **übrigen** Benutzer sind nicht rekonstruierbar (sie
+  liegen nirgends unter dem Tresor). Der Admin trägt sie unter
+  `/admin/benutzer/<id>` neu ein; das Formular bietet das Feld nur für
+  unlesbare Adressen an. Bis dahin können sich diese Konten nicht anmelden;
+  ihre Authenticator-Apps sind ungültig, Passwort und Freigabe intakt.
+- Ein Admin, der **Passwort und** `config.php` verloren hat, kommt mit dem
+  Wiederherstellungsschlüssel allein nicht hinein. Nahe liegender Ausbau
+  (nicht umgesetzt, Folge-Idee): „neues Admin-Konto mit dem Wiederherstellungs-
+  schlüssel anlegen“ – Tresor-Grant aus dem Papierschlüssel, wie bei der
+  frischen Installation ohne neuen Tresor.
+- Haben zwei Admins dasselbe Passwort, lehnt der Schritt ab (nicht
+  unterscheidbar; ein anderes Admin-Konto muss verknüpfen).
+- Die Mail-Warteschlange wird bei Weg 2 geleert: ihre Zeilen sind Chiffrat
+  unter dem verlorenen Schlüssel und würden sonst den Versand blockieren.
+- Folge-Idee gegen den Datenverlust der Adressen: je Konto eine an `VK_pub`
+  versiegelte Kopie von Adresse und Name, dann könnte der verknüpfte Admin
+  alle Konten in einer Session automatisch neu berechnen.
 
 ## E-21 ✅ Eine Regelliste für Buchungen und Belege (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: M7-7 (issue #49), 03 §8, 04 §5*
@@ -210,7 +262,61 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   `needs_review` des Ziels nicht (M6-5).
 - **Noch nicht umgesetzt:** „Neu gelernte Merkmale (weitere IBAN,
   Alias-Name) werden nach Bestätigung hinzugefügt“ (03 §7) – kein
-  Abnahmekriterium von #48, eigenes Folge-Issue.
+  Abnahmekriterium von #48, eigenes Folge-Issue (umgesetzt mit #201, E-29).
+
+## E-29 ❓ Lieferanten lernen Merkmale aus bestätigten Belegen
+*M7-6b (issue #201) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+03 §7 sagt nur „nach Bestätigung hinzugefügt“. Umgesetzt:
+- **Sichtbar und vorausgewählt:** die Prüfansicht zeigt vor dem Speichern
+  ein Ankreuzfeld „Neue Merkmale beim Lieferanten „…“ ergänzen“ mit den
+  Werten (IBAN, Name als Alias, Gläubiger-ID, Mandatsreferenz). Angekreuzt
+  ist es vorausgewählt – wer nichts tut, lässt den Lieferanten lernen; wer
+  zweifelt, nimmt den Haken heraus. Ohne Anzeige zu lernen hätte Stammdaten
+  unbemerkt verändert.
+- **Wann:** beim **ersten** Speichern bzw. „Geprüft“ des Belegs, nur für den
+  Lieferanten, den die Seite aus KI/E-Rechnung/Auflösung gewählt hat und den
+  die Person **behalten** hat (Treffer Stufe 1–4 und bestätigter Vorschlag
+  Stufe 5 – dort ist es am wertvollsten). Wählt die Person einen anderen
+  oder selbst einen (z. B. bei „mehrdeutig“), wird nichts gelernt – wer
+  selbst wählt, kann Merkmale unter „Lieferanten“ pflegen. Auch nicht bei
+  einem Partner aus der Archiv-Vorgabe und nicht bei späteren Speichervorgängen.
+- **Recht:** nur mit `supplier.manage` (es ändert Stammdaten); ohne das Recht
+  wird nichts angeboten und nichts gelernt.
+- **Was:** IBAN und Name als Alias; Gläubiger-ID nur, wenn der Lieferant
+  keine hat (eine abweichende wird gemeldet, nicht ersetzt), Mandatsreferenz
+  nur mit dieser Gläubiger-ID. **Nicht** USt-ID/Steuernummer (finden den
+  Lieferanten schon in Stufe 1, wenn vorhanden; eine abweichende wäre eher ein
+  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …).
+- **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten, oder ein Name,
+  der Name/Alias eines anderen ist → nicht lernen, die Seite nennt ihn; volle
+  Listen (20) → nicht lernen, Hinweis. Der Beleg wird immer gespeichert; das
+  Lernen läuft danach in eigener Transaktion und nur, wenn der Plan noch
+  genau dem gezeigten entspricht – sonst gar nichts (mit Hinweis), denn die
+  Person hat etwas anderes bestätigt.
+- **Vereins-IBAN:** eine IBAN eines eigenen Kontos (`bank_account`) wird nie
+  gelernt, bei der KI-Neuanlage (Stufe 6, #48) weggelassen und in Stufe 2 der
+  Auflösung ignoriert – auf Lastschrift-Rechnungen und Einnahme-Belegen ist sie
+  oft die einzige IBAN; gelernt, würde sie jeden solchen Beleg diesem
+  Lieferanten zuordnen (Hinweis aus dem Koordinator-Review).
+- `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
+  bestätigter Beleg ist keine Prüfung seiner Stammdaten.
+
+## E-24 ❓ Volltextsuche nur mit Session-Index
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
+Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
+später Worker-OCR) legt **keinen dauerhaften Index** an – weder Klartext
+noch Wort-Blind-Indexes, die Worthäufigkeiten verrieten. Jede Session baut
+nach dem Entsperren beim ersten Aufruf der Suche einen eigenen Index per
+kurzer Schrittkette; er liegt verschlüsselt in `shared/var/tmp/suche/`, der
+Schlüssel nur an den Tresor versiegelt in der Session, und endet mit ihr
+(Details 03 §10). Weitere vorläufige Festlegungen: Recht `inbox.view` mit
+dessen Scope (Treffer verlinken in den Posteingang); Suche per POST, damit
+Suchbegriffe nicht in URLs/Logs landen; UND-Verknüpfung mit Phrasen, keine
+Platzhalter, keine Rangfolge (neueste zuerst, höchstens 50); Freitext der
+Einreichung und von Hand erfasste Belegfelder (Zweck, Notiz) gehören nicht
+zum Index – das Issue nennt nur erkannte Texte. Kosten: Der erste Aufbau
+dauert je Session einige Sekunden je 1000 Belege.
 
 ## E-28 ❓ Worker-Kopplung: Zugangsschlüssel verschlüsselt statt als Hash, Protokoll-Details
 *M7b-1 (issue #51), 07 §4–5 – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*

@@ -10,16 +10,23 @@ use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Session;
+use App\Domain\AuditAction;
 use App\Installer\ConfigWriter;
 use App\Installer\InstallController;
+use App\Repository\AuditLogRepository;
+use App\Repository\MailQueueRepository;
+use App\Repository\MfaTotpRepository;
 use App\Repository\SettingRepository;
 use App\Repository\UserKeyRepository;
+use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Service\Account\MfaMethod;
 use App\Service\Backup\BackupService;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
@@ -766,21 +773,428 @@ final class InstallFlowTest extends DatabaseTestCase
         );
     }
 
-    public function testARestoreWithoutConfigInTheBackupGetsANewServerKey(): void
+    // ------------------------------------------------- restore without key
+
+    /**
+     * A working installation with one admin (fresh install through the real
+     * flow), an authenticator app and the printed recovery key - then a
+     * backup WITHOUT config.php of it, the database wiped and config.php
+     * removed, as on a new server. Hands back what the admin would have on
+     * paper: the recovery key's groups, plus the old server key for the
+     * tests that play "I kept a copy of config.php".
+     *
+     * @return array{zip: string, gruppen: list<string>, alterSchluessel: string, userId: int}
+     */
+    private function installationOhneSchluesselGesichert(): array
     {
-        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        mkdir($this->paths()->sharedDir(), 0775, true);
+        $response = $this->submit($this->validPost());
+        $gruppen = $this->extractGroups($response->body);
+        $this->confirmKey($gruppen[6]);
+
+        $alterSchluessel = (string) (require $this->paths()->configFile())['server_key'];
+        $alt = new ServerCrypto((string) base64_decode($alterSchluessel, true));
+        $userId = (int) $this->pdo()->query('SELECT id FROM `user`')->fetchColumn();
+
+        // The admin had set up an authenticator app: its secret is server-key
+        // ciphertext like the address.
+        new MfaTotpRepository($this->pdo())->put($userId, $alt->encrypt('JBSWY3DPEHPK3PXP'));
+        new MfaTotpRepository($this->pdo())->confirm($userId);
+        new UserRepository($this->pdo())->updateMfaMethod($userId, MfaMethod::Totp);
+        // ... and a mail still waiting in the queue, ciphertext under the same key.
+        new MailQueueRepository($this->pdo(), $alt)->enqueue('jemand@verein.example', 'Betreff', 'Text');
+
         $zip = $this->makeBackup(mitConfig: false);
-        $alterSchluessel = (require $this->base . '/quelle_config.php')['server_key'];
         $this->wipeDatabase();
+        unlink($this->paths()->configFile());
+        // The fresh install removed setup.php; the new server has one again.
+        file_put_contents($this->base . '/web/setup.php', '<?php // bootstrap installer');
 
-        $response = $this->submitRestore($zip);
-        self::assertStringContainsString('keinen Server-Schlüssel', $response->body);
+        return ['zip' => $zip, 'gruppen' => $gruppen, 'alterSchluessel' => $alterSchluessel, 'userId' => $userId];
+    }
 
-        $this->runRestoreSteps();
+    /**
+     * @param array<string, string> $post
+     */
+    private function postAccess(string $pfad, array $post): Response
+    {
+        $session = new Session();
+        $session->start();
+        $controller = $this->controller();
+        $request = new Request(
+            method: HttpMethod::Post,
+            path: $pfad,
+            post: [...$post, '_csrf' => $session->csrfToken()],
+            ip: '203.0.113.5',
+        );
+        $response = $pfad === '/install/zugang' ? $controller->access($request) : $controller->serverKey($request);
+        self::assertInstanceOf(Response::class, $response);
+
+        return $response;
+    }
+
+    /**
+     * Restores the key-less backup up to the access step and checks the
+     * state there: data in, config.php NOT written, installer still open.
+     *
+     * @return array{zip: string, gruppen: list<string>, alterSchluessel: string, userId: int}
+     */
+    private function bisZumZugangsschritt(): array
+    {
+        $sicherung = $this->installationOhneSchluesselGesichert();
+
+        $response = $this->submitRestore($sicherung['zip']);
+        self::assertSame(200, $response->status);
+        self::assertStringContainsString('enthält keinen Server-Schlüssel', $response->body);
+        self::assertStringContainsString('niemand anmelden', $response->body, 'the warning says what is at stake');
+
+        $ende = $this->runRestoreSteps();
+        self::assertTrue($ende['fertig']);
+        self::assertSame('/install', $ende['weiter'] ?? null, 'the page is sent on to the access step');
+        self::assertFileDoesNotExist($this->paths()->configFile(), 'config.php waits for the access step');
+        self::assertSame(InstallController::PHASE_ZUGANG, $_SESSION['install_restore']['phase'] ?? null);
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary files are gone already');
+
+        $seite = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertStringContainsString('Zugang zur wiederhergestellten Installation', $seite->body);
+        self::assertStringContainsString('action="/install/serverschluessel"', $seite->body);
+        self::assertStringContainsString('action="/install/zugang"', $seite->body);
+
+        return $sicherung;
+    }
+
+    /**
+     * The chosen path of issue #154: a key-less backup no longer ends in an
+     * installation nobody can enter. The recovery key authorises, the
+     * password identifies the account, and afterwards the login finds it
+     * under the NEW server key.
+     */
+    public function testARestoreWithoutKeyRelinksTheAdminWithTheRecoveryKey(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => 'neu@verein.example',
+            'admin_name' => 'Admina Neu',
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+
+        self::assertSame(200, $response->status, $response->body);
+        self::assertStringContainsString('Wiederherstellung abgeschlossen', $response->body);
+        self::assertStringContainsString('neu@verein.example', $response->body);
+        self::assertStringContainsString('zweite Faktor wird beim ersten Anmelden neu eingerichtet', $response->body);
+        self::assertStringContainsString('keine weiteren Benutzerkonten', $response->body);
+        self::assertArrayNotHasKey('install_restore', $_SESSION);
+        self::assertFileDoesNotExist($this->base . '/web/setup.php');
+
+        $config = Config::fromFile($this->paths()->configFile());
+        self::assertNotSame($sicherung['alterSchluessel'], base64_encode($config->serverKey), 'a new server key');
+        $neu = new ServerCrypto($config->serverKey);
+
+        // The login finds the account under the new key, and reads it.
+        $user = new UserRepository($this->pdo())->findByEmailBlindIndex($neu->blindIndex()->forValue('user.email', 'neu@verein.example'));
+        self::assertNotNull($user);
+        self::assertSame($sicherung['userId'], $user->id);
+        self::assertSame('neu@verein.example', $neu->decrypt($user->emailEnc));
+        self::assertSame('Admina Neu', $neu->decrypt($user->displayNameEnc));
+        self::assertTrue(password_verify($this->validPost()['admin_password'], $user->passwordHash), 'the password is untouched');
+
+        // The authenticator secret was ciphertext under the lost key: gone,
+        // the first login sets 2FA up again (mfa_required stays).
+        self::assertNull(new MfaTotpRepository($this->pdo())->forUser($user->id));
+        self::assertNull($user->mfaMethod);
+        self::assertTrue($user->mfaRequired);
+
+        // Grant and key pair survived the restore - the password still opens the vault.
+        $grant = new VaultGrantRepository($this->pdo())->forUser($user->id);
+        $userKey = new UserKeyRepository($this->pdo())->forUser($user->id);
+        self::assertNotNull($grant);
+        self::assertNotNull($userKey);
+        $vault = $grant->open($userKey->unwrap($this->validPost()['admin_password']), (string) $this->pdo()->query('SELECT public_key FROM vault')->fetchColumn());
+        self::assertTrue($vault->isUnlocked());
+
+        // The queue held only ciphertext under the lost key: emptied, so the
+        // cron and the admin queue page do not trip over it.
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM mail_queue')->fetchColumn());
+
+        // Audited, with the account as the actor; nothing readable in the row.
+        $kopf = new AuditLogRepository($this->pdo())->head();
+        self::assertNotNull($kopf);
+        self::assertSame(AuditAction::ZugangNeuVerknuepft->value, $kopf->action);
+        self::assertSame($user->id, $kopf->userId);
+        $details = $kopf->detailsEnc ?? '';
+        self::assertStringNotContainsString('neu@verein.example', $details);
+        self::assertStringNotContainsString($sicherung['gruppen'][0], $details);
+
+        // The recovery key and the password are nowhere in the database.
+        foreach ($this->pdo()->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN) as $tabelle) {
+            foreach ($this->pdo()->query(sprintf('SELECT * FROM `%s`', (string) $tabelle))->fetchAll() as $zeile) {
+                foreach ($zeile as $wert) {
+                    if (is_string($wert)) {
+                        self::assertStringNotContainsString($sicherung['gruppen'][6], $wert);
+                        self::assertStringNotContainsString($this->validPost()['admin_password'], $wert);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * An account without a grant (a password reset shortly before the
+     * backup) gets one from the recovered vault - the same thing
+     * /admin/wiederherstellen would do after a login that is impossible here.
+     */
+    public function testRelinkingGrantsTheVaultWhenTheAccountHadNoGrant(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $this->pdo()->exec('DELETE FROM vault_grant');
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode('', $sicherung['gruppen']),
+            'admin_email' => $this->validPost()['admin_email'],
+            'admin_name' => $this->validPost()['admin_name'],
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+
+        self::assertSame(200, $response->status, $response->body);
+        self::assertStringContainsString('Der Tresor ist für das Konto freigegeben', $response->body);
+        $grant = new VaultGrantRepository($this->pdo())->forUser($sicherung['userId']);
+        self::assertNotNull($grant);
+        $userKey = new UserKeyRepository($this->pdo())->forUser($sicherung['userId']);
+        self::assertNotNull($userKey);
+        self::assertTrue($grant->open($userKey->unwrap($this->validPost()['admin_password']), (string) $this->pdo()->query('SELECT public_key FROM vault')->fetchColumn())->isUnlocked());
+    }
+
+    /**
+     * Two admins with the same password cannot be told apart - nothing else
+     * about them is readable - so the step refuses rather than guessing
+     * whose account gets the typed address.
+     */
+    public function testRelinkingRefusesWhenTwoAdminsShareThePassword(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $this->pdo()->exec(
+            "INSERT INTO `user` (email_enc, email_bi, display_name_enc, password_hash, status, mfa_required, created_at)
+             SELECT 'x', 'y', 'z', password_hash, status, mfa_required, created_at FROM `user` WHERE id = " . $sicherung['userId'],
+        );
+        $zweiteId = (int) $this->pdo()->lastInsertId();
+        $this->pdo()->exec(sprintf(
+            'INSERT INTO user_role (user_id, role_id) SELECT %d, role_id FROM user_role WHERE user_id = %d',
+            $zweiteId,
+            $sicherung['userId'],
+        ));
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => 'neu@verein.example',
+            'admin_name' => 'Admina Neu',
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('mehreren Admin-Konten', $response->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    /**
+     * config.php is written inside the re-link's transaction: when the
+     * write fails, the account is not left readable only under a key that
+     * exists nowhere, and the old config.php of "Weg 1" still fits.
+     */
+    public function testAFailedConfigWriteRollsTheRelinkBack(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        // A directory where config.php should be: ConfigWriter cannot write.
+        mkdir($this->paths()->configFile(), 0775, true);
+        $vorher = $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch();
+
+        // file_put_contents() on a directory raises a warning before
+        // ConfigWriter turns it into the exception - swallowed here, it is
+        // the failure under test, not a defect.
+        set_error_handler(static fn(): bool => true, \E_WARNING);
+        try {
+            $this->postAccess('/install/zugang', [
+                'schluessel' => implode(' ', $sicherung['gruppen']),
+                'admin_email' => 'neu@verein.example',
+                'admin_name' => 'Admina Neu',
+                'admin_password' => $this->validPost()['admin_password'],
+            ]);
+            self::fail('an unwritable config.php has to surface');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('config.php', $e->getMessage());
+        } finally {
+            restore_error_handler();
+            rmdir($this->paths()->configFile());
+        }
+
+        self::assertSame($vorher, $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch(), 'rolled back');
+        self::assertNotNull(new MfaTotpRepository($this->pdo())->forUser($sicherung['userId']), 'rolled back');
+        self::assertSame(InstallController::PHASE_ZUGANG, $_SESSION['install_restore']['phase'] ?? null, 'the step stays open');
+
+        $richtig = $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']]);
+        self::assertSame(200, $richtig->status, 'Weg 1 still works afterwards');
+    }
+
+    public function testRelinkingRefusesAWrongPasswordAndWritesNothing(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $vorher = $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch();
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => 'neu@verein.example',
+            'admin_name' => 'Admina Neu',
+            'admin_password' => 'ganz-und-gar-das-falsche-passwort',
+        ]);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('kein aktives Admin-Konto', $response->body);
+        self::assertStringContainsString('value="neu@verein.example"', $response->body, 'address and name are shown again');
+        self::assertStringNotContainsString($sicherung['gruppen'][0], $response->body, 'the key is not echoed');
+        self::assertFileDoesNotExist($this->paths()->configFile());
+        self::assertSame($vorher, $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch(), 'the row is untouched');
+        self::assertSame(InstallController::PHASE_ZUGANG, $_SESSION['install_restore']['phase'] ?? null, 'the step stays open');
+    }
+
+    public function testRelinkingRefusesTheRecoveryKeyOfAnotherVaultOrAMistypedOne(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $felder = [
+            'admin_email' => $this->validPost()['admin_email'],
+            'admin_name' => $this->validPost()['admin_name'],
+            'admin_password' => $this->validPost()['admin_password'],
+        ];
+
+        $fremd = $this->postAccess('/install/zugang', [...$felder, 'schluessel' => RecoveryKey::forVault(Vault::create())->formatted()]);
+        self::assertSame(422, $fremd->status);
+        self::assertStringContainsString('nicht zu dieser Installation', $fremd->body);
+
+        $gruppen = $sicherung['gruppen'];
+        $gruppen[3] = strrev($gruppen[3]) === $gruppen[3] ? 'AAAAAAAA' : strrev($gruppen[3]);
+        $vertippt = $this->postAccess('/install/zugang', [...$felder, 'schluessel' => implode(' ', $gruppen)]);
+        self::assertSame(422, $vertippt->status);
+        self::assertStringContainsString('falsch eingegeben', $vertippt->body);
+
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    /**
+     * The other alternative: the admin kept a copy of the old config.php.
+     * Its key is taken over - and only because it really opens the data.
+     */
+    public function testARestoreWithoutKeyAcceptsTheOldServerKeyWhenItOpensTheData(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+
+        $falsch = $this->postAccess('/install/serverschluessel', ['server_key' => ConfigWriter::generateServerKey()]);
+        self::assertSame(422, $falsch->status);
+        self::assertStringContainsString('passt nicht zu den eingespielten Daten', $falsch->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+
+        $unsinn = $this->postAccess('/install/serverschluessel', ['server_key' => 'kein-schluessel']);
+        self::assertSame(422, $unsinn->status);
+        self::assertStringContainsString('kein Server-Schlüssel', $unsinn->body);
+
+        $leer = $this->postAccess('/install/serverschluessel', []);
+        self::assertSame(422, $leer->status);
+
+        $richtig = $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']]);
+        self::assertSame(200, $richtig->status, $richtig->body);
+        self::assertStringContainsString('Wiederherstellung abgeschlossen', $richtig->body);
+        self::assertStringNotContainsString('neu verknüpft', $richtig->body);
 
         $config = require $this->paths()->configFile();
-        self::assertNotSame($alterSchluessel, $config['server_key']);
-        self::assertSame(32, strlen((string) base64_decode($config['server_key'], true)));
+        self::assertSame($sicherung['alterSchluessel'], $config['server_key'], 'the old key is kept');
+        $alt = new ServerCrypto((string) base64_decode($sicherung['alterSchluessel'], true));
+        $user = new UserRepository($this->pdo())->findByEmailBlindIndex($alt->blindIndex()->forValue('user.email', $this->validPost()['admin_email']));
+        self::assertNotNull($user, 'the login finds the account as before');
+        self::assertNotNull(new MfaTotpRepository($this->pdo())->forUser($user->id), 'nothing was reset');
+        self::assertArrayNotHasKey('install_restore', $_SESSION);
+    }
+
+    /**
+     * The config.php itself may be uploaded; it is read for its key with a
+     * regular expression and never executed.
+     */
+    public function testTheOldConfigCanBeUploadedAndIsNotExecuted(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $marker = $this->base . '/ausgefuehrt.txt';
+        $datei = $this->base . '/alte_config.php';
+        file_put_contents($datei, sprintf(
+            "<?php\nfile_put_contents('%s', 'x');\nreturn ['server_key' => '%s', 'cron_token' => 'alt'];\n",
+            $marker,
+            $sicherung['alterSchluessel'],
+        ));
+
+        $session = new Session();
+        $session->start();
+        $response = $this->controller()->serverKey(new Request(
+            method: HttpMethod::Post,
+            path: '/install/serverschluessel',
+            post: ['_csrf' => $session->csrfToken()],
+            files: ['config' => ['error' => \UPLOAD_ERR_OK, 'tmp_name' => $datei, 'name' => 'config.php']],
+        ));
+        self::assertInstanceOf(Response::class, $response);
+
+        self::assertSame(200, $response->status, $response->body);
+        self::assertFileDoesNotExist($marker, 'the uploaded config.php was never executed');
+        self::assertSame($sicherung['alterSchluessel'], (require $this->paths()->configFile())['server_key']);
+        self::assertNotSame('alt', (require $this->paths()->configFile())['cron_token'], 'only the key is taken over');
+    }
+
+    /**
+     * While the access step is open, the installer is still an installer:
+     * the form submits again show the step, the step endpoint is closed,
+     * and "Neu beginnen" leads back to the form.
+     */
+    public function testThePendingAccessStepIsShownAgainAndCanBeAbandoned(): void
+    {
+        $this->bisZumZugangsschritt();
+
+        $erneut = $this->submit($this->validPost());
+        self::assertSame(200, $erneut->status);
+        self::assertStringContainsString('Zugang zur wiederhergestellten Installation', $erneut->body);
+        self::assertSame(1, $this->userCount(), 'no second installation was started');
+
+        $session = new Session();
+        $session->start();
+        $schritt = $this->controller()->restoreStep(new Request(
+            method: HttpMethod::Post,
+            path: '/install/wiederherstellen',
+            headers: ['x-csrf-token' => $session->csrfToken()],
+        ));
+        self::assertInstanceOf(Response::class, $schritt);
+        self::assertSame(409, $schritt->status, 'the dump is through; there is nothing to step');
+
+        $neu = $this->restart();
+        self::assertSame(200, $neu->status);
+        self::assertStringContainsString('Datenbankname', $neu->body);
+        self::assertArrayNotHasKey('install_restore', $_SESSION);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    public function testTheAccessEndpointsNeedCsrfAndAPendingRestore(): void
+    {
+        foreach (['access', 'serverKey'] as $methode) {
+            $ohneToken = $this->controller()->{$methode}(new Request(HttpMethod::Post, '/install/zugang'));
+            self::assertInstanceOf(Response::class, $ohneToken);
+            self::assertSame(403, $ohneToken->status);
+
+            $session = new Session();
+            $session->start();
+            unset($_SESSION['install_restore']);
+            $nichtAktiv = $this->controller()->{$methode}(new Request(
+                method: HttpMethod::Post,
+                path: '/install/zugang',
+                post: ['_csrf' => $session->csrfToken(), 'server_key' => 'x', 'schluessel' => 'x'],
+            ));
+            self::assertInstanceOf(Response::class, $nichtAktiv);
+            self::assertSame(409, $nichtAktiv->status);
+        }
+        self::assertFileDoesNotExist($this->paths()->configFile());
     }
 
     public function testAZipWithoutDumpIsRejectedAndNothingIsWritten(): void
