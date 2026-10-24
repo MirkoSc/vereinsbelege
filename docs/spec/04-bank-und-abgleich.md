@@ -427,7 +427,7 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
 - Beleg-Zahlungsstatus und Buchungs-Belegstatus werden aus den Allocations
   **abgeleitet** (Summen), nicht separat gepflegt.
 
-#### Stand M10-1: Allocation-Modell + abgeleitete Status (issue #65, Migration 036, E-27)
+#### Stand M10-1: Allocation-Modell + abgeleitete Status (issue #65, Migration 037, E-27)
 
 - **Zuordnung** (`allocation`, `App\Service\Bank\Zuordnung`): ein Beleg
   (`invoice`) ↔ eine Buchung (`bank_transaction`) mit **Teilbetrag** in

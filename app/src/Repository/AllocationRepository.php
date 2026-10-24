@@ -8,7 +8,7 @@ use App\Domain\AllocationRecord;
 use App\Domain\ZuordnungMethode;
 
 /**
- * The `allocation` table (migrations/036_allocation.sql, M10-1, issue #65,
+ * The `allocation` table (migrations/037_allocation.sql, M10-1, issue #65,
  * docs/spec/02-datenmodell.md "Fachdaten"). SQL only - encrypting the
  * amount, the rules and the derived statuses live in App\Service\Bank\
  * Zuordnung. Everything that comes back is ciphertext plus plaintext
