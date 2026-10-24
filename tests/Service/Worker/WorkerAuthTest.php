@@ -42,6 +42,18 @@ final class WorkerAuthTest extends WorkerTestCase
         self::assertInstanceOf(Worker::class, $ergebnis);
     }
 
+    public function testTheWorkerHeaderWinsOverAnotherAuthorization(): void
+    {
+        [$id, $schluessel] = $this->koppeln();
+
+        $anfrage = $this->signiert($id, $schluessel, self::PFAD, header: [
+            WorkerProtokoll::HEADER_AUTH => 'Basic dmVyZWluOmdlaGVpbQ==',
+            WorkerProtokoll::HEADER_AUTH_FALLBACK => 'Worker ' . $id,
+        ]);
+
+        self::assertInstanceOf(Worker::class, $this->auth->pruefen($anfrage, new \DateTimeImmutable()));
+    }
+
     public function testAWrongKeyIsRefused(): void
     {
         [$id] = $this->koppeln();

@@ -338,8 +338,9 @@ dauert je Session einige Sekunden je 1000 Belege.
   angezeigt als 8 × 4 Hex-Zeichen) bestätigt hat, darf der Worker nur
   Heartbeats senden, keine Jobs beanspruchen.
 - **Signatur:** `METHODE|PFAD|ZEIT|NONCE|hex(SHA-256(Body))`, Header
-  `Authorization: Worker <id>` (Ersatz `X-Worker-Authorization`, falls der
-  Hoster `Authorization` an FastCGI nicht durchreicht), `X-Worker-Timestamp`,
+  `Authorization: Worker <id>` bzw. `X-Worker-Authorization` (hat Vorrang;
+  falls der Hoster `Authorization` an FastCGI nicht durchreicht oder die
+  Seite hinter HTTP-Basic liegt), `X-Worker-Timestamp`,
   `X-Worker-Nonce`, `X-Worker-Signature`. Query-Strings sind auf Worker-
   Routen verboten (sie wären unsigniert). Fehlversuche: 30 je IP/15 min;
   Anfragen: 300 je Worker/min. Uhrabweichung wird nicht als Fehlversuch
@@ -350,6 +351,9 @@ dauert je Session einige Sekunden je 1000 Belege.
   Bezeichner gespeichert, nie ein Text. Entkoppeln gibt gehaltene Jobs
   sofort frei.
 - **Admin-Recht:** `admin.settings` (wie KI-Anbieter).
+- **Kopplungs-Gesamtlimit:** Wer die öffentliche Route mit falschen Codes
+  flutet, kann das Koppeln für 15 min blockieren (Verfügbarkeit gegen
+  Ratesicherheit bei vielen IPs – bewusst zugunsten der Sicherheit).
 
 Offen für Mirko: ob „Hash“ in 07 §4 eine bewusste Vorgabe war (dann
 bräuchte es ein asymmetrisches Signaturverfahren, z. B. Ed25519 mit

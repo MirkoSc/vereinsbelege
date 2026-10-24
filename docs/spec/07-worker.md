@@ -100,7 +100,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   `gekoppelt` = nur Heartbeat, `aktiv` = darf Jobs beanspruchen.
   Wire-Format in `App\Service\Worker\WorkerProtokoll` (ohne
   HTTP/DB-Abhängigkeit, damit `bin/worker.php` denselben Code nutzt):
-  Header `Authorization: Worker <id>` (Ersatz `X-Worker-Authorization`),
+  Header `Authorization: Worker <id>` und/oder `X-Worker-Authorization`
+  (gleicher Wert; hat Vorrang – für Hoster ohne `Authorization` an FastCGI
+  oder eine Seite hinter HTTP-Basic),
   `X-Worker-Timestamp` (Unix-Sekunden), `X-Worker-Nonce` (16–64 Zeichen
   `[A-Za-z0-9_-]`), `X-Worker-Signature` = hex HMAC-SHA256 über
   `METHODE|PFAD|ZEIT|NONCE|hex(SHA-256(Body))`; Pfad ohne Query –
@@ -131,7 +133,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - Idempotenz: Artefakte tragen eine Job-Versuchs-ID; doppelte Uploads
   werden erkannt.
 - **Stand M7b-1 (issue #51):** umgesetzt sind `pair`, `heartbeat`,
-  `jobs/claim`, `jobs/{id}/complete`, `jobs/{id}/fail`
+  `jobs/claim`, `jobs/{id}/extend` (zusätzlich: Sperre um 30 min
+  verlängern, für lange OCR/KI-Läufe), `jobs/{id}/complete`,
+  `jobs/{id}/fail`
   (`App\Api\WorkerApiController`, JSON, Fehler als `{fehler, meldung}`);
   `blobs`, `context`, `artifacts` folgen mit #52. Protokollversion 1
   (`WorkerProtokoll::VERSION`); inkompatibel → 409 `protokoll` „Worker-Update
@@ -141,7 +145,8 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     protokoll_version}` → `{worker_id, schluessel (Base64), fingerabdruck,
     status, protokoll_version}`.
   - `heartbeat` `{protokoll_version, version, faehigkeiten[], config_version}`
-    → `{status, server_zeit, poll_sekunden, wartend, config}`; `config` =
+    → `{status, server_zeit, poll_sekunden, wartend, config}` (`wartend` =
+    jetzt beanspruchbare Jobs, nicht die gerade bearbeiteten); `config` =
     `{version, versiegelt}` nur, wenn `worker.config_version` neuer ist
     (befüllt von Folge-Issues). Freie Ressourcen werden noch nicht
     ausgewertet.
@@ -152,9 +157,12 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     `lock` (`w<id>-<zufall>`); ein Job über 3 Versuche wird beim Claim
     beendet statt ausgegeben. `versuch` (= `attempts`) ist die
     Job-Versuchs-ID für die Artefakt-Idempotenz (#52).
-  - `complete` `{lock}`, `fail` `{lock, fehler, endgueltig}`: nur mit der
-    eigenen Sperre (sonst 409 bzw. 404 für fremde/unbekannte Jobs); `fehler`
-    nur als Bezeichner (`[A-Za-z][A-Za-z0-9_.:\-]*`, sonst `WorkerFehler`),
+  - `extend`/`complete` `{lock}`, `fail` `{lock, fehler, endgueltig}`: nur
+    mit der eigenen Sperre (sonst 409 bzw. 404 für fremde/unbekannte Jobs);
+    ein wiederholtes `complete` desselben Holders (Antwort verloren) wird
+    mit 200 beantwortet – `locked_by` bleibt dafür am fertigen Job stehen;
+    `fehler` nur als Bezeichner (`[A-Za-z][A-Za-z0-9_.:\\-]*`, also auch
+    Klassennamen mit `\`; sonst `WorkerFehler`),
     nie Text; ohne `endgueltig` geht der Job bis zum 3. Versuch zurück auf
     `offen`.
 

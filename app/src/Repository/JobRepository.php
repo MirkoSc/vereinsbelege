@@ -267,8 +267,11 @@ final readonly class JobRepository
      */
     public function abschliessen(int $id, string $lockedBy, ?\DateTimeImmutable $now = null): bool
     {
+        // `locked_by` stays: a repeated complete of the same holder (its
+        // answer got lost) is recognised as already done, not as a stranger.
+        // claim() never looks at a finished job.
         $stmt = $this->pdo->prepare(
-            'UPDATE job SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+            'UPDATE job SET status = ?, locked_until = NULL, updated_at = ?
              WHERE id = ? AND status = ? AND locked_by = ?',
         );
         $stmt->execute([
@@ -280,6 +283,36 @@ final readonly class JobRepository
         ]);
 
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * How many jobs of these types a claim() could hand out right now:
+     * `offen` or `laeuft` with an expired lock, not parked in `locked_until`
+     * (the worker heartbeat's "wartend", issue #51/M7b-1 - unlike
+     * zaehleOffen(), jobs someone is working on do not count).
+     *
+     * @param list<string> $typen empty counts nothing
+     */
+    public function zaehleBeanspruchbar(JobExecutor $executor, array $typen, ?\DateTimeImmutable $now = null): int
+    {
+        if ($typen === []) {
+            return 0;
+        }
+
+        $stmt = $this->pdo->prepare(sprintf(
+            'SELECT COUNT(*) FROM job
+             WHERE executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?) AND typ IN (%s)',
+            implode(',', array_fill(0, count($typen), '?')),
+        ));
+        $stmt->execute([
+            $executor->value,
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            ...$typen,
+        ]);
+
+        return (int) $stmt->fetchColumn();
     }
 
     /**

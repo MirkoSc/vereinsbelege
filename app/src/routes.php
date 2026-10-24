@@ -374,6 +374,7 @@ return static function (
     $worker = Zugriff::worker()->alsApi();
     $post('/api/worker/heartbeat', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->heartbeat($r, $w));
     $post('/api/worker/jobs/claim', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->claim($r, $w));
+    $post('/api/worker/jobs/{id:\d+}/extend', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->extend($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/complete', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->complete($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/fail', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->fail($r, $p, $w));
 

@@ -137,8 +137,62 @@ final class WorkerApiControllerTest extends WorkerTestCase
 
         self::assertSame(200, $antwort->status);
         self::assertSame(JobStatus::Fertig, $this->jobs->find($jobId)?->status);
-        // Done is done: the job is no longer this worker's.
-        self::assertSame(404, $this->abschluss($id, $schluessel, $jobId, 'complete', ['lock' => $lock])->status);
+        // A repeated complete (its answer got lost) is answered as done ...
+        $nochmal = $this->abschluss($id, $schluessel, $jobId, 'complete', ['lock' => $lock]);
+        self::assertSame(200, $nochmal->status);
+        self::assertSame('fertig', self::daten($nochmal)['status']);
+        // ... but a fail after it changes nothing.
+        self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'fail', ['lock' => $lock])->status);
+        self::assertSame(JobStatus::Fertig, $this->jobs->find($jobId)?->status);
+    }
+
+    public function testJobsInWorkDoNotCountAsWaiting(): void
+    {
+        [$id, $schluessel] = $this->koppeln();
+        $this->jobs->enqueue('ocr', JobExecutor::Worker, 'document', 1);
+        $this->jobs->enqueue('ocr', JobExecutor::Worker, 'document', 2);
+        $this->heartbeat($id, $schluessel, ['ocr']);
+        $this->claim($id, $schluessel);
+
+        self::assertSame(1, self::daten($this->heartbeat($id, $schluessel, ['ocr']))['wartend']);
+    }
+
+    public function testTheHolderCanExtendItsLock(): void
+    {
+        [$id, $schluessel] = $this->koppeln();
+        $jobId = $this->jobs->enqueue('ocr', JobExecutor::Worker, 'document', 1);
+        $this->heartbeat($id, $schluessel, ['ocr']);
+        $lock = (string) self::daten($this->claim($id, $schluessel))['jobs'][0]['lock'];
+        $this->pdo()->prepare('UPDATE job SET locked_until = ? WHERE id = ?')
+            ->execute([new \DateTimeImmutable('+1 minute')->format('Y-m-d H:i:s'), $jobId]);
+
+        self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'extend', ['lock' => 'w' . $id . '-falsch'])->status);
+        $antwort = $this->abschluss($id, $schluessel, $jobId, 'extend', ['lock' => $lock]);
+
+        self::assertSame(200, $antwort->status);
+        $bis = $this->jobs->find($jobId)?->lockedUntil;
+        self::assertNotNull($bis);
+        self::assertGreaterThan(time() + 1700, $bis->getTimestamp());
+    }
+
+    public function testAClaimRacingAnUnpairGivesItsJobsBack(): void
+    {
+        [$id, $schluessel] = $this->koppeln();
+        $jobId = $this->jobs->enqueue('ocr', JobExecutor::Worker, 'document', 1);
+        $this->heartbeat($id, $schluessel, ['ocr']);
+
+        // Authenticated while still active, unpaired before the claim runs.
+        $antwort = $this->aufruf(
+            $this->signiert($id, $schluessel, '/api/worker/jobs/claim', '{"max":1}'),
+            function (Request $r, array $p, Worker $w) use ($id): Response {
+                $this->kopplung->entkoppeln($id, null, '', new \DateTimeImmutable());
+
+                return $this->api->claim($r, $w);
+            },
+        );
+
+        self::assertSame(401, $antwort->status);
+        self::assertSame(JobStatus::Offen, $this->jobs->find($jobId)?->status);
     }
 
     public function testAJobHeldByAnotherHolderLooksUnknown(): void
@@ -232,7 +286,11 @@ final class WorkerApiControllerTest extends WorkerTestCase
     {
         return $this->aufruf(
             $this->signiert($id, $schluessel, sprintf('/api/worker/jobs/%d/%s', $jobId, $aktion), json_encode($daten, JSON_THROW_ON_ERROR)),
-            fn(Request $r, array $p, Worker $w): Response => $aktion === 'complete' ? $this->api->complete($r, $p, $w) : $this->api->fail($r, $p, $w),
+            fn(Request $r, array $p, Worker $w): Response => match ($aktion) {
+                'complete' => $this->api->complete($r, $p, $w),
+                'extend' => $this->api->extend($r, $p, $w),
+                default => $this->api->fail($r, $p, $w),
+            },
             ['id' => (string) $jobId],
         );
     }

@@ -13,9 +13,10 @@ namespace App\Service\Worker;
  * web host verifies with.
  *
  * A signed request carries:
- *   Authorization: Worker <id>        (fallback header X-Worker-Authorization,
- *                                      for hosts whose FastCGI drops
- *                                      Authorization)
+ *   Authorization: Worker <id>        and/or X-Worker-Authorization with the
+ *                                      same value (for hosts whose FastCGI
+ *                                      drops Authorization, or a site behind
+ *                                      HTTP Basic); the X- header wins
  *   X-Worker-Timestamp: <unix seconds>
  *   X-Worker-Nonce: <16-64 chars [A-Za-z0-9_-]>
  *   X-Worker-Signature: hex(HMAC-SHA256(access key, canonical string))

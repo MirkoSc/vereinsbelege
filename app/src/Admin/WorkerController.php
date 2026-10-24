@@ -110,7 +110,6 @@ final readonly class WorkerController
     {
         $now = new \DateTimeImmutable();
         $worker = $this->workers->aktueller();
-        $host = $request->header('host') ?? '';
 
         return Response::html($this->view->render('admin/worker', [
             'title' => 'Worker',
@@ -122,7 +121,7 @@ final readonly class WorkerController
             'code' => $code,
             'codeBis' => $code === null ? null : $this->workers->offenerCodeBis($now),
             'offenerCodeBis' => $code === null && $worker === null ? $this->workers->offenerCodeBis($now) : null,
-            'adresse' => preg_match('/^[A-Za-z0-9.-]+(:\d+)?$/', $host) === 1 ? 'https://' . $host : 'https://belege.verein.de',
+            'adresse' => $request->ownOrigin(),
         ], Area::Admin));
     }
 

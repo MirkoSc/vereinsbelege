@@ -131,7 +131,7 @@ final readonly class WorkerApiController
             'status' => $worker->status->value,
             'server_zeit' => $now->getTimestamp(),
             'poll_sekunden' => self::POLL_SEKUNDEN,
-            'wartend' => $aktiv ? $this->jobs->zaehleOffen(JobExecutor::Worker, $typen) : 0,
+            'wartend' => $aktiv ? $this->jobs->zaehleBeanspruchbar(JobExecutor::Worker, $typen, $now) : 0,
             'config' => $aktiv && $worker->configSealed !== null && $worker->configVersion > $bekannt
                 ? ['version' => $worker->configVersion, 'versiegelt' => base64_encode($worker->configSealed)]
                 : null,
@@ -168,7 +168,40 @@ final readonly class WorkerApiController
             $jobs[] = self::jobDaten($job, $lock);
         }
 
+        // Unpaired while this request was under way: entkoppeln() may have
+        // released the worker's jobs before the claims above, so give back
+        // what was just taken.
+        if ($jobs !== [] && $this->workers->find($worker->id)?->status !== WorkerStatus::Aktiv) {
+            $this->jobs->freigebenFuerPraefix($worker->lockPraefix(), $now);
+
+            return self::fehler(401, 'nicht_authentifiziert', 'Anfrage nicht authentifiziert.');
+        }
+
         return Response::json(['jobs' => $jobs]);
+    }
+
+    /**
+     * Extends the lock of a job the worker is still working on (a long OCR
+     * or AI run), by SPERRE_SEKUNDEN from now. Only the holder may.
+     *
+     * @param array<string, string> $params
+     */
+    public function extend(Request $request, array $params, Worker $worker): Response
+    {
+        $geprueft = $this->eigenerJob($request, $params, $worker);
+        if ($geprueft instanceof Response) {
+            return $geprueft;
+        }
+        [$job, $lock] = $geprueft;
+        if ($job->status !== JobStatus::Laeuft) {
+            return self::sperreVerloren();
+        }
+
+        $now = new \DateTimeImmutable();
+
+        return $this->jobs->heartbeat($job->id, $lock, self::SPERRE_SEKUNDEN, $now)
+            ? Response::json(['gesperrt_bis' => $now->getTimestamp() + self::SPERRE_SEKUNDEN])
+            : self::sperreVerloren();
     }
 
     /**
@@ -181,6 +214,10 @@ final readonly class WorkerApiController
             return $geprueft;
         }
         [$job, $lock] = $geprueft;
+        // A repeat of a complete whose answer got lost.
+        if ($job->status === JobStatus::Fertig) {
+            return Response::json(['status' => JobStatus::Fertig->value]);
+        }
 
         return $this->jobs->abschliessen($job->id, $lock)
             ? Response::json(['status' => JobStatus::Fertig->value])
@@ -197,6 +234,9 @@ final readonly class WorkerApiController
             return $geprueft;
         }
         [$job, $lock, $daten] = $geprueft;
+        if ($job->status !== JobStatus::Laeuft) {
+            return self::sperreVerloren();
+        }
 
         // An identifier, never a message: `last_error` is plaintext and a
         // message could quote receipt data (section 5: "ohne Klartext").
@@ -240,7 +280,9 @@ final readonly class WorkerApiController
         if ($job === null || $job->executor !== JobExecutor::Worker || !str_starts_with($job->lockedBy ?? '', $worker->lockPraefix())) {
             return self::fehler(404, 'job_unbekannt', 'Kein Job dieses Workers.');
         }
-        if ($job->status !== JobStatus::Laeuft || !hash_equals((string) $job->lockedBy, $lock)) {
+        // The status is the caller's business (complete accepts a repeat on
+        // a finished job); the lock must be exactly this claim's.
+        if (!hash_equals((string) $job->lockedBy, $lock)) {
             return self::sperreVerloren();
         }
 

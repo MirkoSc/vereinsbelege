@@ -43,7 +43,7 @@ final class WorkerControllerTest extends WorkerTestCase
 
         self::assertSame(200, $antwort->status);
         self::assertMatchesRegularExpression('/<code>[0-9A-Z]{4}-[0-9A-Z]{4}<\/code>/', $antwort->body);
-        self::assertStringContainsString('docker compose run --rm worker pair https://belege.example.test ', $antwort->body);
+        self::assertStringContainsString('docker compose run --rm worker pair http://belege.example.test ', $antwort->body);
         preg_match('/<code>([0-9A-Z]{4}-[0-9A-Z]{4})<\/code>/', $antwort->body, $treffer);
         self::assertStringNotContainsString($treffer[1], serialize($_SESSION));
 

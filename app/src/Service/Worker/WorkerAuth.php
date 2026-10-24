@@ -94,7 +94,9 @@ final readonly class WorkerAuth
             ], 401);
         }
 
-        $kopf = $request->header(WorkerProtokoll::HEADER_AUTH) ?? $request->header(WorkerProtokoll::HEADER_AUTH_FALLBACK) ?? '';
+        // The worker's own header wins: `Authorization` may carry something
+        // else entirely (HTTP Basic in front of the site).
+        $kopf = $request->header(WorkerProtokoll::HEADER_AUTH_FALLBACK) ?? $request->header(WorkerProtokoll::HEADER_AUTH) ?? '';
         $nonce = $request->header(WorkerProtokoll::HEADER_NONCE) ?? '';
         $signatur = $request->header(WorkerProtokoll::HEADER_SIGNATUR) ?? '';
         if (
