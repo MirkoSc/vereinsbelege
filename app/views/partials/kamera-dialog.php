@@ -6,6 +6,10 @@
  * `public/js/scanner/kamera.js` (`kameraOeffnen()`). "Kamera-App verwenden"
  * is the native camera through <input capture> - the fallback when the
  * browser refuses getUserMedia, and a choice for anyone who prefers it.
+ * Since issue #146 the quad found by the live edge detection is drawn over
+ * the video (.kamera-overlay, an SVG polygon whose points kamera.js sets as
+ * an attribute); taking the photo by itself is opt-in (a checkbox, off
+ * by default, kept until the page reloads).
  *
  * Reads no variables; include it once per page.
  */
@@ -16,8 +20,16 @@
     <div class="kamera-buehne">
         <video class="kamera-video" autoplay muted playsinline></video>
         <div class="kamera-rahmen" aria-hidden="true" hidden></div>
+        <svg class="kamera-overlay" aria-hidden="true" focusable="false" hidden>
+            <polygon points=""></polygon>
+        </svg>
     </div>
     <p class="feld-hilfe">Den Beleg im Rahmen ausrichten, flach und gut ausgeleuchtet.</p>
+    <p class="kamera-status" data-kamera="status" role="status"></p>
+    <label class="feld-ankreuz">
+        <input type="checkbox" data-kamera="automatisch" autocomplete="off">
+        Automatisch auslösen, sobald der Beleg ruhig erkannt ist
+    </label>
     <p class="hinweis hinweis-fehler" data-kamera="fehler" hidden></p>
 
     <p class="knopfreihe">

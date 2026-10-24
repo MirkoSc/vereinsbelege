@@ -188,7 +188,7 @@ final readonly class MailQueueRepository
     private function attemptClaim(int $id, \DateTimeImmutable $now): bool
     {
         $jetzt = $now->format(self::FORMAT);
-        $inFlightBis = $now->modify(sprintf('+%d seconds', self::IN_FLIGHT_SECONDS))->format(self::FORMAT);
+        $inFlightBis = $now->setTimestamp($now->getTimestamp() + self::IN_FLIGHT_SECONDS)->format(self::FORMAT);
 
         $stmt = $this->pdo->prepare(
             'UPDATE mail_queue

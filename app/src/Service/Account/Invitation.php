@@ -249,7 +249,7 @@ final readonly class Invitation
             $userId,
             self::TYP,
             $this->hash($token),
-            $now->modify('+' . self::TTL_SECONDS . ' seconds'),
+            $now->setTimestamp($now->getTimestamp() + self::TTL_SECONDS),
             $now,
         );
 

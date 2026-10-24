@@ -284,6 +284,24 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertFalse($einladung->complete($ergebnis['token'], self::NEU_PW, self::NEU_PW, $jetzt->modify('+73 hours'))->istErfolg());
     }
 
+    public function testDieEinladungGiltUeberDieZeitumstellungGenau72Stunden(): void
+    {
+        // 25 Oct 2026 the clocks go back one hour; the link must still
+        // expire after 72 real hours, not 72 wall-clock hours.
+        $jetzt = new \DateTimeImmutable('2026-10-24 10:00:00');
+        $einladung = $this->einladung();
+        $ergebnis = $einladung->invite(self::NEU, 'Karl Kasse', [$this->rolle(SystemRole::Vorstand)], now: $jetzt);
+
+        $zeile = $this->pdo()->query("SELECT expires_at FROM auth_token WHERE typ = 'invite'")->fetch();
+        self::assertIsArray($zeile);
+        self::assertSame(
+            $jetzt->getTimestamp() + Invitation::TTL_SECONDS,
+            new \DateTimeImmutable((string) $zeile['expires_at'])->getTimestamp(),
+        );
+        $kurzVorAblauf = $jetzt->setTimestamp($jetzt->getTimestamp() + Invitation::TTL_SECONDS - 60);
+        self::assertTrue($einladung->isUsable($ergebnis['token'], $kurzVorAblauf));
+    }
+
     public function testEineGesperrteEinladungLaesstSichNichtAnnehmen(): void
     {
         $id = $this->einladen(self::NEU, SystemRole::Vorstand);
