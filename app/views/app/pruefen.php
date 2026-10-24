@@ -55,6 +55,8 @@
  * @var string|null $kategorieHerkunft where the suggested category came from - rule, supplier, AI (issue #49/M7-7)
  * @var string $lieferantHinweis how the supplier was resolved - step and value (issue #48/M7-6)
  * @var bool $lieferantPruefen the chosen supplier was created by the AI and is still to review
+ * @var array{fuer: int, merkmale: \App\Service\MasterData\Merkmale, an: bool, stand: string}|null $lernen what
+ *      confirming the supplier `fuer` teaches it (issue #201/M7-6b), ticked or not, and its fingerprint
  * @var bool $kiLaeuft an AI run for this document is queued or running
  * @var bool $kiAnstossbar the page may offer to ask the AI (again)
  * @var string $csrf
@@ -352,6 +354,38 @@ $rollenGruppe = [
                             <a href="/app/lieferanten?pruefen=1">Neue Lieferanten prüfen</a>
                         <?php endif; ?>
                     </p>
+                <?php endif; ?>
+                <?php if (($lernen ?? null) !== null):
+                    $lernenName = '';
+                    foreach ($lieferanten as $lieferant) {
+                        if ($lieferant['id'] === $lernen['fuer']) {
+                            $lernenName = $lieferant['name'];
+                        }
+                    }
+                    $lernenZeilen = $lernen['merkmale']->beschreibung(); ?>
+                    <div class="pruefen-lernen" id="pruefen-lernen" data-lieferant="<?= e((string) $lernen['fuer']) ?>">
+                        <input type="hidden" name="lieferant_lernen_fuer" value="<?= e((string) $lernen['fuer']) ?>">
+                        <input type="hidden" name="lieferant_lernen_stand" value="<?= e($lernen['stand']) ?>">
+                        <?php if ($lernenZeilen !== []): ?>
+                            <label class="feld-ankreuz">
+                                <input type="checkbox" name="lieferant_lernen" value="1" aria-describedby="pruefen-lernen-hilfe"<?= $lernen['an'] ? ' checked' : '' ?>>
+                                Neue Merkmale beim Lieferanten „<?= e($lernenName) ?>“ ergänzen
+                            </label>
+                            <ul class="pruefen-lernen-liste">
+                                <?php foreach ($lernenZeilen as $zeile): ?>
+                                    <li><?= e($zeile) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                        <p class="feld-hilfe" id="pruefen-lernen-hilfe">
+                            <?php if ($lernenZeilen !== []): ?>
+                                Gilt nur, solange „<?= e($lernenName) ?>“ gewählt bleibt – so wird der nächste Beleg direkt erkannt.
+                            <?php endif; ?>
+                            <?php foreach ($lernen['merkmale']->hinweise as $hinweis): ?>
+                                <?= e($hinweis) ?>
+                            <?php endforeach; ?>
+                        </p>
+                    </div>
                 <?php endif; ?>
                 <?php if ($darfLieferantAnlegen && $bearbeitbar): ?>
                     <p class="feld-hilfe">Noch nicht vorhanden? Dann hier neu anlegen – als Lieferant bei einer Ausgabe, als Zahler bei einer Einnahme.</p>
