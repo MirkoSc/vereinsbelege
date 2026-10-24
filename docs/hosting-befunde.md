@@ -48,7 +48,8 @@ Folge-Issue · 📋 nur dokumentiert
 | Standard-Zeitzone | egal | 📋 schon `Europe/Berlin` | |
 | OPcache | egal | 📋 vorhanden – `opcache_reset()` nach Release-Umschaltung beachten | |
 | ext-sodium + pwhash INTERACTIVE | vorhanden, < 1 s | ✅ libsodium 1.0.18, INTERACTIVE 52–56 ms | |
-| pwhash MODERATE | nicht vorausgesetzt | ⬆️ 309–321 ms – MODERATE ist bezahlbar | [#100](https://github.com/MirkoSc/vereinsbelege/issues/100) |
+| pwhash MODERATE | nicht vorausgesetzt | ⬆️ 309–321 ms – MODERATE ist bezahlbar und seit #100 das Profil der Tresor-Umhüllung (01 §2); `memory_limit` zählt die 256 MiB nicht mit (libsodium belegt sie selbst) | [#100](https://github.com/MirkoSc/vereinsbelege/issues/100) |
+| Anmeldung mit MODERATE (Gesamtdauer, mehrere gleichzeitig) | (seit #100) | 📋 noch nicht gemessen – beim nächsten Besuch auf dem Webspace eine echte Anmeldung stoppen (Erwartung ≈ 0,5 s) und 3–4 Anmeldungen gleichzeitig auslösen (je 256 MiB für ~0,3 s außerhalb von `memory_limit`) | [#100](https://github.com/MirkoSc/vereinsbelege/issues/100) |
 | `PASSWORD_ARGON2ID` | vorhanden | ✅ funktioniert, 166–170 ms | |
 | Sealed Box, secretstream, `random_bytes` | funktionieren | ✅ Rundläufe erfolgreich – Tresor-Modell und Blob-Verschlüsselung tragen | |
 | ext-gd (JPEG/PNG) | vorhanden | ✅ GD 2.3.0, JPEG/PNG/WebP (ohne AVIF) | |

@@ -14,7 +14,7 @@ namespace App\Service\Crypto;
  *     version (1 byte) | nonce (24 bytes) | secretbox(U_priv, KEK)
  *
  * KEK = Argon2id(password, kdf_salt, kdf_ops, kdf_mem) - the KDF parameters
- * travel in their own columns (KdfParameters).
+ * (and `kdf_alg`) travel in their own columns (KdfParameters).
  *
  * This is deliberately not where the login password hash lives: the password
  * hash and the KEK salt are separate (docs/spec/01-sicherheit.md section 3),
@@ -81,7 +81,7 @@ final readonly class UserKey
     }
 
     /**
-     * The `kdf_salt`, `kdf_ops` and `kdf_mem` columns.
+     * The `kdf_salt`, `kdf_ops`, `kdf_mem` and `kdf_alg` columns.
      */
     public function kdf(): KdfParameters
     {
@@ -131,12 +131,32 @@ final readonly class UserKey
         #[\SensitiveParameter] string $oldPassword,
         #[\SensitiveParameter] string $newPassword,
     ): self {
-        $defaults = KdfParameters::defaults();
-        $kdf = $this->kdf->opsLimit >= $defaults->opsLimit && $this->kdf->memLimit >= $defaults->memLimit
-            ? $this->kdf->withNewSalt()
-            : $defaults;
+        $kdf = $this->kdf->isWeakerThanDefaults() ? KdfParameters::defaults() : $this->kdf->withNewSalt();
 
         return self::wrap($this->unwrap($oldPassword), $newPassword, $kdf);
+    }
+
+    /**
+     * The same key pair under the same password, wrapped again with the
+     * current profile and a fresh salt - or null when this wrapping already
+     * is at least that strong (issue #100). For the login, which has just
+     * unwrapped the pair and holds the password anyway; the caller passes the
+     * pair in so that the expensive derivation is not run twice.
+     *
+     * @throws CryptoException when the pair is not the one wrapped here, or
+     *                         the new derivation fails
+     */
+    public function upgradedWrapping(UserKeyPair $pair, #[\SensitiveParameter] string $password): ?self
+    {
+        if (!$this->kdf->isWeakerThanDefaults()) {
+            return null;
+        }
+
+        if (!hash_equals($this->publicKey, $pair->publicKey())) {
+            throw new CryptoException('The key pair does not belong to this wrapping.');
+        }
+
+        return self::wrap($pair, $password, KdfParameters::defaults());
     }
 
     /**

@@ -38,7 +38,9 @@ use App\Service\Audit\AuditChain;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
+use App\Service\Crypto\KdfParameters;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\UserKey;
 use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
@@ -208,6 +210,125 @@ final class LoginFlowTest extends DatabaseTestCase
         self::assertSame('/app', $antwort->headers['Location'] ?? null);
         self::assertNull(self::vaultCookieOf($antwort), 'Ohne Freigabe gibt es keinen Sitzungsschlüssel.');
         self::assertStringContainsString('Freigabe', (string) ($_SESSION['flash']['text'] ?? ''));
+    }
+
+    // ------------------------------------- KDF profile upgrade (issue #100)
+
+    /**
+     * An account wrapped with the INTERACTIVE profile of earlier releases -
+     * the row written the way the previous release writes it, without the
+     * `kdf_alg` column migration 032 added - still signs in and unlocks the
+     * vault. The login then lifts the wrapping to the current profile, and
+     * the lifted row opens the vault at the next login as well.
+     */
+    public function testAnOlderProfileStillUnlocksAndIsLiftedOnLogin(): void
+    {
+        $schluessel = DataKey::generate();
+        $versiegelt = $this->vault->sealDataKey($schluessel);
+        $alt = $this->schreibeAltesProfil();
+
+        $cookie = self::vaultCookieOf($this->anmelden(self::EMAIL, self::PASSWORT));
+        self::assertNotNull($cookie, 'Die alte Umhüllung entsperrt weiterhin.');
+        self::assertTrue($schluessel->equals(new SessionVault()->unlock($cookie)?->openDataKey($versiegelt)));
+
+        $neu = $this->zeile();
+        self::assertSame(SODIUM_CRYPTO_PWHASH_OPSLIMIT_MODERATE, (int) $neu['kdf_ops']);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE, (int) $neu['kdf_mem']);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, (int) $neu['kdf_alg']);
+        self::assertSame($alt->publicKey(), (string) $neu['public_key'], 'Das Schlüsselpaar bleibt - die Freigabe gilt weiter.');
+        self::assertNotSame($alt->kdf()->salt, (string) $neu['kdf_salt']);
+        self::assertNotSame($alt->wrappedPrivateKey(), (string) $neu['wrapped_private_key']);
+
+        $_SESSION = [];
+        $zweites = self::vaultCookieOf($this->anmelden(self::EMAIL, self::PASSWORT));
+        self::assertNotNull($zweites, 'Die angehobene Umhüllung entsperrt beim nächsten Login.');
+        self::assertTrue($schluessel->equals(new SessionVault()->unlock($zweites)?->openDataKey($versiegelt)));
+    }
+
+    /**
+     * A row that already has the current profile is not written again on
+     * every login.
+     */
+    public function testACurrentProfileIsNotRewrittenOnLogin(): void
+    {
+        $vorher = $this->zeile();
+
+        $this->anmelden(self::EMAIL, self::PASSWORT);
+
+        self::assertSame($vorher, $this->zeile());
+    }
+
+    /**
+     * The upgrade must never undo a password change that committed between
+     * the login's unwrap and its write: the compare-and-swap leaves the
+     * newer row alone.
+     */
+    public function testTheUpgradeDoesNotOverwriteAConcurrentPasswordChange(): void
+    {
+        $repo = new UserKeyRepository($this->pdo());
+        $alt = $this->schreibeAltesProfil();
+        $paar = $alt->unwrap(self::PASSWORT);
+        $angehoben = $alt->upgradedWrapping($paar, self::PASSWORT);
+        self::assertNotNull($angehoben);
+
+        // Meanwhile, in another request: the password is changed.
+        $geaendert = $alt->rewrap(self::PASSWORT, 'ein-ganz-anderes-neues-passwort');
+        $repo->replace($this->userId, $geaendert);
+
+        self::assertFalse($repo->replaceWrapping($this->userId, $alt, $angehoben));
+        self::assertSame($geaendert->wrappedPrivateKey(), (string) $this->zeile()['wrapped_private_key']);
+        self::assertSame(
+            $paar->secretKey(),
+            $repo->forUser($this->userId)?->unwrap('ein-ganz-anderes-neues-passwort')->secretKey(),
+        );
+    }
+
+    /**
+     * Replaces the installer's wrapping of the account with one of the
+     * INTERACTIVE profile, inserted without `kdf_alg` - exactly what the
+     * release before migration 032 leaves behind.
+     */
+    private function schreibeAltesProfil(): UserKey
+    {
+        $paar = new UserKeyRepository($this->pdo())->forUser($this->userId)?->unwrap(self::PASSWORT);
+        self::assertNotNull($paar);
+        $alt = UserKey::wrap($paar, self::PASSWORT, KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
+            SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+        ));
+
+        $this->pdo()->prepare('DELETE FROM user_key WHERE user_id = ?')->execute([$this->userId]);
+        $stmt = $this->pdo()->prepare(
+            'INSERT INTO user_key (user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())',
+        );
+        $stmt->bindValue(1, $this->userId, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $alt->publicKey(), \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $alt->wrappedPrivateKey(), \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $alt->kdf()->salt, \PDO::PARAM_LOB);
+        $stmt->bindValue(5, $alt->kdf()->opsLimit, \PDO::PARAM_INT);
+        $stmt->bindValue(6, $alt->kdf()->memLimit, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, (int) $this->zeile()['kdf_alg'], 'Migration 032 setzt den Vorgabewert.');
+
+        return $alt;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function zeile(): array
+    {
+        $stmt = $this->pdo()->prepare(
+            'SELECT public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, kdf_alg FROM user_key WHERE user_id = ?',
+        );
+        $stmt->execute([$this->userId]);
+        $zeile = $stmt->fetch(\PDO::FETCH_ASSOC);
+        self::assertIsArray($zeile);
+
+        return $zeile;
     }
 
     // ------------------------------------------------------ generic answers

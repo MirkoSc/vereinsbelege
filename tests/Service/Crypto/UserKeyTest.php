@@ -16,7 +16,8 @@ use PHPUnit\Framework\TestCase;
  *
  * Most tests use the cheapest KDF parameters libsodium allows: what they are
  * about is the wrapping, not the cost factor. That the shipped defaults are
- * the INTERACTIVE ones the spec asks for is checked separately, once.
+ * the MODERATE ones the spec asks for (issue #100), and that a row of the
+ * older INTERACTIVE profile still opens, is checked separately.
  */
 final class UserKeyTest extends TestCase
 {
@@ -197,18 +198,177 @@ final class UserKeyTest extends TestCase
     }
 
     /**
-     * docs/spec/01-sicherheit.md section 2: INTERACTIVE / 64 MiB, and the
-     * hosting check confirmed the target host manages it in ~55 ms.
+     * docs/spec/01-sicherheit.md section 2 (issue #100): MODERATE - 256 MiB,
+     * 3 passes, Argon2id v1.3. The hosting check measured 309-321 ms for it
+     * on the target host.
      */
-    public function testDefaultsAreTheInteractiveArgon2idParameters(): void
+    public function testDefaultsAreTheModerateArgon2idParameters(): void
     {
         $defaults = KdfParameters::defaults();
 
-        self::assertSame(SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE, $defaults->opsLimit);
-        self::assertSame(SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE, $defaults->memLimit);
-        self::assertSame(64 * 1024 * 1024, $defaults->memLimit);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_OPSLIMIT_MODERATE, $defaults->opsLimit);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE, $defaults->memLimit);
+        self::assertSame(3, $defaults->opsLimit);
+        self::assertSame(256 * 1024 * 1024, $defaults->memLimit);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $defaults->algorithm);
         self::assertSame(KdfParameters::SALT_BYTES, strlen($defaults->salt));
         self::assertNotSame($defaults->salt, KdfParameters::defaults()->salt);
+        self::assertFalse($defaults->isWeakerThanDefaults());
+    }
+
+    /**
+     * The acceptance criterion of issue #100: a row written with the
+     * INTERACTIVE profile that was the default before still unwraps - with
+     * the real parameters, not the cheap ones, read back as the repository
+     * does.
+     */
+    public function testARowOfTheOlderInteractiveProfileStillUnwraps(): void
+    {
+        $pair = UserKeyPair::create();
+        $old = UserKey::wrap($pair, self::PASSWORD, self::interactiveKdf());
+
+        $fromDatabase = UserKey::fromStorage(
+            $old->publicKey(),
+            $old->wrappedPrivateKey(),
+            KdfParameters::fromStorage(
+                $old->kdf()->salt,
+                SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
+                SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+                SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13,
+            ),
+        );
+
+        self::assertTrue($fromDatabase->kdf()->isWeakerThanDefaults());
+        self::assertSame($pair->secretKey(), $fromDatabase->unwrap(self::PASSWORD)->secretKey());
+    }
+
+    /**
+     * And the KEK really depends on the stored parameters: the same salt
+     * with the current profile instead of the stored one does not open it.
+     * That is why they have to be stored per row at all.
+     */
+    public function testAnOldRowDoesNotOpenWithTheCurrentProfile(): void
+    {
+        $old = UserKey::wrap(UserKeyPair::create(), self::PASSWORD, self::interactiveKdf());
+        $misread = UserKey::fromStorage(
+            $old->publicKey(),
+            $old->wrappedPrivateKey(),
+            KdfParameters::fromStorage($old->kdf()->salt, KdfParameters::DEFAULT_OPSLIMIT, KdfParameters::DEFAULT_MEMLIMIT),
+        );
+
+        $this->expectException(CryptoException::class);
+        $this->expectExceptionMessage('could not be unwrapped');
+
+        $misread->unwrap(self::PASSWORD);
+    }
+
+    /**
+     * The login lifts an old row (issue #100): same key pair - so the vault
+     * grant keeps working -, same password, fresh salt, current profile.
+     */
+    public function testUpgradedWrappingLiftsAnOldRowToTheCurrentProfile(): void
+    {
+        $pair = UserKeyPair::create();
+        $old = UserKey::wrap($pair, self::PASSWORD, self::interactiveKdf());
+
+        $upgraded = $old->upgradedWrapping($old->unwrap(self::PASSWORD), self::PASSWORD);
+
+        self::assertNotNull($upgraded);
+        self::assertSame($pair->publicKey(), $upgraded->publicKey());
+        self::assertSame(KdfParameters::DEFAULT_OPSLIMIT, $upgraded->kdf()->opsLimit);
+        self::assertSame(KdfParameters::DEFAULT_MEMLIMIT, $upgraded->kdf()->memLimit);
+        self::assertSame(KdfParameters::ALGORITHM, $upgraded->kdf()->algorithm);
+        self::assertNotSame($old->kdf()->salt, $upgraded->kdf()->salt);
+        self::assertFalse($upgraded->kdf()->isWeakerThanDefaults());
+        self::assertSame($pair->secretKey(), $upgraded->unwrap(self::PASSWORD)->secretKey());
+    }
+
+    public function testUpgradedWrappingLeavesACurrentRowAlone(): void
+    {
+        $pair = UserKeyPair::create();
+        $current = KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::DEFAULT_OPSLIMIT,
+            KdfParameters::DEFAULT_MEMLIMIT,
+        );
+        // No derivation needed to decide this - the pair is passed in.
+        $key = UserKey::fromStorage($pair->publicKey(), str_repeat("\x01", 73), $current);
+
+        self::assertNull($key->upgradedWrapping($pair, self::PASSWORD));
+    }
+
+    /**
+     * Lowering the profile in code must not weaken accounts that already
+     * have more.
+     */
+    public function testStrongerThanCurrentParametersAreNotWeaker(): void
+    {
+        $stronger = KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::DEFAULT_OPSLIMIT + 1,
+            KdfParameters::DEFAULT_MEMLIMIT * 2,
+        );
+
+        self::assertFalse($stronger->isWeakerThanDefaults());
+        self::assertTrue(KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::DEFAULT_OPSLIMIT + 1,
+            KdfParameters::DEFAULT_MEMLIMIT - 1,
+        )->isWeakerThanDefaults(), 'more passes do not make up for less memory');
+    }
+
+    public function testUpgradedWrappingRejectsAForeignKeyPair(): void
+    {
+        $old = UserKey::wrap(UserKeyPair::create(), self::PASSWORD, self::cheapKdf());
+
+        $this->expectException(CryptoException::class);
+        $this->expectExceptionMessage('does not belong');
+
+        $old->upgradedWrapping(UserKeyPair::create(), self::PASSWORD);
+    }
+
+    public function testTheAlgorithmIsReadBackFromStorage(): void
+    {
+        $kdf = KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::OPSLIMIT_MIN,
+            KdfParameters::MEMLIMIT_MIN,
+            SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13,
+        );
+
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $kdf->algorithm);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $kdf->withNewSalt()->algorithm);
+    }
+
+    /**
+     * Argon2i would derive a different key and look like a wrong password;
+     * an unknown identifier is said as such instead.
+     */
+    public function testAnUnknownAlgorithmIsRejected(): void
+    {
+        $this->expectException(CryptoException::class);
+        $this->expectExceptionMessage('Unknown KDF algorithm');
+
+        KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::OPSLIMIT_MIN,
+            KdfParameters::MEMLIMIT_MIN,
+            SODIUM_CRYPTO_PWHASH_ALG_ARGON2I13,
+        );
+    }
+
+    /**
+     * A password change also lifts an INTERACTIVE row, not only the cheap
+     * test parameters below.
+     */
+    public function testRewrapRaisesAnInteractiveRowToTheCurrentProfile(): void
+    {
+        $old = UserKey::wrap(UserKeyPair::create(), self::PASSWORD, self::interactiveKdf());
+
+        $rewrapped = $old->rewrap(self::PASSWORD, 'neues-passwort-mit-genug-laenge');
+
+        self::assertFalse($rewrapped->kdf()->isWeakerThanDefaults());
+        self::assertSame(KdfParameters::DEFAULT_MEMLIMIT, $rewrapped->kdf()->memLimit);
     }
 
     /**
@@ -237,6 +397,18 @@ final class UserKeyTest extends TestCase
         $this->expectExceptionMessage('salt');
 
         KdfParameters::fromStorage('zu kurz', KdfParameters::OPSLIMIT_MIN, KdfParameters::MEMLIMIT_MIN);
+    }
+
+    /**
+     * The profile every wrapping was written with before issue #100.
+     */
+    private static function interactiveKdf(): KdfParameters
+    {
+        return KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
+            SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+        );
     }
 
     private static function cheapKdf(): KdfParameters

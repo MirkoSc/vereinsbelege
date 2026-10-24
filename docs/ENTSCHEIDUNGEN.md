@@ -119,6 +119,20 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ✅ Argon2id-Profil MODERATE für die Tresor-Umhüllung
+*Betrifft: M2/M3 (issue #100) – **vorläufig, autonom getroffen – Bestätigung
+durch Mirko offen***
+
+Neue Umhüllungen des Benutzer-Privatkeys verwenden Argon2id MODERATE
+(3 Durchläufe, 256 MiB) statt INTERACTIVE (2 Durchläufe, 64 MiB): auf dem
+Zielhost 309–321 ms je Anmeldung, für einen Angreifer mit DB-Dump der
+sechsfache Aufwand je Rateversuch. Parameter und Algorithmus stehen je
+Benutzer in `user_key` (`kdf_ops`, `kdf_mem`, `kdf_alg`); ältere Konten
+öffnen mit ihren eigenen Werten und werden bei der nächsten Anmeldung
+angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
+auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
+Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

@@ -11,6 +11,8 @@ use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\UserKey;
+use App\Service\Crypto\UserKeyPair;
 use App\Service\Crypto\Vault;
 use App\Service\RateLimiter;
 
@@ -147,7 +149,8 @@ final readonly class LoginService
         }
 
         try {
-            $entsperrt = $grant->open($userKey->unwrap($password), $vault->publicKey(), $vault->version);
+            $paar = $userKey->unwrap($password);
+            $entsperrt = $grant->open($paar, $vault->publicKey(), $vault->version);
         } catch (CryptoException) {
             // The password verified but does not open the wrapping, or the
             // grant belongs to another key pair or another generation. Not a
@@ -157,7 +160,38 @@ final readonly class LoginService
             return LoginResult::erfolg($user, null, VaultAccess::Fehlgeschlagen);
         }
 
+        $this->umhuellungAnheben($user->id, $userKey, $paar, $password);
+
         return LoginResult::erfolg($user, $entsperrt, VaultAccess::Entsperrt);
+    }
+
+    /**
+     * Lifts a wrapping written with an older, weaker KDF profile to the
+     * current one (issue #100, docs/spec/01-sicherheit.md section 2) - the
+     * login is the one moment the password is in hand without anybody being
+     * asked to change it, the same reasoning as the password rehash above.
+     *
+     * Best effort: the vault is already open, so a failed derivation (a host
+     * that cannot spend the memory) leaves the old, still valid wrapping in
+     * place and the next login tries again. The repository only writes if
+     * the row is still the one that was just unwrapped, so a password change
+     * committing in between is never undone.
+     */
+    private function umhuellungAnheben(
+        int $userId,
+        UserKey $userKey,
+        UserKeyPair $paar,
+        #[\SensitiveParameter] string $password,
+    ): void {
+        try {
+            $angehoben = $userKey->upgradedWrapping($paar, $password);
+        } catch (CryptoException) {
+            return;
+        }
+
+        if ($angehoben !== null) {
+            $this->userKeys->replaceWrapping($userId, $userKey, $angehoben);
+        }
     }
 
     private function fehlversuch(string $ip, string $konto, \DateTimeImmutable $now): LoginResult
