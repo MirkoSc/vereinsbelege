@@ -9,6 +9,8 @@ enum ZugriffArt
 {
     case Oeffentlich;
     case Cron;
+    /** No session; an HMAC-signed request of a paired worker (issue #51). */
+    case Worker;
     case Angemeldet;
     case Recht;
     case AdminBereich;

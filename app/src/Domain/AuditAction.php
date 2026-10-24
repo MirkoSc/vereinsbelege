@@ -154,6 +154,12 @@ enum AuditAction: string
     // The archive import (issue #77/M12-3): counts and document ids - never a name.
     case ArchivImportiert = 'archiv.importiert';
 
+    // The optional worker (issue #51/M7b-1): the worker id, never a key.
+    case WorkerKopplungscode = 'worker.kopplungscode';
+    case WorkerGekoppelt = 'worker.gekoppelt';
+    case WorkerBestaetigt = 'worker.bestaetigt';
+    case WorkerEntkoppelt = 'worker.entkoppelt';
+
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
     case WartungAufgehoben = 'wartung.aufgehoben';
@@ -258,6 +264,10 @@ enum AuditAction: string
             self::ExportZurueckgesetzt => 'Export-Markierung zurückgesetzt',
             self::ExportNextcloud => 'Export in Nextcloud abgelegt',
             self::ArchivImportiert => 'Archiv importiert',
+            self::WorkerKopplungscode => 'Worker-Kopplungscode erzeugt',
+            self::WorkerGekoppelt => 'Worker gekoppelt',
+            self::WorkerBestaetigt => 'Worker-Fingerabdruck bestätigt',
+            self::WorkerEntkoppelt => 'Worker entkoppelt',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -294,6 +304,7 @@ enum AuditAction: string
             self::KiAnbieterStandard, self::KiFallbackGewaehlt, self::KiFallbackEntfernt => 'ai_provider',
             self::KontoauszugImportiert => 'bank_import',
             self::ArchivImportiert => 'archive_import',
+            self::WorkerGekoppelt, self::WorkerBestaetigt, self::WorkerEntkoppelt => 'worker',
             self::ExportMarkiert, self::ExportZurueckgesetzt, self::ExportNextcloud => 'export_run',
             self::BuchungAngelegt, self::BuchungGeaendert, self::BuchungGeloescht,
             self::BuchungEingeordnet => 'bank_transaction',
@@ -312,7 +323,7 @@ enum AuditAction: string
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud,
-            self::ExportErstellt,
+            self::ExportErstellt, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen => null,
         };
@@ -341,6 +352,7 @@ enum AuditAction: string
             'assignment_rule' => 'Buchungsregel',
             'allocation' => 'Zuordnung Beleg ↔ Buchung',
             'document' => 'Beleg',
+            'worker' => 'Worker',
             default => $entity,
         };
     }
