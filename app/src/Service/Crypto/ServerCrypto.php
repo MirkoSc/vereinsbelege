@@ -73,6 +73,23 @@ final readonly class ServerCrypto
     }
 
     /**
+     * decrypt() for a value that may legitimately not open: after a restore
+     * without the old server key (issue #154, docs/spec/06-betrieb.md
+     * section 2) every address and name written before it is ciphertext
+     * under a key that is gone. Pages that list accounts show "nicht
+     * lesbar" for such a row instead of failing as a whole; nothing else
+     * should reach for this - a wrong key is otherwise an error.
+     */
+    public function decryptOrNull(string $stored): ?string
+    {
+        try {
+            return $this->decrypt($stored);
+        } catch (CryptoException) {
+            return null;
+        }
+    }
+
+    /**
      * The lookup index for operating data, `user.email_bi` above all: the
      * login has to find an account before anybody is logged in, so this one
      * index cannot hang off the vault.

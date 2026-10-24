@@ -217,8 +217,23 @@ final readonly class LieferantenAufloesung implements JobHandler
             return null;
         }
         $eRechnung = $this->texterkennung->eRechnung($document, $vault);
-        $ueber = $eRechnung !== null && $eRechnung->gelesen() ? ($eRechnung->extraktion ?? []) : [];
 
+        return self::ueberlagern($ki, $eRechnung !== null && $eRechnung->gelesen() ? ($eRechnung->extraktion ?? []) : []);
+    }
+
+    /**
+     * $ki (`extract-v1`) with the supplier, direction and mandate reference
+     * of a read e-invoice ($ueber, the same shape) laid over it - each value
+     * the e-invoice states wins. Also what a confirmed receipt teaches its
+     * supplier (issue #201/M7-6b, App\Service\Invoice\Pruefung).
+     *
+     * @param array<string, mixed> $ki
+     * @param array<string, mixed> $ueber
+     *
+     * @return array<string, mixed>
+     */
+    public static function ueberlagern(array $ki, array $ueber): array
+    {
         $partner = is_array($ki['supplier'] ?? null) ? $ki['supplier'] : [];
         foreach (is_array($ueber['supplier'] ?? null) ? $ueber['supplier'] : [] as $feld => $wert) {
             if (is_string($wert) && trim($wert) !== '') {

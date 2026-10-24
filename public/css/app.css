@@ -1182,6 +1182,18 @@ body.bereich-app:has(.pruefansicht) {
     gap: 0 var(--abstand-5);
 }
 
+/* Was ein bestätigter Beleg dem Lieferanten beibringt (Issue #201, M7-6b):
+   lange IBANs und Namen brechen auch bei 360 px um. */
+.pruefen-lernen {
+    margin-bottom: var(--abstand-3);
+    overflow-wrap: anywhere;
+}
+
+.pruefen-lernen-liste {
+    margin: 0 0 var(--abstand-2);
+    padding-left: var(--abstand-5);
+}
+
 /* Zusammengehörige kurze Felder in einer Zeile, sobald Platz ist. */
 .pruefen-zeile {
     display: flex;

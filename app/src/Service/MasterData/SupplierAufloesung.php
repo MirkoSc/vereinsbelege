@@ -78,7 +78,8 @@ final readonly class SupplierAufloesung
 
         $stufen = [
             1 => [[SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))], [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))]],
-            2 => [[SupplierKeyKind::Iban, Iban::istGueltig($iban) ? $iban : '']],
+            // The club's own account names no supplier (a direct debit, an income).
+            2 => [[SupplierKeyKind::Iban, Iban::istGueltig($iban) && !$this->service->istVereinsIban($vault, $iban) ? $iban : '']],
             3 => [[SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))]],
             4 => [[SupplierKeyKind::Name, SupplierKeys::name($wert('name'))]],
         ];

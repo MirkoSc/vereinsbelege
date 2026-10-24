@@ -1281,7 +1281,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   6. sonst **automatisch neu anlegen** mit `created_via=ki`,
      `needs_review=1` (Liste „Neue Lieferanten prüfen")
 - Neu gelernte Merkmale (weitere IBAN, Alias-Name) werden dem Lieferanten
-  nach Bestätigung hinzugefügt.
+  nach Bestätigung hinzugefügt – umgesetzt mit M7-6b, „Stand M7-6b“.
 - Zusammenführen doppelter Lieferanten (alle Belege/Regeln umhängen,
   `merged_into` setzen, Audit). **Festgeschriebene Belege** (01 §7) sind
   unveränderlich und werden nicht umgehängt, sondern über `merged_into`
@@ -1390,7 +1390,66 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     `needs_review = 0`, Audit `lieferant.geprueft` (nur beim ersten Mal).
     Speichern des Formulars gilt ebenfalls als geprüft (geänderte Felder dann
     inkl. `needs_review`); Zusammenführen lässt das Flag des Ziels.
-  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23).
+  - *Noch offen:* „neu gelernte Merkmale … nach Bestätigung hinzugefügt“ (E-23)
+    – umgesetzt mit M7-6b, siehe unten.
+
+- **Stand M7-6b** (issue #201, keine Migration; vorläufige Details E-29):
+  Bestätigt eine Person den Lieferanten, den die Prüfansicht gewählt hat,
+  lernt er die neuen Merkmale des Belegs.
+  - *Quelle:* nur die Werte des Belegs – der neueste KI-Vorschlag
+    (`supplier`, `payment.mandate_reference`), darüber jeder Wert des
+    Verkäufers einer gelesenen E-Rechnung (dieselbe Überlagerung wie
+    `resolve_supplier`, `LieferantenAufloesung::ueberlagern()`), beim
+    Speichern **neu aus den Artefakten gelesen**, nie aus den Formularfeldern
+    (Freitext, „Neu anlegen“).
+  - *Regeln* (`App\Service\MasterData\LieferantenMerkmale::neue()`, reine
+    Funktion; Ergebnis `Merkmale`): **IBAN** gültig und noch nicht beim
+    Lieferanten; **Name** als Alias, wenn seine normalisierte Form (Stufe 4)
+    weder Name noch Alias ist; **Gläubiger-ID** gültig und nur, wenn der
+    Lieferant keine hat (eine andere → Hinweis, nicht ersetzt);
+    **Mandatsreferenz** nur zusammen mit dieser Gläubiger-ID. Höchstens 20 je
+    Liste, sonst Hinweis. USt-ID/Steuernummer werden nicht gelernt.
+  - *Vereinskonten* (`SupplierService::istVereinsIban()`, Blind Index
+    `bank_account.iban`): eine IBAN eines eigenen Kontos des Vereins ist nie
+    die eines Lieferanten – bei Lastschrift-Rechnungen und Einnahmen steht oft
+    nur sie auf dem Beleg. Sie wird nicht gelernt („ein Konto des Vereins –
+    nicht übernommen“), bei der Stufe-6-Neuanlage weggelassen und in Stufe 2
+    der Auflösung (wie in der Vorbelegung über Kennungen) ignoriert.
+  - *Eindeutigkeit* (`SupplierService::lernbar()`): eine IBAN oder
+    Gläubiger-ID, die schon bei einem **anderen** Lieferanten liegt, wird
+    nicht gelernt, ebenso kein Name, der Name oder Alias eines anderen ist
+    (Stufe 4 würde für ihn mehrdeutig); die Seite nennt ihn („bitte
+    zusammenführen“).
+  - *Anzeige vor dem Speichern:* unter der Lieferanten-Auswahl ein
+    Ankreuzfeld „Neue Merkmale beim Lieferanten „…“ ergänzen“,
+    **vorausgewählt**, mit der Liste der Werte und den Hinweisen; dazu das
+    versteckten Felder `lieferant_lernen_fuer` (ID) und
+    `lieferant_lernen_stand` (Fingerabdruck des gezeigten Plans, HMAC mit
+    Tresor-Schlüssel, `Merkmale::fingerabdruck()`). Angeboten nur, wenn der
+    Beleg noch nicht gespeichert ist, der Lieferant aus KI/E-Rechnung/
+    Auflösung gewählt wurde (nicht aus der Archiv-Vorgabe) und die Person
+    `supplier.manage` hat. `pruefansicht.js` blendet es aus, sobald ein
+    anderer Partner gewählt wird.
+  - *Speichern* (`Pruefung::speichern()`): gelernt wird nur, wenn angekreuzt,
+    beim **ersten** Speichern, mit `supplier.manage`, ohne „Neu anlegen“ und
+    wenn der gespeicherte Lieferant **genau** `lieferant_lernen_fuer` ist –
+    ein durch einen anderen ersetzter Vorschlag lernt nichts. Nach dem
+    Commit des Belegs in **eigener** Transaktion
+    (`SupplierService::merkmaleErgaenzen()`): Zeile `FOR UPDATE`, neu
+    entschlüsselt und neu geplant (Schlüssel anderer Lieferanten mit
+    `FOR UPDATE` gelesen, damit zwei Speichervorgänge nicht dieselbe IBAN
+    zwei Lieferanten beibringen) – gelernt wird nur, wenn der Plan noch
+    **genau** dem gezeigten entspricht (Fingerabdruck) –, unter dem
+    Zeilen-DEK neu verschlüsselt, `supplier_key` neu geschrieben,
+    Eindeutigkeit erneut geprüft; `needs_review` bleibt. Audit
+    `lieferant.geaendert` (Entität Lieferant) mit `{felder, beleg}` – nur
+    Feldnamen wie beim Formular (`iban`, `aliases`, `creditor_id`,
+    `mandate_refs`) und Beleg-ID. Ein geänderter Plan oder ein verlorenes
+    Sperren (Deadlock/Timeout) verwirft nur das Lernen (Hinweis), nicht den
+    Beleg.
+    Die Meldung nennt nur Feldbezeichnungen („Beim Lieferanten ergänzt: IBAN.“).
+  - *Unberührt:* festgeschriebene Belege (Speichern ist dort gesperrt) und
+    zusammengeführte Lieferanten (weder wählbar noch lernbar).
 
 ## 8. Kategorisierung
 
@@ -1496,6 +1555,113 @@ Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
   `serie.verworfen` (Details: Status vorher).
 - *Nie* wird `invoice` geschrieben; Beträge/Namen nur verschlüsselt
   (`recurring_series.data_enc`), `job.state` leer.
+
+## 10. Volltextsuche (Session-Index)
+
+**Stand issue #94** (ohne Migration): `/app/suche` findet Belege über ihren
+erkannten Text, ohne dass ein durchsuchbarer Index dauerhaft auf dem Server
+liegt (CLAUDE.md §5, E-24).
+
+- *Kein dauerhafter Index:* weder Klartext noch Wort-HMACs (Blind Indexes je
+  Wort) in DB oder Dateien – beides verriete einem Datenbank- oder
+  Dateileser Worthäufigkeiten und damit Inhalte. Stattdessen baut jede
+  angemeldete Session mit entsperrtem Tresor ihren eigenen, verschlüsselten
+  Index, der mit der Session endet.
+- *Textquellen* (`App\Service\Suche\Suchtextquelle`, je Quelle eine Klasse,
+  in `bootstrap.php` als Liste an `Volltextsuche` übergeben):
+  `TextlayerQuelle` (alle Seiten des neuesten `text`-Laufs von
+  `extract_text`, auch eine für die KI zu dünne Textebene –
+  `Texterkennung::seitentexte()`), `ERechnungQuelle` (Felder einer gelesenen
+  E-Rechnung) und `KiQuelle` (gültige `extraction` des neuesten KI-Laufs). Aus
+  einer Extraktion (`Extraktionstexte`, Format `extract-v1`) zählen
+  Lieferantenangaben, Rechnungs-/Kunden-/Vertragsnummer, Zweck,
+  Mandatsreferenz, Hinweis auf Wiederkehr und der Bruttobetrag in deutscher
+  Schreibweise mit zwei Nachkommastellen („1234,50“, auch aus „1234.5“). Der OCR-Text des Workers (07, #51–#55) kommt ohne
+  Umbau dazu: als Artefakt `text` deckt ihn `TextlayerQuelle` schon ab,
+  sonst als eigene Quelle mit eigener Artefakt-Art.
+- *Normalisierung* (`Suchtext`): Kleinschreibung, Leerraum zu einem
+  Leerzeichen, Steuer- und Formatzeichen (weiches Trennzeichen, Null-Breite)
+  entfernt, Umlaute bleiben; je Dokument höchstens 32 KiB
+  (`MAX_BYTES_JE_DOKUMENT`), Quellen mit „ | “ getrennt.
+- *Ablage:* Teile unter `shared/var/tmp/suche/<Index-ID>/<n>.bin`
+  (`SuchindexSpeicher`, Dateirechte 0600, atomar geschrieben). Je Teil JSON
+  `{f: 1, e: [[document_id, text], …]}` → `gzdeflate` → `sodium_pad` auf
+  4-KiB-Blöcke (die Größe eines Teils verrät wenig über seinen Text) →
+  `FieldCipher` (XChaCha20-Poly1305, AAD `suchindex|<n>|teil`) mit einem
+  **zufälligen Index-Schlüssel je Index**. In der PHP-Session
+  (`SitzungsSuchindex`, `$_SESSION['suchindex']`) stehen nur Index-ID, Cursor,
+  Teilezahl, Benutzer-ID, Fingerabdruck des Scopes und der Index-Schlüssel
+  **versiegelt an den Tresor-Public-Key** (wie `dek_sealed`) – öffnen kann ihn
+  nur der entsperrte Tresor, also nur mit dem Cookie `__Host-vk` (01 §2).
+  Session-Dateien allein, Index-Dateien allein oder beides zusammen öffnen
+  nichts; die Session bleibt klein.
+- *Aufbau als Schrittkette* (CLAUDE.md §1): `POST /app/suche/index`
+  (`Volltextsuche::schritt()`, JSON `{fertig, offen}`) nimmt bis zu 40
+  Dokumente (`SCHRITT_DOKUMENTE`) auf und schreibt sie als einen Teil;
+  `public/js/suche.js` wiederholt das, bis der Index aktuell ist, und schickt
+  dann das Suchformular erneut ab (Schrittgröße und offene Belege als
+  `data-*`). Welche Dokumente dran sind, sagt der **Cursor = höchste
+  aufgenommene `document_artifact.id`** der Arten, die die Quellen lesen
+  (`text`, `e_rechnung`, `extraction`): Ein Schritt nimmt die Dokumente mit
+  Artefakten über dem Cursor in der Reihenfolge ihres jeweils neuesten
+  Artefakts (`DocumentArtifactRepository::naechsteSuchdokumente()`), der neue
+  Cursor ist das neueste Artefakt des letzten – so wird jedes Dokument je
+  Änderung genau einmal aufgenommen, und `offen` sinkt je Schritt um die
+  Schrittgröße. Ein neuer Joblauf schreibt neue Zeilen, sein Dokument kommt
+  in den nächsten Schritt; beim Suchen werden die Teile vom neuesten her
+  gelesen, so gilt je Dokument der neueste Eintrag (auch ein leerer). Der
+  erste Aufbau ist dasselbe ab Cursor 0.
+  Sind höchstens 40 Dokumente offen (kleiner Verein, ein paar neue Belege seit
+  der letzten Suche), erledigt die Seite das gleich selbst
+  (`Volltextsuche::nachziehen()`), ohne Kette. Gebaut wird beim ersten Aufruf
+  von `/app/suche` in der Session, nicht schon beim Anmelden.
+- *Suche:* `POST /app/suche` (CSRF) – die Suchbegriffe sind Vereinsdaten und
+  gehören nicht in URLs, Server-Logs oder den Verlauf; Antwort `no-store`.
+  Begriffe an Leerraum getrennt, „in Anführungszeichen“ als Phrase, alle
+  müssen vorkommen (UND), mindestens 2 Zeichen, höchstens 8 Begriffe und
+  200 Zeichen (`Suchanfrage`); Treffer neueste zuerst (Dokument-ID), höchstens
+  50 (`MAX_TREFFER`, darüber „weitere Treffer – bitte eingrenzen“; erst
+  werden alle Teile nach passenden Dokument-IDs durchsucht, der Ausschnitt
+  nur für die angezeigten Treffer gebildet), je Treffer
+  Referenz (Link auf `/app/posteingang/{id}`), Eingang, Status,
+  Mannschaft/Bereich und ein Ausschnitt um die erste Fundstelle mit
+  `<mark>` (Segmente, in der View escaped). Gesucht wird nur in einem Index,
+  der aktuell ist – ein halber Index zeigt keine (unvollständigen) Treffer.
+- *Rechte und Scope:* `inbox.view` mit seinem Scope (01 §4) auf allen vier
+  Routen – wie der Posteingang, auf den die Treffer verlinken. Aufgenommen
+  werden nur Dokumente im Scope (`DocumentArtifactRepository::
+  suchquellenNach()`, `Zugriffsbereich::sqlBedingung()` auf
+  `document.created_at`/`cost_center_id`), und jeder Treffer wird vor der
+  Anzeige erneut in SQL gegen den Scope geprüft
+  (`DocumentRepository::inboxItems()`): Ein Dokument, das den Scope
+  inzwischen verlassen hat, steht noch im Index, erscheint aber nicht. Bei
+  einem Kostenstellen-Scope merkt sich die Session zusätzlich eine Signatur
+  der aufgenommenen Dokumente (Anzahl und Summe ihrer IDs bis zum Cursor,
+  `suchdokumenteBis()`); bekommt ein altes Dokument nachträglich eine
+  Kostenstelle des Scopes (oder verliert sie), passt die Signatur nicht mehr
+  und der Index wird neu gebaut. Ein Zeitraum-Scope hängt an
+  `created_at`, das sich nie ändert.
+- *Verwerfen und Neuaufbau:* anderer Benutzer, geänderter Scope, ein Tresor,
+  der den Schlüssel nicht öffnet, ein unbekanntes Session-Format, ein
+  fehlender oder manipulierter Teil → Index weg (Dateien und Session-Eintrag),
+  der nächste Aufruf baut neu. „Suchindex neu aufbauen“ (`POST
+  /app/suche/neu`) tut dasselbe von Hand. Abmelden löscht die Dateien
+  (`AuthController`, vor dem Zerstören der Session); verwaiste Indexe
+  abgelaufener Sessions räumt der Cron nach 24 h ab
+  (`Cron\SuchindexCleanupTask`, `suchindex_aufraeumen`, nur Dateizeiten).
+- *Bekannte Grenzen:* Ein Artefakt, dessen `data_enc` erst nach dem Lesen
+  eines Schritts gesetzt wird (Einfügen und Füllen liegen im selben Request
+  von Millisekunden), fehlt im Index bis zum nächsten Lauf oder Neuaufbau.
+  Jede Suche entschlüsselt alle Teile in einem Request; bei einigen
+  Tausend Belegen je Jahr (typisch wenige KiB Text je Beleg) sind das einige
+  MiB und damit kurz – sehr große Archive mit langen PDF-Texten machen die
+  Suche entsprechend langsamer.
+  Kompression vor Verschlüsselung verrät über die (auf 4 KiB gerundete)
+  Größe eines Teils grob, wie gut sich sein Text packen lässt; ausnutzbar
+  wäre das nur mit Lesezugriff auf `var/tmp` und vielen gezielten
+  Neuaufbauten.
+- *Ohne Tresor* gibt es nichts zu durchsuchen: Hinweis statt Formular, der
+  Schritt antwortet 403.
 
 ## Pflicht-Tests
 
@@ -1631,7 +1797,16 @@ als Daten, Marken entschärft; `PruefungFlowTest`: Treffer gewählt mit Stufe,
 Vorschlag gelb, Neuanlage mit Link, Rolle passt nicht, Verkäufer der
 E-Rechnung, Archiv gewinnt; `SupplierFlowTest`: Liste „Neue Lieferanten
 prüfen“, „Als geprüft markieren“ einmal mit Audit, Speichern gilt als geprüft,
-Zusammenführen lässt das Flag, Tresor/CSRF; `RoutePermissionMatrixTest`);
+Zusammenführen lässt das Flag, Tresor/CSRF; `RoutePermissionMatrixTest`;
+M7-6b: `LieferantenMerkmaleTest`: neue IBAN/Alias, Bekanntes und Ungültiges
+nicht, Gläubiger-ID nur wenn leer samt Mandat, volle Listen; `PruefungFlowTest`:
+Ankreuzfeld vorausgewählt, Lernen samt `supplier_key` und Audit nur mit
+Feldnamen, nächster Beleg in Stufe 2, ersetzter Vorschlag/abgewählt/ohne
+`supplier.manage`/späteres Speichern/geänderter Plan lernt nichts, IBAN bzw.
+Name eines anderen Lieferanten genannt und nicht gelernt, Vereins-IBAN nicht
+gelernt (dazu `LieferantenAufloesungJobTest`: Stufe 6 ohne Vereins-IBAN,
+Stufe 2 ignoriert sie), abgelehntes Speichern zeigt das Angebot
+wieder, zusammengeführter Lieferant unberührt; `pruefansicht.test.js`);
 Serienerkennung (M8-1: `SerienerkennungTest`: monatlich, quartalsweise,
 halbjährlich, jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb
 Toleranz, Sprung beendet die Serie, Einzelkauf übersprungen, 2 + KI-Hinweis
@@ -1653,3 +1828,16 @@ Lieferanten, abgelehntes Gegenstück zählt nicht, Verwerfen aus jedem offenen
 Status inkl. `geprueft`, ohne Verdacht abgelehnt, Behalten löst beide und eine
 dritte Kopie markiert wieder, festgeschriebener Beleg unverändert, CSRF/Recht/
 Scope/Tresor).
+Volltextsuche (issue #94, Abschnitt 10): `SuchtextTest` (Normalisierung,
+Kürzung an Zeichengrenzen), `SuchanfrageTest` (UND, Phrasen, kurze/doppelte
+Begriffe, Ausschnitt mit Markierung, Mehrbyte-Zeichen), `ExtraktionstexteTest`,
+`SuchindexSpeicherTest` (atomar, 0600, Kennung kein Pfad, Cron nach 24 h);
+`VolltextsucheTest` (alle drei Quellen, Aufbau in Schritten, neueste zuerst
+und Obergrenze, kein Klartext in Dateien und Session, Schlüssel nur mit dem
+Tresor, neuer Text und neuester Eintrag gilt, nur der Scope wird
+aufgenommen und angezeigt, Scope-Wechsel/anderer Benutzer/anderer Tresor/
+manipulierter oder fehlender Teil verwerfen, Verwerfen löscht Dateien);
+`SucheFlowTest` (Suche per POST mit `no-store`, kleiner Bestand ohne Kette,
+großer mit Kette und JSON-Schritt, escapter Ausschnitt, ohne Tresor, CSRF,
+Neuaufbau, Kostenstellen-Scope); `RoutePermissionMatrixTest`;
+`tests/js/suche.test.js`.

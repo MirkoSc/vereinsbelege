@@ -626,14 +626,14 @@ final class SerienFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         $router = new Router();
-        // Every controller closure of app/src/routes.php: $auth, $guard, 35
+        // Every controller closure of app/src/routes.php: $auth, $guard, 36
         // more, then the optional ones by name.
         (require dirname(__DIR__, 2) . '/app/src/routes.php')(
             $router,
             $view,
             $unerreichbar,
             $guard,
-            ...array_fill(0, 35, $unerreichbar),
+            ...array_fill(0, 36, $unerreichbar),
             nextcloudAdmin: $unerreichbar,
             serien: $serien,
         );

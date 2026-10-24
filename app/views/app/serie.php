@@ -38,9 +38,11 @@ $posten = static function (array $liste, string $legende, string $leer) use ($be
         <?php foreach ($liste as $p): ?>
             <label class="feld-ankreuz">
                 <input type="checkbox" name="belege[]" value="<?= e((string) $p->invoiceId) ?>"<?= in_array($p->invoiceId, $belege, true) ? ' checked' : '' ?><?= $verworfen ? ' disabled' : '' ?>>
-                <?= e($p->datum->format('d.m.Y')) ?> – <?= e(Betrag::format($p->brutto) . ' ' . $p->waehrung) ?>
-                <?php if (!$p->geprueft): ?><span class="marke marke-warnung">nicht mehr geprüft</span><?php endif; ?>
-                · <a href="/app/belege/pruefen/<?= e((string) $p->documentId) ?>">Beleg öffnen</a>
+                <span>
+                    <?= e($p->datum->format('d.m.Y')) ?> – <?= e(Betrag::format($p->brutto) . ' ' . $p->waehrung) ?>
+                    <?php if (!$p->geprueft): ?><span class="marke marke-warnung">nicht mehr geprüft</span><?php endif; ?>
+                    · <a href="/app/belege/pruefen/<?= e((string) $p->documentId) ?>">Beleg öffnen</a>
+                </span>
             </label>
         <?php endforeach; ?>
     </fieldset>

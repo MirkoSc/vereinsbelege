@@ -74,16 +74,38 @@ final readonly class RestoreService
         } finally {
             $zip->close();
         }
-        if ($config === false) {
-            return null;
-        }
 
+        return $config === false ? null : self::serverSchluesselAusConfig($config);
+    }
+
+    /**
+     * The `server_key` of a config.php's text - the one the installer wrote
+     * (App\Installer\ConfigWriter) - or null when there is none or it is not
+     * a 32-byte key. A regular expression, never include(): the text is an
+     * upload, from the backup ZIP or from the separately kept copy the
+     * installer accepts after a restore without key (issue #154,
+     * docs/spec/06-betrieb.md section 2).
+     *
+     * @return string|null the key, base64 as it stands in the file
+     */
+    public static function serverSchluesselAusConfig(string $config): ?string
+    {
         if (preg_match("/'server_key'\\s*=>\\s*'([A-Za-z0-9+\\/=]+)'/", $config, $treffer) !== 1) {
             return null;
         }
-        $roh = base64_decode($treffer[1], true);
 
-        return $roh !== false && strlen($roh) === ConfigWriter::SERVER_KEY_BYTES ? $treffer[1] : null;
+        return self::gueltigerServerSchluessel($treffer[1]) ? $treffer[1] : null;
+    }
+
+    /**
+     * Whether a base64 string decodes to exactly one server key - the check
+     * for a key typed or pasted into the installer.
+     */
+    public static function gueltigerServerSchluessel(string $base64): bool
+    {
+        $roh = base64_decode($base64, true);
+
+        return $roh !== false && strlen($roh) === ConfigWriter::SERVER_KEY_BYTES;
     }
 
     /**

@@ -64,7 +64,7 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         parent::tearDown();
     }
 
-    private function service(): BackupService
+    private function service(?\DateTimeImmutable $festeZeit = null): BackupService
     {
         return new BackupService(
             $this->pdo(),
@@ -72,6 +72,7 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
             $this->configFile,
             '9.9.9-test',
             $this->blobDir,
+            $festeZeit === null ? null : static fn(): \DateTimeImmutable => $festeZeit,
         );
     }
 
@@ -378,6 +379,78 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         self::assertNull($service->path('../../shared/config.php'));
         self::assertNull($service->path('backup_x.zip'));
         self::assertNull($service->path('backup_20990101_000000.zip'), 'valid name but missing file');
+        self::assertNull($service->path('backup_20990101_000000_x.zip'));
+        self::assertNull($service->path('backup_20990101_000000_2.zip/../x'));
+    }
+
+    /**
+     * Issue #155: two backups in the same second used to get the same name,
+     * and the second silently replaced the first. Now the second one gets a
+     * suffix, both files exist, both are listed (newest first) and both are
+     * reachable through path().
+     */
+    public function testTwoBackupsInTheSameSecondDoNotOverwriteEachOther(): void
+    {
+        $service = $this->service(new \DateTimeImmutable('2026-10-01 12:00:00'));
+
+        $erstes = $service->create(mitBlobs: false);
+        $zweites = $service->create(mitConfig: true);
+        $drittes = $service->create();
+
+        self::assertSame('backup_20261001_120000.zip', $erstes);
+        self::assertSame('backup_20261001_120000_2.zip', $zweites);
+        self::assertSame('backup_20261001_120000_3.zip', $drittes);
+        self::assertFileExists($this->backupDir . '/' . $erstes);
+        self::assertFileExists($this->backupDir . '/' . $zweites);
+
+        $zip = new \ZipArchive();
+        self::assertTrue($zip->open($this->backupDir . '/' . $erstes));
+        self::assertFalse($zip->getFromName('config.php'), 'the first backup is still the one without config');
+        $zip->close();
+        self::assertTrue($zip->open($this->backupDir . '/' . $zweites));
+        self::assertNotFalse($zip->getFromName('config.php'), 'the second one is the one with it');
+        self::assertSame('2026-10-01 12:00:00', json_decode((string) $zip->getFromName('manifest.json'), true)['erstellt_am']);
+        $zip->close();
+
+        self::assertSame([$drittes, $zweites, $erstes], array_column($service->list(), 'name'), 'newest first');
+        self::assertSame($this->backupDir . '/' . $zweites, $service->path($zweites));
+
+        // From `_10` on, plain string order would put the newest behind
+        // `_2` - and rotation would then delete the newest first.
+        for ($n = 4; $n <= 11; $n++) {
+            $service->create(mitBlobs: false);
+        }
+        $namen = array_column($service->list(), 'name');
+        self::assertSame('backup_20261001_120000_11.zip', $namen[0]);
+        self::assertSame('backup_20261001_120000_10.zip', $namen[1]);
+        self::assertCount(BackupService::KEEP, $namen, 'rotation kept the newest ten');
+        self::assertSame($zweites, $namen[array_key_last($namen)], 'the oldest survivor is _2');
+        self::assertFileDoesNotExist($this->backupDir . '/' . $erstes, 'the oldest of the second is the one rotated out');
+    }
+
+    /**
+     * The suffix is bounded: once a second is "full", create() fails
+     * cleanly - nothing of the existing backups is touched and no temporary
+     * file stays behind.
+     */
+    public function testTooManyBackupsInOneSecondFailCleanly(): void
+    {
+        $service = $this->service(new \DateTimeImmutable('2026-10-01 12:00:00'));
+        touch($this->backupDir . '/backup_20261001_120000.zip');
+        for ($n = 2; $n <= BackupService::MAX_PER_SECOND; $n++) {
+            touch(sprintf('%s/backup_20261001_120000_%d.zip', $this->backupDir, $n));
+        }
+        $vorher = glob($this->backupDir . '/backup_*') ?: [];
+
+        try {
+            $service->create();
+            self::fail('the hundred-and-first backup in one second has to fail');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('derselben Sekunde', $e->getMessage());
+        }
+
+        self::assertSame($vorher, glob($this->backupDir . '/backup_*') ?: [], 'nothing overwritten, nothing added');
+        self::assertSame([], glob($this->backupDir . '/dump_*') ?: []);
     }
 
     /** Restores a backup ZIP the way the installer does: dump, then blobs. */

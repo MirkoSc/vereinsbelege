@@ -23,15 +23,40 @@ final readonly class BackupService
 {
     public const int KEEP = 10;
 
+    /**
+     * How many backups may share one second before create() gives up - a
+     * second one gets `_2`, a third `_3` (issue #155: two runs in the same
+     * second used to overwrite each other silently).
+     */
+    public const int MAX_PER_SECOND = 100;
+
+    /**
+     * Printed by bin/backup.php for every backup made without config.php
+     * (issue #154): the default backup restores into an installation nobody
+     * can log in to until an admin re-links their account - said loudly at
+     * the moment the backup is made, not only at the restore.
+     */
+    public const string WARNUNG_OHNE_CONFIG = 'WARNING: this backup does NOT contain shared/config.php (server key). '
+        . 'Restored on another server without that key, nobody can log in until an admin re-links '
+        . 'their account in the installer with the recovery key and their password; mail addresses '
+        . 'of the other users, authenticator secrets, AI API keys and the SMTP password are lost '
+        . '(docs/spec/06-betrieb.md section 2). Keep a copy of shared/config.php next to the recovery key.';
+
     /** Prefix of the blob files inside the ZIP. */
     public const string BLOB_PREFIX = 'blobs/';
 
+    /**
+     * @param (\Closure(): \DateTimeImmutable)|null $clock the time the
+     *        filename and the manifest carry; tests pin it to force two
+     *        backups into the same second
+     */
     public function __construct(
         private \PDO $pdo,
         private string $backupDir,
         private string $configFile,
         private string $appVersion,
         private string $blobDir,
+        private ?\Closure $clock = null,
     ) {
     }
 
@@ -47,6 +72,7 @@ final readonly class BackupService
         // Random name: two requests creating a backup at once must not
         // delete each other's temporary dump.
         $dumpFile = $this->backupDir . '/dump_' . bin2hex(random_bytes(8)) . '.tmp';
+        $zipPath = null;
 
         try {
             $stream = fopen($dumpFile, 'wb');
@@ -60,9 +86,11 @@ final readonly class BackupService
             }
 
             $configDabei = $mitConfig && is_file($this->configFile);
-            $name = 'backup_' . new \DateTimeImmutable()->format('Ymd_His') . '.zip';
-            $zipPath = $this->backupDir . '/' . $name;
+            $jetzt = $this->clock === null ? new \DateTimeImmutable() : ($this->clock)();
+            [$name, $zipPath] = $this->reserveName($jetzt);
 
+            // OVERWRITE only truncates the empty file reserveName() just
+            // created - nothing else is ever overwritten.
             $zip = new \ZipArchive();
             if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
                 throw new \RuntimeException('Backup-ZIP kann nicht erstellt werden: ' . $zipPath);
@@ -78,7 +106,7 @@ final readonly class BackupService
             $zip->addFromString('manifest.json', json_encode([
                 'app_version' => $this->appVersion,
                 'schema_version' => $this->schemaVersion(),
-                'erstellt_am' => new \DateTimeImmutable()->format('Y-m-d H:i:s'),
+                'erstellt_am' => $jetzt->format('Y-m-d H:i:s'),
                 'config_enthalten' => $configDabei,
                 'blob_dateien' => $blobDateien,
                 'blob_bytes' => $blobBytes,
@@ -89,6 +117,13 @@ final readonly class BackupService
             if (!$zip->close()) {
                 throw new \RuntimeException('Backup-ZIP konnte nicht geschrieben werden: ' . $zipPath);
             }
+        } catch (\Throwable $e) {
+            // The reserved name must not survive as an empty or half-written
+            // ZIP that list() would then offer as a backup.
+            if ($zipPath !== null && is_file($zipPath)) {
+                @unlink($zipPath);
+            }
+            throw $e;
         } finally {
             if (is_file($dumpFile)) {
                 unlink($dumpFile);
@@ -98,6 +133,35 @@ final readonly class BackupService
         $this->rotate();
 
         return $name;
+    }
+
+    /**
+     * The next free filename for this second, taken atomically: fopen() in
+     * mode `x` fails when the file exists, so two backups started at once
+     * cannot both claim the same name. The first gets
+     * `backup_YYYYMMDD_HHMMSS.zip`, the next ones `_2`, `_3`, ... - list()
+     * sorts naturally, so the later one still comes first.
+     *
+     * @return array{string, string} name and full path of the reserved file
+     */
+    private function reserveName(\DateTimeImmutable $jetzt): array
+    {
+        $stempel = $jetzt->format('Ymd_His');
+        for ($n = 1; $n <= self::MAX_PER_SECOND; $n++) {
+            $name = $n === 1 ? sprintf('backup_%s.zip', $stempel) : sprintf('backup_%s_%d.zip', $stempel, $n);
+            $zipPath = $this->backupDir . '/' . $name;
+            $handle = @fopen($zipPath, 'x');
+            if ($handle !== false) {
+                fclose($handle);
+
+                return [$name, $zipPath];
+            }
+            if (!is_file($zipPath)) {
+                throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
+            }
+        }
+
+        throw new \RuntimeException('Zu viele Backups in derselben Sekunde: ' . $stempel);
     }
 
     /**
@@ -154,18 +218,21 @@ final readonly class BackupService
                 'geaendert_am' => date('Y-m-d H:i:s', (int) filemtime($path)),
             ];
         }
-        usort($backups, static fn(array $a, array $b): int => strcmp($b['name'], $a['name']));
+        // Natural order, so that the same-second suffix `_10` sorts after
+        // `_9` and `backup_X.zip` before `backup_X_2.zip` (reserveName()).
+        usort($backups, static fn(array $a, array $b): int => strnatcmp($b['name'], $a['name']));
 
         return $backups;
     }
 
     /**
      * Validated path; refuses anything but a plain backup filename (no
-     * traversal).
+     * traversal). The optional `_N` is the same-second suffix of
+     * reserveName().
      */
     public function path(string $name): ?string
     {
-        if (preg_match('/^backup_\d{8}_\d{6}\.zip$/', $name) !== 1) {
+        if (preg_match('/^backup_\d{8}_\d{6}(_\d{1,3})?\.zip$/', $name) !== 1) {
             return null;
         }
         $path = $this->backupDir . '/' . $name;

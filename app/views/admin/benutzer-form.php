@@ -20,6 +20,7 @@
  * @var array{0: string, 1: string}|null $tresor
  * @var bool $eigenesKonto
  * @var int $standardTage
+ * @var bool $emailNeuSetzen the stored address does not open under the current server key (issue #154)
  */
 
 $neu = $user === null;
@@ -55,6 +56,19 @@ $ziel = $neu ? '/admin/benutzer' : '/admin/benutzer/' . $user->id;
                        autocomplete="off" required>
             </label>
             <p class="feld-hilfe">An diese Adresse geht der Einladungslink (72 Stunden gültig).</p>
+        <?php elseif ($emailNeuSetzen ?? false): ?>
+            <p class="hinweis hinweis-warnung">
+                Die gespeicherte E-Mail-Adresse ist <strong>nicht lesbar</strong> – sie wurde mit einem
+                Server-Schlüssel verschlüsselt, der nach der Wiederherstellung eines Backups ohne
+                <code>config.php</code> nicht mehr vorliegt. Bis eine neue Adresse eingetragen ist, kann sich
+                das Konto nicht anmelden. Passwort und Tresor-Freigabe bleiben erhalten; eine eingerichtete
+                Authenticator-App wird beim Speichern zurückgesetzt und beim nächsten Anmelden neu eingerichtet.
+            </p>
+            <label for="benutzer-email">E-Mail-Adresse neu setzen <span class="pflicht" aria-hidden="true">*</span>
+                <input type="email" id="benutzer-email" name="email" value="<?= e($eingabe['email']) ?>"
+                       autocomplete="off" required>
+            </label>
+            <p class="feld-hilfe">Mit dieser Adresse meldet sich das Konto künftig an; das Passwort bleibt das bisherige.</p>
         <?php else: ?>
             <p><strong>E-Mail-Adresse:</strong> <?= e($eingabe['email']) ?></p>
         <?php endif; ?>
