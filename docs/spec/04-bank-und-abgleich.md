@@ -540,6 +540,62 @@ und Einreichung).
 - Nach einer bestätigten Zuordnung lernt der Lieferant IBAN/Mandatsreferenz
   (mit Rückfrage).
 
+#### Stand M10-2: Punktebewertung, Auto-Zuordnung, Vorschläge (issue #66, E-35)
+
+- **Bewertung** (`App\Service\Bank\Punktebewertung`, reine Funktionen):
+  nur Paare, die zugeordnet werden könnten (Richtung passt – Gutschrift
+  Gegenrichtung –, beide Seiten haben noch etwas offen). Signale wie in der
+  Tabelle, Beträge gegen den **offenen** Betrag; „Skonto“ nur nach unten;
+  Rechnungs-/Kundennummer normalisiert (Trennzeichen egal) in
+  Verwendungszweck und End-to-End-Referenz (≥ 3 Zeichen mit Ziffer,
+  Ziffernkante berührt keine Ziffer);
+  IBAN gegen die IBANs des Lieferanten, Mandatsreferenz bzw. Gläubiger-ID
+  gegen dessen Mandate/Gläubiger-ID; Name ≥ 80 % (`LieferantenAehnlichkeit`)
+  gegen Name und Aliasse; Fenster ohne Fälligkeit ab Rechnungsdatum.
+  Erstattungssignal vorbereitet, die Einreicher-IBAN liefert M10-3.
+- **Automatisch** (`Punktebewertung::planen`): Score ≥ `auto_schwelle`,
+  Vorsprung ≥ `auto_abstand` (≥ 1, Gleichstand nie) vor dem Zweitbesten
+  des Belegs **und** der Buchung, offene Beträge beider Seiten gleich. Methode `auto`, `score`,
+  `rule_trace` = `{"v":1,"signale":{"<signal>":<punkte>,…}}` – nie ein Wert.
+- **Vorschläge:** alle übrigen Paare ab `vorschlag_ab` Punkten, je Beleg die
+  drei besten, mit Begründung je Signal und Teilbetrag
+  `min(offen Beleg, offen Buchung)`. Nicht gespeichert – bei jedem Aufruf in
+  der Session neu berechnet; „Übernehmen“ bewertet neu (abgelehnt unter
+  `vorschlag_ab` oder bei geändertem Betrag) und ordnet als
+  `vorschlag_bestaetigt` zu. Jede Zuordnung bleibt über `Zuordnung::loesen`
+  lösbar.
+- **Kandidaten:** Belege mit Dokument `geprueft`/`festgeschrieben`,
+  Zahlungsweg `konto`/`erstattung`, Status offen/teilbezahlt/
+  erstattung_offen; Buchungen mit Status ≠ `zugeordnet`, ohne Ausgaben mit
+  „kein Beleg nötig“, ab Fensterbeginn des ältesten offenen Belegs (ohne
+  offenen Beleg keine); beides im
+  Zugriffsbereich von `matching.edit` (Kostenstellen-Scope sieht keine
+  Buchung).
+- **Laufzeit** (CLAUDE.md §1): kein Kreuzprodukt – `Kandidatenindex`
+  nennt je Beleg nur Buchungen mit gemeinsamem Anker (Betrag exakt/Skonto,
+  IBAN, Mandat/Gläubiger-ID, Rechnungs-/Kundennummer im Zweck); ein Betrag
+  mit > 25 Buchungen ist kein Anker. Nicht bewertete Paare gehen mit ihrer
+  Obergrenze in die Abstandsprüfung ein. Gleiche Währung Pflicht. Jede
+  Zeile einmal entschlüsselt, Summen gebündelt.
+- **Seite** `/app/abgleich` (`matching.edit`, CSRF auf allen POST, ohne
+  entsperrten Tresor nichts; der Aufruf rechnet nichts, erst „Abgleich
+  berechnen“ `?berechnen=1`): Knopf „N eindeutige Zuordnungen anlegen“,
+  Vorschlagsliste, Formular „Punktebewertung“. Parameter als Setting
+  `abgleich_parameter` (JSON, `App\Service\Bank\Abgleichsparameter`,
+  ungültig → Startwert).
+- **Audit:** je Zuordnung `zuordnung.angelegt` (wie M10-1),
+  `abgleich.ausgefuehrt` (Zahl angelegt/übersprungen),
+  `einstellung.abgleich` (Feldnamen).
+
+**Pflicht-Tests M10-2:** `PunktebewertungTest` (jedes Signal einzeln,
+Auto-Schwelle, Abstandsregel von Beleg- und Buchungsseite, Sammelzahlung,
+Ratenzahlung, Skonto, Mindestpunkte, Parameter/Formular, Währung,
+Obergrenze nicht bewerteter Paare, gekappter Betrag, Volumen 600 × 2.500),
+`AbgleichFlowTest` (Auto mit Score/Trace ohne Werte, Lösen und erneut,
+mehrdeutig → Vorschlag, Übernehmen bewertet neu, Sammelzahlung über zwei
+Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
+`RoutePermissionMatrixTest` (`matching.edit`).
+
 ### Oberfläche „Abgleich"
 - Zwei Listen nebeneinander: offene Belege | Buchungen ohne Beleg, Filter
   Konto/Zeitraum/Betrag; Vorschläge oben mit „Übernehmen" / „Verwerfen".
