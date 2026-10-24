@@ -1265,7 +1265,8 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   unveränderlich und werden nicht umgehängt, sondern über `merged_into`
   aufgelöst – Details unter „Stand M6-5“.
 - Lieferant hat Default-Kategorie/-Sphäre; ab dem 2. bestätigten Beleg mit
-  gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI).
+  gleicher Kategorie wird sie automatisch vorgeschlagen (Regel vor KI) –
+  umgesetzt mit M7-7, §8 „Stand M7-7“.
 - **Stand M6-2** (issue #36): Stammdaten-Pflege unter `/app/lieferanten`
   (Lieferanten und Zahler, Spalte `role`), Blind-Index-Schlüssel in
   `supplier_key` für Name/Aliasse, IBAN, USt-ID, Steuernummer, Gläubiger-ID
@@ -1318,6 +1319,44 @@ Vorschlag. Anzeige, woher der Vorschlag stammt („Regel: Lieferant", „KI
 0.82").
 `assignment_rule` gibt es seit M9-6 für Buchungen (04 §5 „Stand M9-6“,
 Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
+
+**Stand M7-7** (issue #49, ohne Migration, E-21):
+- *Regeln:* Es gibt **eine** Regelliste (`/app/buchungen/regeln`). Eine Regel
+  mit Kategorie schlägt diese Kategorie auch für Belege vor
+  (`App\Service\Bank\Regelabgleich::trifftBeleg()`): *Stichwort* enthalten
+  im Zweck des Belegs, *Gegenseite* als IBAN gleich einer IBAN des
+  Lieferanten bzw. Zahlers, sonst enthalten in seinem Namen oder einem
+  Alias – beim noch unbekannten Partner (KI/E-Rechnung „Neu anlegen“) in
+  dessen Name bzw. IBAN; Richtung, Groß-/Kleinschreibung, Leerraum, „beides
+  muss passen“ und „ohne Bedingung nichts“ wie bei Buchungen. Von mehreren
+  passenden aktiven Regeln **mit Kategorie** gilt die älteste.
+- *Lieferanten-Default:* zuerst `supplier.default_category_id`, dann
+  **gelernt**: Haben die zwei neuesten geprüften bzw. festgeschriebenen
+  Belege des Partners (`checked_at`, auch über `merged_into` aufgelöst –
+  ein zusammengeführter Partner im Formular zählt als sein Ziel –,
+  nur im Zugriffsbereich der Person) dieselbe Kategorie, wird sie
+  vorgeschlagen (`InvoiceRepository::letzteGeprueftenKategorien()`, nichts
+  wird in `supplier` geschrieben).
+- *KI:* `category_id` des neuesten Laufs (§6).
+- Jede Stufe zählt nur mit einer **aktiven, zur Richtung passenden**
+  Kategorie, sonst fragt die nächste. Reihenfolge und Herkunft:
+  `App\Service\Invoice\Kategorisierung` (rein, ohne DB), angewendet in
+  `Pruefung::kategorieVorschlagen()` auf das fertig vorbelegte Formular
+  (Partner, Zweck, Richtung aus KI, E-Rechnung und Archiv-Vorgabe). Nennt
+  die Archiv-Vorgabe (M12-3) selbst eine Kategorie, bleibt diese – sie hat
+  ein Mensch einsortiert.
+- *Anzeige:* unter dem Feld „Vorgeschlagen von: Regel „Name““ bzw.
+  „Standard-Kategorie des Lieferanten/Zahlers“, „wie die letzten 2 geprüften
+  Belege des Lieferanten/Zahlers“, „KI 0,82“ (`aria-describedby`). Den
+  Namen der Regel sieht nur, wer Regeln lesen darf (`bank.view`), sonst
+  steht nur „Regel“. Gelb („KI unsicher“) nur, wenn die KI-Kategorie
+  stehen bleibt.
+- *Änderbar:* Wie die ganze Vorbelegung (§6) nur ein Vorschlag, solange
+  der Beleg nicht gespeichert ist; gespeichert wird, was die Person wählt.
+  Danach ändert die Kategorie nur noch das Formular – bis „Geprüft“ und
+  nach „Festschreibung aufheben“ (01 §7); spätere Regeln oder Lieferanten-
+  Defaults fassen gespeicherte Belege nie an. Die Herkunft wird nicht
+  gespeichert.
 
 ## 9. Wiederkehrende Rechnungen
 
@@ -1409,6 +1448,15 @@ und „KI erneut versuchen“ (Status, Job, Audit, kein zweiter Lauf), „Mit KI
 auslesen“, ohne Profil nichts angeboten, Tresor/CSRF/Scope;
 `InboxFlowTest`/`ArchivImportFlowTest`: Job beim Annehmen bzw. Import;
 `RoutePermissionMatrixTest`);
+Kategorisierung (M7-7: `KategorisierungTest`: Regel am Beleg – Stichwort im
+Zweck, Gegenseite über Name/Alias/IBAN, beides, Richtung, ohne Bedingung
+nichts; Reihenfolge Regel > Standard > gelernt > KI, älteste aktive Regel mit
+Kategorie, unbrauchbare Kategorie gibt weiter, gelernt nur bei zwei gleichen
+neuesten, Belege nur bei Bedarf gelesen, Herkunftstexte samt Regelname nur
+mit Leserecht; `PruefungFlowTest`: Regel vor Lieferanten-Default vor KI samt
+Anzeige und ohne Gelb, Regel auf neuen Partner der KI, aus zwei geprüften
+Belegen gelernt und nur im Zugriffsbereich, Lieferant aus dem Archiv,
+Vorschlag änderbar und nach dem Speichern weg);
 KI-Client mit aufgezeichneten Antworten (`tests/fixtures/llm/extract-v1/`,
 `FakeLlmClient`/`FakeChatHttp`; `KiAbfrageTest`: gültig, ungültig +
 Reparatur mit Verlauf und Fehlerliste, nach der Reparatur ungültig →

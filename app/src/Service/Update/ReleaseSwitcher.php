@@ -313,6 +313,26 @@ final class ReleaseSwitcher
         return $meldungen;
     }
 
+    /**
+     * Deny-all .htaccess in shared/, releases/ and current/ (issue #101),
+     * for installations whose setup.php predates it and after a rollback to
+     * a release built before it. Runs in the finish step like
+     * refreshDocrootFiles() and after a rollback; an existing file is never
+     * touched.
+     *
+     * @return list<string> German notes for the update log, empty when every
+     *         directory is protected
+     */
+    public function lockPrivateDirectories(): array
+    {
+        $ungeschuetzt = DenyHtaccess::ensureAll($this->baseDir);
+        if ($ungeschuetzt === []) {
+            return [];
+        }
+
+        return ['Hinweis: Keine .htaccess-Sperre in ' . DenyHtaccess::describe($ungeschuetzt) . '.'];
+    }
+
     private static function removeTree(string $dir): void
     {
         $iterator = new \RecursiveIteratorIterator(

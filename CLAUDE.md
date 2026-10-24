@@ -58,9 +58,12 @@ aktuelle Issue verlinkt**, nicht alle.
 Identisch zum Vereinskalender:
 
 Die (Sub-)Domain zeigt im Kundenmenü des Hosters auf `/web/`; alles daneben
-liegt damit außerhalb des öffentlich erreichbaren Bereichs. Ist das nicht
-einstellbar, muss `shared/` per `.htaccess` gesperrt werden – dass das
-greift, prüft `tools/hosting-check.php`.
+liegt damit außerhalb des öffentlich erreichbaren Bereichs. Zusätzlich
+sperren `.htaccess`-Dateien (`Require all denied`) `shared/`, `releases/`
+und – über die Datei im Release-Wurzelverzeichnis – `current/`, falls eine
+Domain doch eine Ebene höher zeigt (06 §1). Dass `.htaccess` ausgewertet
+wird, prüft `tools/hosting-check.php`; ob `shared/config.php` im Betrieb
+abrufbar ist, der Systemcheck.
 
 ```
 /web/            DocumentRoot: index.php-Shim + .htaccess (Security-Header, CSP)

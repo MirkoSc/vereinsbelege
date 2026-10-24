@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Bank;
 
 use App\Domain\AssignmentRule;
+use App\Domain\Belegmerkmale;
 use App\Domain\Buchungsmerkmale;
 use App\Domain\Iban;
 
@@ -24,6 +25,11 @@ use App\Domain\Iban;
  * Of several active rules the oldest (lowest id) wins, for both of its
  * effects - one rule per booking keeps "which rule did this" a single
  * answer.
+ *
+ * The same rules suggest the category of a receipt (M7-7, issue #49,
+ * docs/spec/03-erfassung-und-ki.md section 8, trifftBeleg()): the keyword in
+ * the receipt's purpose, the counterparty against the supplier's IBANs or
+ * its name and aliases.
  */
 final class Regelabgleich
 {
@@ -40,31 +46,61 @@ final class Regelabgleich
 
     public static function trifft(AssignmentRule $regel, Buchungsmerkmale $buchung): bool
     {
+        return self::trifftMerkmale(
+            $regel,
+            $buchung->richtung->value,
+            [$buchung->zweck, $buchung->buchungstext],
+            [$buchung->gegenseiteName],
+            [$buchung->gegenseiteIban],
+        );
+    }
+
+    /**
+     * Whether the rule matches a receipt (M7-7, issue #49): `stichwort`
+     * contained in the purpose; `gegenseite` an IBAN equal to one of the
+     * partner's, anything else contained in its name or one of its aliases.
+     * Same normalisation, same "both must match" and "no condition matches
+     * nothing" as for a booking.
+     */
+    public static function trifftBeleg(AssignmentRule $regel, Belegmerkmale $beleg): bool
+    {
+        return self::trifftMerkmale($regel, $beleg->richtung->value, [$beleg->zweck], $beleg->partnerNamen, $beleg->partnerIbans);
+    }
+
+    /**
+     * The one matching logic of bookings and receipts.
+     *
+     * @param list<string> $texte where the keyword may stand
+     * @param list<string> $namen names of the counterparty
+     * @param list<string> $ibans IBANs of the counterparty, empty ones ignored
+     */
+    private static function trifftMerkmale(AssignmentRule $regel, string $richtung, array $texte, array $namen, array $ibans): bool
+    {
         if ($regel->stichwort === '' && $regel->gegenseite === '') {
             return false;
         }
-        if ($regel->direction !== null && $regel->direction !== $buchung->richtung) {
+        if ($regel->direction !== null && $regel->direction->value !== $richtung) {
             return false;
         }
 
         if ($regel->stichwort !== '') {
             $stichwort = self::normalisieren($regel->stichwort);
-            if (!str_contains(self::normalisieren($buchung->zweck), $stichwort)
-                && !str_contains(self::normalisieren($buchung->buchungstext), $stichwort)) {
+            if (!array_any($texte, static fn(string $text): bool => str_contains(self::normalisieren($text), $stichwort))) {
                 return false;
             }
         }
-
-        if ($regel->gegenseite !== '') {
-            $treffer = $regel->gegenseiteIstIban()
-                ? $buchung->gegenseiteIban !== '' && Iban::normalisieren($buchung->gegenseiteIban) === Iban::normalisieren($regel->gegenseite)
-                : str_contains(self::normalisieren($buchung->gegenseiteName), self::normalisieren($regel->gegenseite));
-            if (!$treffer) {
-                return false;
-            }
+        if ($regel->gegenseite === '') {
+            return true;
         }
 
-        return true;
+        if ($regel->gegenseiteIstIban()) {
+            $iban = Iban::normalisieren($regel->gegenseite);
+
+            return array_any($ibans, static fn(string $wert): bool => $wert !== '' && Iban::normalisieren($wert) === $iban);
+        }
+        $muster = self::normalisieren($regel->gegenseite);
+
+        return array_any($namen, static fn(string $name): bool => str_contains(self::normalisieren($name), $muster));
     }
 
     /**

@@ -14,6 +14,7 @@ use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Migration\Migrator;
+use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\View\View;
 
@@ -97,7 +98,18 @@ final readonly class InstallController
             return $this->renderAccess();
         }
 
-        return $this->render(['errors' => [], 'values' => ['kanal' => $this->channelFromSetup()]]);
+        // Deny-all .htaccess in shared/, releases/ and current/ (issue #101).
+        // setup.php already wrote them; the form repeats it so an
+        // installation whose setup.php could not write them gets a second
+        // try - and a visible warning instead of a silently unprotected
+        // config.php. Idempotent, never overwrites.
+        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
+
+        return $this->render([
+            'errors' => [],
+            'values' => ['kanal' => $this->channelFromSetup()],
+            'ungeschuetzt' => $ungeschuetzt === [] ? '' : DenyHtaccess::describe($ungeschuetzt),
+        ]);
     }
 
     public function submit(Request $request): ResponseInterface

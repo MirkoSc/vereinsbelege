@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace App\Service\Bank;
 
 /**
- * One statement message of an MT940 file (:20: up to the closing "-").
+ * One statement message of an MT940 file (:20: up to the closing "-") or
+ * one statement (`Stmt`) of a CAMT.053 file (issue #91).
  */
 final readonly class Kontoauszug
 {

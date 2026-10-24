@@ -25,6 +25,30 @@ Der Shim liegt zusätzlich als Konstante `ReleaseSwitcher::SHIM` vor: beim
 Umschalten ist das Release-Verzeichnis kurz nicht lesbar, die Selbstheilung
 braucht den Inhalt also ohne Datei. `ShimContentTest` hält beide gleich.
 
+**Zugriffssperre für die Verzeichnisse neben dem DocumentRoot** (issue #101):
+`shared/` und `releases/` sind nur deshalb privat, weil die Domain auf `web/`
+zeigt – eine Einstellung im Kundenmenü, die sich ändern kann. Deshalb legt
+`setup.php` in beide eine `.htaccess` mit `Require all denied` (in
+`<IfModule mod_authz_core.c>`, für Apache 2.2 der Fallback `Order allow,deny`
+/ `Deny from all`), bevor etwas in `releases/` heruntergeladen wird. Inhalt
+und Schreiblogik stehen in `App\Service\Update\DenyHtaccess`, das
+`bin/build_setup.php` wie den `ReleaseDownloader` in `setup.php` einbettet.
+`current/` ist ein umbenanntes Release; eine dort geschriebene Datei wäre mit
+dem nächsten Update weg. Darum liegt dieselbe Datei im Repo-Wurzelverzeichnis
+und damit in jedem Release-ZIP (`DenyHtaccessTest` hält beide gleich) –
+`current/` ist ab dem Umschalten gesperrt. Zusätzlich schreiben Installer und
+Updater sie auch nach `current/`, falls sie fehlt (Rollback auf ein Release
+von vor #101). Eine vorhandene `.htaccess` wird nie überschrieben; sie zählt
+nur als Schutz, wenn sie das ganze Verzeichnis sperrt: eine Sperrzeile
+außerhalb von `<Files>`, `<FilesMatch>` & Co. (nur `<IfModule>` ist erlaubt)
+und nichts, was wieder freigibt (`Require all granted`, `Allow from`,
+`Satisfy any`). Gelingt das nicht, bricht nichts ab: `setup.php` zeigt vor
+dem Weiterleiten einen Hinweis mit Grund (Verzeichnis fehlt / nicht
+schreibbar / vorhandene Datei sperrt nicht), das `/install`-Formular versucht
+es erneut und warnt sichtbar, und der `finish`-Schritt des Updaters sowie
+ein Rollback holen es nach (Hinweis im Update-Log). Ob die Sperre im Betrieb
+greift, prüft der Systemcheck (§5).
+
 Erweiterungen im `/install`-Flow:
 1. DB-Zugangsdaten + Verbindungstest (wie gehabt)
 2. **Server-Schlüssel** erzeugen → `config.php`
@@ -104,7 +128,11 @@ Während der Wartungsmodus gesetzt ist, lässt der Shim außer `/admin` auch
 (Update fortsetzen, Rollback, Flag freigeben), ohne Stylesheet und ohne das
 Skript der Schrittkette an.
 
-**Pflicht-Tests:** `ShimContentTest` (Konstante ≡ `docker/web/index.php`,
+**Pflicht-Tests:** `DenyHtaccessTest` (Inhalt mit `Require all denied` und
+Apache-2.2-Fallback, Repo-Wurzel-`.htaccess` ≡ Konstante und im Release-ZIP,
+Schreiben, Idempotenz, fremde Datei bleibt stehen und zählt nur, wenn sie das
+ganze Verzeichnis sperrt, Grund statt Abbruch bei Fehlschlag, `setup.php` bettet die Klasse ein und sperrt vor
+dem Download); `ShimContentTest` (Konstante ≡ `docker/web/index.php`,
 Shim ist gültiges PHP, beide Sperrbedingungen und die Ausnahmen für
 `/css/` und `/js/` vorhanden, `setup.php` kopiert die drei Docroot-Dateien
 statt eigene Kopien zu führen); `ReleaseSwitcherTest` (Umschalten,
@@ -117,6 +145,7 @@ des Assets, curl-Zweig); `MaintenanceModeTest`; `ConfigWriterTest`
 (ganze Kette gegen ein lokales Release-ZIP, manipuliertes ZIP, falsche
 `VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück);
 `InstallFlowTest` (Schema, `config.php` erst nach Bestätigung, Kanal-Übernahme,
+Zugriffssperre in `shared/` und `releases/` bzw. sichtbare Warnung,
 CSRF, abgelehnte Zugangsdaten, sieben Gruppen zu acht Zeichen, falsche letzte
 Gruppe verrät den Schlüssel nicht erneut, Admin-Zeile per Server-Schlüssel
 verschlüsselt und über den Blind Index auffindbar, `vault_grant` öffnet mit
@@ -743,9 +772,19 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
   `warn`), `upload_max_filesize` und `post_max_size` (je ≥ 2 MiB, ein Chunk),
   die Erweiterungen sodium, gd, zip und curl, `PASSWORD_ARGON2ID` und die
   Schreibrechte auf `shared/var/` (echter Schreibversuch mit einer
-  Prüfdatei, die sofort wieder verschwindet). Alles Weitere – Erreichbarkeit
-  externer Hosts, Dauer-Messungen, `.htaccess`-Auswertung – bleibt dem
-  Hosting-Check vorbehalten.
+  Prüfdatei, die sofort wieder verschwindet). Dazu zwei Punkte aus issue
+  #101: ob `shared/`, `releases/` und `current/` eine sperrende `.htaccess`
+  tragen (nur lesend, fehlt sie: `warn`), und ob `shared/config.php` über die
+  eigene Domain abrufbar ist – ein GET auf `<Schema>://<Host>/shared/config.php`,
+  der Ort, an dem die Datei läge, wenn diese Domain eine Ebene über `web/`
+  zeigt. 2xx ist `fail`, 401/403/404/410 `ok`, alles andere (Serverfehler,
+  keine Antwort) `warn`, weil es nichts beweist. Bis zu drei Weiterleitungen
+  werden verfolgt (HTTP → HTTPS), nur der Statuscode wird ausgewertet, der
+  Inhalt verworfen. Der Host kommt wie beim Selbsttest des Updaters aus dem
+  Host-Header (`Request::ownOrigin()`, nur in Form eines Hostnamens). Eine
+  *andere* Domain desselben Hosting-Kontos, die höher zeigt, sieht die Probe
+  nicht – dafür ist die Dateiprüfung da. Alles Weitere – Erreichbarkeit externer Hosts, Dauer-Messungen,
+  allgemeine `.htaccess`-Auswertung – bleibt dem Hosting-Check vorbehalten.
 - **Recht `admin.system`**, wie Update und Wartung; nur lesend, deshalb
   weder CSRF noch Audit-Eintrag. Der Tresor muss nicht entsperrt sein: kein
   Wert ist eine fachliche Angabe.
@@ -760,9 +799,11 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
 **Pflicht-Tests:** `tests/Service/SystemCheck/SystemCheckTest.php` (Bewertung
 der Mindestwerte, `parseBytes`/`formatBytes`, Erweiterungen, Argon2id,
 Schreibprobe samt Aufräumen, schlechtester Status, JSON ohne Geheimnisse und
-ohne Serverpfad), `tests/Integration/SystemCheckWaitTimeoutTest.php`
+ohne Serverpfad, Bewertung der `config.php`-Probe je Statuscode, Sperrdateien
+nur lesend geprüft), `tests/Integration/SystemCheckWaitTimeoutTest.php`
 (`wait_timeout` gegen einen echten Server), `tests/Admin/SystemCheckPageTest.php`
 (Tabelle, `data-label` für die Kartenansicht, Gesamtstatus, JSON, externes
-Skript statt Inline-JS) und `RoutePermissionMatrixTest` (nur `admin.system`
+Skript statt Inline-JS, abrufbare `config.php` als Fehler, gefälschter
+Host-Header) und `RoutePermissionMatrixTest` (nur `admin.system`
 öffnet die Seite); die Kopierlogik testet `tests/js/systemcheck.test.js`.
 

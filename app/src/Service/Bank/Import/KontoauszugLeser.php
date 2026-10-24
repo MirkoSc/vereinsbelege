@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service\Bank\Import;
 
+use App\Service\Bank\Camt053Exception;
+use App\Service\Bank\Camt053Parser;
 use App\Service\Bank\Csv\CsvBuchung;
 use App\Service\Bank\Csv\CsvException;
 use App\Service\Bank\Csv\CsvParser;
@@ -16,18 +18,20 @@ use App\Service\Bank\Mt940Parser;
 
 /**
  * Reads a statement file for the import (M9-4, issue #62, docs/spec/
- * 04-bank-und-abgleich.md section 4) with the parsers of M9-2/M9-3 and
- * turns both formats into one App\Service\Bank\Import\ImportDatei.
+ * 04-bank-und-abgleich.md section 4) with the parsers of M9-2/M9-3 and of
+ * issue #91 (CAMT.053) and turns every format into one
+ * App\Service\Bank\Import\ImportDatei.
  *
  * Pure: the file comes in as a string, nothing is stored or logged, and
  * every message names at most a line and a field (KontoauszugUnlesbar).
  *
  * Fixed here:
  * - MT940 is recognised by its first fields (`:20:` or a SWIFT block
- *   `{1:`), everything else is CSV and needs a fitting profile
- *   (App\Service\Bank\Csv\CsvProfilErkennung).
- * - One file, one account: an MT940 file with statements of several
- *   accounts is refused - one import belongs to one account.
+ *   `{1:`), CAMT.053 by being XML or a ZIP (the parser then tells a
+ *   camt.052/.054 or other XML apart), everything else is CSV and needs a
+ *   fitting profile (App\Service\Bank\Csv\CsvProfilErkennung).
+ * - One file, one account: an MT940 or CAMT.053 file with statements of
+ *   several accounts is refused - one import belongs to one account.
  * - A CSV export written newest first is turned round, so the postings are
  *   chronological. The direction comes from the dates, for a file of a
  *   single day from the balance column if there is one.
@@ -39,6 +43,7 @@ final readonly class KontoauszugLeser
 
     public function __construct(
         private Mt940Parser $mt940 = new Mt940Parser(),
+        private Camt053Parser $camt053 = new Camt053Parser(),
         private CsvParser $csv = new CsvParser(),
         private CsvProfilErkennung $profilErkennung = new CsvProfilErkennung(),
     ) {
@@ -64,8 +69,15 @@ final readonly class KontoauszugLeser
         return false;
     }
 
+    /** CAMT.053 comes as XML or as a ZIP of XML files (issue #91). */
+    public function istCamt053(string $inhalt): bool
+    {
+        return Camt053Parser::istZip($inhalt) || Camt053Parser::istXml($inhalt);
+    }
+
     /**
-     * The format of an uploaded file: MT940, or the CSV profile that fits.
+     * The format of an uploaded file: MT940, CAMT.053, or the CSV profile
+     * that fits.
      *
      * @param list<CsvProfil> $profile
      *
@@ -73,6 +85,10 @@ final readonly class KontoauszugLeser
      */
     public function erkenne(string $inhalt, array $profile): ImportFormat
     {
+        // Before MT940: a ZIP stores its files' text as it is.
+        if ($this->istCamt053($inhalt)) {
+            return ImportFormat::camt053();
+        }
         if ($this->istMt940($inhalt)) {
             return ImportFormat::mt940();
         }
@@ -80,7 +96,7 @@ final readonly class KontoauszugLeser
         $profil = $this->profilErkennung->finde($inhalt, $profile);
         if ($profil === null || $profil->id === null) {
             throw new KontoauszugUnlesbar(
-                'Die Datei ist weder MT940 noch passt sie zu einem bekannten CSV-Format. Bitte unter „CSV-Formate“ ein Format für diese Bank anlegen.',
+                'Die Datei ist weder MT940 noch CAMT.053 noch passt sie zu einem bekannten CSV-Format. Bitte unter „CSV-Formate“ ein Format für diese Bank anlegen.',
                 csvFormatFehlt: true,
             );
         }
@@ -99,6 +115,9 @@ final readonly class KontoauszugLeser
         if ($format->istMt940()) {
             return $this->liesMt940($inhalt, $format);
         }
+        if ($format->istCamt053()) {
+            return $this->liesCamt053($inhalt, $format);
+        }
 
         foreach ($profile as $profil) {
             if ($profil->id === $format->csvProfilId) {
@@ -110,7 +129,7 @@ final readonly class KontoauszugLeser
     }
 
     /**
-     * Who the account of an MT940 account line is: the IBAN, else bank code
+     * Who the account of an MT940 account line (or a CAMT.053 account) is: the IBAN, else bank code
      * and account number (leading zeros dropped), else the line itself.
      */
     public static function kontokennung(Kontoangabe $konto): string
@@ -139,6 +158,30 @@ final readonly class KontoauszugLeser
             throw new KontoauszugUnlesbar('Die Datei enthält keinen Kontoauszug.');
         }
 
+        return $this->ausAuszuegen($auszuege, $format, 0);
+    }
+
+    /**
+     * @throws KontoauszugUnlesbar
+     */
+    private function liesCamt053(string $inhalt, ImportFormat $format): ImportDatei
+    {
+        try {
+            $ergebnis = $this->camt053->parse($inhalt);
+        } catch (Camt053Exception $e) {
+            throw new KontoauszugUnlesbar('Die CAMT.053-Datei ist nicht lesbar: ' . $e->getMessage());
+        }
+
+        return $this->ausAuszuegen($ergebnis->auszuege, $format, $ergebnis->vorgemerkt);
+    }
+
+    /**
+     * @param non-empty-list<Kontoauszug> $auszuege
+     *
+     * @throws KontoauszugUnlesbar
+     */
+    private function ausAuszuegen(array $auszuege, ImportFormat $format, int $vorgemerkt): ImportDatei
+    {
         $kennungen = array_unique(array_map(static fn(Kontoauszug $a): string => self::kontokennung($a->konto), $auszuege));
         if (count($kennungen) > 1) {
             throw new KontoauszugUnlesbar('Die Datei enthält Auszüge mehrerer Konten. Bitte je Konto eine eigene Datei exportieren und einzeln importieren.');
@@ -151,7 +194,7 @@ final readonly class KontoauszugLeser
             }
         }
 
-        return new ImportDatei($format, $auszuege[0]->konto, $posten, $auszuege, [], 0, false);
+        return new ImportDatei($format, $auszuege[0]->konto, $posten, $auszuege, [], $vorgemerkt, false);
     }
 
     /**
