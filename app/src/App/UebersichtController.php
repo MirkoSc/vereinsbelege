@@ -124,7 +124,7 @@ final readonly class UebersichtController
 
     private static function ohneCache(Response $response): Response
     {
-        return new Response($response->status, [...$response->headers, 'Cache-Control' => 'no-store, private'], $response->body);
+        return new Response($response->status, [...$response->headers, 'Cache-Control' => 'no-store, private'], $response->body, $response->additionalCookies);
     }
 
     public function erstattungen(Request $request): ResponseInterface

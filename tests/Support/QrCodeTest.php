@@ -91,7 +91,7 @@ final class QrCodeTest extends TestCase
     public function testTheSvgLabelIsEscaped(): void
     {
         self::assertStringContainsString('aria-label="a &quot;b&quot; &lt;c&gt;"', QrCode::svg('x', label: 'a "b" <c>'));
-        self::assertStringContainsString('aria-label="QR-Code zur Einrichtung des Authenticators"', QrCode::svg('x'));
+        self::assertStringContainsString('aria-label="QR-Code"', QrCode::svg('x'));
     }
 
     /**

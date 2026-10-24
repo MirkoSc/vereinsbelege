@@ -629,7 +629,7 @@ final readonly class PruefungController
             'darfLieferantAnlegen' => $this->berechtigungen()->darf(Permission::SupplierManage),
             // The GiroCode page has the unpaid list's right and scope (issue #86).
             'girocodeLink' => $tresor !== null && $document->status !== DocumentStatus::Abgelehnt
-                && $this->berechtigungen()->darf(Permission::ReportView) && $this->pruefung->zuUeberweisen($document)
+                && $this->berechtigungen()->darf(Permission::ReportView) && $this->pruefung->zuUeberweisen($document, $this->berechtigungen()->zugriffsbereich(Permission::ReportView))
                 ? '/app/offen/rechnungen/' . $document->id . '/girocode'
                 : null,
             'position' => $position === false ? null : $position + 1,

@@ -367,7 +367,7 @@ final class UebersichtFlowTest extends DatabaseTestCase
         $vereinsIban = 'DE02120300000000202051';
         // Learned before the club's account was set up - the page must not
         // trust what is stored (E-29).
-        $verein = $this->lieferantMitIban('Verwechselt', $vereinsIban);
+        $verein = $this->lieferantMitIban('Verwechselt', $vereinsIban . "\nDE12500105170648489890", 'COBADEFFXXX');
         $this->konten()->anlegen($this->tresor, BankAccountKind::Bank, ['name' => 'Girokonto', 'iban' => $vereinsIban, 'bic' => '', 'bank' => '', 'opening_balance' => '0,00', 'opening_date' => '2026-01-01'], new \DateTimeImmutable());
         $ohneIban = $this->beleg(5000, lieferant: $this->lieferant('Ohne IBAN'));
         $einnahme = $this->beleg(7000, richtung: InvoiceDirection::Einnahme, lieferant: $this->lieferantMitIban('Sponsor', 'DE89370400440532013000'));
@@ -386,10 +386,13 @@ final class UebersichtFlowTest extends DatabaseTestCase
         self::assertStringContainsString('<svg', $body);
         self::assertStringContainsString('keine Rechnungsnummer', $body);
 
-        // The club's own account is never a payee (E-29).
+        // The club's own account is never a payee (E-29) - and the BIC may
+        // be that account's, so the remaining IBAN's code goes without it.
         $body = $this->get('/app/offen/rechnungen/' . $this->dokumentVon($this->beleg(990, lieferant: $verein)) . '/girocode')->body;
-        self::assertStringNotContainsString('<svg', $body);
+        self::assertSame(1, substr_count($body, '<svg'));
+        self::assertStringContainsString('DE12 5001 0517 0648 4898 90', $body);
         self::assertStringNotContainsString('DE02 1203', $body);
+        self::assertStringNotContainsString('COBADEFFXXX', $body);
         self::assertStringContainsString('1 beim Lieferanten hinterlegte IBAN ist ungültig oder ein Konto des Vereins', $body);
     }
 

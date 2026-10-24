@@ -16,7 +16,8 @@ namespace App\Support;
  *
  * Deliberately narrow: byte mode only, error correction level M, versions 1
  * through 13 (up to 331 bytes of payload - exactly the maximum an EPC069-12
- * GiroCode may carry, App\Service\Bank\GiroCode, docs/spec/04 section 5a).
+ * GiroCode may carry, App\Service\Bank\GiroCode, docs/spec/04 section 5
+ * "Stand Backlog: GiroCode").
  * Larger versions are left out and encode() throws instead of silently
  * producing a symbol nothing can read. The TOTP setup page always has a
  * second way in: the secret is shown as plain Base32 text next to the code
@@ -110,7 +111,7 @@ final class QrCode
         string $data,
         int $moduleSize = 4,
         int $quietZone = 4,
-        string $label = 'QR-Code zur Einrichtung des Authenticators',
+        string $label = 'QR-Code',
     ): string
     {
         $matrix = self::encode($data);

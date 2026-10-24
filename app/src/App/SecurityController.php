@@ -274,7 +274,7 @@ final readonly class SecurityController
             'fehler' => $fehler,
             'hinweis' => $hinweis,
             'totpSecretBase32' => $totpSecretBase32,
-            'totpQrSvg' => $totpUri === null ? null : QrCode::svg($totpUri),
+            'totpQrSvg' => $totpUri === null ? null : QrCode::svg($totpUri, label: 'QR-Code zur Einrichtung des Authenticators'),
             'backupCodes' => $backupCodes,
         ], Area::App));
     }

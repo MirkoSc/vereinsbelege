@@ -111,6 +111,7 @@ final readonly class Uebersichten
 
         $ibans = [];
         $verworfen = 0;
+        $alle = array_unique(array_filter(array_map(Iban::normalisieren(...), $lieferant->data->ibans)));
         foreach ($lieferant->data->ibans as $iban) {
             $iban = Iban::normalisieren($iban);
             if ($iban === '' || isset($ibans[$iban])) {
@@ -127,8 +128,9 @@ final readonly class Uebersichten
             return new Ueberweisung($posten, [], 'Beim Lieferanten ist keine gültige IBAN hinterlegt.', $verworfen);
         }
 
-        // The supplier's single BIC fits only when there is a single IBAN.
-        $bic = count($ibans) === 1 ? $lieferant->data->bic : '';
+        // The supplier's single BIC fits only when it has a single IBAN at
+        // all - not when others were dropped (the BIC may be theirs).
+        $bic = count($alle) === 1 ? $lieferant->data->bic : '';
         $codes = [];
         foreach (array_keys($ibans) as $iban) {
             try {

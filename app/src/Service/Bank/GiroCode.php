@@ -77,8 +77,8 @@ final readonly class GiroCode
         // shorten the remittance, then the name, one character at a time.
         while (strlen($code->payload()) > self::PAYLOAD_MAX) {
             $code = $code->zweck !== ''
-                ? new self($code->name, $iban, $bic, $cent, mb_substr($code->zweck, 0, -1))
-                : new self(mb_substr($code->name, 0, -1), $iban, $bic, $cent, '');
+                ? new self($code->name, $iban, $bic, $cent, rtrim(mb_substr($code->zweck, 0, -1)))
+                : new self(rtrim(mb_substr($code->name, 0, -1)), $iban, $bic, $cent, '');
         }
 
         return $code;

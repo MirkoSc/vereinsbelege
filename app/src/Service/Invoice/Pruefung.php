@@ -168,14 +168,16 @@ final readonly class Pruefung
     /**
      * Whether the saved receipt is an expense still to transfer - Zahlungsweg
      * `konto`, open or partly paid - so the review page links its GiroCode
-     * (issue #86, E-40). Plaintext structure, no vault needed; the GiroCode
-     * page decides the rest (IBAN, currency, scope).
+     * (issue #86, E-40) - within $bereich, the GiroCode page's scope
+     * (`report.view`). Plaintext structure, no vault needed; the GiroCode
+     * page decides the rest (IBAN, currency, Altbestand).
      */
-    public function zuUeberweisen(Document $document): bool
+    public function zuUeberweisen(Document $document, Zugriffsbereich $bereich): bool
     {
         $record = $this->invoices->findByDocument($document->id);
 
         return $record !== null
+            && $bereich->erlaubt($record->costCenterId, $record->invoiceDate)
             && $record->direction === InvoiceDirection::Ausgabe
             && $record->paymentKind === Zahlungsweg::Konto
             && in_array($record->paymentStatus, [PaymentStatus::Offen, PaymentStatus::Teilbezahlt], true);
