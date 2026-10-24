@@ -332,6 +332,19 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/serien/3', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/serien/3', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/serien/3/verwerfen', false],
+            // Work lists "Offen" (issue #69/M10-5): receipts `report.view`
+            // (also a cost-center scope), bookings `bank.view`, expected
+            // receipts `document.edit`.
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/offen', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/rechnungen', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erstattungen', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/rechnungen', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/erstattungen', true],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/offen/buchungen', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/buchungen', false],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/offen/erwartet', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/erwartet', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erwartet', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
             [SystemRole::Admin, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/app/belege/pruefen/7/festschreiben', true],
@@ -767,6 +780,8 @@ final class RoutePermissionMatrixTest extends TestCase
             workerAdmin: $stellvertreter,
             // The matching page (issue #66/M10-2), optional.
             abgleich: $stellvertreter,
+            // The work lists "Offen" (issue #69/M10-5), optional.
+            offen: $stellvertreter,
             // The vault key rotation (issue #90), optional.
             tresorRotation: $stellvertreter,
         );

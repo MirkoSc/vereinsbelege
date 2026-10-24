@@ -44,6 +44,7 @@ use App\App\SecurityController;
 use App\App\SerienController;
 use App\App\SucheController;
 use App\App\SupplierController;
+use App\App\UebersichtController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
 use App\Domain\Worker;
@@ -189,6 +190,9 @@ use App\View\View;
  * @param (\Closure(): AbgleichController)|null $abgleich built lazily, same
  *        reason as $mail: only the matching page needs the database
  *        (issue #66/M10-2). Optional like $nextcloudAdmin.
+ * @param (\Closure(): UebersichtController)|null $offen built lazily, same
+ *        reason as $mail: only the work lists "Offen" need the database
+ *        (issue #69/M10-5). Optional like $nextcloudAdmin.
  * @param (\Closure(): VaultRotationController)|null $tresorRotation built
  *        lazily (issue #90); optional and last for the same reason as
  *        $nextcloudAdmin.
@@ -241,6 +245,7 @@ return static function (
     ?\Closure $workerApi = null,
     ?\Closure $workerAdmin = null,
     ?\Closure $abgleich = null,
+    ?\Closure $offen = null,
     ?\Closure $tresorRotation = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -252,6 +257,7 @@ return static function (
     $workerApi ??= static fn(): never => throw new \LogicException('The worker API is not wired into this route table.');
     $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
     $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
+    $offen ??= static fn(): never => throw new \LogicException('The work lists are not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -612,6 +618,17 @@ return static function (
     $post('/app/abgleich/ausfuehren', $abgleichRecht, static fn(Request $r) => $abgleich()->ausfuehren($r));
     $post('/app/abgleich/uebernehmen', $abgleichRecht, static fn(Request $r) => $abgleich()->uebernehmen($r));
     $post('/app/abgleich/einstellungen', $abgleichRecht, static fn(Request $r) => $abgleich()->einstellungen($r));
+    // Work lists "Offen" (M10-5, issue #69, docs/spec/04-bank-und-abgleich.md
+    // section 5 "Übersichten", E-37), read-only: unpaid receipts and open
+    // reimbursements `report.view` (its scope filters in SQL), bookings
+    // without a receipt `bank.view`, expected receipts of series
+    // `document.edit` without a scope like the series pages. /app/offen
+    // only forwards to the first list the account may open.
+    $get('/app/offen', $angemeldet, static fn(Request $r) => $offen()->start($r));
+    $get('/app/offen/rechnungen', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $offen()->unbezahlt($r));
+    $get('/app/offen/erstattungen', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $offen()->erstattungen($r));
+    $get('/app/offen/buchungen', Zugriff::recht(Permission::BankView), static fn(Request $r) => $offen()->buchungen($r));
+    $get('/app/offen/erwartet', $documentEdit, static fn(Request $r) => $offen()->erwartet($r));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,

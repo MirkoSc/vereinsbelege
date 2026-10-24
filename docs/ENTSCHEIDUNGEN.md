@@ -455,6 +455,50 @@ Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht
   kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
   wäre ein Folge-Issue.
 
+## E-37 ❓ Arbeitslisten „Offen“: Rechte, Altbestand, „Beleg anfordern“
+*M10-5 (issue #69) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (04 §5 „Übersichten“) nennt nur die vier Listen. Umgesetzt (Details
+04 §5 „Stand M10-5“):
+- **Vier Seiten unter `/app/offen/...`** mit Reiterzeile statt einer
+  Sammelseite: Jede Liste hat ihr eigenes Recht, die Route prüft es. Belege
+  (unbezahlt, Erstattungen) `report.view` – es ist eine Auswertung, und so
+  sehen Vorstand, Kassenprüfer und Steuerberater sie lesend, ein
+  Vereinsverantwortlicher die seiner Kostenstelle. Buchungen `bank.view`
+  (eine Buchung hat keine Kostenstelle). Erwartete Belege `document.edit`
+  ohne Scope wie die Serienseiten (E-26). Verworfen: `matching.edit` – das
+  schlösse alle Lesenden aus.
+- **Altbestand getrennt:** Migration 037 hat alle Belege auf `konto`/`offen`
+  gesetzt (E-27), auch Archiv-Kassenbelege. Statt einer Fehlerflut zählt die
+  Liste Belege, die vor Migration 037 erfasst wurden, nur in einem Hinweis
+  und zeigt sie auf Klick gesondert. Kriterium: `created_at` und `updated_at`
+  vor `schema_version.applied_at` von 037 – wer den Beleg in der Prüfansicht
+  einmal speichert (Zahlungsweg bestätigt), holt ihn in die normale Liste.
+  Keine Migration, kein Backfill.
+  Verworfen: automatischer Backfill auf `bar` (die Spec sagt nicht, welche
+  Alt-Belege bar waren; der offene Punkt aus E-27 bleibt bei Mirko).
+- **„Fällig“** = Fälligkeit heute bis in 7 Tagen, **„überfällig“** = Fälligkeit
+  vorbei (fest, kein Setting); Belege ohne Fälligkeitsdatum zuletzt, ohne
+  Marke.
+- **„Beleg anfordern“** zeigt nur einen Text zum Kopieren in eine eigene Mail
+  (`<details>`, kein JS) – kein Versand über die Mail-Queue: Empfänger ist
+  meist kein Benutzer, und die Queue dürfte keine fachlichen Klartexte
+  tragen. Ebenso kein `mailto:`-Link (Klartext in einer URL).
+- **Erstattungen je Einreicher und IBAN:** gruppiert nach Name **und** IBAN
+  aus der Einreichung. Nur nach Name wäre unsicher: `/einreichen` ist
+  öffentlich, jemand könnte unter einem fremden Namen mit eigener IBAN
+  einreichen, und die Gruppe zeigte dann seine IBAN neben der ganzen Summe
+  der echten Person (Befund im Koordinator-Review). Derselbe Name mit
+  verschiedenen oder fehlender IBAN ergibt mehrere Gruppen mit Warnung.
+  Belege ohne Einreichung bilden eine eigene Gruppe. SEPA-Sammelüberweisung
+  (pain.001) bleibt Backlog; #67 (Erstattungs-Abgleich) und #86 (GiroCode)
+  setzen auf diese Listen auf.
+- **Link im Mailtext** über `PublicUrl::resolve()` (konfigurierte öffentliche
+  URL bzw. Host der Absender-Domain), nicht aus dem Host-Header; ohne
+  geprüfte Basis nennt der Text das Formular ohne Link.
+- **Nur Anzeige:** kein Zähler in Navigation/Startseite, keine Mail, kein
+  Cron (der Cron kann nicht entschlüsseln).
+
 ## E-28 ❓ Worker-Kopplung: Zugangsschlüssel verschlüsselt statt als Hash, Protokoll-Details
 *M7b-1 (issue #51), 07 §4–5 – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
 
