@@ -100,7 +100,7 @@ final class BackupPageFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Backup jetzt erstellen', $antwort->body);
         self::assertMatchesRegularExpression('#<input type="checkbox" name="mit_config" value="1"[^>]*>#', $antwort->body);
         self::assertStringNotContainsString('name="mit_config" value="1" checked', $antwort->body, 'off by default');
-        self::assertStringContainsString('enthält den Server-Schlüssel', mb_strtolower($antwort->body));
+        self::assertStringContainsString('enthält den server-schlüssel', mb_strtolower($antwort->body));
         self::assertStringContainsString('id="backup-warnung-ohne-config"', $antwort->body);
         self::assertStringContainsString('/js/backups.js', $antwort->body);
         self::assertStringContainsString('Noch keine Backups vorhanden.', $antwort->body);
