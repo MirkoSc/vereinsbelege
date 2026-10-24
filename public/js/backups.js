@@ -19,8 +19,15 @@ function statusText(stand) {
         return 'Backup ' + (stand.name || '') + ' erstellt.';
     }
     switch (stand.phase) {
-        case 'dump':
-            return 'Datenbank wird gesichert …';
+        case 'dump': {
+            // The dump runs over several steps (issue #208); the row count
+            // shows that it moves on.
+            const zeilen = stand.dump_zeilen || 0;
+
+            return zeilen === 0
+                ? 'Datenbank wird gesichert …'
+                : 'Datenbank wird gesichert … (' + zeilen + ' Zeilen)';
+        }
         case 'blobs': {
             const gesamt = stand.blob_gesamt || 0;
             const fertig = Math.min(stand.blob_dateien || 0, gesamt);
