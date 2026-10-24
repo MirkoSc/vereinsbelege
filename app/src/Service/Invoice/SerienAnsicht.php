@@ -9,9 +9,10 @@ use App\Domain\SeriesData;
 
 /**
  * A recurring series decrypted for its pages (issue #57/M8-1). The list
- * leaves $mitglieder and $weitere empty; the detail page fills them: the
- * receipts of the series and the supplier's other checked receipts that
- * belong to no series and can be added.
+ * leaves $weitere empty and fills $kennzahlen (issue #58/M8-2: newest
+ * receipt, yearly projection, trend, overdue); the detail page fills
+ * $mitglieder and $weitere: the receipts of the series and the supplier's
+ * other checked receipts that belong to no series and can be added.
  */
 final readonly class SerienAnsicht
 {
@@ -26,6 +27,7 @@ final readonly class SerienAnsicht
         public int $anzahl,
         public array $mitglieder = [],
         public array $weitere = [],
+        public ?SerienKennzahlen $kennzahlen = null,
     ) {
     }
 
