@@ -123,7 +123,7 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertSame([self::IBAN_1, self::IBAN_2], $nachher->ibans);
         self::assertSame(self::GLAEUBIGER, $nachher->creditorId);
         self::assertSame(['M-1'], $nachher->mandateRefs);
-        self::assertSame([...$vorher->toPayload(), 'aliases' => $nachher->aliases, 'ibans' => $nachher->ibans, 'creditor_id' => self::GLAEUBIGER, 'mandate_refs' => ['M-1']], $nachher->toPayload());
+        self::assertSame([...$vorher->toPayload(), 'aliases' => $nachher->aliases, 'iban' => $nachher->ibans, 'creditor_id' => self::GLAEUBIGER, 'mandate_refs' => ['M-1']], $nachher->toPayload());
     }
 
     public function testDroppingACreditorIdDropsItsMandateToo(): void
