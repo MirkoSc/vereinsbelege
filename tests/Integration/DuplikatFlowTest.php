@@ -381,6 +381,31 @@ final class DuplikatFlowTest extends DatabaseTestCase
         self::assertSame('Als Duplikat verworfen: gleicher Lieferant und gleiche Rechnungsnummer wie Beleg #' . $erste . '.', $this->notiz($zweite));
     }
 
+    public function testAReceiptWithAllocationsIsNotDiscarded(): void
+    {
+        $lieferant = $this->lieferant('Rasen & Co. GmbH');
+        $erste = $this->beleg(['eins']);
+        $zweite = $this->beleg(['zwei']);
+        $this->erfassen($erste, $lieferant, self::NUMMER);
+        $this->erfassen($zweite, $lieferant, self::NUMMER, geprueft: true);
+        // Only whether an allocation exists counts here (M10-1) - the row
+        // itself is a stand-in without a real booking behind it.
+        $pdo = $this->pdo();
+        $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+        $pdo->prepare("INSERT INTO allocation (invoice_id, transaction_id, dek_sealed, amount_enc, method, created_at) VALUES (?, 999999, 'x', 'x', 'manuell', NOW())")
+            ->execute([(int) $this->rechnung($zweite)['id']]);
+        $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
+
+        $antwort = $this->post('/app/belege/pruefen/' . $zweite . '/duplikat-verwerfen', []);
+
+        self::assertNotSame(500, $antwort->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($zweite), 'a rejected receipt would keep the booking\'s amount');
+
+        $pdo->exec('DELETE FROM allocation');
+        $this->post('/app/belege/pruefen/' . $zweite . '/duplikat-verwerfen', []);
+        self::assertSame(DocumentStatus::Abgelehnt, $this->belegStatus($zweite));
+    }
+
     public function testDiscardingWithoutSuspicionIsRefused(): void
     {
         $einzeln = $this->einreichung(['Kassenbon']);

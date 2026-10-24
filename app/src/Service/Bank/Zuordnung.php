@@ -11,11 +11,13 @@ use App\Domain\BankAccountKind;
 use App\Domain\BankTransactionRecord;
 use App\Domain\Belegstand;
 use App\Domain\Differenzgrund;
+use App\Domain\DocumentStatus;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceType;
 use App\Domain\Zahlungsstand;
 use App\Domain\Zahlungsweg;
 use App\Domain\ZuordnungMethode;
+use App\Domain\Zugriffsbereich;
 use App\Repository\AllocationRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\InvoiceRepository;
@@ -94,11 +96,17 @@ final readonly class Zuordnung
 
         $this->pdo->beginTransaction();
         try {
+            // Document first, then receipt - the order the review page and
+            // the duplicate check lock in.
+            $dokumentId = $this->belege->find($invoiceId)?->documentId
+                ?? throw new BankRuleViolation('Diesen Beleg gibt es nicht.');
+            if ($this->belege->dokumentStatus($dokumentId) === DocumentStatus::Abgelehnt) {
+                throw new BankRuleViolation('Dieser Beleg ist abgelehnt (z. B. als Duplikat verworfen) und nimmt keine Zuordnung an.');
+            }
             $beleg = $this->belege->find($invoiceId, sperren: true)
                 ?? throw new BankRuleViolation('Diesen Beleg gibt es nicht.');
             $buchung = $this->buchungen->find($transactionId, sperren: true)
                 ?? throw new BankRuleViolation('Diese Buchung gibt es nicht.');
-
             if (!$beleg->paymentKind->erwartetBuchung()) {
                 throw new BankRuleViolation(sprintf(
                     'Für diesen Beleg wird keine Buchung erwartet (Zahlungsweg „%s“) – zuerst den Zahlungsweg in der Prüfansicht ändern.',
@@ -326,12 +334,15 @@ final readonly class Zuordnung
      * settling bookings once the receipt is settled - a partly paid receipt
      * reads as unpaid, its payment is not done. A receipt paid in cash
      * without a cash-book entry (`Zahlungsweg::Bar`) only sets `{kasse}`.
+     * The bookings are club data of their own (`bank.view`): only those in
+     * $buchungsbereich are read - none without that right (null).
      *
      * @param list<InvoiceRecord> $belege
+     * @param Zugriffsbereich|null $buchungsbereich the scope of `bank.view`, null without it
      *
      * @return array<int, Zahlungsangaben> by invoice id; receipts without anything to say are left out
      */
-    public function zahlungsangaben(Vault $vault, array $belege): array
+    public function zahlungsangaben(Vault $vault, array $belege, ?Zugriffsbereich $buchungsbereich): array
     {
         $angaben = [];
         $ids = [];
@@ -342,7 +353,7 @@ final readonly class Zuordnung
                 $angaben[$beleg->id] = new Zahlungsangaben(kasse: true);
             }
         }
-        if ($ids === []) {
+        if ($ids === [] || $buchungsbereich === null) {
             return $angaben;
         }
 
@@ -359,7 +370,10 @@ final readonly class Zuordnung
             foreach ($zuordnungen as $zuordnung) {
                 if (!array_key_exists($zuordnung->transactionId, $buchungen)) {
                     $record = $this->buchungen->find($zuordnung->transactionId);
-                    $buchungen[$zuordnung->transactionId] = $record === null ? null : Buchungen::entschluesseln($vault, $record);
+                    // A booking has no cost center: a cost-center scope sees none (01 §4).
+                    $buchungen[$zuordnung->transactionId] = $record === null || !$buchungsbereich->erlaubt(null, $record->bookingDate)
+                        ? null
+                        : Buchungen::entschluesseln($vault, $record);
                 }
                 $buchung = $buchungen[$zuordnung->transactionId];
                 if ($buchung === null) {

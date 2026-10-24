@@ -102,8 +102,11 @@ final readonly class ZipExport
      * @param int|null $lauf the documents of this export run instead of the
      *        filter's "nur noch nicht exportierte" (issue #179/M12-4,
      *        InvoiceRepository::exportListe())
+     * @param Zugriffsbereich|null $buchungsbereich the scope of `bank.view` -
+     *        "bezahlt am", "Konto" and "Referenz" come from bookings in it;
+     *        null without that right: the columns stay empty
      */
-    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault, ?int $lauf = null): ExportPlan
+    public function vorbereiten(ExportFilter $filter, Zugriffsbereich $bereich, Vault $vault, ?int $lauf = null, ?Zugriffsbereich $buchungsbereich = null): ExportPlan
     {
         $muster = ExportEinstellungen::fromSettings($this->settings)->muster;
         $wurzel = ExportEinstellungen::wurzelordner($filter->von, $filter->bis);
@@ -131,7 +134,7 @@ final readonly class ZipExport
         $documentIds = [];
 
         $belege = $this->belege->exportListe($filter, $bereich, $lauf);
-        $zahlungen = $this->zuordnung->zahlungsangaben($vault, array_map(static fn(ExportBeleg $b): InvoiceRecord => $b->invoice, $belege));
+        $zahlungen = $this->zuordnung->zahlungsangaben($vault, array_map(static fn(ExportBeleg $b): InvoiceRecord => $b->invoice, $belege), $buchungsbereich);
 
         foreach ($belege as $beleg) {
             $documentIds[] = $beleg->invoice->documentId;

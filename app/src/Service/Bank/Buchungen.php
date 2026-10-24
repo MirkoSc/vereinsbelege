@@ -194,20 +194,21 @@ final readonly class Buchungen
         if ($geaendert === []) {
             return [];
         }
-        // Allocations (M10-1) rely on amount and direction: released first.
-        if ($alt->docStatus->hatBeleg() && (in_array('amount', $geaendert, true) || in_array('direction', $geaendert, true))) {
-            throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – Betrag und Richtung lassen sich erst ändern, wenn die Zuordnung gelöst ist.', 'betrag');
-        }
-
-        // A receipt already allocated (M10-1, fully or in part) stays
-        // allocated; otherwise the status follows the choice.
-        $status = $alt->docStatus->hatBeleg()
-            ? $alt->docStatus
-            : BankTransactionDocStatus::fuerNeueBuchung($neu->belegNoetig);
-
-        $record = $this->buchungen->find($alt->id) ?? throw new BankRuleViolation('Diese Buchung gibt es nicht mehr.');
         $this->pdo->beginTransaction();
         try {
+            // Under the row lock Zuordnung::zuordnen() takes too: an
+            // allocation made since the page was loaded counts.
+            $record = $this->buchungen->find($alt->id, sperren: true) ?? throw new BankRuleViolation('Diese Buchung gibt es nicht mehr.');
+            // Allocations (M10-1) rely on amount and direction: released first.
+            if ($record->docStatus->hatBeleg() && (in_array('amount', $geaendert, true) || in_array('direction', $geaendert, true))) {
+                throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – Betrag und Richtung lassen sich erst ändern, wenn die Zuordnung gelöst ist.', 'betrag');
+            }
+            // A receipt already allocated (M10-1, fully or in part) stays
+            // allocated; otherwise the status follows the choice.
+            $status = $record->docStatus->hatBeleg()
+                ? $record->docStatus
+                : BankTransactionDocStatus::fuerNeueBuchung($neu->belegNoetig);
+
             $this->buchungen->updateManual(
                 $alt->id,
                 $neu->konto->id,
@@ -240,10 +241,24 @@ final readonly class Buchungen
         if (!$buchung->istManuell()) {
             throw new BankRuleViolation('Eine Buchung aus einem Kontoauszug lässt sich nicht löschen.');
         }
-        if ($buchung->docStatus->hatBeleg()) {
-            throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – erst die Zuordnung lösen.');
+        $this->pdo->beginTransaction();
+        try {
+            // Checked under the row lock Zuordnung::zuordnen() takes too.
+            $record = $this->buchungen->find($buchung->id, sperren: true);
+            if ($record !== null) {
+                if ($record->docStatus->hatBeleg()) {
+                    throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – erst die Zuordnung lösen.');
+                }
+                $this->buchungen->deleteManual($buchung->id);
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            throw $e;
         }
-        $this->buchungen->deleteManual($buchung->id);
     }
 
     /**

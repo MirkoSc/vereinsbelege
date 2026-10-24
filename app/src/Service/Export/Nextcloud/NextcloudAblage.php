@@ -82,7 +82,7 @@ final readonly class NextcloudAblage
      *
      * @throws NextcloudAblageFehler|WebDavFehler
      */
-    public function starten(ExportRun $lauf, Zugriffsbereich $bereich, Vault $vault, ?int $userId, \DateTimeImmutable $now): ExportRunUpload
+    public function starten(ExportRun $lauf, Zugriffsbereich $bereich, ?Zugriffsbereich $buchungsbereich, Vault $vault, ?int $userId, \DateTimeImmutable $now): ExportRunUpload
     {
         $ziel = $this->ziel($vault);
         $ordner = $this->dav->eigenschaften($ziel, '');
@@ -90,7 +90,7 @@ final readonly class NextcloudAblage
             throw new NextcloudAblageFehler('Der Ordner wurde in der Nextcloud nicht gefunden – bitte die Adresse in der Administration prüfen.');
         }
 
-        $plan = $this->plan($lauf, $bereich, $vault);
+        $plan = $this->plan($lauf, $bereich, $buchungsbereich, $vault);
         if ($plan->anzahlBelege === 0) {
             throw new NextcloudAblageFehler('Die Belege dieses Exports sind nicht mehr verfügbar – es wurde nichts abgelegt.');
         }
@@ -106,7 +106,7 @@ final readonly class NextcloudAblage
      *
      * @throws NextcloudAblageFehler|WebDavFehler the cursor stays where it was
      */
-    public function schritt(ExportRun $lauf, Zugriffsbereich $bereich, Vault $vault, ?int $userId, string $ip, \DateTimeImmutable $now): ExportRunUpload
+    public function schritt(ExportRun $lauf, Zugriffsbereich $bereich, ?Zugriffsbereich $buchungsbereich, Vault $vault, ?int $userId, string $ip, \DateTimeImmutable $now): ExportRunUpload
     {
         $stand = $this->uploads->find($lauf->id);
         if ($stand === null || $stand->status !== NextcloudAblageStatus::Laeuft) {
@@ -114,7 +114,7 @@ final readonly class NextcloudAblage
         }
 
         $ziel = $this->ziel($vault);
-        $plan = $this->plan($lauf, $bereich, $vault);
+        $plan = $this->plan($lauf, $bereich, $buchungsbereich, $vault);
         $gesamt = $plan->anzahlDateien();
         $index = $stand->nextIndex;
         $hash = self::planHash($plan, $vault);
@@ -293,9 +293,9 @@ final readonly class NextcloudAblage
         return bin2hex($vault->blindIndex()->forValue('export_run_upload.plan', $inhalt));
     }
 
-    private function plan(ExportRun $lauf, Zugriffsbereich $bereich, Vault $vault): ExportPlan
+    private function plan(ExportRun $lauf, Zugriffsbereich $bereich, ?Zugriffsbereich $buchungsbereich, Vault $vault): ExportPlan
     {
-        return $this->export->vorbereiten(ExportFilter::ausFeldern($lauf->filter, $lauf->createdAt), $bereich, $vault, $lauf->id);
+        return $this->export->vorbereiten(ExportFilter::ausFeldern($lauf->filter, $lauf->createdAt), $bereich, $vault, $lauf->id, $buchungsbereich);
     }
 
     private function ziel(Vault $vault): NextcloudZiel

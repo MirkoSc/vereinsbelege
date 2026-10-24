@@ -442,7 +442,14 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
   der Buchung (|Betrag| − zugeordnet); Richtung der Buchung = Richtung des
   Belegs – bei einer **Gutschrift** die Gegenrichtung (Geld fließt zurück);
   der Beleg muss eine Buchung erwarten (Zahlungsweg `konto` oder
-  `erstattung`). Alles andere ist eine `BankRuleViolation` mit Feld.
+  `erstattung`); sein Dokument darf nicht **abgelehnt** sein. Alles andere
+  ist eine `BankRuleViolation` mit Feld. Sperr-Reihenfolge überall:
+  Dokument → Beleg → Buchung.
+- **Gegenseiten, die Zuordnungen respektieren** (jeweils unter Zeilensperre
+  neu geprüft): eine Handbuchung mit Zuordnung lässt sich weder löschen
+  noch in Betrag/Richtung ändern; ein Beleg mit Zuordnungen lässt sich nicht
+  als Duplikat verwerfen; Regeln und Einordnung überschreiben `zugeordnet`/
+  `teilweise` nie.
 - **Zahlungsweg** (`invoice.payment_kind`, `App\Domain\Zahlungsweg`, Feld
   der Prüfansicht): `konto` – über Bank oder Kasse gebucht (Default);
   `erstattung` – Einreicher hat verauslagt, Verein erstattet (M10-3); `bar` –
@@ -477,7 +484,10 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
 - **Prüfansicht und Zuordnungen:** Solange ein Beleg Zuordnungen hat,
   lehnt die Prüfansicht einen Zahlungsweg ohne Buchungserwartung, einen
   Wechsel der Richtung oder von/zu Gutschrift und ein Brutto unter der
-  zugeordneten Summe ab (Feld markiert). Ändert sich Zahlungsweg oder
+  zugeordneten Summe ab (Feld markiert). Unabhängig davon verlangt ein
+  Zahlungsweg mit Buchungserwartung ein Brutto **> 0** (Gutschriften
+  positiv mit Belegart „Gutschrift“, 0-€-Belege mit „kein
+  Zahlungsbezug“) – sonst bliebe der Beleg für immer offen. Ändert sich Zahlungsweg oder
   Brutto, wird der Status neu abgeleitet. Ein **festgeschriebener** Beleg
   nimmt Zuordnungen an – die Festschreibung schützt den Inhalt, nicht den
   Zahlungsverlauf.
@@ -485,7 +495,10 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
   Buchung), „Konto“ (Namen der Konten), „Referenz“ (Verwendungszwecke) für
   **ausgeglichene** Belege; `{kasse}` bei Zahlungsweg `bar` oder wenn alle
   ausgleichenden Buchungen auf Kassen liegen
-  (`Zuordnung::zahlungsangaben()`).
+  (`Zuordnung::zahlungsangaben()`). Die Buchungsangaben sind eigene Daten:
+  nur mit `bank.view` und nur aus Buchungen in dessen Zugriffsbereich
+  (eine Buchung hat keine Kostenstelle – ein Kostenstellen-Scope sieht
+  keine); ohne das Recht bleiben die drei Spalten leer.
 - **Audit:** `zuordnung.angelegt` (invoice_id, transaction_id, method,
   score), `zuordnung.geloest` – Entität `allocation`;
   `beleg.differenz_abgeschlossen`/`beleg.differenz_geoeffnet` (grund) –

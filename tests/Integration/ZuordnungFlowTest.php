@@ -539,6 +539,72 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         self::assertSame('erstattet', $this->rechnung($beleg)['payment_status']);
     }
 
+    public function testABookingChangedOrDeletedFromAStalePageStillSeesTheAllocation(): void
+    {
+        $kasse = $this->kasse('Barkasse');
+        $buchungen = $this->buchungen();
+        $kategorie = $this->kategorie('Platzpflege & Grünanlagen');
+        $felder = [
+            'konto' => (string) $kasse, 'datum' => '2026-03-20', 'betrag' => '100,00', 'richtung' => 'ausgabe',
+            'kategorie' => (string) $kategorie, 'zweck' => 'Dünger bar', 'gegenseite' => 'Bauhaus', 'beleg' => '',
+        ];
+        $id = $buchungen->anlegen($this->tresor, $felder, new \DateTimeImmutable());
+        // Loaded before the allocation - the page the person still has open.
+        $veraltet = $buchungen->finde($this->tresor, $id, Zugriffsbereich::unbeschraenkt()) ?? self::fail();
+        self::assertFalse($veraltet->docStatus->hatBeleg());
+        $this->zuordnen($this->beleg(10000), $id, 10000);
+
+        try {
+            $buchungen->aendern($this->tresor, $veraltet, [...$felder, 'betrag' => '50,00'], new \DateTimeImmutable());
+            self::fail('amount changed under an allocation');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('wenn die Zuordnung gelöst ist', $e->getMessage());
+        }
+        try {
+            $buchungen->loeschen($veraltet);
+            self::fail('deleted under an allocation');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('erst die Zuordnung lösen', $e->getMessage());
+        }
+        self::assertSame('zugeordnet', $this->buchung($id)['doc_status']);
+        self::assertFalse($this->pdo()->inTransaction());
+    }
+
+    public function testAReceiptThatExpectsABookingNeedsAPositiveGross(): void
+    {
+        $beleg = $this->beleg(10000, status: DocumentStatus::InPruefung);
+        $dokument = new DocumentRepository($this->pdo())->find((int) $this->rechnung($beleg)['document_id']) ?? self::fail();
+        foreach (['konto', 'erstattung'] as $weg) {
+            foreach (['0,00', '-5,00'] as $brutto) {
+                try {
+                    $this->pruefung()->speichern($dokument, $this->tresor, $this->formular(['brutto' => $brutto, 'netto' => '', 'zahlungsweg' => $weg]), false, false, $this->userId, self::IP, new \DateTimeImmutable());
+                    self::fail('saved ' . $brutto . ' with ' . $weg);
+                } catch (InvoiceRuleViolation $e) {
+                    self::assertSame('brutto', $e->feld);
+                    self::assertStringContainsString('größer als 0', $e->getMessage());
+                }
+            }
+        }
+
+        $this->pruefung()->speichern($dokument, $this->tresor, $this->formular(['brutto' => '0,00', 'netto' => '', 'zahlungsweg' => 'keine']), false, false, $this->userId, self::IP, new \DateTimeImmutable());
+        self::assertSame('kein_zahlungsbezug', $this->rechnung($beleg)['payment_status']);
+    }
+
+    public function testARejectedReceiptTakesNoAllocation(): void
+    {
+        $beleg = $this->beleg(10000);
+        $this->pdo()->prepare("UPDATE document SET status = 'abgelehnt' WHERE id = ?")->execute([(int) $this->rechnung($beleg)['document_id']]);
+        $buchung = $this->importierteBuchung($this->bankkonto('Girokonto'), '2026-03-20', -10000, 'RE-1', 'Bauhaus');
+
+        try {
+            $this->zuordnen($beleg, $buchung, 10000);
+            self::fail('allocated to a rejected receipt');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('abgelehnt', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM allocation')->fetchColumn());
+    }
+
     // ------------------------------------------------------- the ZIP export
 
     public function testTheExportReadsThePaymentFromTheAllocations(): void
@@ -566,7 +632,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         $angaben = $this->zuordnung()->zahlungsangaben($this->tresor, array_map(
             fn(int $id) => new InvoiceRepository($this->pdo())->find($id) ?? self::fail(),
             [$bezahlt, $teilweise, $bar, $ausKasse],
-        ));
+        ), Zugriffsbereich::unbeschraenkt());
         $ids = array_keys($angaben);
         sort($ids);
         self::assertSame([$bezahlt, $bar, $ausKasse], $ids, 'a partly paid receipt has no payment to report');
@@ -579,6 +645,16 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         self::assertTrue($angaben[$ausKasse]->kasse, 'settled from the cash box');
         self::assertSame(['Barkasse'], $angaben[$ausKasse]->konten);
 
+        // The bookings are read only within `bank.view`: a period scope
+        // hides the later instalment, no right hides every booking.
+        $records = array_map(fn(int $id) => new InvoiceRepository($this->pdo())->find($id) ?? self::fail(), [$bezahlt, $bar]);
+        $bisMaerz = $this->zuordnung()->zahlungsangaben($this->tresor, $records, new Zugriffsbereich(von: new \DateTimeImmutable('2026-01-01'), bis: new \DateTimeImmutable('2026-03-10')));
+        self::assertSame('2026-03-05', $bisMaerz[$bezahlt]->bezahltAm?->format('Y-m-d'));
+        self::assertSame(['RE-1 Rate 1'], $bisMaerz[$bezahlt]->referenzen);
+        $ohneRecht = $this->zuordnung()->zahlungsangaben($this->tresor, $records, null);
+        self::assertSame([$bar], array_keys($ohneRecht), 'without bank.view only the cash flag of the receipt itself');
+        self::assertSame([], $this->zuordnung()->zahlungsangaben($this->tresor, $records, new Zugriffsbereich(kostenstellen: [1]))[$bezahlt]->referenzen ?? [], 'a booking has no cost center');
+
         $pdo = $this->pdo();
         new SettingRepository($pdo)->set('export_pfad_muster', '{jahr}/{monatsname}/{kasse}/{lieferant} {datum}.pdf');
         $export = new ZipExport(
@@ -590,7 +666,7 @@ final class ZuordnungFlowTest extends DatabaseTestCase
             new SettingRepository($pdo),
             $this->zuordnung(),
         );
-        $plan = $export->vorbereiten(new ExportFilter(new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31')), Zugriffsbereich::unbeschraenkt(), $this->tresor);
+        $plan = $export->vorbereiten(new ExportFilter(new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31')), Zugriffsbereich::unbeschraenkt(), $this->tresor, null, Zugriffsbereich::unbeschraenkt());
 
         self::assertSame(
             "\u{FEFF}Datum;Richtung;Lieferant;Rechnungsnr.;Brutto;Kategorie;Kostenstelle;Status;bezahlt am;Konto;Referenz;Datei\r\n"

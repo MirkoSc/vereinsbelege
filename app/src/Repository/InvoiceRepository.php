@@ -61,6 +61,30 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * The status of a receipt's document, read with a shared lock - the
+     * matching (M10-1) refuses a rejected document. Taken before the
+     * receipt's own row lock, in the order the review page and the
+     * duplicate check lock (document, then receipt).
+     */
+    public function dokumentStatus(int $documentId): ?DocumentStatus
+    {
+        $stmt = $this->pdo->prepare('SELECT status FROM document WHERE id = ? LOCK IN SHARE MODE');
+        $stmt->execute([$documentId]);
+        $status = $stmt->fetchColumn();
+
+        return $status === false ? null : DocumentStatus::from((string) $status);
+    }
+
+    /** Whether any booking is allocated to this receipt (M10-1). */
+    public function hatZuordnungen(int $id): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT EXISTS (SELECT 1 FROM allocation WHERE invoice_id = ?)');
+        $stmt->execute([$id]);
+
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /**
      * Writes the derived payment side (M10-1, issue #65): the status
      * App\Domain\PaymentStatus::ableiten() produced and the reason of a
      * closed difference. Deliberately not bound to `locked_at`: a locked

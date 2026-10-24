@@ -1031,6 +1031,11 @@ final readonly class Pruefung
             throw new InvoiceRuleViolation('Bitte den Bruttobetrag angeben.', 'brutto');
         }
         $brutto = self::betrag($feld('brutto'), 'brutto', 'Den Bruttobetrag');
+        // A booking settles a positive amount (M10-1): a receipt of 0 € or
+        // less could never be paid and would stay open for good.
+        if ($brutto <= 0 && $zahlungsweg->erwartetBuchung()) {
+            throw new InvoiceRuleViolation('Bei diesem Zahlungsweg muss der Bruttobetrag größer als 0 sein. Gutschriften als positiven Betrag mit Belegart „Gutschrift“ erfassen, Belege über 0 € mit Zahlungsweg „kein Zahlungsbezug“.', 'brutto');
+        }
         $netto = $feld('netto') === '' ? null : self::betrag($feld('netto'), 'netto', 'Den Nettobetrag');
 
         $steuern = [];
