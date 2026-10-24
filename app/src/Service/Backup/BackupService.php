@@ -103,14 +103,7 @@ final readonly class BackupService
             $blobBytes = 0;
             $blobDateien = $mitBlobs ? $this->addBlobs($zip, $blobBytes) : 0;
 
-            $zip->addFromString('manifest.json', json_encode([
-                'app_version' => $this->appVersion,
-                'schema_version' => $this->schemaVersion(),
-                'erstellt_am' => $jetzt->format('Y-m-d H:i:s'),
-                'config_enthalten' => $configDabei,
-                'blob_dateien' => $blobDateien,
-                'blob_bytes' => $blobBytes,
-            ], JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
+            $zip->addFromString('manifest.json', $this->manifest($jetzt, $configDabei, $blobDateien, $blobBytes));
 
             // ZipArchive reads the added files on close(), so the dump must
             // still exist until here.
@@ -144,7 +137,7 @@ final readonly class BackupService
      *
      * @return array{string, string} name and full path of the reserved file
      */
-    private function reserveName(\DateTimeImmutable $jetzt): array
+    public function reserveName(\DateTimeImmutable $jetzt): array
     {
         $stempel = $jetzt->format('Ymd_His');
         for ($n = 1; $n <= self::MAX_PER_SECOND; $n++) {
@@ -179,21 +172,8 @@ final readonly class BackupService
      */
     private function addBlobs(\ZipArchive $zip, int &$bytes): int
     {
-        $dateien = glob($this->blobDir . '/*/*') ?: [];
-        sort($dateien);
-
         $anzahl = 0;
-        foreach ($dateien as $pfad) {
-            $name = basename($pfad);
-            $unterordner = basename(dirname($pfad));
-            if (preg_match('/^[0-9a-f]{32}$/', $name) !== 1 || $unterordner !== substr($name, 0, 2)) {
-                continue;
-            }
-            if (!is_file($pfad)) {
-                continue;
-            }
-
-            $eintrag = self::BLOB_PREFIX . $unterordner . '/' . $name;
+        foreach ($this->blobFiles() as $eintrag => $pfad) {
             if (!$zip->addFile($pfad, $eintrag)) {
                 throw new \RuntimeException('Blob konnte dem Backup nicht hinzugefügt werden.');
             }
@@ -203,6 +183,73 @@ final readonly class BackupService
         }
 
         return $anzahl;
+    }
+
+    /**
+     * The finished blob files of backend `fs`, sorted by entry name - the
+     * same selection for create() and the admin page's step chain
+     * (BackupErstellung).
+     *
+     * @return array<string, string> ZIP entry name => path on disk
+     */
+    public function blobFiles(): array
+    {
+        $dateien = glob($this->blobDir . '/*/*') ?: [];
+        sort($dateien);
+
+        $ergebnis = [];
+        foreach ($dateien as $pfad) {
+            $name = basename($pfad);
+            $unterordner = basename(dirname($pfad));
+            if (preg_match('/^[0-9a-f]{32}$/', $name) !== 1 || $unterordner !== substr($name, 0, 2)) {
+                continue;
+            }
+            if (!is_file($pfad)) {
+                continue;
+            }
+            $ergebnis[self::BLOB_PREFIX . $unterordner . '/' . $name] = $pfad;
+        }
+
+        return $ergebnis;
+    }
+
+    /**
+     * manifest.json - only numbers and versions, nothing about the club's
+     * business (docs/spec/06-betrieb.md section 2).
+     */
+    public function manifest(\DateTimeImmutable $jetzt, bool $configDabei, int $blobDateien, int $blobBytes): string
+    {
+        return json_encode([
+            'app_version' => $this->appVersion,
+            'schema_version' => $this->schemaVersion(),
+            'erstellt_am' => $jetzt->format('Y-m-d H:i:s'),
+            'config_enthalten' => $configDabei,
+            'blob_dateien' => $blobDateien,
+            'blob_bytes' => $blobBytes,
+        ], JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT);
+    }
+
+    /**
+     * Whether the backup carries shared/config.php (the server key) - read
+     * from the archive itself, not from manifest.json, so a renamed or
+     * hand-made ZIP cannot hide it.
+     */
+    public function containsConfig(string $name): bool
+    {
+        $path = $this->path($name);
+        if ($path === null) {
+            return false;
+        }
+        $zip = new \ZipArchive();
+        if ($zip->open($path, \ZipArchive::RDONLY) !== true) {
+            // Unreadable: treat it as the sensitive kind, never the other way round.
+            return true;
+        }
+        try {
+            return $zip->locateName('config.php') !== false;
+        } finally {
+            $zip->close();
+        }
     }
 
     /**
@@ -250,7 +297,7 @@ final readonly class BackupService
         }
     }
 
-    private function rotate(): void
+    public function rotate(): void
     {
         foreach (array_slice($this->list(), self::KEEP) as $old) {
             unlink($this->backupDir . '/' . $old['name']);

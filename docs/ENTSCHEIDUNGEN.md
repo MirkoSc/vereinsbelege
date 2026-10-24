@@ -458,3 +458,29 @@ Variante:
 - **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
   Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
   10 MB entpackt.
+
+## E-30 ❓ Admin-Seite „Backups“: Erstellen als Schrittkette, Download mit `config.php` nur mit Passwort
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #112)*
+
+- **Erstellen als Schrittkette statt `BackupService::create()` in einem
+  Request:** Ein Backup mit Belegdateien passt auf dem Zielhost in keinen
+  Request (06 §2). Die Seite baut das ZIP deshalb in kurzen Schritten (Dump,
+  Blobs in Portionen, Abschluss) und hängt dabei selbst an das Archiv an
+  (`ZipAnhang`, ZIP64), weil libzip bei jedem `close()` das ganze Archiv neu
+  schreibt. Ergebnis und Format sind dieselben wie bei `create()`.
+  Verworfen: Backup über die Seite nur ohne Blobs (unvollständig bei
+  Backend `fs`), Blobs per `ZipArchive` portionsweise (Kopie des ganzen
+  Archivs je Portion). Der Dump bleibt ein einzelner Request – wie in der
+  Update-Kette; bei sehr großen `db`-Blob-Beständen ist das die Grenze.
+- **Download eines Backups mit `config.php` nur per POST mit dem aktuellen
+  Passwort** (zusätzlich zu `admin.system` und CSRF), Fehlversuche begrenzt.
+  Ein solches ZIP enthält den Server-Schlüssel; eine liegengelassene,
+  angemeldete Sitzung soll ihn nicht mit einem Klick herausgeben. Kein
+  erneuter zweiter Faktor: das bräuchte einen eigenen Bestätigungsablauf je
+  Methode (TOTP, E-Mail-Code) – Folge-Idee, falls gewünscht. Backups ohne
+  `config.php` lädt der angemeldete Admin per GET.
+- **Eine Erstellung gleichzeitig** (409), eine über 1 h nicht fortgesetzte
+  darf ein neuer Start verwerfen; Erstellen ist nur mit JavaScript möglich
+  (wie Update und Speicher-Umzug).
+- **Kein Löschen einzelner Backups** über die Seite (nicht im Umfang des
+  Issues); es bleibt bei der Rotation (10).

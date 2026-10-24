@@ -245,6 +245,15 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/systemcheck', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/systemcheck', false],
+            // Backups (issue #112): admin.system, like Update - the list, the
+            // chain and the download of the whole dump.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/backups', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/backups/schritt', true],
+            [SystemRole::Admin, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups', false],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/backups', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/backups/backup_20260101_120000.zip', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -593,7 +602,7 @@ final class RoutePermissionMatrixTest extends TestCase
             '/\{([a-z_][a-zA-Z0-9_]*)(?::([^{}]+))?\}/',
             static function (array $m): string {
                 $regex = ($m[2] ?? '') !== '' ? $m[2] : '[^/]+';
-                foreach (['1', str_repeat('a', 32), 'abc'] as $kandidat) {
+                foreach (['1', str_repeat('a', 32), 'abc', 'backup_20260101_120000.zip'] as $kandidat) {
                     if (preg_match('#^(?:' . $regex . ')$#', $kandidat) === 1) {
                         return $kandidat;
                     }
@@ -678,6 +687,8 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             $stellvertreter,
             // The Nextcloud settings (issue #95), optional.
+            $stellvertreter,
+            // The backups page (issue #112), optional.
             $stellvertreter,
             // The optional worker (issue #51/M7b-1). The signature check is
             // a stand-in here like the controllers: what this test pins is
