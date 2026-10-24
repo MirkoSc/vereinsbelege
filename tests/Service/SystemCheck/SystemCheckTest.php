@@ -173,7 +173,9 @@ final class SystemCheckTest extends TestCase
             self::assertSame(CheckStatus::Ok, new SystemCheck()->memoryLimit()->status);
             self::assertSame('512 MiB', new SystemCheck()->memoryLimit()->actual);
 
-            ini_set('memory_limit', '200M');
+            // Still in the warn band (128-256 MiB), but above what the whole
+            // suite already holds - PHP refuses a limit below current usage.
+            self::assertNotFalse(ini_set('memory_limit', '255M'), 'the suite itself uses more than 255 MiB');
             self::assertSame(CheckStatus::Warn, new SystemCheck()->memoryLimit()->status);
 
             ini_set('memory_limit', '-1');
