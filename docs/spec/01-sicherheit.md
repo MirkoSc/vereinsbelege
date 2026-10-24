@@ -329,7 +329,7 @@ Neues Tresor-Schlüsselpaar, alte Generation danach außer Dienst – als
 Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
 `App\Admin\VaultRotationController`, `App\Service\Tresor\Schluesselrotation`).
 
-- **Zustand** steht nur in `vault` (Migration 039): eine Rotation läuft genau
+- **Zustand** steht nur in `vault` (Migration 040): eine Rotation läuft genau
   dann, wenn mehr als eine Generation kein `retired_at` hat.
   `recovery_confirmed_at` hält fest, dass der Wiederherstellungsschlüssel
   einer Generation bestätigt wurde (Bestand und Installer: gesetzt).

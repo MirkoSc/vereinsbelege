@@ -43,7 +43,7 @@ final readonly class VaultRepository
                 'SELECT version, public_key FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
             );
         } catch (\PDOException) {
-            // Before migration 039 (update between 'switch' and 'migrate').
+            // Before migration 040 (update between 'switch' and 'migrate').
             $stmt = $this->pdo->query('SELECT version, public_key FROM vault ORDER BY version DESC LIMIT 1');
         }
         $row = $stmt === false ? false : $stmt->fetch(\PDO::FETCH_ASSOC);
@@ -72,7 +72,7 @@ final readonly class VaultRepository
             $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?)');
             $stmt->bindValue(4, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
         } catch (\PDOException $e) {
-            // A schema before migration 039 (an installation that migrates in
+            // A schema before migration 040 (an installation that migrates in
             // steps): no rotation exists there, the column comes with it.
             if (!$schluesselBestaetigt || !str_contains($e->getMessage(), 'recovery_confirmed_at')) {
                 throw $e;
@@ -97,7 +97,7 @@ final readonly class VaultRepository
                 'SELECT version, public_key, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
             );
         } catch (\PDOException) {
-            // Between the updater's 'switch' and 'migrate' steps migration 039
+            // Between the updater's 'switch' and 'migrate' steps migration 040
             // has not run yet: no rotation can exist, every generation is
             // active - logins and the update chain must keep working.
             $stmt = $this->pdo->query(
@@ -114,7 +114,7 @@ final readonly class VaultRepository
     /**
      * The generations not replaced yet, oldest first. One in normal
      * operation; two while a key rotation runs - that IS the rotation state
-     * (migration 039), there is no separate flag to keep in step.
+     * (migration 040), there is no separate flag to keep in step.
      *
      * @return list<VaultGeneration>
      */
@@ -124,7 +124,7 @@ final readonly class VaultRepository
     }
 
     /**
-     * Why a release before migration 039 must not run on this database, or
+     * Why a release before migration 040 must not run on this database, or
      * null (issue #90, docs/spec/06-betrieb.md section 1 "Rollback"): it
      * takes the newest `vault` row as the key, so the newest row must be a
      * confirmed generation in use, and no rotation may run.
@@ -145,7 +145,7 @@ final readonly class VaultRepository
         try {
             $stmt = $this->pdo->query('SELECT COUNT(*) FROM vault WHERE retired_at IS NULL');
         } catch (\PDOException) {
-            // Before migration 039 (update between 'switch' and 'migrate'):
+            // Before migration 040 (update between 'switch' and 'migrate'):
             // no rotation, and the update's own pages must stay reachable.
             return false;
         }

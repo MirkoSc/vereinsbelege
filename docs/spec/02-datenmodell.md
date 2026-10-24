@@ -19,7 +19,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher"; Migration 010, M3-6) | – |
 | `user_scope` | user_id PK, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten, Grenzen inklusive; Migration 010, M3-6) | – |
 | `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, kdf_alg (Migration 006, M3-2; `kdf_alg` seit Migration 033, issue #100) | – (selbst gewrappt) |
-| `vault` | version, public_key, created_at (Migration 004, M2-4), recovery_confirmed_at, retired_at (Migration 039, Schlüsselrotation – 01 §2) | – |
+| `vault` | version, public_key, created_at (Migration 004, M2-4), recovery_confirmed_at, retired_at (Migration 040, Schlüsselrotation – 01 §2) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at, created_at (Migration 008, M3-4) | S |
 | `mfa_email_code` | user_id, code_hash, expires_at, attempts, created_at (Migration 008, M3-4) | – |
@@ -27,7 +27,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `trusted_device` | id, user_id, token_hash UNIQUE, label, created_at, last_used_at NULL, expires_at (Migration 008, M3-4) | – |
 | `auth_token` | id, user_id, typ (`reset`/`invite`), token_hash UNIQUE, expires_at, used_at NULL, created_at (Migration 009, M3-5; `invite` seit M3-7) | – |
 | `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin | – |
-| `audit_log` | id (vom Schreiber gesetzt, kein AUTO_INCREMENT), ts, user_id NULL (kein FK), action, entity NULL, entity_id NULL, ip_hash NULL (HMAC, Server-Schlüssel), details_enc NULL, dek_sealed NULL, prev_hash, hash (Migration 011, M3-8), dek_resealed NULL (Migration 039: nach einer Schlüsselrotation neu versiegelter DEK, außerhalb der Hash-Kette) | T (details) |
+| `audit_log` | id (vom Schreiber gesetzt, kein AUTO_INCREMENT), ts, user_id NULL (kein FK), action, entity NULL, entity_id NULL, ip_hash NULL (HMAC, Server-Schlüssel), details_enc NULL, dek_sealed NULL, prev_hash, hash (Migration 011, M3-8), dek_resealed NULL (Migration 040: nach einer Schlüsselrotation neu versiegelter DEK, außerhalb der Hash-Kette) | T (details) |
 
 - `vault` stand als einzige dieser Tabellen schon vor `user`/`user_key`/
   `vault_grant` (Migration 004, M2-4): der Chunk-Upload ist der erste

@@ -49,7 +49,7 @@ use App\Service\Crypto\VaultGrant;
  * What the rotation does NOT reach, by design (spec): backups made before
  * it - they keep their old keys, and the OLD recovery key stays needed for
  * them; the original `audit_log.dek_sealed` (inside the hash chain, see
- * migration 039), which the old key still opens.
+ * migration 040), which the old key still opens.
  */
 final readonly class Schluesselrotation
 {
@@ -312,7 +312,7 @@ final readonly class Schluesselrotation
             }
             $this->grants->deleteVersion($neu->version);
             // Deleted, not retired: nothing was ever sealed to it (current()
-            // never returned it), and a release before migration 039 - after
+            // never returned it), and a release before migration 040 - after
             // a rollback - would take a leftover row for the newest key.
             // Its number may be handed out again; every session that could
             // hold the key ends below.

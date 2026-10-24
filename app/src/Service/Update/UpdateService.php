@@ -51,7 +51,7 @@ final class UpdateService
         private readonly float $backupSekunden = self::BACKUP_SEKUNDEN,
         /**
          * Why a rollback must not happen right now, or null (issue #90):
-         * a release before migration 039 reads `vault` as "newest row is
+         * a release before migration 040 reads `vault` as "newest row is
          * the key" and would seal to a vault key rotation's pending key.
          * Asked lazily - the update pages must work without a database.
          *

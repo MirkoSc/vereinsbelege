@@ -310,7 +310,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
         // The public submission keeps sealing - to the old, confirmed key.
         self::assertSame(1, Vault::sealedVersion(new VaultRepository($this->pdo())->current()?->sealDataKey(DataKey::generate()) ?? ''));
 
-        self::assertNotNull(new VaultRepository($this->pdo())->rollbackHindernis(), 'Kein Rollback auf ein Release vor 039, solange eine Rotation läuft.');
+        self::assertNotNull(new VaultRepository($this->pdo())->rollbackHindernis(), 'Kein Rollback auf ein Release vor 040, solange eine Rotation läuft.');
         self::assertSame(1, $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable()));
 
         self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
@@ -494,9 +494,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
     /**
      * Between the updater's 'switch' and 'migrate' steps the new code runs on
      * the old schema: the guard and the login must not fail on the missing
-     * columns of migration 039.
+     * columns of migration 040.
      */
-    public function testVorMigration039GibtEsKeineRotationUndDieAnmeldungGeht(): void
+    public function testVorMigration040GibtEsKeineRotationUndDieAnmeldungGeht(): void
     {
         $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at');
 
