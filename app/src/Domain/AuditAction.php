@@ -98,6 +98,13 @@ enum AuditAction: string
     case RegelDeaktiviert = 'regel.deaktiviert';
     case RegelAngewendet = 'regel.angewendet';
 
+    // Matching receipt <-> booking (M10-1, issue #65): ids and method only,
+    // never an amount.
+    case ZuordnungAngelegt = 'zuordnung.angelegt';
+    case ZuordnungGeloest = 'zuordnung.geloest';
+    case BelegDifferenzAbgeschlossen = 'beleg.differenz_abgeschlossen';
+    case BelegDifferenzGeoeffnet = 'beleg.differenz_geoeffnet';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -120,6 +127,12 @@ enum AuditAction: string
     case BelegDuplikatBehalten = 'beleg.duplikat_behalten';
     // The AI extraction (issue #47/M7-5): a person asks for a new run.
     case BelegKiErneut = 'beleg.ki_erneut';
+    // Recurring series (issue #57/M8-1): details name the changed fields,
+    // the status before or the document linked - never an amount.
+    case SerieBestaetigt = 'serie.bestaetigt';
+    case SerieGeaendert = 'serie.geaendert';
+    case SerieVerworfen = 'serie.verworfen';
+    case SerieBelegVerknuepft = 'serie.beleg_verknuepft';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -218,6 +231,10 @@ enum AuditAction: string
             self::RegelAktiviert => 'Buchungsregel aktiviert',
             self::RegelDeaktiviert => 'Buchungsregel deaktiviert',
             self::RegelAngewendet => 'Buchungsregel angewendet',
+            self::ZuordnungAngelegt => 'Beleg einer Buchung zugeordnet',
+            self::ZuordnungGeloest => 'Zuordnung Beleg ↔ Buchung gelöst',
+            self::BelegDifferenzAbgeschlossen => 'Zahlungsdifferenz des Belegs abgeschlossen',
+            self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
@@ -232,6 +249,10 @@ enum AuditAction: string
             self::BelegDuplikatVerworfen => 'Beleg als Duplikat verworfen',
             self::BelegDuplikatBehalten => 'Duplikat-Verdacht: bewusst behalten',
             self::BelegKiErneut => 'KI-Auslesen neu angestoßen',
+            self::SerieBestaetigt => 'Wiederkehrende Serie bestätigt',
+            self::SerieGeaendert => 'Wiederkehrende Serie geändert',
+            self::SerieVerworfen => 'Wiederkehrende Serie verworfen',
+            self::SerieBelegVerknuepft => 'Beleg einer Serie zugeordnet',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -289,11 +310,15 @@ enum AuditAction: string
             self::BuchungEingeordnet => 'bank_transaction',
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
             self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
+            self::ZuordnungAngelegt, self::ZuordnungGeloest => 'allocation',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
             self::BelegFestgeschrieben, self::BelegFestschreibungAufgehoben,
-            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut => 'document',
+            self::BelegDuplikatVerworfen, self::BelegDuplikatBehalten, self::BelegKiErneut,
+            self::BelegDifferenzAbgeschlossen, self::BelegDifferenzGeoeffnet => 'document',
+            self::SerieBestaetigt, self::SerieGeaendert, self::SerieVerworfen,
+            self::SerieBelegVerknuepft => 'recurring_series',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
@@ -325,6 +350,7 @@ enum AuditAction: string
             'export_run' => 'Export',
             'bank_transaction' => 'Buchung',
             'assignment_rule' => 'Buchungsregel',
+            'allocation' => 'Zuordnung Beleg ↔ Buchung',
             'document' => 'Beleg',
             'worker' => 'Worker',
             default => $entity,

@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Domain\Differenzgrund;
 use App\Domain\DocumentStatus;
 use App\Domain\ExportRunStatus;
+use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
+use App\Domain\PaymentStatus;
 use App\Domain\Zugriffsbereich;
 use App\Service\Export\ExportBeleg;
 use App\Service\Export\ExportFilter;
@@ -45,6 +48,60 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * @param bool $sperren row lock until the caller's transaction ends -
+     *        the matching (M10-1) checks sums under it
+     */
+    public function find(int $id, bool $sperren = false): ?InvoiceRecord
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM invoice WHERE id = ?' . ($sperren ? ' FOR UPDATE' : ''));
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : InvoiceRecord::fromRow($row);
+    }
+
+    /**
+     * The status of a receipt's document, read with a shared lock - the
+     * matching (M10-1) refuses a rejected document. Taken before the
+     * receipt's own row lock, in the order the review page and the
+     * duplicate check lock (document, then receipt).
+     */
+    public function dokumentStatus(int $documentId): ?DocumentStatus
+    {
+        $stmt = $this->pdo->prepare('SELECT status FROM document WHERE id = ? LOCK IN SHARE MODE');
+        $stmt->execute([$documentId]);
+        $status = $stmt->fetchColumn();
+
+        return $status === false ? null : DocumentStatus::from((string) $status);
+    }
+
+    /** Whether any booking is allocated to this receipt (M10-1). */
+    public function hatZuordnungen(int $id): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT EXISTS (SELECT 1 FROM allocation WHERE invoice_id = ?)');
+        $stmt->execute([$id]);
+
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /**
+     * Writes the derived payment side (M10-1, issue #65): the status
+     * App\Domain\PaymentStatus::ableiten() produced and the reason of a
+     * closed difference. Deliberately not bound to `locked_at`: a locked
+     * receipt may still be paid - the lock covers what the receipt says.
+     * `updated_at`/`updated_by` stay: nothing of the receipt changed. Only
+     * App\Service\Bank\Zuordnung calls this.
+     */
+    public function setzeZahlungsstatus(int $id, PaymentStatus $status, ?Differenzgrund $differenz): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE invoice SET payment_status = ?, difference_reason = ? WHERE id = ?');
+        $stmt->bindValue(1, $status->value);
+        $stmt->bindValue(2, $differenz?->value);
+        $stmt->bindValue(3, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * First step of a new row: everything but the ciphertext, whose AAD
      * needs the id this returns. The caller writes setData() in the same
      * transaction.
@@ -59,11 +116,15 @@ final readonly class InvoiceRepository
     ): int {
         $stmt = $this->pdo->prepare(
             "INSERT INTO invoice (document_id, doc_type, direction, supplier_id, invoice_date, due_date, service_from, service_to,
-                                  category_id, cost_center_id, dek_sealed, data_enc, number_bi, created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
+                                  category_id, cost_center_id, payment_kind, payment_status, dek_sealed, data_enc, number_bi,
+                                  created_by, created_at, updated_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
         );
         $stmt->bindValue(1, $documentId, \PDO::PARAM_INT);
         $n = self::bindStruktur($stmt, 2, $struktur);
+        // A new receipt has no allocations: its status is what the
+        // Zahlungsweg alone implies (App\Domain\PaymentStatus::ableiten()).
+        $stmt->bindValue($n++, PaymentStatus::ableiten($struktur->paymentKind, 0, 0, null)->value);
         $stmt->bindValue($n++, $dekSealed, \PDO::PARAM_LOB);
         self::bindNullable($stmt, $n++, $numberBi, \PDO::PARAM_LOB);
         self::bindNullable($stmt, $n++, $userId, \PDO::PARAM_INT);
@@ -93,7 +154,7 @@ final readonly class InvoiceRepository
     ): void {
         $stmt = $this->pdo->prepare(
             'UPDATE invoice SET doc_type = ?, direction = ?, supplier_id = ?, invoice_date = ?, due_date = ?, service_from = ?,
-                                service_to = ?, category_id = ?, cost_center_id = ?, data_enc = ?, number_bi = ?,
+                                service_to = ?, category_id = ?, cost_center_id = ?, payment_kind = ?, data_enc = ?, number_bi = ?,
                                 updated_by = ?, updated_at = ?
              WHERE id = ? AND locked_at IS NULL',
         );
@@ -167,6 +228,51 @@ final readonly class InvoiceRepository
             static fn(mixed $id): ?int => $id === null ? null : (int) $id,
             $stmt->fetchAll(\PDO::FETCH_COLUMN),
         );
+    }
+
+    /**
+     * The checked receipts (`geprueft`/`festgeschrieben`) of a supplier and
+     * direction, also those still pointing at a supplier merged into it -
+     * what series detection (issue #57/M8-1, App\Service\Invoice\Serien)
+     * looks at. Not scoped: a series is about the supplier, and its pages
+     * are only open to accounts without a scope. Only the $anzahl newest
+     * (by receipt date), oldest first - each one is decrypted, and a
+     * supplier's history should not make a request long.
+     *
+     * @return list<InvoiceRecord>
+     */
+    public function geprueftFuerLieferant(int $supplierId, InvoiceDirection $richtung, int $anzahl = 120): array
+    {
+        $stmt = $this->pdo->prepare(sprintf(
+            'SELECT i.* FROM invoice i JOIN supplier s ON s.id = i.supplier_id JOIN document d ON d.id = i.document_id
+             WHERE (i.supplier_id = ? OR s.merged_into = ?) AND i.direction = ? AND i.checked_at IS NOT NULL AND d.status IN (?, ?)
+             ORDER BY i.invoice_date DESC, i.id DESC LIMIT %d',
+            max(1, $anzahl),
+        ));
+        $stmt->execute([$supplierId, $supplierId, $richtung->value, DocumentStatus::Geprueft->value, DocumentStatus::Festgeschrieben->value]);
+
+        return array_reverse(array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll()));
+    }
+
+    /**
+     * Receipts by id, in date order - the receipts of a series (issue
+     * #57/M8-1), whatever their state now.
+     *
+     * @param list<int> $ids
+     *
+     * @return list<InvoiceRecord>
+     */
+    public function nachIds(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM invoice WHERE id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') ORDER BY invoice_date, id',
+        );
+        $stmt->execute(array_values($ids));
+
+        return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
     }
 
     /** Who marked the receipt as checked, and when ("Geprüft, nächster"). */
@@ -314,6 +420,7 @@ final readonly class InvoiceRepository
         self::bindNullable($stmt, $n++, $datum($s->serviceTo), \PDO::PARAM_STR);
         self::bindNullable($stmt, $n++, $s->categoryId, \PDO::PARAM_INT);
         self::bindNullable($stmt, $n++, $s->costCenterId, \PDO::PARAM_INT);
+        $stmt->bindValue($n++, $s->paymentKind->value);
 
         return $n;
     }

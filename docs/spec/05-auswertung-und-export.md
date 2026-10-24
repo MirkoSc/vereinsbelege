@@ -157,8 +157,11 @@ leer → Ebene entfällt).
     - „Datei“ ist relativ zum Wurzelordner, mehrere Dateien sind mit ` | `
       getrennt. Der Formel-Schutz gilt auch hier: Ein Pfad, der mit `-` oder
       `+` beginnt (Muster mit `{betrag}` vorn), bekommt ebenfalls das `'`.
-    - **„bezahlt am“, „Konto“, „Referenz“ bleiben leer, `{kasse}` ist immer
-      leer**, bis Belege Zahlungen zugeordnet werden (M10-1, #65).
+    - **„bezahlt am“, „Konto“, „Referenz“** kommen seit M10-1 (#65) aus den
+      Zuordnungen eines **ausgeglichenen** Belegs (04 §5 „Stand M10-1“):
+      Datum der letzten ausgleichenden Buchung, Kontonamen und
+      Verwendungszwecke (mehrere mit ` | `). Teilbezahlt = leer. `{kasse}`
+      bei Zahlungsweg `bar` oder Ausgleich nur über Kassen.
   - **ZIP-Writer:** Eigener Writer `App\Service\Export\ZipStrom` (reines
     PHP auf ext-zlib), keine Bibliothek. maennchen/zipstream-php wurde
     geprüft und verworfen: Das wäre die erste Laufzeit-Abhängigkeit, und
@@ -401,8 +404,8 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
     gelesen hat – solange noch keine `invoice`-Zeile existiert. Weicht ein
     gelesener Wert ab, gewinnt das Archiv, und ein Hinweis nennt beide
     Werte. Dazu: Herkunftspfad, Hinweise aus dem Pfad und für `Kasse` der
-    Hinweis „bar bezahlt“ – ein Feld dafür kommt erst mit der Zuordnung
-    Beleg ↔ Zahlung (M10-1, #65), die `kasse` aus dem Artefakt übernimmt.
+    Hinweis „bar bezahlt“ und – seit M10-1 (#65) – die Vorbelegung des
+    Zahlungswegs mit „bar bezahlt (ohne Kassenbuchung)“ (04 §5).
   - **Bericht und Audit:** Nicht übernommene Dateien stehen mit Grund
     verschlüsselt in `archive_import.report_enc` (höchstens 2 000), die
     Seite zeigt sie nach dem Import. Audit `archiv.importiert` genau einmal

@@ -24,6 +24,17 @@ namespace App\Service\Backup;
  */
 final readonly class MysqlDumper
 {
+    /**
+     * The session settings the dump sets once at its top (and resets at its
+     * end). RestoreService repeats them on every step after the first: each
+     * step is a request with a fresh connection (issue #120).
+     */
+    public const string SESSION_NAMES = 'SET NAMES utf8mb4';
+
+    public const string SESSION_FOREIGN_KEYS_OFF = 'SET FOREIGN_KEY_CHECKS = 0';
+
+    public const string SESSION_FOREIGN_KEYS_ON = 'SET FOREIGN_KEY_CHECKS = 1';
+
     private const int ROWS_PER_INSERT = 100;
 
     /**
@@ -43,15 +54,15 @@ final readonly class MysqlDumper
     public function dump($stream): void
     {
         fwrite($stream, "-- Vereinsbelege DB dump\n");
-        fwrite($stream, "SET NAMES utf8mb4;\n");
-        fwrite($stream, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
+        fwrite($stream, self::SESSION_NAMES . ";\n");
+        fwrite($stream, self::SESSION_FOREIGN_KEYS_OFF . ";\n\n");
 
         $tables = $this->pdo->query('SHOW TABLES')->fetchAll(\PDO::FETCH_COLUMN);
         foreach ($tables as $table) {
             $this->dumpTable($stream, (string) $table);
         }
 
-        fwrite($stream, "SET FOREIGN_KEY_CHECKS = 1;\n");
+        fwrite($stream, self::SESSION_FOREIGN_KEYS_ON . ";\n");
     }
 
     /**

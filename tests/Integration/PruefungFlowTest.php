@@ -23,6 +23,7 @@ use App\Domain\PermissionScope;
 use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
+use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
@@ -50,6 +51,7 @@ use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
+use App\Repository\SubmissionRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
@@ -91,6 +93,7 @@ use App\Tests\Support\FakeChatHttp;
 use App\Tests\Support\FakeJpeg;
 use App\Tests\Support\FakeLlmClient;
 use App\Tests\Support\KiAuslesungFabrik;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -344,7 +347,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $zeilen = $this->auditZeilen($id);
         self::assertSame([AuditAction::BelegBearbeitet->value], array_map(static fn(AuditEntry $e): string => $e->action, $zeilen));
         self::assertSame(
-            ['felder' => ['doc_type', 'direction', 'invoice_date', 'category_id', 'cost_center_id', 'invoice_number', 'gross', 'net', 'taxes', 'currency', 'purpose_short', 'notes'], 'von' => 'bereit_zur_auswertung'],
+            ['felder' => ['doc_type', 'direction', 'invoice_date', 'category_id', 'cost_center_id', 'payment_kind', 'invoice_number', 'gross', 'net', 'taxes', 'currency', 'purpose_short', 'notes'], 'von' => 'bereit_zur_auswertung'],
             $this->audit->details($zeilen[0], $this->tresor),
         );
 
@@ -373,6 +376,45 @@ final class PruefungFlowTest extends DatabaseTestCase
         $zeilen = $this->auditZeilen($id);
         self::assertCount(2, $zeilen);
         self::assertSame(['felder' => ['gross', 'net', 'taxes']], $this->audit->details($zeilen[0], $this->tresor));
+    }
+
+    public function testTheZahlungswegIsChosenInTheFormAndSetsThePaymentStatus(): void
+    {
+        $id = $this->beleg();
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+        self::assertMatchesRegularExpression('/<option value="konto" selected>/', $seite->body, 'a booking of the club is the default');
+        foreach (Zahlungsweg::cases() as $weg) {
+            self::assertStringContainsString('<option value="' . $weg->value . '"', $seite->body);
+        }
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->felder(['zahlungsweg' => 'erstattung', 'aktion' => 'speichern']));
+        self::assertSame(302, $antwort->status);
+        $zeile = $this->rechnung($id);
+        self::assertSame('erstattung', $zeile['payment_kind']);
+        self::assertSame('erstattung_offen', $zeile['payment_status'], 'derived from the Zahlungsweg alone while nothing is allocated');
+        self::assertNull($zeile['difference_reason']);
+        self::assertMatchesRegularExpression('/<option value="erstattung" selected>/', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->felder(['zahlungsweg' => 'bar', 'aktion' => 'speichern']));
+        self::assertSame(302, $antwort->status);
+        self::assertSame('bezahlt', $this->rechnung($id)['payment_status'], 'paid in cash is paid');
+        $zeilen = $this->auditZeilen($id);
+        self::assertSame(['felder' => ['payment_kind']], $this->audit->details($zeilen[0], $this->tresor));
+
+        $antwort = $this->post('/app/belege/pruefen/' . $id, $this->felder(['zahlungsweg' => 'scheck', 'aktion' => 'speichern']));
+        self::assertSame(422, $antwort->status);
+        self::assertStringContainsString('Bitte den Zahlungsweg wählen.', $antwort->body);
+    }
+
+    public function testASubmissionsWishPrefillsTheZahlungsweg(): void
+    {
+        foreach (['ueberweisung' => 'erstattung', 'bar' => 'bar', 'keine' => 'konto'] as $art => $weg) {
+            $id = $this->einreichung($art);
+            $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true);
+            self::assertSame(200, $seite->status);
+            self::assertMatchesRegularExpression('/<option value="' . $weg . '" selected>/', $seite->body, $art);
+        }
+        self::assertSame(0, $this->anzahlBelege(), 'a prefill until a person saves it');
     }
 
     public function testCheckedNextMovesOnThroughTheQueueAndWrapsAround(): void
@@ -1061,7 +1103,8 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertMatchesRegularExpression('/<option value="' . $this->ausgabeKategorie . '"[^>]* selected/', $seite->body);
         self::assertStringContainsString('aus dem Archiv vorbelegt', $seite->body);
         self::assertStringContainsString('Aus dem Archiv-Import: „2026/02. Februar/Kasse/Kiosk am Platz 05.02.2026.pdf“.', $seite->body);
-        self::assertStringContainsString('Archiv: Ordner „Kasse“ – bar bezahlt.', $seite->body);
+        self::assertStringContainsString('Archiv: Ordner „Kasse“ – bar bezahlt, Zahlungsweg vorbelegt.', $seite->body);
+        self::assertMatchesRegularExpression('/<option value="bar" selected>/', $seite->body, 'the Zahlungsweg follows the folder (M10-1)');
         self::assertStringContainsString('Der Ordner „03“ passt nicht zum Datum 05.02.2026 im Dateinamen.', $seite->body);
         self::assertSame(0, $this->anzahlBelege(), 'a suggestion until a person saves it');
 
@@ -1202,7 +1245,7 @@ final class PruefungFlowTest extends DatabaseTestCase
         $spalten = array_map(strval(...), $this->pdo()->query('SHOW COLUMNS FROM invoice')->fetchAll(\PDO::FETCH_COLUMN));
 
         self::assertSame([
-            'id', 'document_id', 'doc_type', 'direction', 'supplier_id', 'invoice_date', 'due_date', 'service_from',
+            'id', 'document_id', 'doc_type', 'direction', 'payment_kind', 'payment_status', 'difference_reason', 'supplier_id', 'invoice_date', 'due_date', 'service_from',
             'service_to', 'category_id', 'sphere', 'cost_center_id', 'checked_by', 'checked_at', 'locked_by', 'locked_at', 'dek_sealed', 'data_enc',
             'number_bi', 'created_by', 'created_at', 'updated_by', 'updated_at',
         ], $spalten);
@@ -1960,6 +2003,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             ...array_fill_keys(Pruefung::feldnamen(), ''),
             'richtung' => 'ausgabe',
             'belegart' => 'rechnung',
+            'zahlungsweg' => 'konto',
             'datum' => '2026-03-14',
             'nummer' => self::NUMMER,
             'brutto' => '1.234,56',
@@ -2001,6 +2045,30 @@ final class PruefungFlowTest extends DatabaseTestCase
             $status,
             costCenterId: $kostenstelle,
             createdBy: $this->userId,
+        );
+    }
+
+    /** A document from the public submission, with what the person asked about the money. */
+    private function einreichung(string $erstattung): int
+    {
+        $submissions = new SubmissionRepository($this->pdo());
+        $submissionId = $submissions->insertDraft(random_bytes(32), new \DateTimeImmutable());
+        $key = DataKey::generate();
+        $submissions->complete(
+            $submissionId,
+            sprintf('R-2026-%04d', ++$this->laufnummer),
+            $this->tresor->sealDataKey($key),
+            FieldCipher::encrypt($key, (string) json_encode(['name' => 'Max Muster', 'erstattung' => ['art' => $erstattung], 'freitext' => 'Bon']), new FieldContext('submission', $submissionId, 'payload_enc')),
+        );
+        $blob = $this->blobService()->storeString(FakeJpeg::bauen(10, 10), new BlobMeta(MagicBytes::JPEG, 'original.bin'), $this->tresor, BlobStorage::Fs)->id;
+
+        return new DocumentRepository($this->pdo())->insert(
+            DocumentSource::Einreichung,
+            $submissionId,
+            [$blob],
+            $this->tresor->sealDataKey(DataKey::generate()),
+            new \DateTimeImmutable()->modify('+' . $this->laufnummer . ' seconds'),
+            DocumentStatus::BereitZurAuswertung,
         );
     }
 
@@ -2072,6 +2140,8 @@ final class PruefungFlowTest extends DatabaseTestCase
             KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto, $this->kiClient),
             $this->regeln(),
             KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
+            new JobRepository($pdo),
+            ZuordnungFabrik::bauen($pdo, $this->audit),
         );
     }
 

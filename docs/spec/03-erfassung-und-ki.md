@@ -781,7 +781,9 @@ aktivem Worker-Modul.
    sobald es einen Beleg mit gültigem Ergebnis auf `ausgewertet` setzt, und per
    Migration 035 für schon ausgewertete Belege) – immer `session`
 6. `classify` (Kategorie/Kostenstelle, Regeln + KI-Vorschlag) – `session`
-7. `detect_recurring` (Abschnitt 9) – `session`
+7. `detect_recurring` (Abschnitt 9; seit issue #57/M8-1 `App\Service\Invoice\Serien`,
+   eingereiht von „Geprüft“ in der Prüfansicht und per Migration 036 je Lieferant
+   und Richtung für den neuesten schon geprüften Beleg) – `session`
 8. `detect_duplicate` (issue #40/M6-6: berechnet `document.content_bi` aus den
    Originaldateien, ein Schritt je Datei, `App\Service\Document\Duplikatindex`;
    eingereiht gleich beim Eingang neben `pdf_erzeugen`, nicht erst nach den
@@ -1509,6 +1511,87 @@ Muster im Tresor, Abgleich in PHP); M7-7 ergänzt die Beleg-Seite.
   Mandatsreferenz) wird eine Serie vorgeschlagen – nützlich für
   „Buchung ohne Beleg".
 
+**Stand M8-1** (issue #57, Migration 036, E-26): Erkennung, Vorschlag,
+Bestätigen/Ändern/Verwerfen. **M8-2** (issue #58, E-33): Übersicht mit
+Jahreshochrechnung/Trend/„überfällig" (unten „Übersicht"). Serien aus
+Bankbuchungen später.
+- *Auslöser:* Jeder Beleg, der in der Prüfansicht „Geprüft“ wird, reiht
+  den Session-Job `detect_recurring` ein (`Serien::einreihen()`). Gezählt
+  werden nur geprüfte bzw. festgeschriebene Belege
+  (`InvoiceRepository::geprueftFuerLieferant()`, auch über `merged_into`
+  aufgelöst; die 120 neuesten), getrennt nach Lieferant **und** Richtung.
+  Ein Schritt, eine Transaktion unter Zeilensperre des Lieferanten und
+  seiner Serien (ein gleichzeitiges Bestätigen überschreibt sich nicht).
+  Wurde der Beleg auf einen anderen Lieferanten oder eine andere Richtung
+  geändert, verlässt er zuerst seine bisherige Serie.
+- *Erkennung* (`App\Service\Invoice\Serienerkennung`, rein, ohne DB):
+  ≥ 3 Belege (2, wenn die KI am auslösenden – neuesten – Beleg
+  `recurring.likely` las; nennt sie einen Rhythmus, muss er passen),
+  gleiche Währung, Betrag > 0, jeder Betrag innerhalb ±15 % (Setting
+  `serien_toleranz_prozent`, 0–100) des nächstneueren – eine schrittweise
+  Preissteigerung bleibt in der Serie, ein Sprung beendet sie. Die Kette
+  beginnt beim neuesten Beleg; passt der nicht (Einzelkauf), der nächste.
+  Nicht passende Beträge werden übersprungen. Rhythmus: Median der Abstände
+  ≈ Monat/Quartal/Halbjahr/Jahr (30,4/91,3/182,6/365,25 Tage ± 5/12/20/30);
+  von zwei Belegen, die näher als ein halber Rhythmus liegen, bleibt nur der,
+  dessen Abstand zum neueren Nachbarn besser zum Rhythmus passt (Einzelkauf
+  mit ähnlichem Betrag, Duplikat); eine Lücke über 2,5 Rhythmen
+  schneidet ab (nur der Teil danach zählt). Höchstens die 60 neuesten Belege.
+- *Vorschlag:* `next_expected` = neuester Beleg + Rhythmus (Tag aufs
+  Monatsende gekappt), `tolerance_days` 7/14/21/30, erwarteter Betrag = der
+  neueste. Ein neuer Lauf aktualisiert den offenen Vorschlag, mit dem er die
+  meisten Belege teilt (Bezeichnung/Vertrag bleiben); teilt er keine, wird
+  er ein weiterer Vorschlag (Miete und Versicherung desselben Partners).
+  Belege, die noch an einem anderen offenen Vorschlag hängen (späte Belege
+  schließen eine Lücke), gehen in den gewählten über; ein leer gewordener
+  Vorschlag wird gelöscht. Kein Audit.
+- *Bestätigte Serie:* Ein neuer geprüfter Beleg, der zu keiner Serie gehört,
+  wird verknüpft, wenn Währung gleich, Betrag in der Toleranz des erwarteten
+  und kein Beleg der Serie näher als ein halber Rhythmus liegt (bei mehreren
+  der nächste Betrag); ist er der neueste, übernimmt die Serie Betrag und
+  rechnet `next_expected` weiter. Audit `serie.beleg_verknuepft` ohne
+  Benutzer (Details: Dokument-ID).
+- *Seiten* `/app/serien` (Liste: Vorschläge, bestätigte Serien, nächste
+  Fälligkeit zuerst; Navigation „Wiederkehrend“) und `/app/serien/{id}`
+  (Formular: Bezeichnung, Rhythmus inkl. „unregelmäßig“ – dann ohne nächste
+  Fälligkeit –, erwarteter Betrag, nächste Fälligkeit, Toleranz 0–120 Tage,
+  Vertrags-/Kundennummer, Belege als Ankreuzfelder, darunter weitere
+  geprüfte Belege des Partners ohne Serie). `POST` dorthin bestätigt einen
+  Vorschlag bzw. speichert, `POST …/verwerfen` verwirft (auch eine
+  bestätigte Serie; danach nur lesbar). Recht `document.edit`, CSRF, Tresor;
+  ein Konto mit Scope auf `document.edit` bekommt 403 (eine Serie umfasst
+  alle Belege des Lieferanten). Audit `serie.bestaetigt`/`serie.geaendert`
+  (nur Feldnamen; Speichern ohne Änderung schreibt nichts) und
+  `serie.verworfen` (Details: Status vorher).
+- *Nie* wird `invoice` geschrieben; Beträge/Namen nur verschlüsselt
+  (`recurring_series.data_enc`), `job.state` leer.
+- *Übersicht* (M8-2, `/app/serien`, Titel „Wiederkehrende Kosten“, Recht
+  und Scope wie oben, keine Migration): zuerst die bestätigten Serien, dann
+  die Vorschläge, je Serie Rhythmus, erwarteter Betrag, letzter geprüfter
+  Beleg (Betrag, Datum, Link in die Prüfansicht), Jahreshochrechnung, Trend,
+  nächste Fälligkeit; die Bezeichnung führt zur Serie. Berechnet rein in PHP
+  (`App\Service\Invoice\SerienKennzahlen`, ohne DB); entschlüsselt werden
+  nur die Belege, die die Kennzahlen brauchen (nach Klartext-Datum
+  ausgewählt: der neueste, der Vergleichsbeleg), ein nicht lesbarer Beleg
+  wird übersprungen statt die Seite abzubrechen:
+  - *Jahreshochrechnung* = erwarteter Betrag × Belege pro Jahr (12/4/2/1);
+    „unregelmäßig“ hat keine. Darüber die Summe je Richtung und Währung
+    über die bestätigten Serien („Ausgaben pro Jahr“).
+  - *Trend* = letzter Betrag gegen den neuesten Beleg der Serie, der
+    mindestens 335 Tage älter ist (≈ Vorjahr), sonst gegen den ältesten; nur
+    Belege in der Währung der Serie mit Betrag > 0 (ist der neueste eine
+    Gutschrift oder in anderer Währung: kein Trend), in Zehntelprozent
+    gerundet, ab zwei Belegen.
+  - *Fälligkeit* nur für bestätigte Serien mit nächster Fälligkeit:
+    „fällig“ ab dem Tag bis einschließlich Fälligkeit + `tolerance_days`,
+    danach **„überfällig“** (Marke, Hinweis mit Anzahl über der Tabelle).
+    Maßgeblich sind nur geprüfte Belege – ein Beleg, der noch im Posteingang
+    liegt, beendet „überfällig“ erst mit dem Prüfen (dann verknüpft ihn die
+    Serie und rechnet `next_expected` weiter). Vorschläge und verworfene
+    Serien sind nie überfällig.
+  - Keine Mail und kein Cron: „überfällig“ entsteht beim Anzeigen (der Cron
+    kann ohne Tresor nichts entschlüsseln, CLAUDE.md §4).
+
 ## 10. Volltextsuche (Session-Index)
 
 **Stand issue #94** (ohne Migration): `/app/suche` findet Belege über ihren
@@ -1760,8 +1843,22 @@ Name eines anderen Lieferanten genannt und nicht gelernt, Vereins-IBAN nicht
 gelernt (dazu `LieferantenAufloesungJobTest`: Stufe 6 ohne Vereins-IBAN,
 Stufe 2 ignoriert sie), abgelehntes Speichern zeigt das Angebot
 wieder, zusammengeführter Lieferant unberührt; `pruefansicht.test.js`);
-Serienerkennung (monatlich, quartalsweise,
-jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb Toleranz);
+Serienerkennung (M8-1: `SerienerkennungTest`: monatlich, quartalsweise,
+halbjährlich, jährlich, unregelmäßig → keine Serie, Preissteigerung innerhalb
+Toleranz, Sprung beendet die Serie, Einzelkauf übersprungen, 2 + KI-Hinweis
+samt Rhythmus, Lücke schneidet ab, Währung/Gutschrift, Monatsende;
+`SerienFlowTest`: „Geprüft“ reiht ein, drei Belege → Vorschlag ohne Klartext,
+zweiter Lauf aktualisiert, festgeschriebene zählen und bleiben unverändert,
+Lieferanten getrennt, Toleranz-Setting, Migration 036, Liste/Formular/
+Bestätigen mit Audit nur Feldnamen, bestätigte Serie übernimmt den nächsten
+Beleg, Verwerfen ohne erneuten Vorschlag, Validierung je Feld, Tresor/CSRF,
+Zusammenführen; `RoutePermissionMatrixTest`; M8-2: `SerienKennzahlenTest`:
+Jahreshochrechnung je Rhythmus, keine bei „unregelmäßig“, Trend gegen ≈
+Vorjahr bzw. ältesten Beleg, keiner bei einem Beleg/anderer Währung,
+„überfällig“ erst nach der Toleranz, nur bestätigte Serien mit Fälligkeit,
+nur benötigte Belege entschlüsselt, unlesbarer übersprungen, Summen;
+`SerienFlowTest`: Übersicht mit „überfällig“, Links zu Serie und Beleg,
+letzter Betrag, Hochrechnung, Trend, Vorschlag nie überfällig);
 Duplikaterkennung (`InhaltsindexTest`: gleiche Bytes gleich unabhängig von der
 Stückelung, Seitenreihenfolge zählt, kein reiner SHA-256, anderer Tresor anders,
 gesperrter Tresor wirft; `DuplikatindexJobTest`: beide Speicher-Backends, ein

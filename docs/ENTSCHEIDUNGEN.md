@@ -302,6 +302,51 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
   bestätigter Beleg ist keine Prüfung seiner Stammdaten.
 
+## E-27 ✅ Allocation-Modell: Zahlungsweg am Beleg, materialisiert abgeleitete Status (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-1 (issue #65), 02 „Fachdaten“, 04 §5, 05 §2/§3*
+
+- **Abgeleitet, aber gespeichert:** `invoice.payment_status` und
+  `bank_transaction.doc_status` (`teilweise`/`zugeordnet`) sind reine
+  Funktionen der Allocation-Summen und werden von genau einem Service
+  (`App\Service\Bank\Zuordnung`) nach jeder Änderung neu geschrieben –
+  niemand setzt sie von Hand, kein Formular zeigt sie editierbar. Gespeichert
+  werden sie trotzdem, weil die Beträge verschlüsselt sind: Die Listen von
+  M10-5 (unbezahlt, fällig, offene Erstattungen, Buchungen ohne Beleg)
+  müssen in SQL filtern und blättern können, ohne jeden Beleg zu
+  entschlüsseln. Das ist dieselbe Stelle, an der M9-6 schon `zugeordnet`
+  vorgesehen hat.
+- **Zahlungsweg als Klartext-Strukturfeld** (`payment_kind`): `konto`,
+  `erstattung`, `bar`, `keine`. Nur die ersten beiden erwarten Buchungen.
+  `bar` = „bar bezahlt ohne Kassenbuchung“ ist **immer bezahlt** (der Beleg
+  ist der Zahlungsnachweis) – so landen Archiv-Belege aus dem Ordner
+  `Kasse` nicht dauerhaft in „unbezahlt“. Wer Kassenbons mit dem Kassenbuch
+  (manuelle Kassenbuchungen, M9-5) abgleichen will, wählt `konto`.
+  **Offen für Mirko:** ob „Bar erhalten“ aus der Einreichung besser `konto`
+  (Kassenbuchung erwartet) als `bar` wäre; ob ein Backfill für vor M10-1
+  erfasste Archiv-Belege (alle `konto`/`offen`) nötig ist – ein
+  Session-Job könnte `kasse` aus dem `vorgabe`-Artefakt nachziehen.
+- **Teilbeträge positiv, Richtung passt:** Der Betrag einer Zuordnung ist
+  der Teil des Belegbruttos, den die Buchung ausgleicht – nie negativ. Eine
+  Gutschrift wird von einer Buchung der **Gegenrichtung** ausgeglichen
+  (Rückzahlung); „Gutschrift gegen Rechnung“ heißt: Rechnung mit
+  Differenzgrund `gutschrift` abschließen, Gutschrift selbst `keine`.
+  Verworfen: negative Allocation-Beträge (eine Gutschrift „im“ Betrag einer
+  Sammelüberweisung) – sie hätten jede Summenprüfung und M10-2/M10-3
+  verkompliziert.
+- **Skonto als Differenzgrund am Beleg** (`difference_reason`), nicht als
+  eigene Allocation-Zeile ohne Buchung: Der Rest ist Brutto − zugeordnet
+  und wird berechnet, nicht gespeichert. Gründe: `skonto`, `gutschrift`,
+  `sonstiges`.
+- **Festgeschriebene Belege** nehmen Zuordnungen an; die Festschreibung
+  schützt den Inhalt des Belegs, nicht seinen Zahlungsverlauf.
+- **Export:** „Referenz“ = Verwendungszweck der ausgleichenden Buchungen
+  (die E-Rechnungs-/SEPA-Referenz `eref` wird derzeit nicht in den
+  Buchungs-Klartext gehoben). **Offen für Mirko:** ob „Referenz“ eher die
+  Buchungs-ID oder `eref` sein soll; ob „bezahlt am“ auch bei teilbezahlt
+  (Datum der letzten Rate) gefüllt werden soll.
+- **Umbuchungen eigene Konten (M10-6)** brauchen keine Allocation: Das sind
+  Buchung↔Buchung-Paare; vorgesehen ist eine eigene Verknüpfung plus ein
+  `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
@@ -317,6 +362,55 @@ Platzhalter, keine Rangfolge (neueste zuerst, höchstens 50); Freitext der
 Einreichung und von Hand erfasste Belegfelder (Zweck, Notiz) gehören nicht
 zum Index – das Issue nennt nur erkannte Texte. Kosten: Der erste Aufbau
 dauert je Session einige Sekunden je 1000 Belege.
+
+## E-26 ❓ Wiederkehrende Rechnungen: Erkennung, Verknüpfung, Verwerfen
+*M8-1 (issue #57) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §9) nennt nur die Eckwerte. Umgesetzt (Details 03 §9 „Stand M8-1“):
+- **Belege über eine eigene Tabelle** `recurring_series_invoice` statt
+  `invoice.recurring_series_id`: festgeschriebene Belege sind unveränderlich
+  (01 §7), und die meisten Belege, in denen man eine Serie erkennt, sind schon
+  festgeschrieben. Spalte `period` statt `interval` (reserviertes Wort),
+  `status` (Vorschlag/bestätigt/verworfen) statt `active`/`confirmed`.
+- **Auslöser „Geprüft“**: nur geprüfte/festgeschriebene Belege zählen
+  (Beträge sind von Menschen bestätigt), je Lieferant **und** Richtung.
+- **Betrag:** ±15 % jeweils zum nächstneueren Beleg (nicht zum Median) – eine
+  Preissteigerung in Schritten bleibt eine Serie. **Rhythmus:** Median der
+  Abstände ± 5/12/20/30 Tage, von zu dicht liegenden Belegen bleibt der besser
+  passende (Einzelkauf mit ähnlichem Betrag), eine Lücke
+  über 2,5 Rhythmen schneidet ab. Toleranz bis „überfällig“: 7/14/21/30 Tage.
+  Die Betragstoleranz ist ein Setting ohne Admin-Seite (Folge-Issue).
+- **Bestätigte Serie verknüpft neue passende Belege automatisch** (mit Audit,
+  auf der Serienseite wieder abwählbar) – die Serie hat ein Mensch bestätigt.
+- **Verwerfen** behält die Verknüpfungen: diese Belege kommen nie wieder als
+  Vorschlag; erst neue Belege können eine neue Serie bilden. Eine verworfene
+  Serie ist nur noch lesbar (kein „Wiederherstellen“).
+- **Nur ohne Scope:** die Seiten verlangen `document.edit` ohne Kostenstellen-/
+  Zeitraum-Einschränkung, weil eine Serie alle Belege eines Lieferanten zeigt.
+- **Noch nicht:** Serien aus Bankbuchungen (Mandatsreferenz), Übersicht mit
+  Jahreshochrechnung/Trend/„überfällig“ (M8-2, #58), Hinweis auf die Serie in
+  der Prüfansicht.
+
+## E-33 ❓ Übersicht „Wiederkehrende Kosten“: Kennzahlen und „überfällig“
+*M8-2 (issue #58) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht“):
+- **Keine neue Seite**, sondern `/app/serien` erweitert (Titel „Wiederkehrende
+  Kosten“, bestätigte Serien vor den Vorschlägen); Recht und „nur ohne Scope“
+  wie E-26. Keine Migration.
+- **Jahreshochrechnung** = erwarteter Betrag × Belege pro Jahr, nicht die
+  Summe der letzten zwölf Monate (die wäre bei neuen Serien zu klein);
+  „unregelmäßig“ bekommt keine. Summe je Richtung und Währung.
+- **Trend** gegen den Beleg etwa ein Jahr davor (≥ 335 Tage), sonst gegen den
+  ältesten der Serie – eine Prozentzahl, kein Diagramm.
+- **„Überfällig“** = heute nach nächster Fälligkeit + Toleranz, nur bei
+  bestätigten Serien; dazwischen „fällig“. Es zählen nur **geprüfte** Belege
+  (wie E-26) – ein noch ungeprüfter Beleg im Posteingang hebt die Markierung
+  nicht auf. Verworfen: Posteingang mitzählen (dort ist der Betrag noch nicht
+  bestätigt und der Lieferant oft noch offen).
+- **Nur Anzeige:** keine Mail, kein Hinweis auf der Startseite/Navigation,
+  kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
+  wäre ein Folge-Issue.
 
 ## E-28 ❓ Worker-Kopplung: Zugangsschlüssel verschlüsselt statt als Hash, Protokoll-Details
 *M7b-1 (issue #51), 07 §4–5 – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
@@ -484,3 +578,40 @@ Variante:
   (wie Update und Speicher-Umzug).
 - **Kein Löschen einzelner Backups** über die Seite (nicht im Umfang des
   Issues); es bleibt bei der Rotation (10).
+
+## E-31 ✅ Dump strömend einspielen: Byte-Offset, Byte-Budget, Fortschritt (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #120, 06 §2*
+
+Die Dump-Phase des Restores merkt sich einen Byte-Offset hinter der letzten
+ausgeführten Anweisung statt eines Statement-Index; jeder Schritt liest nur
+ab dort (`SqlStatementStream`). Getroffen ohne Rückfrage:
+
+- **Byte-Budget 8 MiB je Schritt** zusätzlich zu den 200 Anweisungen (wie
+  bei den Blob-Dateien). Mit Backend `db` trägt ein INSERT von
+  `file_blob_chunk` rund 512 KiB Hex – 200 davon wären ein Request über
+  100 MB. Mindestens eine Anweisung je Schritt, damit die Kette weiterläuft.
+- **Fortschritt in Bytes.** Die Gesamtzahl der Anweisungen kennt man nur
+  nach einem Lesen der ganzen Datei; das wäre wieder ein langer Request.
+  Die Seite zeigt deshalb „Anweisung X eingespielt (P %)“ statt
+  „Anweisung X von Y“.
+- **Offset nach jeder Anweisung in der Session**, nicht erst am Blockende:
+  ein Abbruch durch das Zeitlimit wiederholt höchstens die eine Anweisung,
+  die gerade lief, statt des ganzen Blocks.
+- **Alte Restore-Session wird umgerechnet** statt abgebrochen: der
+  Statement-Index wird einmal durch Lesen bis dorthin in einen Byte-Offset
+  übersetzt (gleiche Zerlegung, nichts wird ausgeführt).
+- **Sitzungseinstellungen des Dumps je Schritt wiederholen** (`SET NAMES`,
+  `FOREIGN_KEY_CHECKS = 0`, am Ende wieder `= 1`) – als Konstanten im
+  `MysqlDumper`, die er selbst schreibt und der `RestoreService` nachspielt; ein
+  allgemeines Nachspielen aller `SET`-Anweisungen gibt es nicht. Behebt
+  nebenbei, dass Restores über 200 Anweisungen schon vorher ab dem zweiten
+  Schritt mit Fremdschlüssel-Prüfung liefen und scheiterten.
+- **Anweisungen über 16 MiB werden abgelehnt** (Speicher konstant; der
+  Dumper erzeugt höchstens ~1 MiB, MariaDBs Standard-`max_allowed_packet`
+  ist 16 MiB).
+
+Offen für Mirko: Die beim Abbruch gerade laufende Anweisung bzw. bei einem
+harten Prozessabbruch (Session nicht mehr geschrieben) der Rest des Blocks
+kann doppelt laufen – dann hilft nur ein
+Restore von vorn. Ganz schließen ließe sich das nur mit einem
+Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).

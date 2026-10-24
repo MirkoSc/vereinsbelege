@@ -70,8 +70,9 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Upload\MagicBytes;
 use App\Tests\Support\DatabaseTestCase;
-use App\Tests\Support\KiAuslesungFabrik;
 use App\Tests\Support\FakeJpeg;
+use App\Tests\Support\KiAuslesungFabrik;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -380,6 +381,31 @@ final class DuplikatFlowTest extends DatabaseTestCase
         self::assertSame('Als Duplikat verworfen: gleicher Lieferant und gleiche Rechnungsnummer wie Beleg #' . $erste . '.', $this->notiz($zweite));
     }
 
+    public function testAReceiptWithAllocationsIsNotDiscarded(): void
+    {
+        $lieferant = $this->lieferant('Rasen & Co. GmbH');
+        $erste = $this->beleg(['eins']);
+        $zweite = $this->beleg(['zwei']);
+        $this->erfassen($erste, $lieferant, self::NUMMER);
+        $this->erfassen($zweite, $lieferant, self::NUMMER, geprueft: true);
+        // Only whether an allocation exists counts here (M10-1) - the row
+        // itself is a stand-in without a real booking behind it.
+        $pdo = $this->pdo();
+        $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+        $pdo->prepare("INSERT INTO allocation (invoice_id, transaction_id, dek_sealed, amount_enc, method, created_at) VALUES (?, 999999, 'x', 'x', 'manuell', NOW())")
+            ->execute([(int) $this->rechnung($zweite)['id']]);
+        $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
+
+        $antwort = $this->post('/app/belege/pruefen/' . $zweite . '/duplikat-verwerfen', []);
+
+        self::assertNotSame(500, $antwort->status);
+        self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($zweite), 'a rejected receipt would keep the booking\'s amount');
+
+        $pdo->exec('DELETE FROM allocation');
+        $this->post('/app/belege/pruefen/' . $zweite . '/duplikat-verwerfen', []);
+        self::assertSame(DocumentStatus::Abgelehnt, $this->belegStatus($zweite));
+    }
+
     public function testDiscardingWithoutSuspicionIsRefused(): void
     {
         $einzeln = $this->einreichung(['Kassenbon']);
@@ -613,6 +639,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
             ...array_fill_keys(Pruefung::feldnamen(), ''),
             'richtung' => 'ausgabe',
             'belegart' => 'rechnung',
+            'zahlungsweg' => 'konto',
             'datum' => '2026-03-14',
             'nummer' => $nummer,
             'lieferant' => (string) $lieferant,
@@ -805,6 +832,8 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto),
                 new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
                 KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
+                new JobRepository($pdo),
+                ZuordnungFabrik::bauen($pdo, $this->audit),
             ),
             new Festschreibung($pdo, $documents, new InvoiceRepository($pdo), $this->audit),
             new CategoryRepository($pdo),

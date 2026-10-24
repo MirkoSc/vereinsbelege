@@ -101,6 +101,15 @@ final readonly class Duplikatpruefung
         $gegenstuecke = $this->gegenstuecke($document);
         $this->inTransaktion(function () use ($document, $gegenstuecke, $vault, $bereich, $userId, $ip, $now): void {
             $kandidaten = $this->kandidatenImLock($document, $gegenstuecke);
+            // A rejected receipt must not hold a booking's amount (M10-1):
+            // checked under the row lock Zuordnung::zuordnen() takes too.
+            $rechnung = $this->invoices->findByDocument($document->id);
+            if ($rechnung !== null) {
+                $this->invoices->find($rechnung->id, sperren: true);
+                if ($this->invoices->hatZuordnungen($rechnung->id)) {
+                    throw new DuplikatRuleViolation('Diesem Beleg sind Buchungen zugeordnet – zuerst die Zuordnungen lösen, dann als Duplikat verwerfen.');
+                }
+            }
             $notiz = FieldCipher::encrypt(
                 $vault->openDataKey($document->dekSealed),
                 self::notiz(self::aufteilen($kandidaten, $bereich)),
@@ -110,11 +119,8 @@ final readonly class Duplikatpruefung
             if (!$this->documents->wechsleStatus($document->id, $document->status, DocumentStatus::Abgelehnt, $notiz, null, $userId, $now)) {
                 throw new DuplikatRuleViolation('Der Beleg wurde inzwischen anders bearbeitet. Bitte die Seite neu laden.');
             }
-            if ($document->status === DocumentStatus::Geprueft) {
-                $rechnung = $this->invoices->findByDocument($document->id);
-                if ($rechnung !== null) {
-                    $this->invoices->setzeUngeprueft($rechnung->id);
-                }
+            if ($document->status === DocumentStatus::Geprueft && $rechnung !== null) {
+                $this->invoices->setzeUngeprueft($rechnung->id);
             }
 
             $this->audit->record(AuditAction::BelegDuplikatVerworfen, $userId, $ip, $document->id, [

@@ -6,8 +6,10 @@ namespace App\Domain;
 
 /**
  * The plaintext part of a captured receipt (issue #37/M6-3): the
- * structural `invoice` columns SQL filters and sorts on. Next to it,
- * App\Domain\InvoiceData holds what goes into the vault.
+ * structural `invoice` columns SQL filters and sorts on - since M10-1
+ * (issue #65) with the Zahlungsweg; the derived payment status is not part
+ * of it, nobody enters it. Next to it, App\Domain\InvoiceData holds what
+ * goes into the vault.
  */
 final readonly class InvoiceStructure
 {
@@ -21,6 +23,7 @@ final readonly class InvoiceStructure
         public ?\DateTimeImmutable $serviceTo,
         public ?int $categoryId,
         public ?int $costCenterId,
+        public Zahlungsweg $paymentKind = Zahlungsweg::Konto,
     ) {
     }
 
@@ -36,6 +39,7 @@ final readonly class InvoiceStructure
             serviceTo: $record->serviceTo,
             categoryId: $record->categoryId,
             costCenterId: $record->costCenterId,
+            paymentKind: $record->paymentKind,
         );
     }
 
@@ -74,6 +78,7 @@ final readonly class InvoiceStructure
             'service_to' => $datum($this->serviceTo),
             'category_id' => $this->categoryId,
             'cost_center_id' => $this->costCenterId,
+            'payment_kind' => $this->paymentKind->value,
         ];
     }
 }
