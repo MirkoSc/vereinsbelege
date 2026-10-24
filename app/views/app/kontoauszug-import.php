@@ -25,16 +25,21 @@
 
 use App\Domain\BalanceCheck;
 use App\Domain\BankImportStatus;
+use App\Service\Bank\Import\ImportFormat;
 
 $fehlerAn = static fn(string $feld): string => $fehlerFeld === $feld ? ' aria-invalid="true" aria-describedby="import-fehler"' : '';
 $profilNamen = [];
 foreach ($profile as $profil) {
     $profilNamen['csv:' . $profil->id] = $profil->name;
 }
-$formatLabel = static fn(string $format): string => match ($format) {
-    'mt940' => 'MT940',
-    'camt053' => 'CAMT.053',
-    default => 'CSV: ' . ($profilNamen[$format] ?? 'gelöschtes Format'),
+$formatLabel = static function (string $wert) use ($profilNamen): string {
+    try {
+        $format = ImportFormat::fromString($wert);
+    } catch (\InvalidArgumentException) {
+        return 'unbekannt';
+    }
+
+    return $format->istCsv() ? 'CSV: ' . ($profilNamen[$wert] ?? 'gelöschtes Format') : $format->bezeichnung();
 };
 $saldoMarke = static fn(?BalanceCheck $b): string => match ($b) {
     BalanceCheck::Ok => 'marke-ok',

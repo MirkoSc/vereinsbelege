@@ -7,6 +7,7 @@ namespace App\Tests\Service\Bank;
 use App\Service\Bank\Camt053Ergebnis;
 use App\Service\Bank\Camt053Exception;
 use App\Service\Bank\Camt053Parser;
+use App\Service\Bank\Kontoauszug;
 use App\Service\Bank\Mt940Parser;
 use App\Service\Bank\Umsatz;
 use App\Service\Bank\Umsatzdetails;
@@ -258,12 +259,58 @@ final class Camt053ParserTest extends TestCase
         self::assertSame('Zuschuss Übungsleiter Q1 2024', self::details($erster->umsaetze[0])->verwendungszweck);
     }
 
-    public function testTheSameStatementTwiceInAZipIsReadOnce(): void
+    public function testTheSameStatementTwiceInAZipIsReadOnceWithItsPendingEntries(): void
     {
         $xml = self::inhalt('sparkasse-053-001-02.xml');
         $ergebnis = new Camt053Parser()->parse(self::zip(['a.xml' => $xml, 'b/kopie.xml' => $xml]));
-
         self::assertCount(2, $ergebnis->auszuege);
+
+        $xml = self::inhalt('vrbank-053-001-08.xml');
+        $ergebnis = new Camt053Parser()->parse(self::zip(['a.xml' => $xml, 'b/kopie.xml' => $xml]));
+        self::assertCount(1, $ergebnis->auszuege);
+        self::assertSame(1, $ergebnis->vorgemerkt);
+    }
+
+    public function testStatementsOfOneDayFollowTheirSequenceNumber(): void
+    {
+        $tag = static fn(string $nr, string $anfang, string $schluss, string $betrag): string => str_replace(
+            '<Id>T1</Id>',
+            '<Id>T' . $nr . '</Id><ElctrncSeqNb>' . $nr . '</ElctrncSeqNb>',
+            self::stmt(self::bal('PRCD', $anfang, '2024-05-02') . self::bal('CLBD', $schluss, '2024-05-02'), self::ntry($betrag, 'CRDT', '2024-05-02')),
+        );
+        $ergebnis = new Camt053Parser()->parse(self::zip(['spaet.xml' => $tag('10', '3.00', '6.00', '3.00'), 'frueh.xml' => $tag('9', '1.00', '3.00', '2.00')]));
+
+        self::assertSame(['9', '10'], array_map(static fn(Kontoauszug $a): ?string => $a->auszugsnummer, $ergebnis->auszuege));
+    }
+
+    public function testPurposeElementsAreJoinedByTheirTrimmedLength(): void
+    {
+        $voll = str_pad('Beitrag', 139, '.') . ' ';
+        $tx = static fn(string ...$ustrd): string => self::stmt(
+            self::bal('PRCD', '0', '2024-05-01') . self::bal('CLBD', '1.00', '2024-05-01'),
+            str_replace('</BookgDt>', '</BookgDt><NtryDtls><TxDtls><RmtInf>' . implode('', array_map(static fn(string $u): string => '<Ustrd>' . $u . '</Ustrd>', $ustrd)) . '</RmtInf></TxDtls></NtryDtls>', self::ntry('1.00', 'CRDT', '2024-05-01')),
+        );
+        $zweck = static fn(string $xml): string => (string) new Camt053Parser()->parse($xml)->auszuege[0]->umsaetze[0]->details?->verwendungszweck;
+
+        self::assertSame(rtrim($voll) . ' 4711 Danke', $zweck($tx($voll, '4711 Danke')), 'A full element ending in a space ended on a word.');
+        self::assertSame('Beitrag 2024 Danke', $zweck($tx("\n" . str_repeat(' ', 140) . 'Beitrag 2024' . "\n    ", 'Danke')), 'Indentation is no text.');
+    }
+
+    public function testADateTimeIsReadInBerlinWhateverZoneTheProcessRunsIn(): void
+    {
+        $xml = self::stmt(
+            self::bal('PRCD', '0', '2023-12-31') . self::bal('CLBD', '1.00', '2024-01-01'),
+            '<Ntry><Amt Ccy="EUR">1.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><DtTm>2023-12-31T23:30:00Z</DtTm></BookgDt></Ntry>',
+        );
+        $vorher = date_default_timezone_get();
+        date_default_timezone_set('UTC');
+        try {
+            $umsatz = new Camt053Parser()->parse($xml)->auszuege[0]->umsaetze[0];
+        } finally {
+            date_default_timezone_set($vorher);
+        }
+
+        self::assertSame('2024-01-01', self::datum($umsatz->buchungsdatum));
     }
 
     /**
@@ -350,6 +397,9 @@ final class Camt053ParserTest extends TestCase
         yield 'empty' => ['', 'keine lesbare XML-Datei'];
         yield 'no XML' => ['Datum;Betrag 99999', 'keine lesbare XML-Datei'];
         yield 'broken XML' => ['<Document><BkToCstmrStmt><Stmt>Geheim', 'keine lesbare XML-Datei'];
+        yield 'doctype in UTF-16' => [(string) mb_convert_encoding('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE Document [<!ENTITY g "Geheim">]><Document><BkToCstmrStmt><Stmt>&g;</Stmt></BkToCstmrStmt></Document>', 'UTF-16LE', 'UTF-8'), 'keine lesbare XML-Datei'];
+        yield 'second statement of a file' => [str_replace('</Stmt></BkToCstmrStmt>', '</Stmt><Stmt><Id>T2</Id><Acct><Id><IBAN>DE41500105170123456789</IBAN></Id></Acct>' . self::bal('PRCD', '1.00', '2024-05-01') . '</Stmt></BkToCstmrStmt>', self::stmt($ok, '')), 'Auszug 2: Der Schlusssaldo (CLBD) fehlt.'];
+        yield 'statement numbers count per file in a zip' => [self::zip(['a.xml' => self::stmt($ok, ''), 'liesmich.txt' => 'x', 'b.xml' => self::stmt(self::bal('PRCD', '1.00', '2024-05-01'), '')]), 'XML-Datei 2 im ZIP: Auszug 1: Der Schlusssaldo (CLBD) fehlt.'];
         yield 'doctype' => ['<?xml version="1.0"?><!DOCTYPE x [<!ENTITY g "Geheim">]><Document><BkToCstmrStmt/></Document>', 'keine lesbare XML-Datei'];
         yield 'camt.052' => ['<Document><BkToCstmrAcctRpt><Rpt/></BkToCstmrAcctRpt></Document>', 'CAMT.052'];
         yield 'camt.054' => ['<Document><BkToCstmrDbtCdtNtfctn/></Document>', 'CAMT.054'];
@@ -366,7 +416,7 @@ final class Camt053ParserTest extends TestCase
         yield 'no booking date' => [self::stmt($ok, '<Ntry><Amt Ccy="EUR">1.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts></Ntry>'), 'Auszug 1, Buchung 1: Das Buchungsdatum (BookgDt) fehlt.'];
         yield 'no currency' => [self::stmt($ok, '<Ntry><Amt>1.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2024-05-01</Dt></BookgDt></Ntry>'), 'Auszug 1, Buchung 1: Die Währung (Ccy) fehlt.'];
         yield 'zip without XML' => [self::zip(['liesmich.txt' => 'Geheim']), 'Das ZIP enthält keine XML-Datei.'];
-        yield 'broken file in zip' => [self::zip(['a.xml' => self::stmt($ok, ''), 'b.xml' => 'Geheim 99999']), 'Datei 2 im ZIP: Die Datei ist keine lesbare XML-Datei.'];
+        yield 'broken file in zip' => [self::zip(['a.xml' => self::stmt($ok, ''), 'b.xml' => 'Geheim 99999']), 'XML-Datei 2 im ZIP: Die Datei ist keine lesbare XML-Datei.'];
     }
 
     #[DataProvider('kaputt')]

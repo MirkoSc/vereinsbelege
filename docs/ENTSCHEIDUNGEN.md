@@ -211,5 +211,5 @@ Variante:
   mit dem Hinweis, CAMT.053 zu exportieren – sie haben keinen festen
   Schlusssaldo bzw. sind keine Kontoauszüge.
 - **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
-  Textdateien) wird stillschweigend ignoriert; Grenzen 10 MB je Datei,
-  20 MB entpackt.
+  Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
+  10 MB entpackt.

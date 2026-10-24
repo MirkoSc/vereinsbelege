@@ -53,11 +53,16 @@ use App\Service\Archiv\ZipLeser;
  */
 final class Camt053Parser
 {
-    /** Largest XML file read, also per entry of a ZIP. */
-    public const int MAX_XML_BYTES = 10 * 1024 * 1024;
+    /**
+     * Largest XML file read, also per entry of a ZIP. Every step of the
+     * import chain reads the file again: a year of daily statements of a
+     * busy account (7,300 entries, 4.5 MB of XML) takes about half a second
+     * and 35 MB.
+     */
+    public const int MAX_XML_BYTES = 5 * 1024 * 1024;
 
     /** All XML of a ZIP together. */
-    private const int MAX_ZIP_SUMME = 20 * 1024 * 1024;
+    private const int MAX_ZIP_SUMME = 10 * 1024 * 1024;
 
     /** More statement files than a decade of daily statements. */
     private const int MAX_ZIP_DATEIEN = 5000;
@@ -66,6 +71,9 @@ final class Camt053Parser
     private const int USTRD_LAENGE = 140;
 
     private const string NICHT_ANGEGEBEN = 'NOTPROVIDED';
+
+    /** Dates are calendar days of the club (CLAUDE.md section 5). */
+    private const string ZEITZONE = 'Europe/Berlin';
 
     public static function istZip(string $inhalt): bool
     {
@@ -85,37 +93,46 @@ final class Camt053Parser
      */
     public function parse(string $inhalt): Camt053Ergebnis
     {
-        $auszuege = [];
-        $vorgemerkt = 0;
-        $dateien = self::istZip($inhalt) ? $this->ausZip($inhalt) : [$inhalt];
-        $mehrere = count($dateien) > 1 || self::istZip($inhalt);
-        $nr = 0;
-        foreach ($dateien as $i => $xml) {
+        $zip = self::istZip($inhalt);
+        $gelesen = [];
+        foreach ($zip ? $this->ausZip($inhalt) : [$inhalt] as $i => $xml) {
             try {
-                [$gelesen, $offen] = $this->datei($xml, $nr);
+                array_push($gelesen, ...$this->datei($xml));
             } catch (Camt053Exception $e) {
-                throw $mehrere ? new Camt053Exception(sprintf('Datei %d im ZIP: %s', $i + 1, $e->getMessage())) : $e;
+                throw $zip ? new Camt053Exception(sprintf('XML-Datei %d im ZIP: %s', $i + 1, $e->getMessage())) : $e;
             }
-            $nr += count($gelesen);
-            array_push($auszuege, ...$gelesen);
-            $vorgemerkt += $offen;
         }
 
+        // The same statement twice (a ZIP of overlapping downloads) counts once.
         $gesehen = [];
         $eindeutig = [];
-        foreach ($auszuege as $auszug) {
+        foreach ($gelesen as [$auszug, $vorgemerkt]) {
             $schluessel = $auszug->konto->roh . "\0" . $auszug->referenz;
             if ($auszug->referenz !== '' && isset($gesehen[$schluessel])) {
                 continue;
             }
             $gesehen[$schluessel] = true;
-            $eindeutig[] = $auszug;
+            $eindeutig[] = [$auszug, $vorgemerkt];
         }
 
-        // Chronological, stable: statements of one day keep the file order.
-        usort($eindeutig, static fn(Kontoauszug $a, Kontoauszug $b): int => [$a->anfangssaldo->datum, $a->schlusssaldo->datum] <=> [$b->anfangssaldo->datum, $b->schlusssaldo->datum]);
+        // Chronological; statements of one day by their sequence number,
+        // otherwise (stable sort) in file order.
+        usort($eindeutig, static fn(array $a, array $b): int => self::reihenfolge($a[0]) <=> self::reihenfolge($b[0]));
 
-        return new Camt053Ergebnis($eindeutig, $vorgemerkt);
+        return new Camt053Ergebnis(
+            array_map(static fn(array $paar): Kontoauszug => $paar[0], $eindeutig),
+            array_sum(array_map(static fn(array $paar): int => $paar[1], $eindeutig)),
+        );
+    }
+
+    /**
+     * @return array{\DateTimeImmutable, \DateTimeImmutable, int}
+     */
+    private static function reihenfolge(Kontoauszug $auszug): array
+    {
+        $nummer = $auszug->auszugsnummer !== null && ctype_digit($auszug->auszugsnummer) ? (int) $auszug->auszugsnummer : 0;
+
+        return [$auszug->anfangssaldo->datum, $auszug->schlusssaldo->datum, $nummer];
     }
 
     /**
@@ -145,7 +162,7 @@ final class Camt053Parser
                 try {
                     $xml = implode('', iterator_to_array($zip->inhalt($eintrag, self::MAX_XML_BYTES), false));
                 } catch (ZipEintragDefekt $e) {
-                    throw new Camt053Exception(sprintf('Datei %d im ZIP: %s', count($dateien) + 1, $e->getMessage()));
+                    throw new Camt053Exception(sprintf('XML-Datei %d im ZIP: %s', count($dateien) + 1, $e->getMessage()));
                 }
                 $summe += strlen($xml);
                 $dateien[] = $xml;
@@ -161,12 +178,12 @@ final class Camt053Parser
     }
 
     /**
-     * @return array{list<Kontoauszug>, int} the statements and the skipped
-     *         entries not yet booked
+     * @return list<array{Kontoauszug, int}> each statement with the number of
+     *         its skipped entries not yet booked
      *
      * @throws Camt053Exception
      */
-    private function datei(string $xml, int $bisher): array
+    private function datei(string $xml): array
     {
         if (strlen($xml) > self::MAX_XML_BYTES) {
             throw new Camt053Exception('Die XML-Datei ist zu groß.');
@@ -178,7 +195,10 @@ final class Camt053Parser
         $vorher = libxml_use_internal_errors(true);
         try {
             $dom = new \DOMDocument();
-            if (!$dom->loadXML($xml, LIBXML_NONET) || $dom->documentElement === null) {
+            // The byte search above misses a DOCTYPE in UTF-16; libxml does
+            // not substitute entities without LIBXML_NOENT, and the file is
+            // refused here all the same.
+            if (!$dom->loadXML($xml, LIBXML_NONET) || $dom->documentElement === null || $dom->doctype !== null) {
                 throw new Camt053Exception('Die Datei ist keine lesbare XML-Datei.');
             }
             $nachricht = self::kind($dom->documentElement, 'BkToCstmrStmt');
@@ -187,17 +207,14 @@ final class Camt053Parser
             }
 
             $auszuege = [];
-            $vorgemerkt = 0;
-            foreach (self::kinder($nachricht, 'Stmt') as $stmt) {
-                [$auszug, $offen] = $this->auszug($stmt, $bisher + count($auszuege) + 1);
-                $auszuege[] = $auszug;
-                $vorgemerkt += $offen;
+            foreach (self::kinder($nachricht, 'Stmt') as $i => $stmt) {
+                $auszuege[] = $this->auszug($stmt, $i + 1);
             }
             if ($auszuege === []) {
                 throw new Camt053Exception('Die Datei enthält keinen Kontoauszug (Stmt).');
             }
 
-            return [$auszuege, $vorgemerkt];
+            return $auszuege;
         } catch (\ValueError) {
             throw new Camt053Exception('Die Datei ist keine lesbare XML-Datei.');
         } finally {
@@ -239,7 +256,8 @@ final class Camt053Parser
         $zwischen = $salden['ITBD'] ?? [];
         $anfangsElement = $salden['OPBD'][0] ?? $salden['PRCD'][0] ?? null;
         $anfangZwischen = $anfangsElement === null;
-        if ($anfangZwischen && ($zwischen !== [] && (count($zwischen) > 1 || isset($salden['CLBD'])))) {
+        // An interim balance opens only if another one is left to close.
+        if ($anfangZwischen && count($zwischen) + (isset($salden['CLBD']) ? 1 : 0) >= 2) {
             $anfangsElement = array_shift($zwischen);
         }
         $schlussElement = $salden['CLBD'][0] ?? ($zwischen === [] ? null : $zwischen[count($zwischen) - 1]);
@@ -414,8 +432,10 @@ final class Camt053Parser
             if ($teil === '') {
                 continue;
             }
+            // A full element was cut mid-text; a shorter one (or one that
+            // ended in a space, trimmed now) ended on a word.
             $text .= ($vorher === null || mb_strlen($vorher) >= self::USTRD_LAENGE ? '' : ' ') . $teil;
-            $vorher = $ustrd->textContent;
+            $vorher = $teil;
         }
         if ($text !== '') {
             return $text;
@@ -492,8 +512,9 @@ final class Camt053Parser
     }
 
     /**
-     * `<X><Dt>` or `<X><DtTm>` as a calendar day in the application's time
-     * zone (Europe/Berlin), null when the element is missing.
+     * `<X><Dt>` or `<X><DtTm>` as a calendar day - a date-time as its day in
+     * Europe/Berlin, whatever zone the process runs in - null when the
+     * element is missing.
      *
      * @throws Camt053Exception
      */
@@ -513,7 +534,7 @@ final class Camt053Parser
             $datum = null;
             if ($zeit !== null && preg_match('/^\d{4}-\d{2}-\d{2}T/', $zeit) === 1) {
                 try {
-                    $lokal = new \DateTimeImmutable($zeit)->setTimezone(new \DateTimeZone(date_default_timezone_get()));
+                    $lokal = new \DateTimeImmutable($zeit)->setTimezone(new \DateTimeZone(self::ZEITZONE));
                     $datum = new \DateTimeImmutable($lokal->format('Y-m-d'));
                 } catch (\Exception) {
                     $datum = null;

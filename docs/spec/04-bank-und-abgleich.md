@@ -160,12 +160,18 @@ Festgelegte Regeln:
 - **Datei:** eine XML-Datei mit einem oder mehreren `Stmt`, oder ein
   **ZIP** mit mehreren solchen Dateien (Tagesauszüge eines Zeitraums). Aus
   dem ZIP zählen nur `.xml`-Einträge (ohne `__MACOSX/` und Punktdateien),
-  höchstens 10 MB je Datei und 20 MB entpackt insgesamt – gelesen mit
+  höchstens 5 MB je Datei und 10 MB entpackt insgesamt – gelesen mit
   `App\Service\Archiv\ZipLeser` im Speicher, nichts landet in `var/tmp`.
-  Derselbe Auszug (`Stmt/Id`) zweimal wird einmal gelesen. Die Auszüge
-  werden nach Anfangs-, dann Schlusssaldo-Datum sortiert (stabil), damit
-  Reihenfolge und laufende Dedup-Nummer nicht von der Dateireihenfolge im
-  ZIP abhängen. `DOCTYPE` wird abgelehnt (keine Entitäten, kein Netz).
+  Jeder Schritt der Kette liest die Datei neu (wie bei MT940/CSV); ein Jahr
+  Tagesauszüge mit 7.300 Buchungen (4,5 MB XML) dauert rund 0,5 s bei
+  35 MB Speicher. Derselbe Auszug (`Stmt/Id`) zweimal wird einmal gelesen
+  (auch seine vorgemerkten Einträge zählen einmal). Die Auszüge werden nach
+  Anfangs-, dann Schlusssaldo-Datum, dann Auszugsnummer sortiert (sonst
+  stabil), damit Reihenfolge und laufende Dedup-Nummer nicht von der
+  Dateireihenfolge im ZIP abhängen. Ein `DOCTYPE` wird abgelehnt – vor dem
+  Parsen per Bytesuche und danach am Dokument (UTF-16) –, keine Entitäten,
+  kein Netz. Fehlermeldungen zählen „XML-Datei n im ZIP“ und „Auszug n“ je
+  Datei.
 - **Konto:** `Acct/Id/IBAN` (als Kontozeile und für die Zuordnung über
   `iban_bi`), sonst `Acct/Id/Othr/Id` nur als Rohwert („Merken“ wie bei
   MT940). Auszüge mehrerer Konten in einer Datei/einem ZIP → abgelehnt.
