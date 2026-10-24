@@ -9,17 +9,24 @@ namespace App\Service\Invoice;
  *
  * @param list<string> $warnungen hints that did not stop the save (the sum
  *        check), German, without any value of the receipt
+ * @param list<string> $gelernt what the receipt taught its supplier (issue
+ *        #201/M7-6b) - German labels ("IBAN"), no values
+ * @param bool $nichtGelernt learning was refused: the plan changed since
+ *        the page was shown, or a parallel save won the locks
  */
 final readonly class PruefErgebnis
 {
     /**
      * @param list<string> $warnungen
+     * @param list<string> $gelernt
      */
     public function __construct(
         public int $invoiceId,
         public bool $geprueft,
         public array $warnungen,
         public bool $lieferantAngelegt,
+        public array $gelernt = [],
+        public bool $nichtGelernt = false,
     ) {
     }
 }
