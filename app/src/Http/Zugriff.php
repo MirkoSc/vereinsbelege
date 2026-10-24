@@ -38,6 +38,17 @@ final readonly class Zugriff
         return new self(ZugriffArt::Cron);
     }
 
+    /**
+     * No session; the request must be signed by a paired worker
+     * (docs/spec/07-worker.md section 4, issue #51/M7b-1). app/src/routes.php
+     * wraps every such route in App\Service\Worker\WorkerAuth, derived
+     * from this declaration like the login guard.
+     */
+    public static function worker(): self
+    {
+        return new self(ZugriffArt::Worker);
+    }
+
     /** Any logged-in account - things every account does for itself. */
     public static function angemeldet(): self
     {
@@ -64,7 +75,7 @@ final readonly class Zugriff
     public function brauchtAnmeldung(): bool
     {
         return match ($this->art) {
-            ZugriffArt::Oeffentlich, ZugriffArt::Cron => false,
+            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Worker => false,
             ZugriffArt::Angemeldet, ZugriffArt::Recht, ZugriffArt::AdminBereich => true,
         };
     }
@@ -75,6 +86,7 @@ final readonly class Zugriff
         return match ($this->art) {
             ZugriffArt::Oeffentlich => 'öffentlich',
             ZugriffArt::Cron => 'cron-token',
+            ZugriffArt::Worker => 'worker-signatur',
             ZugriffArt::Angemeldet => 'angemeldet',
             ZugriffArt::Recht => (string) $this->recht?->value,
             ZugriffArt::AdminBereich => 'admin.*',

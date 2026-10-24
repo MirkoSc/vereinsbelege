@@ -66,6 +66,8 @@ final class RoutePermissionMatrixTest extends TestCase
         '/einreichen/upload/{id:[0-9a-f]+}/chunk/{n:\d+}',
         '/einreichen/upload/{id:[0-9a-f]+}/finish',
         '/einreichen/upload/{id:[0-9a-f]+}/abort',
+        // Issue #51/M7b-1: the one-time pairing code is the credential.
+        '/api/worker/pair',
     ];
 
     private ?SessionUser $angemeldet = null;
@@ -141,10 +143,33 @@ final class RoutePermissionMatrixTest extends TestCase
     public function testOnlyTheAllowlistIsPublic(): void
     {
         foreach ($this->router()->routes() as $route) {
+            // Signed by a paired worker - not public, see the test below.
+            if ($route->zugriff->art === ZugriffArt::Worker) {
+                continue;
+            }
             if (!$route->zugriff->brauchtAnmeldung()) {
                 self::assertContains($route->pattern, self::OEFFENTLICH, $route->pattern . ' is public but not on the allowlist');
             }
         }
+    }
+
+    /**
+     * Issue #51/M7b-1: every worker route but the pairing is signed, and
+     * the signature declaration exists only under /api/worker/.
+     */
+    public function testWorkerRoutesAreSignedAndOnlyThere(): void
+    {
+        $gefunden = 0;
+        foreach ($this->router()->routes() as $route) {
+            $unterWorker = str_starts_with($route->pattern, '/api/worker/');
+            if ($route->zugriff->art === ZugriffArt::Worker) {
+                self::assertTrue($unterWorker, $route->pattern . ' is declared worker outside /api/worker/');
+                ++$gefunden;
+            } elseif ($unterWorker) {
+                self::assertSame('/api/worker/pair', $route->pattern, $route->pattern . ' under /api/worker/ is not signed');
+            }
+        }
+        self::assertGreaterThan(0, $gefunden);
     }
 
     /**
@@ -193,6 +218,12 @@ final class RoutePermissionMatrixTest extends TestCase
             if (str_starts_with($route->pattern, '/api/rasterung/')) {
                 self::assertSame(Permission::DocumentEdit, $route->zugriff->recht, $route->pattern);
 
+                continue;
+            }
+
+            // The worker API (issue #51/M7b-1): no account at all - see
+            // testWorkerRoutesAreSignedAndOnlyThere().
+            if (str_starts_with($route->pattern, '/api/worker/')) {
                 continue;
             }
 
@@ -516,7 +547,7 @@ final class RoutePermissionMatrixTest extends TestCase
         }
 
         return match ($zugriff->art) {
-            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Angemeldet => true,
+            ZugriffArt::Oeffentlich, ZugriffArt::Cron, ZugriffArt::Worker, ZugriffArt::Angemeldet => true,
             ZugriffArt::AdminBereich => $berechtigungen->darfAdminBereich(),
             ZugriffArt::Recht => $zugriff->recht !== null && $berechtigungen->darf($zugriff->recht),
         };
@@ -682,8 +713,15 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             // The recurring series pages (issue #57/M8-1), optional.
             $stellvertreter,
-            // The matching page (issue #66/M10-2), optional and last.
-            $stellvertreter,
+            // The optional worker (issue #51/M7b-1). The signature check is
+            // a stand-in here like the controllers: what this test pins is
+            // the declarations; tests/Service/Worker/WorkerAuthTest checks
+            // the signature itself.
+            workerAuth: $stellvertreter,
+            workerApi: $stellvertreter,
+            workerAdmin: $stellvertreter,
+            // The matching page (issue #66/M10-2), optional.
+            abgleich: $stellvertreter,
         );
 
         return $router;
