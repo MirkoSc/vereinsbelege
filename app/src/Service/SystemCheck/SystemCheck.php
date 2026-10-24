@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service\SystemCheck;
 
+use App\Service\Update\DenyHtaccess;
+
 /**
  * The runtime counterpart to tools/hosting-check.php: that script is run once
  * by hand before the installation, this one answers "is it still true?" on a
@@ -55,20 +57,34 @@ final readonly class SystemCheck
         'curl' => 'Ausgehende Aufrufe: KI-Anbieter, Update-Suche, Mail.',
     ];
 
+    /** Where shared/config.php would be if a domain pointed one level above web/. */
+    public const string CONFIG_PROBE_PATH = '/shared/config.php';
+
     /**
      * @param ?string $varDir absolute path of shared/var; without it the
      *        write check is left out, like the database check without a PDO
+     * @param (\Closure(string): ?int)|null $statusProbe HTTP status of a URL,
+     *        null without an answer (CurlStatusProbe); without it, or without
+     *        an origin for all(), the config exposure check is left out
+     * @param ?string $sharedDir absolute path of shared/; its parent holds
+     *        the directories whose deny-all .htaccess is checked
      */
     public function __construct(
         private ?\PDO $pdo = null,
         private ?string $varDir = null,
+        private ?\Closure $statusProbe = null,
+        private ?string $sharedDir = null,
     ) {
     }
 
     /**
+     * @param ?string $origin scheme, host and port this installation is
+     *        reached under ("https://belege.example"), for the config
+     *        exposure check
+     *
      * @return list<CheckResult>
      */
-    public function all(): array
+    public function all(?string $origin = null): array
     {
         $results = [$this->exceptionIgnoreArgs()];
 
@@ -87,6 +103,14 @@ final readonly class SystemCheck
 
         if ($this->varDir !== null) {
             $results[] = $this->varWritable($this->varDir);
+        }
+
+        if ($this->sharedDir !== null) {
+            $results[] = $this->directoryLocks(dirname($this->sharedDir));
+        }
+
+        if ($origin !== null && $this->statusProbe !== null) {
+            $results[] = $this->configExposure($origin);
         }
 
         return $results;
@@ -315,6 +339,96 @@ final readonly class SystemCheck
                 ? 'Blobs, Backups, Log und temporäre Dateien lassen sich ablegen.'
                 : 'Ohne Schreibrechte scheitern Uploads, Backups und das Log.',
         );
+    }
+
+    /**
+     * Issue #101, from the file system: do shared/, releases/ and current/
+     * still carry a .htaccess that locks them? Read only - the installer and
+     * the updater write the files, this page only looks. A gap is a warning,
+     * not a failure: as long as the domain points at web/ nothing is
+     * exposed, but the second line of defence is gone. The directory names
+     * are relative, no server path reaches the output.
+     */
+    public function directoryLocks(string $baseDir): CheckResult
+    {
+        $offen = [];
+        foreach (DenyHtaccess::DIRECTORIES as $name) {
+            $dir = rtrim($baseDir, '/') . '/' . $name;
+            if (!is_dir($dir)) {
+                continue;
+            }
+            $file = $dir . '/.htaccess';
+            if (!is_file($file) || !DenyHtaccess::denies((string) @file_get_contents($file))) {
+                $offen[] = $name . '/';
+            }
+        }
+
+        return new CheckResult(
+            key: 'directory_locks',
+            label: 'Zugriffssperre (.htaccess) neben dem Web-Verzeichnis',
+            expected: implode(', ', array_map(static fn(string $d): string => $d . '/', DenyHtaccess::DIRECTORIES)),
+            actual: $offen === [] ? 'gesperrt' : 'fehlt in ' . implode(', ', $offen),
+            status: $offen === [] ? CheckStatus::Ok : CheckStatus::Warn,
+            detail: $offen === []
+                ? 'Auch eine Domain, die eine Ebene zu hoch zeigt, bekäme nichts ausgeliefert.'
+                : 'Die Installation und jedes Update legen die Datei an. Fehlt sie weiter: Schreibrechte '
+                    . 'prüfen oder eine .htaccess mit „Require all denied“ per FTP anlegen.',
+        );
+    }
+
+    /**
+     * Issue #101: is shared/config.php served under the installation's own
+     * domain? It is not as long as the domain points at web/ - but that is a
+     * setting in the hoster's customer menu. Any 2xx means the file (server
+     * key, database password) is out in the open: fail.
+     *
+     * The probe can only see the domain this page was opened under; another
+     * domain of the same hosting account that points higher up stays
+     * invisible to it - that is what directoryLocks() is for.
+     *
+     * 401/403/404/410 are the expected answers. Anything else - a server
+     * error, no answer at all - proves neither, so it warns rather than
+     * claiming safety. Only the status code is shown; the URL is built from
+     * the origin alone and holds no server path.
+     */
+    public function configExposure(string $origin): CheckResult
+    {
+        $url = rtrim($origin, '/') . self::CONFIG_PROBE_PATH;
+        $status = $this->statusProbe === null ? null : ($this->statusProbe)($url);
+
+        $result = static fn(string $actual, CheckStatus $rating, string $detail): CheckResult => new CheckResult(
+            key: 'config_exposure',
+            label: 'shared/config.php von außen gesperrt',
+            expected: 'nicht abrufbar (403/404)',
+            actual: $actual,
+            status: $rating,
+            detail: $detail,
+        );
+
+        return match (true) {
+            $status === null => $result(
+                'keine Antwort',
+                CheckStatus::Warn,
+                'Der Server hat auf ' . self::CONFIG_PROBE_PATH . ' nicht geantwortet – die Prüfung ist '
+                    . 'ohne Ergebnis. Von außen im Browser nachprüfen.',
+            ),
+            $status >= 200 && $status < 300 => $result(
+                'abrufbar (HTTP ' . $status . ')',
+                CheckStatus::Fail,
+                'Die Konfiguration mit Server-Schlüssel und Datenbank-Zugang ist über die Domain erreichbar. '
+                    . 'Sofort die Domain im Kundenmenü auf den web-Ordner legen und die .htaccess in shared/ prüfen.',
+            ),
+            in_array($status, [401, 403, 404, 410], true) => $result(
+                'gesperrt (HTTP ' . $status . ')',
+                CheckStatus::Ok,
+                'Die Domain liefert ' . self::CONFIG_PROBE_PATH . ' nicht aus.',
+            ),
+            default => $result(
+                'unklar (HTTP ' . $status . ')',
+                CheckStatus::Warn,
+                'Weder ausgeliefert noch eindeutig gesperrt. Von außen im Browser nachprüfen.',
+            ),
+        };
     }
 
     /**

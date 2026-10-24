@@ -20,6 +20,10 @@
  * A field the AI filled in unsure (issue #47/M7-5) is yellow and says
  * "KI unsicher" in its label - colour alone would not reach everyone.
  *
+ * A suggested category says below the field where it came from - a rule,
+ * the supplier, the AI with its confidence (issue #49/M7-7). It stays a
+ * suggestion: the field can be changed until the receipt is saved.
+ *
  * @var \App\Domain\InboxItem $eintrag
  * @var bool $entsperrt
  * @var bool $bearbeitbar the form may be saved
@@ -48,6 +52,7 @@
  * @var list<string> $archivHinweise what the archive import read, and where it differs (issue #77/M12-3)
  * @var \App\Service\Document\KiAuszug|null $ki the AI's suggestion, only before a receipt is saved (issue #47/M7-5)
  * @var list<string> $unsicher form fields the AI filled in unsure (confidence below 0.7)
+ * @var string|null $kategorieHerkunft where the suggested category came from - rule, supplier, AI (issue #49/M7-7)
  * @var string $lieferantHinweis how the supplier was resolved - step and value (issue #48/M7-6)
  * @var bool $lieferantPruefen the chosen supplier was created by the AI and is still to review
  * @var bool $kiLaeuft an AI run for this document is queued or running
@@ -362,7 +367,7 @@ $rollenGruppe = [
             </fieldset>
 
             <label for="pruefen-kategorie">Kategorie<?= $unsicherMarke('kategorie') ?>
-                <select id="pruefen-kategorie" name="kategorie"<?= $unsicherAn('kategorie') ?><?= $fehlerAn('kategorie') ?>>
+                <select id="pruefen-kategorie" name="kategorie"<?= $unsicherAn('kategorie') ?><?= $fehlerAn('kategorie') ?><?= $kategorieHerkunft !== null && $fehlerFeld !== 'kategorie' ? ' aria-describedby="pruefen-kategorie-herkunft"' : '' ?>>
                     <option value="">Keine</option>
                     <?php foreach (CategoryDirection::cases() as $richtung): ?>
                         <?php if (($kategorieGruppen[$richtung->value] ?? []) !== []): ?>
@@ -375,6 +380,9 @@ $rollenGruppe = [
                     <?php endforeach; ?>
                 </select>
             </label>
+            <?php if ($kategorieHerkunft !== null): ?>
+                <p class="feld-hilfe" id="pruefen-kategorie-herkunft">Vorgeschlagen von: <?= e($kategorieHerkunft) ?></p>
+            <?php endif; ?>
 
             <label for="pruefen-kostenstelle">Kostenstelle (Mannschaft/Bereich)
                 <select id="pruefen-kostenstelle" name="kostenstelle"<?= $fehlerAn('kostenstelle') ?>>

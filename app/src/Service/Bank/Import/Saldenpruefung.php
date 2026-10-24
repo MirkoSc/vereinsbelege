@@ -13,7 +13,8 @@ use App\Service\Bank\Kontoauszug;
  * preview, never a reason to refuse the import.
  *
  * The file against itself:
- * - MT940: per statement opening balance + bookings = closing balance
+ * - MT940 and CAMT.053 (issue #91): per statement opening balance +
+ *   bookings = closing balance
  *   (App\Service\Bank\Kontoauszug::saldoStimmt()), and between two
  *   statements the closing balance of one is the opening balance of the
  *   next - otherwise a statement is missing from the file.
@@ -38,7 +39,7 @@ final class Saldenpruefung
             return new SaldenErgebnis(BalanceCheck::NichtVerfuegbar, [], null);
         }
 
-        $punkte = $datei->format->istMt940() ? self::mt940($datei) : self::csv($datei);
+        $punkte = $datei->format->hatAuszuege() ? self::auszuege($datei) : self::csv($datei);
 
         $anschluss = null;
         $anfang = self::dateiAnfangCent($datei);
@@ -62,7 +63,7 @@ final class Saldenpruefung
 
     /**
      * The balance before the file's first booking, as the file states it:
-     * the opening balance of the earliest MT940 statement, or the first
+     * the opening balance of the earliest MT940/CAMT.053 statement, or the first
      * CSV balance minus its amount. Null when the file carries no balances.
      */
     public static function dateiAnfangCent(ImportDatei $datei): ?int
@@ -70,7 +71,7 @@ final class Saldenpruefung
         if (!$datei->hatSalden()) {
             return null;
         }
-        if ($datei->format->istMt940()) {
+        if ($datei->format->hatAuszuege()) {
             return self::chronologisch($datei->auszuege)[0]->anfangssaldo->cent;
         }
         $erster = $datei->posten[0];
@@ -81,7 +82,7 @@ final class Saldenpruefung
     /**
      * @return list<Saldenpruefpunkt>
      */
-    private static function mt940(ImportDatei $datei): array
+    private static function auszuege(ImportDatei $datei): array
     {
         $punkte = [];
         $vorher = null;
@@ -174,7 +175,7 @@ final class Saldenpruefung
 
     private static function waehrung(ImportDatei $datei): string
     {
-        if ($datei->format->istMt940()) {
+        if ($datei->format->hatAuszuege()) {
             return self::chronologisch($datei->auszuege)[0]->anfangssaldo->waehrung;
         }
 

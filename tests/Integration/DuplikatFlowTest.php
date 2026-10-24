@@ -25,7 +25,9 @@ use App\Http\Response;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -35,6 +37,7 @@ use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\RoleRepository;
+use App\Repository\SettingRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserAccessRepository;
@@ -45,6 +48,7 @@ use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\Buchungsregeln;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -799,6 +803,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 new Posteingang($documents, $kostenstellen, $this->blobService(), $this->audit, new JobRepository($this->pdo())),
                 $this->audit,
                 KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto),
+                new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
                 KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
             ),
             new Festschreibung($pdo, $documents, new InvoiceRepository($pdo), $this->audit),

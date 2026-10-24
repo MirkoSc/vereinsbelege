@@ -91,6 +91,25 @@ final readonly class Request
         return $https !== '' && strtolower($https) !== 'off';
     }
 
+    /**
+     * Scheme, host and port this request came in under, for the requests the
+     * application makes to itself (update self-test, system check). The
+     * Host header is client controlled, so it is accepted only in the shape
+     * of a host name with an optional port - anything else falls back to
+     * localhost, which keeps it from being turned into a request to an
+     * arbitrary URL. It can still name a foreign host: callers sit behind
+     * an admin right.
+     */
+    public function ownOrigin(): string
+    {
+        $host = (string) ($this->header('host') ?? '');
+        if (preg_match('/^[A-Za-z0-9.-]+(:\d{1,5})?$/D', $host) !== 1) {
+            $host = 'localhost';
+        }
+
+        return (self::httpsFromGlobals() ? 'https://' : 'http://') . $host;
+    }
+
     public function header(string $name): ?string
     {
         return $this->headers[strtolower($name)] ?? null;

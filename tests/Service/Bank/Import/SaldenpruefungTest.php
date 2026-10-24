@@ -41,6 +41,29 @@ final class SaldenpruefungTest extends TestCase
         self::assertSame([], $ergebnis->abweichungen());
     }
 
+    public function testCamtStatementsAreCheckedLikeMt940(): void
+    {
+        $leser = new KontoauszugLeser();
+        $camt = Saldenpruefung::pruefe($leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'), ImportFormat::camt053(), []), 152340, 'EUR');
+
+        self::assertSame(BalanceCheck::Ok, $camt->ergebnis);
+        self::assertCount(3, $camt->punkte);
+        self::assertSame([152340, 8410, 160750], [$camt->punkte[0]->anfangCent, $camt->punkte[0]->umsaetzeCent, $camt->punkte[0]->schlussCent]);
+        self::assertStringContainsString('Auszug 12 vom 11.03.2024', $camt->punkte[0]->bezeichnung);
+        self::assertSame(152340, $camt->anschluss?->schlussCent);
+        self::assertSame(152340, Saldenpruefung::dateiAnfangCent($leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'), ImportFormat::camt053(), [])));
+
+        $falsch = str_replace('<Amt Ccy="EUR">1649.90</Amt>', '<Amt Ccy="EUR">1650.00</Amt>', ImportTestDaten::datei(ImportTestDaten::CAMT . 'sparkasse-053-001-02.xml'));
+        $abweichung = Saldenpruefung::pruefe($leser->lies($falsch, ImportFormat::camt053(), []), null, 'EUR');
+        self::assertSame(BalanceCheck::Abweichung, $abweichung->ergebnis);
+        self::assertSame(-10, $abweichung->abweichungen()[0]->differenzCent());
+
+        // Daily statements of a ZIP chain from one file to the next.
+        $zip = Saldenpruefung::pruefe($leser->lies(ImportTestDaten::datei(ImportTestDaten::CAMT . 'tagesauszuege-053-001-04.zip'), ImportFormat::camt053(), []), null, 'EUR');
+        self::assertSame(BalanceCheck::Ok, $zip->ergebnis);
+        self::assertCount(3, $zip->punkte);
+    }
+
     public function testAClosingBalanceThatDoesNotAddUpIsADeviation(): void
     {
         $ergebnis = Saldenpruefung::pruefe(self::mt940(str_replace(':62F:C240312EUR1649,90', ':62F:C240312EUR1650,00', self::sparkasse())), null, 'EUR');

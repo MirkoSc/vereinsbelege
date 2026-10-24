@@ -13,6 +13,8 @@ composer.phar
 /docker/shared/update_state.json
 /docker/shared/release_checksums.txt
 /docker/shared/setup_kanal.txt
+# written by the installer/updater (issue #101), like on a real host
+/docker/shared/.htaccess
 
 # docker/shared/config.php IS committed on purpose: it is the dev
 # configuration of the container (CLAUDE.md section 8, "docker compose up"
