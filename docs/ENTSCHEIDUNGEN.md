@@ -187,3 +187,13 @@ Die 9 Fotos für diese Messung liegen **nicht** in diesem Repository (CLAUDE.md
 Beträge, Lieferanten und teils Namen/Adressen. Auswertung lief einmalig
 lokal in der Bearbeitungssession; weder die Fotos noch daraus erzeugte
 Bilder wurden committet.
+
+## M7-8 KI-Protokoll: Umfang (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+- Protokolliert werden die Aufrufe des `ai_extract`-Jobs (inkl. Reparatur und
+  Fallback), nicht der „Verbindung testen“-Probe.
+- Die Tabelle `ai_call_log` ist Klartext (Betriebsdaten ohne Belegbezug – auch
+  keine Beleg-ID), damit sie ohne Tresor lesbar ist; Anbieter und Modell werden
+  kopiert, damit die Historie ein gelöschtes Profil überlebt.
+- Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
+  Bereinigung, kein Filter/Export.

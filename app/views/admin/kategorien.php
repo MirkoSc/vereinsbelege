@@ -43,7 +43,7 @@ use App\Domain\CategoryDirection;
         <?php else: ?>
             <div class="tabelle-rahmen">
                 <table class="tabelle">
-                    <caption><?= e($richtung->gruppe()) ?> – <?= e((string) count($kategorien)) ?> Kategorien</caption>
+                    <caption><?= e($richtung->gruppe()) ?> – <?= e((string) count($kategorien)) ?> <?= count($kategorien) === 1 ? 'Kategorie' : 'Kategorien' ?></caption>
                     <thead>
                         <tr>
                             <th scope="col">Name</th>
