@@ -28,6 +28,7 @@ use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Camt053Parser;
 use App\Service\Bank\Kontoangabe;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -134,7 +135,7 @@ final readonly class KontoauszugImport
 
         $blob = $this->blobs->storeString(
             $inhalt,
-            new BlobMeta($format->istMt940() ? 'text/plain' : 'text/csv', self::dateiname($dateiname)),
+            new BlobMeta(self::dateityp($format, $inhalt), self::dateiname($dateiname)),
             $vault,
             BlobService::configuredStorage($this->settings),
         );
@@ -169,6 +170,9 @@ final readonly class KontoauszugImport
         if ($konto !== null && $import->status === BankImportStatus::Vorschau) {
             $schluessel = Dedupschluessel::fuer($vault->blindIndex(), $konto->id, $datei->posten);
             $vorhanden = $this->buchungen->existingDedup($konto->id, $schluessel);
+            foreach ($this->ersatzDuplikate($vault, $konto->id, $datei->posten, $schluessel, $vorhanden) as $i => $_) {
+                $vorhanden[$schluessel[$i]] = true;
+            }
         }
 
         $posten = [];
@@ -348,7 +352,8 @@ final readonly class KontoauszugImport
     {
         $kontoId = (int) $import->accountId;
         $index = $vault->blindIndex();
-        $schluessel = array_slice(Dedupschluessel::fuer($index, $kontoId, $datei->posten), $von, $bis - $von, true);
+        $alle = Dedupschluessel::fuer($index, $kontoId, $datei->posten);
+        $schluessel = array_slice($alle, $von, $bis - $von, true);
         $regeln = $this->regeln->fuerImport($vault);
         $standard = $this->regeln->belegStandard();
 
@@ -361,9 +366,10 @@ final readonly class KontoauszugImport
                 return false;
             }
 
-            $vorhanden = $this->buchungen->existingDedup($kontoId, array_values($schluessel));
+            $vorhanden = $this->buchungen->existingDedup($kontoId, $alle);
+            $ersatz = $this->ersatzDuplikate($vault, $kontoId, $datei->posten, $alle, $vorhanden);
             foreach ($schluessel as $i => $dedup) {
-                if (!isset($vorhanden[$dedup])) {
+                if (!isset($vorhanden[$dedup]) && !isset($ersatz[$i])) {
                     $this->buchung($vault, $kontoId, $import->id, $datei->posten[$i], $dedup, $regeln, $standard, $now);
                 }
             }
@@ -378,6 +384,56 @@ final readonly class KontoauszugImport
         }
 
         return true;
+    }
+
+    /**
+     * Postings without a counterparty IBAN whose dedup key is new but that
+     * the account already has under another key: an imported booking
+     * without counterparty on the same day with the same amount, written by
+     * another file (its key is none of this file's). That is a batch booking
+     * or a fee seen through another format - MT940 and CAMT.053 give a batch
+     * different purposes (04 section 2a). Matched one to one in file order,
+     * so two such bookings of a day need two stored ones. The same answer on
+     * every step: rows this import wrote carry this file's keys.
+     *
+     * @param list<ImportPosten>  $posten
+     * @param list<string>        $schluessel the dedup keys of all postings
+     * @param array<string, true> $vorhanden  the keys the account has
+     *
+     * @return array<int, true> posting indexes to treat as duplicates
+     */
+    private function ersatzDuplikate(Vault $vault, int $kontoId, array $posten, array $schluessel, array $vorhanden): array
+    {
+        $kandidaten = [];
+        foreach ($posten as $i => $p) {
+            if (!isset($vorhanden[$schluessel[$i]]) && Iban::normalisieren($p->umsatz->details->iban ?? '') === '') {
+                $kandidaten[] = $i;
+            }
+        }
+        if ($kandidaten === []) {
+            return [];
+        }
+
+        $daten = array_map(static fn(int $i): \DateTimeImmutable => $posten[$i]->umsatz->buchungsdatum, $kandidaten);
+        $eigene = array_flip($schluessel);
+        $vorrat = [];
+        foreach ($this->buchungen->importedWithoutCounterparty($kontoId, min($daten), max($daten)->modify('+1 day')) as [$dedup, $buchung]) {
+            if (!isset($eigene[$dedup])) {
+                $merkmal = $buchung->bookingDate->format('Y-m-d') . '|' . $this->betrag($vault, $buchung);
+                $vorrat[$merkmal] = ($vorrat[$merkmal] ?? 0) + 1;
+            }
+        }
+
+        $ersatz = [];
+        foreach ($kandidaten as $i) {
+            $merkmal = $posten[$i]->umsatz->buchungsdatum->format('Y-m-d') . '|' . $posten[$i]->umsatz->cent;
+            if (($vorrat[$merkmal] ?? 0) > 0) {
+                $vorrat[$merkmal]--;
+                $ersatz[$i] = true;
+            }
+        }
+
+        return $ersatz;
     }
 
     /**
@@ -576,6 +632,15 @@ final readonly class KontoauszugImport
         $daten = json_decode($json, true, 4, JSON_THROW_ON_ERROR);
 
         return is_array($daten) && is_int($daten['amount'] ?? null) ? $daten['amount'] : 0;
+    }
+
+    private static function dateityp(ImportFormat $format, string $inhalt): string
+    {
+        return match (true) {
+            $format->istMt940() => 'text/plain',
+            $format->istCamt053() => Camt053Parser::istZip($inhalt) ? 'application/zip' : 'application/xml',
+            default => 'text/csv',
+        };
     }
 
     /** Only the base name, at most 200 characters - it is shown, never used as a path. */

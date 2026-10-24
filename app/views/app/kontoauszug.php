@@ -61,7 +61,7 @@ $aktion = static fn(string $was): string => '/app/konten/import/' . $id . '/' . 
                 <caption>Datei</caption>
                 <tbody>
                     <tr><th scope="row">Datei</th><td><?= e($vorschau->dateiname) ?></td></tr>
-                    <tr><th scope="row">Format</th><td><?= e($vorschau->datei->format->istMt940() ? 'MT940' : 'CSV') ?></td></tr>
+                    <tr><th scope="row">Format</th><td><?= e($vorschau->datei->format->bezeichnung()) ?></td></tr>
                     <tr>
                         <th scope="row">Konto</th>
                         <td><?= $vorschau->konto === null ? '<span class="marke marke-warnung">noch nicht gewählt</span>' : e($vorschau->konto->data->name) ?></td>
@@ -223,7 +223,7 @@ $aktion = static fn(string $was): string => '/app/konten/import/' . $id . '/' . 
                 </p>
             <?php endif; ?>
         <?php elseif ($saldo === BalanceCheck::NichtVerfuegbar): ?>
-            <p class="gedaempft">Diese Datei enthält keine Salden – geprüft werden kann nur ein Export mit Anfangs- und Schlusssaldo (MT940) oder mit einer Spalte „Saldo nach Buchung“.</p>
+            <p class="gedaempft">Diese Datei enthält keine Salden – geprüft werden kann nur ein Export mit Anfangs- und Schlusssaldo (MT940, CAMT.053) oder mit einer Spalte „Saldo nach Buchung“.</p>
         <?php endif; ?>
         <?php if ($vorschau->anschlussHinweis !== null): ?>
             <p class="gedaempft"><?= e($vorschau->anschlussHinweis) ?></p>

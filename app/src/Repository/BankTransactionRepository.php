@@ -159,6 +159,25 @@ final readonly class BankTransactionRepository
     }
 
     /**
+     * Imported bookings without a counterparty with $von <= booking_date <
+     * $bis, each with its dedup blind index - the candidates for the
+     * fallback duplicate check of App\Service\Bank\Import\KontoauszugImport
+     * (batch bookings and fees whose purpose differs between formats).
+     *
+     * @return list<array{string, BankTransactionRecord}> dedup_bi and row
+     */
+    public function importedWithoutCounterparty(int $accountId, \DateTimeImmutable $von, \DateTimeImmutable $bis): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT * FROM bank_transaction WHERE account_id = ? AND source = 'import' AND counterparty_bi IS NULL"
+            . ' AND booking_date >= ? AND booking_date < ? ORDER BY booking_date, id',
+        );
+        $stmt->execute([$accountId, $von->format('Y-m-d'), $bis->format('Y-m-d')]);
+
+        return array_map(static fn(array $row): array => [(string) $row['dedup_bi'], self::hydrate($row)], $stmt->fetchAll());
+    }
+
+    /**
      * The booking list (M9-5): every structural filter and the reader's
      * scope in SQL, newest first. The period scope of external roles
      * (docs/spec/01-sicherheit.md section 4) applies to `booking_date`; a
