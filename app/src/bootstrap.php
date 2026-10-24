@@ -54,6 +54,7 @@ use App\Http\Zugriff;
 use App\Installer\InstallController;
 use App\Repository\AiCallLogRepository;
 use App\Repository\AiProviderRepository;
+use App\Repository\AllocationRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
@@ -116,6 +117,7 @@ use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Import\KontoauszugImport;
+use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
 use App\Service\Cron\AuthTokenCleanupTask;
@@ -312,6 +314,18 @@ $auditFor = static fn(\PDO $pdo): AuditLog => new AuditLog(
     new AuditLogRepository($pdo),
     new VaultRepository($pdo),
     $serverCrypto,
+);
+
+// Matching receipt <-> booking (M10-1, issue #65): the allocations and the
+// statuses derived from them - the review page (Zahlungsweg) and the ZIP
+// export (bezahlt am/Konto/Referenz) need it besides the matching itself.
+$zuordnungFor = static fn(\PDO $pdo): Zuordnung => new Zuordnung(
+    $pdo,
+    new AllocationRepository($pdo),
+    new InvoiceRepository($pdo),
+    new BankTransactionRepository($pdo),
+    new BankAccountService($pdo, new BankAccountRepository($pdo)),
+    $auditFor($pdo),
 );
 
 // Second factor (M3-4, issue #17, docs/spec/01-sicherheit.md section 3):
@@ -597,6 +611,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
             $kiAuslesungFor($pdo),
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), $kategorien, new SettingRepository($pdo)),
             $lieferantenAufloesungFor($pdo),
+            $zuordnungFor($pdo),
         ),
         new Festschreibung($pdo, $documents, $rechnungen, $audit),
         $kategorien,
@@ -685,6 +700,7 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
         $kategorien,
         $kostenstellen,
         new SettingRepository($pdo),
+        $zuordnungFor($pdo),
         $logger,
         sekundenJeDatei: 30,
     );

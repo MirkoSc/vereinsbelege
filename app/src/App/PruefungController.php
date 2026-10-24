@@ -128,6 +128,11 @@ final readonly class PruefungController
         $felder = $this->pruefung->felder($document, $beleg);
         $vorbelegbar = $beleg === null && $document->status->pruefbar();
         $leer = $felder;
+        if ($vorbelegbar) {
+            // What the submitter asked about the money prefills the
+            // Zahlungsweg (M10-1, issue #65).
+            $felder = $this->pruefung->zahlungswegVorbelegen($felder, $eintrag, $tresor);
+        }
 
         // No receipt captured yet: what was read automatically fills the
         // form - the person still confirms it by saving. First the AI's

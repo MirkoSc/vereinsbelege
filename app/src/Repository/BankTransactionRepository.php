@@ -233,9 +233,13 @@ final readonly class BankTransactionRepository
         return array_map(self::hydrate(...), $stmt->fetchAll());
     }
 
-    public function find(int $id): ?BankTransactionRecord
+    /**
+     * @param bool $sperren row lock until the caller's transaction ends -
+     *        the matching (M10-1) checks sums under it
+     */
+    public function find(int $id, bool $sperren = false): ?BankTransactionRecord
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM bank_transaction WHERE id = ?');
+        $stmt = $this->pdo->prepare('SELECT * FROM bank_transaction WHERE id = ?' . ($sperren ? ' FOR UPDATE' : ''));
         $stmt->execute([$id]);
         $row = $stmt->fetch();
 
@@ -376,8 +380,8 @@ final readonly class BankTransactionRepository
 
     /**
      * Takes a rule's effect back (M9-6): a receipt status it set returns to
-     * the default of the direction - an allocated receipt (M10) stays
-     * allocated -, a category it set goes, and the rows forget the rule.
+     * the default of the direction - an allocated receipt (M10-1, fully or
+     * in part) stays allocated -, a category it set goes, and the rows forget the rule.
      * What a person set on such a row stays. No vault needed: everything
      * involved is plaintext structure. Returns the number of bookings.
      */
@@ -389,13 +393,14 @@ final readonly class BankTransactionRepository
         $stmt = $this->pdo->prepare(
             "UPDATE bank_transaction
                 SET doc_required = CASE direction WHEN 'ausgabe' THEN 1 ELSE ? END,
-                    doc_status = CASE WHEN doc_status = ? THEN doc_status WHEN direction = 'ausgabe' THEN ? ELSE ? END,
+                    doc_status = CASE WHEN doc_status IN (?, ?) THEN doc_status WHEN direction = 'ausgabe' THEN ? ELSE ? END,
                     doc_source = ?, updated_at = ?
               WHERE rule_id = ? AND doc_source = ?",
         );
         $stmt->execute([
             $einnahmeBelegNoetig ? 1 : 0,
             BankTransactionDocStatus::Zugeordnet->value,
+            BankTransactionDocStatus::Teilweise->value,
             BankTransactionDocStatus::Fehlt->value,
             $einnahmeStatus,
             BankTransactionSetBy::Standard->value,
@@ -449,6 +454,18 @@ final readonly class BankTransactionRepository
     }
 
     /** Deletes a manual booking; an imported one stays. Returns whether a row went. */
+    /**
+     * Writes the receipt status the allocations imply (M10-1, issue #65,
+     * App\Domain\BankTransactionDocStatus::ableiten()). `doc_required`,
+     * `doc_source` and the rule stay: they say what the booking needs, this
+     * says what it has. Only App\Service\Bank\Zuordnung calls this.
+     */
+    public function setzeBelegstatus(int $id, BankTransactionDocStatus $status, \DateTimeImmutable $now): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE bank_transaction SET doc_status = ?, updated_at = ? WHERE id = ?');
+        $stmt->execute([$status->value, $now->format(self::FORMAT), $id]);
+    }
+
     public function deleteManual(int $id): bool
     {
         $stmt = $this->pdo->prepare('DELETE FROM bank_transaction WHERE id = ? AND source = ?');

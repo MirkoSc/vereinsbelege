@@ -195,10 +195,10 @@ final readonly class Buchungen
             return [];
         }
 
-        // A receipt already allocated (M10) stays allocated; otherwise the
-        // status follows the choice.
-        $status = $alt->docStatus === BankTransactionDocStatus::Zugeordnet
-            ? BankTransactionDocStatus::Zugeordnet
+        // A receipt already allocated (M10-1, fully or in part) stays
+        // allocated; otherwise the status follows the choice.
+        $status = $alt->docStatus->hatBeleg()
+            ? $alt->docStatus
             : BankTransactionDocStatus::fuerNeueBuchung($neu->belegNoetig);
 
         $record = $this->buchungen->find($alt->id) ?? throw new BankRuleViolation('Diese Buchung gibt es nicht mehr.');
@@ -236,7 +236,7 @@ final readonly class Buchungen
         if (!$buchung->istManuell()) {
             throw new BankRuleViolation('Eine Buchung aus einem Kontoauszug lässt sich nicht löschen.');
         }
-        if ($buchung->docStatus === BankTransactionDocStatus::Zugeordnet) {
+        if ($buchung->docStatus->hatBeleg()) {
             throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – erst die Zuordnung lösen.');
         }
         $this->buchungen->deleteManual($buchung->id);
@@ -292,8 +292,8 @@ final readonly class Buchungen
 
         // The rule stays named as long as it still accounts for one of the two.
         $regelId = $kategorieQuelle === BankTransactionSetBy::Regel || $belegQuelle === BankTransactionSetBy::Regel ? $buchung->ruleId : null;
-        $status = $buchung->docStatus === BankTransactionDocStatus::Zugeordnet
-            ? BankTransactionDocStatus::Zugeordnet
+        $status = $buchung->docStatus->hatBeleg()
+            ? $buchung->docStatus
             : BankTransactionDocStatus::fuerNeueBuchung($belegNoetig);
         $this->buchungen->einordnen($buchung->id, $kategorieId, $kategorieQuelle, $belegNoetig, $status, $belegQuelle, $regelId, $now);
 

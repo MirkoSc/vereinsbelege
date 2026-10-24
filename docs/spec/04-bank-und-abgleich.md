@@ -427,6 +427,83 @@ Tresor, CSRF, 404; Verwendungszählung Konto/Kategorie; Audit),
 - Beleg-Zahlungsstatus und Buchungs-Belegstatus werden aus den Allocations
   **abgeleitet** (Summen), nicht separat gepflegt.
 
+#### Stand M10-1: Allocation-Modell + abgeleitete Status (issue #65, Migration 036, E-27)
+
+- **Zuordnung** (`allocation`, `App\Service\Bank\Zuordnung`): ein Beleg
+  (`invoice`) ↔ eine Buchung (`bank_transaction`) mit **Teilbetrag** in
+  Integer-Cent, immer positiv – der Teil des Belegbruttos, den diese Buchung
+  ausgleicht. Je Paar höchstens eine Zeile (`UNIQUE`); eine Korrektur löst
+  und legt neu an. Der Betrag liegt im Tresor (eigener DEK), die Struktur
+  (IDs, `method`, `score`, `rule_trace`) ist Klartext. Beide Fremdschlüssel
+  `RESTRICT`.
+- **Regeln beim Anlegen** (alle im Service, unter Zeilensperre beider
+  Seiten): Betrag > 0; ≤ offener Betrag des Belegs (Brutto − zugeordnet;
+  0 bei abgeschlossener Differenz) **und** ≤ noch nicht zugeordneter Betrag
+  der Buchung (|Betrag| − zugeordnet); Richtung der Buchung = Richtung des
+  Belegs – bei einer **Gutschrift** die Gegenrichtung (Geld fließt zurück);
+  der Beleg muss eine Buchung erwarten (Zahlungsweg `konto` oder
+  `erstattung`). Alles andere ist eine `BankRuleViolation` mit Feld.
+- **Zahlungsweg** (`invoice.payment_kind`, `App\Domain\Zahlungsweg`, Feld
+  der Prüfansicht): `konto` – über Bank oder Kasse gebucht (Default);
+  `erstattung` – Einreicher hat verauslagt, Verein erstattet (M10-3); `bar` –
+  bar bezahlt **ohne** Kassenbuchung, der Beleg ist der Zahlungsnachweis;
+  `keine` – kein Zahlungsbezug (verrechnete Gutschrift, Information).
+  Vorbelegt aus der Einreichung (`ueberweisung` → `erstattung`, `bar` →
+  `bar`, `keine` → `konto`) und aus dem Archiv-Ordner `Kasse` → `bar`
+  (05 §3). Nur `konto` und `erstattung` nehmen Zuordnungen an.
+- **Abgeleitete Status** – reine Funktionen, von `Zuordnung` nach jeder
+  Änderung in derselben Transaktion geschrieben, nie von Hand:
+  - Beleg (`App\Domain\PaymentStatus::ableiten(weg, brutto, zugeordnet,
+    differenz)`): `keine` → `kein_zahlungsbezug`; `bar` → `bezahlt`;
+    sonst zugeordnet = 0 → `offen` (`erstattung`: `erstattung_offen`),
+    zugeordnet ≥ brutto **oder** Differenz abgeschlossen → `bezahlt`
+    (`erstattung`: `erstattet`), dazwischen `teilbezahlt`.
+    `App\Domain\Zahlungsstand` liefert dazu `offen()` (was noch
+    zuzuordnen ist) und `differenzbetrag()`.
+  - Buchung (`App\Domain\BankTransactionDocStatus::ableiten(belegNoetig,
+    betrag, zugeordnet)`): ohne Zuordnung `fehlt`/`nicht_noetig` nach
+    `doc_required`; zugeordnet ≥ |Betrag| → `zugeordnet`, sonst
+    `teilweise` (Sammelüberweisung, ein Beleg fehlt noch). `hatBeleg()`
+    (= `teilweise` oder `zugeordnet`) schützt die Buchung vor Löschen, und
+    weder Regel noch „Einordnung“ ändern diesen Status – nur die
+    Zuordnungen (`App\Domain\Belegstand`).
+- **Differenz abschließen** (`difference_reason`: `skonto`, `gutschrift`,
+  `sonstiges`): nur wenn ein Teil zugeordnet ist und ein Rest fehlt; der
+  Beleg gilt dann als ausgeglichen, der Rest wird berechnet, nicht
+  gespeichert. „Wieder öffnen“ nimmt es zurück; eine gelöste Zuordnung,
+  die den Rest verschwinden lässt oder nichts Zugeordnetes übrig lässt,
+  räumt den Grund automatisch. **Gutschrift gegen Rechnung** = Rechnung mit
+  Grund `gutschrift` abschließen, Gutschrift selbst `keine`.
+- **Prüfansicht und Zuordnungen:** Solange ein Beleg Zuordnungen hat,
+  lehnt die Prüfansicht einen Zahlungsweg ohne Buchungserwartung, einen
+  Wechsel der Richtung oder von/zu Gutschrift und ein Brutto unter der
+  zugeordneten Summe ab (Feld markiert). Ändert sich Zahlungsweg oder
+  Brutto, wird der Status neu abgeleitet. Ein **festgeschriebener** Beleg
+  nimmt Zuordnungen an – die Festschreibung schützt den Inhalt, nicht den
+  Zahlungsverlauf.
+- **Export** (05 §2): „bezahlt am“ (Datum der letzten ausgleichenden
+  Buchung), „Konto“ (Namen der Konten), „Referenz“ (Verwendungszwecke) für
+  **ausgeglichene** Belege; `{kasse}` bei Zahlungsweg `bar` oder wenn alle
+  ausgleichenden Buchungen auf Kassen liegen
+  (`Zuordnung::zahlungsangaben()`).
+- **Audit:** `zuordnung.angelegt` (invoice_id, transaction_id, method,
+  score), `zuordnung.geloest` – Entität `allocation`;
+  `beleg.differenz_abgeschlossen`/`beleg.differenz_geoeffnet` (grund) –
+  Entität `document`. Nie ein Betrag.
+- **Keine Oberfläche** in M10-1: Zuordnungen entstehen erst mit M10-2/M10-4;
+  M10-1 liefert Modell, Service, Zahlungsweg-Feld und Export-Spalten.
+
+**Pflicht-Tests M10-1:** `PaymentStatusTest`, `BankTransactionDocStatusTest`
+(Ableitung je Fall), `ZuordnungFlowTest` (1:1, Sammelzahlung mit
+`teilweise`, Ratenzahlung, Skonto-Differenz mit Öffnen und Grenzen,
+Gutschrift Gegenrichtung/verrechnet, Erstattungs-Vokabular, `bar`/`keine`
+ohne Zuordnung, Richtung, Betrag > 0, Paar nur einmal, Lösen leitet beide
+Status neu ab und räumt den Differenzgrund, zugeordnete Buchung gegen
+Löschen/Regel/Einordnung, festgeschriebener Beleg, Prüfansicht schützt
+Zuordnungen, Betrag nur als Chiffrat, Audit ohne Betrag, Export-Spalten und
+`{kasse}`), `PruefungFlowTest` (Zahlungsweg-Feld, Vorbelegung aus Archiv
+und Einreichung).
+
 ### Punktebewertung (Parameter als Settings, Startwerte)
 | Signal | Punkte |
 |---|---|

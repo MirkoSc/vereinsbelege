@@ -425,7 +425,7 @@ final readonly class Buchungsregeln
 
         return [
             $beleg ? false : null,
-            $beleg ? ($record->docStatus === BankTransactionDocStatus::Zugeordnet ? BankTransactionDocStatus::Zugeordnet : BankTransactionDocStatus::NichtNoetig) : null,
+            $beleg ? ($record->docStatus->hatBeleg() ? $record->docStatus : BankTransactionDocStatus::NichtNoetig) : null,
             $kategorie ? $regel->categoryId : null,
         ];
     }

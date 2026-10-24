@@ -70,8 +70,9 @@ use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
 use App\Service\Upload\MagicBytes;
 use App\Tests\Support\DatabaseTestCase;
-use App\Tests\Support\KiAuslesungFabrik;
 use App\Tests\Support\FakeJpeg;
+use App\Tests\Support\KiAuslesungFabrik;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -613,6 +614,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
             ...array_fill_keys(Pruefung::feldnamen(), ''),
             'richtung' => 'ausgabe',
             'belegart' => 'rechnung',
+            'zahlungsweg' => 'konto',
             'datum' => '2026-03-14',
             'nummer' => $nummer,
             'lieferant' => (string) $lieferant,
@@ -805,6 +807,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 KiAuslesungFabrik::bauen($pdo, $this->blobService(), $this->crypto),
                 new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
                 KiAuslesungFabrik::lieferanten($pdo, $this->blobService(), $this->crypto, $this->audit),
+                ZuordnungFabrik::bauen($pdo, $this->audit),
             ),
             new Festschreibung($pdo, $documents, new InvoiceRepository($pdo), $this->audit),
             new CategoryRepository($pdo),

@@ -62,6 +62,7 @@ use App\Service\Upload\MagicBytes;
 use App\Support\FileLogger;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\ZipLeser;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 
 /**
@@ -1057,7 +1058,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
                 $view,
                 new Session(),
                 new SessionVault(),
-                new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), new FileLogger($this->logDatei())),
+                new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), ZuordnungFabrik::bauen($pdo, $this->audit), new FileLogger($this->logDatei())),
                 new ExportRunRepository($pdo),
                 $kategorien,
                 $kostenstellen,

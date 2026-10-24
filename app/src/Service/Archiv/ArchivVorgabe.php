@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Archiv;
 
 use App\Domain\InvoiceDirection;
+use App\Domain\Zahlungsweg;
 
 /**
  * What the archive import knows about one imported document (issue
@@ -16,8 +17,8 @@ use App\Domain\InvoiceDirection;
  * automatically (an e-invoice now, the AI with M7-5): the archive values
  * were set by a person when the archive was sorted, so they take priority;
  * where an automatic value differs, the page says so (ueberlagern()). The
- * `Kasse` folder has no field yet - it is a hint until receipts get
- * payments (M10-1, issue #65), which will read `kasse` from here.
+ * `Kasse` folder prefills the Zahlungsweg "bar bezahlt" (M10-1, issue
+ * #65) and says so in a hint.
  */
 final readonly class ArchivVorgabe
 {
@@ -166,7 +167,8 @@ final readonly class ArchivVorgabe
             $felder['kategorie'] = (string) $this->kategorieId;
         }
         if ($this->kasse) {
-            $hinweise[] = 'Archiv: Ordner „Kasse“ – bar bezahlt.';
+            $felder['zahlungsweg'] = Zahlungsweg::Bar->value;
+            $hinweise[] = 'Archiv: Ordner „Kasse“ – bar bezahlt, Zahlungsweg vorbelegt.';
         }
 
         return ['felder' => $felder, 'hinweise' => [...$hinweise, ...$this->hinweise]];

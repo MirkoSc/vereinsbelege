@@ -67,6 +67,7 @@ use App\Service\Upload\MagicBytes;
 use App\Support\FileLogger;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\FakeWebDav;
+use App\Tests\Support\ZuordnungFabrik;
 use App\View\View;
 
 /**
@@ -708,7 +709,7 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
             $kategorien = new CategoryRepository($pdo);
             $kostenstellen = new CostCenterRepository($pdo);
             $lieferanten = new SupplierService($pdo, new SupplierRepository($pdo), $kategorien);
-            $zip = new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), new FileLogger($this->wurzel . '/shared/var/log/app.log'));
+            $zip = new ZipExport(new InvoiceRepository($pdo), $this->blobs(), $lieferanten, $kategorien, $kostenstellen, new SettingRepository($pdo), ZuordnungFabrik::bauen($pdo, $this->audit), new FileLogger($this->wurzel . '/shared/var/log/app.log'));
 
             return new ExportController(
                 $view,
