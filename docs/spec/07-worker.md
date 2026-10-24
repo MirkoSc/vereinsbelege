@@ -63,7 +63,7 @@ Der Worker erhält **nie** den Tresor-Private-Key.
 - Temporäre Klartextdateien auf dem Worker liegen ausschließlich in einem
   `tmpfs` (RAM), werden nach jedem Job gelöscht; kein Klartext auf der
   SD-Karte.
-- **Stand M7b-2 (issue #52, Migration 039, E-39):** `worker_grant` je Blob
+- **Stand M7b-2 (issue #52, Migration 041, E-39):** `worker_grant` je Blob
   (worker_id, document_id, blob_id, `sealed_dek` = `crypto_box_seal(DEK,
   W_pub)`, expires_at = +3 Tage) und `worker_context` je Dokument
   (`{freitext, kostenstelle_hinweis}` an `W_pub`, Freitext auf 1000 Zeichen

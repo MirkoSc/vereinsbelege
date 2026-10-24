@@ -38,7 +38,7 @@ final class WorkerKrypto
     /** A `dek_sealed` for the vault: version byte + sealed data key. */
     public const int DEK_SEALED_BYTES = 1 + self::GRANT_BYTES;
 
-    /** Upper bound of the sealed context (migrations/039: VARBINARY(8192)). */
+    /** Upper bound of the sealed context (migrations/041: VARBINARY(8192)). */
     public const int KONTEXT_MAX_BYTES = 8192;
 
     /**

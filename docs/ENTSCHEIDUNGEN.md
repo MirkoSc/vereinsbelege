@@ -617,7 +617,7 @@ Restore von vorn. Ganz schließen ließe sich das nur mit einem
 Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
 
 ## E-39 ❓ Worker-Grants, Worker-Kontext und Artefakt-Upload (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
-*Betrifft: issue #52/M7b-2, 07 §3 und §5, 02 „Betrieb“, Migration 039*
+*Betrifft: issue #52/M7b-2, 07 §3 und §5, 02 „Betrieb“, Migration 041*
 
 Der Worker bekommt nie den Tresor-Private-Key, nur je Dokument versiegelte
 Daten-Schlüssel. Getroffen ohne Rückfrage:

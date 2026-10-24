@@ -9,7 +9,7 @@ use App\Domain\JobStatus;
 
 /**
  * The tables `worker_grant` and `worker_context` (issue #52/M7b-2,
- * docs/spec/07-worker.md section 3, migration 039): per-document data keys
+ * docs/spec/07-worker.md section 3, migration 041): per-document data keys
  * and AI context, sealed to one worker's W_pub. Everything here is either
  * structural or sealed - nothing the web host could read.
  */
