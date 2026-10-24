@@ -271,8 +271,38 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   hin.
 - *Einspielen:* Installer-Schritt 6, „Backup einspielen“ mit hochgeladenem
   ZIP, in zwei Phasen (ein Request je Block, Stand in der Session,
-  `public/js/install.js`): erst der Dump in Blöcken zu 200 Anweisungen, dann
-  die Blob-Dateien in Portionen (200 Dateien bzw. 8 MiB je Request).
+  `public/js/install.js`): erst der Dump in Blöcken zu 200 Anweisungen bzw.
+  8 MiB, dann die Blob-Dateien in Portionen (200 Dateien bzw. 8 MiB je
+  Request).
+- *Dump strömend (#120, E-31):* der Stand der Dump-Phase ist ein
+  **Byte-Offset** in `dump.sql` (`install_restore.dump_offset`, dazu der
+  Zähler `anweisungen`), immer direkt hinter dem `;` einer Anweisung – dort
+  steht der Lexer außerhalb jedes Strings und Kommentars, ein neuer Request
+  setzt mit leerem Zustand an. `App\Service\Migration\SqlStatementStream`
+  liest ab dort in 1-MiB-Portionen und zerlegt genau wie `SqlSplitter`
+  (Strings mit Backslash-Escapes, Backticks ohne Escapes, `--`/`#`/`/* */`);
+  der Lexer-Zustand überlebt Puffergrenzen. Jeder Schritt liest damit nur
+  seinen Teil der Datei (vorher: ganze Datei je Schritt, O(n²)), der
+  Speicher bleibt konstant; eine Anweisung über 16 MiB wird abgelehnt statt
+  bis `memory_limit` zu wachsen. Der Offset wird **nach jeder einzelnen
+  Anweisung** in die Session geschrieben: bricht ein Request mitten im Block
+  ab (Zeitlimit – PHP speichert die Session auch dann), setzt der nächste
+  hinter der letzten bestätigten Anweisung an statt den ganzen Block zu
+  wiederholen. Nur die eine Anweisung, die beim Abbruch gerade lief, kann
+  ein zweites Mal laufen (ein doppeltes INSERT endet mit SQLSTATE 23000 →
+  Restore von vorn). Fortschritt: `offset`/`gesamt` sind in der Dump-Phase Bytes,
+  die Seite zeigt „Anweisung X eingespielt (P %)“. Eine Restore-Session
+  einer älteren Version (Statement-Index in `offset`, kein `dump_offset`)
+  wird einmalig umgerechnet: Datei bis zu dieser Anweisung lesen, nichts
+  ausführen. Jeder Schritt ist ein eigener Request mit **neuer
+  DB-Verbindung**; der Dump setzt `SET NAMES utf8mb4` und
+  `SET FOREIGN_KEY_CHECKS = 0` aber nur einmal oben. Ein fortgesetzter
+  Schritt (Offset > 0) wiederholt diese beiden deshalb zuerst, und der
+  Schritt, der das Dateiende erreicht, schaltet die Fremdschlüssel-Prüfung
+  wieder ein, bevor die Migrationen auf derselben Verbindung laufen. (Vor
+  #120 lief jeder Schritt ab dem zweiten mit Prüfung – ein Dump über 200
+  Anweisungen scheiterte an `CREATE TABLE` mit Fremdschlüssel auf eine
+  alphabetisch spätere Tabelle.)
   Migrationen und `config.php` kommen **zuletzt**, damit ein Abbruch in der
   Blob-Phase den Installer offen lässt statt eine halb gefüllte Installation
   für fertig zu erklären. Trägt das ZIP Blobs, liegt es bis zum Ende als
@@ -362,7 +392,13 @@ Tresors ab). `POST /install/wiederherstellen` antwortet in dieser Phase 409.
   Zeilendaten des Backups.
 - Bricht ein Block mitten in der Ausführung ab (Absturz), ist die Zieldatenbank
   halb gefüllt. Abhilfe: Restore von vorn – jede Tabelle beginnt mit
-  `DROP TABLE IF EXISTS`.
+  `DROP TABLE IF EXISTS`. Seit #120 setzt ein abgebrochener Schritt hinter
+  der letzten bestätigten Anweisung wieder an; offen bleiben die Anweisung,
+  die beim Abbruch gerade lief, und ein harter Prozessabbruch (z. B.
+  FastCGI-Timeout, OOM), bei dem PHP die Session nicht mehr schreibt – dann
+  wiederholt der nächste Schritt Anweisungen ab dem zuletzt gespeicherten
+  Offset, und ein doppeltes INSERT endet mit SQLSTATE 23000; auch dann:
+  Restore von vorn.
 
 **Pflicht-Tests:** `BackupRestoreRoundtripTest` (Backup → alle Tabellen
 löschen → einspielen → byte-gleich; Sonderzeichen, NULL, mehr Zeilen als ein
@@ -375,7 +411,16 @@ bleibt draußen, Blobs auf Wunsch weglassbar);
 **eine hochgeladene `config.php` wird nie ausgeführt**, ungültiger Schlüssel;
 Blobs landen unter ihrem eigenen Namen, **nur** `blobs/<2 Hex>/<32 Hex>` wird
 geschrieben, Portionierung nach Byte-Budget, ZIP ohne Blobs braucht keine
-Blob-Phase);
+Blob-Phase; **Dump in Schritten ab Byte-Offset, jede Anweisung genau einmal,
+die Schritte lesen die Datei zusammen nur einmal, Abbruch nach jeder
+einzelnen Anweisung und Wiederaufnahme, Byte-Budget, Umrechnung eines alten
+Statement-Index** – #120);
+`SqlStatementStreamTest` (zerlegt wie `SqlSplitter` bei jeder Puffergröße
+ab 1 Byte und bei Wiederaufnahme an jeder Grenze, Zufallsskripte, Speicher
+konstant bei großem Dump, Offset außerhalb der Datei, Anweisung über
+16 MiB); `BackupRestoreRoundtripTest` spielt den Dump wie der Installer in
+Schritten ein, dazu ein großer Dump (über 200 Anweisungen, Werte länger als
+der Lesepuffer) byte-gleich;
 `UpdateChainTest` (`backup` direkt vor `switch`, ohne `config.php` und ohne
 Blobs, bei Fehler kein Umschalten); `InstallFlowTest` (Restore mit
 Schlüssel im Backup, Restore **mit Blob-Dateien**, ZIP ohne Dump, Pfad ohne

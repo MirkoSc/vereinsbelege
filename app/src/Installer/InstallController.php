@@ -367,11 +367,38 @@ final readonly class InstallController
             $restore = new RestoreService();
 
             if ($phase === 'sql') {
-                $fortschritt = $restore->anwenden($pdo, $dumpDatei, (int) ($stand['offset'] ?? 0));
-                $_SESSION['install_restore']['offset'] = $fortschritt['offset'];
+                // Byte offset into dump.sql (issue #120). A session of an
+                // older version counts statements under `offset` instead:
+                // it is converted once, by reading up to that statement.
+                if (!is_int($stand['dump_offset'] ?? null)) {
+                    $umgerechnet = $restore->byteOffsetNachAnweisungen($dumpDatei, (int) ($stand['offset'] ?? 0));
+                    $_SESSION['install_restore']['dump_offset'] = $umgerechnet['offset'];
+                    $_SESSION['install_restore']['anweisungen'] = $umgerechnet['anweisungen'];
+                }
+                $start = (int) $_SESSION['install_restore']['dump_offset'];
+
+                // Kept after every statement, not once per block: a request
+                // that breaks off resumes behind the last statement that ran.
+                $fortschritt = $restore->anwenden(
+                    $pdo,
+                    $dumpDatei,
+                    $start,
+                    static function (int $grenze): void {
+                        $_SESSION['install_restore']['dump_offset'] = $grenze;
+                        $_SESSION['install_restore']['anweisungen'] = (int) ($_SESSION['install_restore']['anweisungen'] ?? 0) + 1;
+                    },
+                );
+                $_SESSION['install_restore']['dump_offset'] = $fortschritt['offset'];
+                $anweisungen = (int) ($_SESSION['install_restore']['anweisungen'] ?? 0);
 
                 if ($fortschritt['offset'] < $fortschritt['gesamt']) {
-                    return Response::json(['fertig' => false, 'phase' => 'sql', ...$fortschritt]);
+                    return Response::json([
+                        'fertig' => false,
+                        'phase' => 'sql',
+                        'offset' => $fortschritt['offset'],
+                        'gesamt' => $fortschritt['gesamt'],
+                        'anweisungen' => $anweisungen,
+                    ]);
                 }
 
                 // Dump through: the blob files follow, if there are any. The
@@ -696,6 +723,10 @@ final readonly class InstallController
             'dump_datei' => $dumpDatei,
             'zip_datei' => $zipDatei,
             'phase' => 'sql',
+            // dump phase: byte offset into dump.sql and statements run so
+            // far (issue #120); `offset` counts the files of the blob phase
+            'dump_offset' => 0,
+            'anweisungen' => 0,
             'offset' => 0,
             'server_key' => $serverSchluessel,
         ];
