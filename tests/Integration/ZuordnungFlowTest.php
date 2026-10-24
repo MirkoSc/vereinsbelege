@@ -19,6 +19,7 @@ use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
 use App\Domain\PaymentStatus;
+use App\Domain\UmbuchungMethode;
 use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Domain\ZuordnungMethode;
@@ -36,6 +37,7 @@ use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SupplierRepository;
+use App\Repository\TransferRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
 use App\Service\Audit\AuditFilter;
@@ -44,6 +46,7 @@ use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Umbuchungen;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -476,6 +479,38 @@ final class ZuordnungFlowTest extends DatabaseTestCase
         self::assertSame(1, new BankTransactionRepository($this->pdo())->regelZuruecknehmen($regel, false, new \DateTimeImmutable()));
         self::assertSame('teilweise', $this->buchung($importiert)['doc_status']);
         self::assertSame('standard', $this->buchung($importiert)['doc_source']);
+    }
+
+    /**
+     * M10-6 (issue #70): half of a transfer between own accounts needs no
+     * receipt and takes none; a booking with a receipt is not paired.
+     */
+    public function testATransferTakesNoReceiptAndAnAllocatedBookingIsNoTransfer(): void
+    {
+        $giro = $this->bankkonto('Girokonto');
+        $kasse = $this->kasse('Barkasse');
+        $abhebung = $this->importierteBuchung($giro, '2026-03-14', -10000, 'Bargeld', '');
+        $einlage = $this->importierteBuchung($kasse, '2026-03-14', 10000, 'Bargeld', '');
+        $umbuchungen = new Umbuchungen($this->pdo(), new TransferRepository($this->pdo()), new BankTransactionRepository($this->pdo()), $this->konten(), $this->audit);
+        $umbuchungen->paaren($this->tresor, $abhebung, $einlage, UmbuchungMethode::Manuell, $this->userId, self::IP, new \DateTimeImmutable());
+
+        try {
+            $this->zuordnen($this->beleg(10000), $abhebung, 10000);
+            self::fail('a transfer takes no receipt');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('erst die Umbuchung lösen', $e->getMessage());
+        }
+        self::assertSame('nicht_noetig', $this->buchung($abhebung)['doc_status']);
+
+        $umbuchungen->loesen($abhebung, $this->userId, self::IP, new \DateTimeImmutable());
+        $this->zuordnen($this->beleg(10000), $abhebung, 10000);
+        try {
+            $umbuchungen->paaren($this->tresor, $abhebung, $einlage, UmbuchungMethode::Manuell, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('an allocated booking is no transfer');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('ein Beleg zugeordnet', $e->getMessage());
+        }
+        self::assertSame('zugeordnet', $this->buchung($abhebung)['doc_status']);
     }
 
     public function testALockedReceiptCanStillBePaid(): void
