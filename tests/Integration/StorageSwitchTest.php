@@ -141,6 +141,41 @@ final class StorageSwitchTest extends DatabaseTestCase
     }
 
     /**
+     * Issue #208: while a backup's dump runs over many requests, nothing is
+     * moved or cleaned up - a blob moved in between would be missing from
+     * the backup. Checking stays allowed.
+     */
+    public function testNothingMovesWhileABackupIsBeingMade(): void
+    {
+        $this->blobs()->storeString(self::CONTENT, new BlobMeta('image/jpeg'), $this->vault, BlobStorage::Db);
+        $laeuft = true;
+        $switch = new StorageSwitchService(
+            $this->repository(),
+            $this->blobs(),
+            $this->settings(),
+            static function () use (&$laeuft): bool {
+                return $laeuft;
+            },
+        );
+        $switch->setTarget(BlobStorage::Fs);
+
+        foreach ([$switch->move(...), $switch->cleanUp(...)] as $schritt) {
+            try {
+                $schritt();
+                self::fail('no move while a backup runs');
+            } catch (\RuntimeException $e) {
+                self::assertStringContainsString('Backup', $e->getMessage());
+            }
+        }
+        self::assertSame(1, $switch->state()->offen, 'nothing moved');
+        $switch->startCheck();
+
+        $laeuft = false;
+        $this->runChain($switch);
+        self::assertSame(0, $switch->state()->offen);
+    }
+
+    /**
      * A move interrupted halfway is simply continued: the chain remembers
      * nothing, it counts what is left.
      */

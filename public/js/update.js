@@ -28,6 +28,17 @@ function abSchritt(alle, schritt) {
     return index === -1 ? [] : alle.slice(index);
 }
 
+/** Upper bound of calls of one step, so a server that keeps answering `weiter` cannot loop forever. */
+const MAX_WIEDERHOLUNGEN = 100000;
+
+/**
+ * Whether the step that gave this answer wants to be called again: the
+ * backup step answers `weiter` while its dump is not through (issue #208).
+ */
+function nochmal(state) {
+    return Boolean(state && state.weiter === true && !state.fehler);
+}
+
 /** The last line of the step log - the admin page shows only that one. */
 function letzteMeldung(state) {
     const meldungen = (state && state.meldungen) || [];
@@ -94,7 +105,14 @@ function initUpdate() {
         for (const name of schritte) {
             status.textContent = 'Schritt „' + name + '“ läuft …';
             try {
-                const state = await schritt(name);
+                let state = await schritt(name);
+                for (let teil = 2; nochmal(state); teil++) {
+                    if (teil > MAX_WIEDERHOLUNGEN) {
+                        throw new Error('Der Schritt endet nicht.');
+                    }
+                    status.textContent = 'Schritt „' + name + '“ läuft … (Teil ' + teil + ')';
+                    state = await schritt(name);
+                }
                 notiere(name + ': ' + letzteMeldung(state));
             } catch (problem) {
                 fehlgeschlagenerSchritt = name;
@@ -159,5 +177,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { naechsteSchritte, abSchritt, letzteMeldung };
+    module.exports = { naechsteSchritte, abSchritt, letzteMeldung, nochmal };
 }
