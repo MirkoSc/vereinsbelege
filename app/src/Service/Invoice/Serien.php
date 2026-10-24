@@ -160,18 +160,39 @@ final readonly class Serien implements JobHandler
     }
 
     /**
-     * Suggestions and confirmed series, next expected date first.
+     * Suggestions and confirmed series, next expected date first, each with
+     * the figures of the overview (issue #58/M8-2): every receipt of every
+     * listed series is decrypted - a club has a few dozen series.
      *
      * @return list<SerienAnsicht>
      */
-    public function liste(Vault $vault): array
+    public function liste(Vault $vault, \DateTimeImmutable $heute): array
     {
-        $anzahl = $this->serien->anzahlMitglieder();
+        $records = $this->serien->liste([SeriesStatus::Vorgeschlagen, SeriesStatus::Bestaetigt]);
+        $mitglieder = $this->serien->alleMitglieder(array_map(static fn(RecurringSeriesRecord $r): int => $r->id, $records));
+        $posten = [];
+        foreach (array_chunk(array_merge([], ...array_values($mitglieder)), 500) as $teil) {
+            foreach ($this->invoices->nachIds($teil) as $invoice) {
+                $posten[$invoice->id] = $this->posten($vault, $invoice);
+            }
+        }
+
         $namen = [];
         $liste = [];
-        foreach ($this->serien->liste([SeriesStatus::Vorgeschlagen, SeriesStatus::Bestaetigt]) as $record) {
+        foreach ($records as $record) {
             $namen[$record->supplierId] ??= $this->lieferantName($vault, $record->supplierId);
-            $liste[] = new SerienAnsicht($record, $this->daten($vault, $record), $namen[$record->supplierId], $anzahl[$record->id] ?? 0);
+            $daten = $this->daten($vault, $record);
+            $eigene = array_values(array_filter(array_map(
+                static fn(int $id): ?SerienPosten => $posten[$id] ?? null,
+                $mitglieder[$record->id] ?? [],
+            )));
+            $liste[] = new SerienAnsicht(
+                $record,
+                $daten,
+                $namen[$record->supplierId],
+                count($eigene),
+                kennzahlen: SerienKennzahlen::berechne($record, $daten, $eigene, $heute),
+            );
         }
 
         return $liste;

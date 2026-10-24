@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\App;
 
 use App\Domain\Berechtigungen;
+use App\Domain\InvoiceDirection;
 use App\Domain\Permission;
 use App\Domain\SeriesPeriod;
 use App\Domain\SeriesStatus;
@@ -26,8 +27,10 @@ use App\View\View;
 
 /**
  * Recurring invoices /app/serien (M8-1, issue #57, docs/spec/
- * 03-erfassung-und-ki.md section 9): the suggestions the `detect_recurring`
- * job found and the confirmed series; one series' page to confirm a
+ * 03-erfassung-und-ki.md section 9): the overview "Wiederkehrende Kosten"
+ * (issue #58/M8-2) - the suggestions the `detect_recurring` job found and
+ * the confirmed series with newest receipt, yearly projection, trend and
+ * the "überfällig" mark; one series' page to confirm a
  * suggestion (rhythm, expected amount, next date, tolerance, label,
  * contract reference, which receipts belong to it), change a confirmed one
  * or dismiss either.
@@ -60,15 +63,42 @@ final readonly class SerienController
             return $this->eingeschraenkt();
         }
         $tresor = $this->tresor($request);
-        $liste = $tresor === null ? [] : $this->serien->liste($tresor);
+        $liste = $tresor === null ? [] : $this->serien->liste($tresor, new \DateTimeImmutable());
 
         return Response::html($this->view->render('app/serien', [
-            'title' => 'Wiederkehrende Rechnungen',
+            'title' => 'Wiederkehrende Kosten',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
             'vorschlaege' => array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Vorgeschlagen)),
-            'bestaetigt' => array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt)),
+            'bestaetigt' => $bestaetigt = array_values(array_filter($liste, static fn(SerienAnsicht $s): bool => $s->record->status === SeriesStatus::Bestaetigt)),
+            'summen' => self::summen($bestaetigt),
         ], Area::App));
+    }
+
+    /**
+     * The yearly projection of the confirmed series added up, per direction
+     * and currency; series without a fixed rhythm do not count.
+     *
+     * @param list<SerienAnsicht> $bestaetigt
+     *
+     * @return list<array{richtung: string, waehrung: string, cent: int, anzahl: int}>
+     */
+    private static function summen(array $bestaetigt): array
+    {
+        $summen = [];
+        foreach ($bestaetigt as $serie) {
+            $cent = $serie->kennzahlen?->jahreshochrechnung;
+            if ($cent === null) {
+                continue;
+            }
+            $schluessel = $serie->record->direction->value . '|' . $serie->daten->currency;
+            $summen[$schluessel] ??= ['richtung' => $serie->record->direction === InvoiceDirection::Ausgabe ? 'Ausgaben' : 'Einnahmen', 'waehrung' => $serie->daten->currency, 'cent' => 0, 'anzahl' => 0];
+            $summen[$schluessel]['cent'] += $cent;
+            ++$summen[$schluessel]['anzahl'];
+        }
+        ksort($summen);
+
+        return array_values($summen);
     }
 
     /**
