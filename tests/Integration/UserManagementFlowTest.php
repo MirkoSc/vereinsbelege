@@ -641,6 +641,15 @@ final class UserManagementFlowTest extends DatabaseTestCase
         new MfaTotpRepository($this->pdo())->confirm($id);
         new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
 
+        // An invalid address does not touch anything, the authenticator included.
+        $ungueltig = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'keine-adresse',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+        self::assertSame(422, $ungueltig->status);
+        self::assertNotNull(new MfaTotpRepository($this->pdo())->forUser($id));
+
         $gespeichert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
             'name' => 'Karl Kasse',
             'email' => 'karl.neu@example.org',
@@ -675,6 +684,42 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertSame(302, $ignoriert->status);
         self::assertSame($id, $this->idVon('karl.neu@example.org'));
         self::assertNull(new UserRepository($this->pdo())->findByEmailBlindIndex($this->crypto->blindIndex()->forValue('user.email', 'noch.einer@example.org')));
+    }
+
+    /**
+     * The authenticator is only reset when its secret is ciphertext under the
+     * lost key. A secret that still opens under the current key (set up after
+     * the key change) stays: re-entering an address never drops a usable
+     * second factor.
+     */
+    public function testEinLesbaresTotpGeheimnisBleibtBeimNeusetzenDerAdresseErhalten(): void
+    {
+        $id = $this->aktiverBenutzer(self::NEU, SystemRole::Finanzen);
+        $fremd = new ServerCrypto(str_repeat('f', ServerCrypto::KEY_BYTES));
+        $stmt = $this->pdo()->prepare('UPDATE `user` SET email_enc = ?, email_bi = ?, display_name_enc = ? WHERE id = ?');
+        $stmt->bindValue(1, $fremd->encrypt(self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $fremd->blindIndex()->forValue('user.email', self::NEU), \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $fremd->encrypt('Karl Kasse'), \PDO::PARAM_LOB);
+        $stmt->bindValue(4, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        // ... but the authenticator secret is under the CURRENT key.
+        new MfaTotpRepository($this->pdo())->put($id, $this->crypto->encrypt('JBSWY3DPEHPK3PXP'));
+        new MfaTotpRepository($this->pdo())->confirm($id);
+        new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
+
+        $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
+        $gespeichert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
+            'name' => 'Karl Kasse',
+            'email' => 'karl.neu@example.org',
+            'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
+        ]));
+
+        self::assertSame(302, $gespeichert->status);
+        self::assertSame($id, $this->idVon('karl.neu@example.org'));
+        $geheimnis = new MfaTotpRepository($this->pdo())->forUser($id);
+        self::assertNotNull($geheimnis, 'a usable authenticator is kept');
+        self::assertSame('JBSWY3DPEHPK3PXP', $this->crypto->decrypt($geheimnis->secretEnc));
+        self::assertSame(MfaMethod::Totp, new UserRepository($this->pdo())->findById($id)?->mfaMethod);
     }
 
     public function testEinUnbekannterBenutzerIst404(): void

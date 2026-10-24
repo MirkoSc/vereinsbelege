@@ -293,9 +293,10 @@ bis ein Admin unter `/admin/benutzer/<id>` eine neue Adresse einträgt – das
 Formular bietet das Feld genau dann an, wenn die gespeicherte Adresse nicht
 aufgeht (`UserRepository::updateEmail()`, Eindeutigkeit über den Blind
 Index, Audit-Detail `email_neu_gesetzt`; eine Authenticator-App wird dabei
-wie bei Weg 2 zurückgesetzt, ihr Geheimnis ist ebenso Chiffrat unter dem
-alten Schlüssel). Passwort, Schlüsselpaar und Freigabe dieser Konten sind
-unberührt. API-Schlüssel der KI-Anbieter, SMTP-Passwort und die Mail-Warteschlange
+nur dann wie bei Weg 2 zurückgesetzt, wenn ihr Geheimnis mit dem aktuellen
+Server-Schlüssel **nicht** aufgeht – ein lesbares Geheimnis bleibt, das
+Neusetzen einer Adresse entfernt nie einen brauchbaren zweiten Faktor).
+Passwort, Schlüsselpaar und Freigabe dieser Konten sind unberührt. API-Schlüssel der KI-Anbieter, SMTP-Passwort und die Mail-Warteschlange
 sind verloren (die Leser liefern dafür schon „nicht gesetzt“). Eine
 Rekonstruktion der Adressen aus Tresor-Daten gibt es nicht – sie liegen
 nirgends unter dem Tresor (Folge-Idee: eine an `VK_pub` versiegelte Kopie je
@@ -346,8 +347,8 @@ derselben Sekunde überschreiben sich nicht und sind beide in `list()`/`path()`,
 Begrenzung des Suffixes, natürliche Sortierung ab `_10` samt Rotation;
 `BackupCliOptionsTest` (`--help`, unbekannte Option
 abgelehnt); `UserManagementFlowTest` (unlesbare Adresse wird angezeigt,
-neu gesetzt samt TOTP-Reset, Anmeldung danach möglich, lesbare Adresse
-nicht änderbar);
+neu gesetzt samt TOTP-Reset bei unlesbarem Geheimnis, lesbares Geheimnis
+bleibt, Anmeldung danach möglich, lesbare Adresse nicht änderbar);
 `tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen,
 Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
 

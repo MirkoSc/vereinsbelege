@@ -43,14 +43,6 @@ final readonly class User
     }
 
     /**
-     * Whether a second factor is actually usable, not merely required
-     * (docs/spec/01-sicherheit.md section 3, issue #17): `mfa_required`
-     * defaults to true for every account from the moment it is created
-     * (migrations/006_user.sql), long before anybody set a factor up.
-     * App\Http\LoginGuard uses this to force enrollment instead of letting a
-     * required-but-absent factor quietly mean "none".
-     */
-    /**
      * What a row is called while its name is ciphertext under a lost server
      * key (restore without config.php, issue #154): the id is the only
      * readable handle it has. Used wherever ServerCrypto::decryptOrNull()
@@ -61,6 +53,14 @@ final readonly class User
         return 'Benutzer #' . $this->id;
     }
 
+    /**
+     * Whether a second factor is actually usable, not merely required
+     * (docs/spec/01-sicherheit.md section 3, issue #17): `mfa_required`
+     * defaults to true for every account from the moment it is created
+     * (migrations/006_user.sql), long before anybody set a factor up.
+     * App\Http\LoginGuard uses this to force enrollment instead of letting a
+     * required-but-absent factor quietly mean "none".
+     */
     public function mfaEingerichtet(): bool
     {
         return $this->mfaMethod !== null;

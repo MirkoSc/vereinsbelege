@@ -218,11 +218,14 @@ final readonly class UserController
             $this->verwaltung->umbenennen($id, $name);
             if ($emailNeuSetzen) {
                 $this->users->updateEmail($id, $this->crypto->encrypt($email), $emailBi);
-                // The authenticator secret is ciphertext under the same lost
-                // key: the login would fail at the second factor forever.
-                // Same reset as App\Installer\RestoreAccess::relink(); the
-                // next login sets the second factor up again.
-                if ($user->mfaMethod === MfaMethod::Totp) {
+                // An authenticator secret that is ciphertext under the same
+                // lost key would fail the login at the second factor forever:
+                // same reset as App\Installer\RestoreAccess::relink(), the
+                // next login sets the second factor up again. A secret that
+                // still opens stays - the second factor is never dropped by
+                // an admin merely re-entering an address.
+                $geheimnis = $user->mfaMethod === MfaMethod::Totp ? $this->totp->forUser($id) : null;
+                if ($geheimnis !== null && $this->crypto->decryptOrNull($geheimnis->secretEnc) === null) {
                     $this->totp->delete($id);
                     $this->backupCodes->deleteAllForUser($id);
                     $this->users->updateMfaMethod($id, null);
