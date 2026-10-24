@@ -187,11 +187,6 @@ final readonly class UpdateController
      */
     private function baseUrl(Request $request): string
     {
-        $host = (string) ($request->header('host') ?? '');
-        if (preg_match('/^[A-Za-z0-9.-]+(:\d{1,5})?$/', $host) !== 1) {
-            $host = 'localhost';
-        }
-
-        return (Request::httpsFromGlobals() ? 'https://' : 'http://') . $host;
+        return $request->ownOrigin();
     }
 }

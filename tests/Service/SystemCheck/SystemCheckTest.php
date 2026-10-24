@@ -7,6 +7,7 @@ namespace App\Tests\Service\SystemCheck;
 use App\Service\SystemCheck\CheckResult;
 use App\Service\SystemCheck\CheckStatus;
 use App\Service\SystemCheck\SystemCheck;
+use App\Service\Update\DenyHtaccess;
 use PHPUnit\Framework\TestCase;
 
 final class SystemCheckTest extends TestCase
@@ -321,6 +322,122 @@ final class SystemCheckTest extends TestCase
                 putenv($name);
             }
         }
+    }
+
+    // ---- shared/config.php over the own domain (issue #101) ----
+
+    /**
+     * @param list<string> $gefragt receives every URL the probe was asked for
+     *
+     * @return \Closure(string): ?int
+     */
+    private static function probe(?int $status, array &$gefragt = []): \Closure
+    {
+        return static function (string $url) use ($status, &$gefragt): ?int {
+            $gefragt[] = $url;
+
+            return $status;
+        };
+    }
+
+    public function testAServedConfigIsAFailure(): void
+    {
+        $gefragt = [];
+        $result = new SystemCheck(null, null, self::probe(200, $gefragt))->configExposure('https://belege.example');
+
+        self::assertSame(['https://belege.example/shared/config.php'], $gefragt);
+        self::assertSame('config_exposure', $result->key);
+        self::assertSame(CheckStatus::Fail, $result->status);
+        self::assertSame('abrufbar (HTTP 200)', $result->actual);
+    }
+
+    public function testDeniedOrMissingIsFine(): void
+    {
+        foreach ([401, 403, 404, 410] as $status) {
+            $result = new SystemCheck(null, null, self::probe($status))->configExposure('https://belege.example/');
+
+            self::assertSame(CheckStatus::Ok, $result->status, (string) $status);
+            self::assertSame('gesperrt (HTTP ' . $status . ')', $result->actual);
+        }
+    }
+
+    /**
+     * A redirect that was not resolved, a server error or no answer at all
+     * proves neither - the
+     * check must not claim safety it could not establish.
+     */
+    public function testAnythingElseIsOnlyAWarning(): void
+    {
+        foreach ([301, 302, 500, 503] as $status) {
+            self::assertSame(
+                CheckStatus::Warn,
+                new SystemCheck(null, null, self::probe($status))->configExposure('https://belege.example')->status,
+                (string) $status,
+            );
+        }
+
+        $result = new SystemCheck(null, null, self::probe(null))->configExposure('https://belege.example');
+        self::assertSame(CheckStatus::Warn, $result->status);
+        self::assertSame('keine Antwort', $result->actual);
+    }
+
+    /**
+     * The probe needs both: something that can fetch, and the domain to
+     * fetch from. Without either the line is left out, like the database
+     * check without a PDO.
+     */
+    public function testTheExposureCheckJoinsOnlyWithAProbeAndAnOrigin(): void
+    {
+        $gefragt = [];
+        $probe = self::probe(404, $gefragt);
+
+        self::assertNotContains('config_exposure', $this->keys(new SystemCheck(null, null, $probe)->all()));
+        self::assertNotContains('config_exposure', $this->keys(new SystemCheck()->all('https://belege.example')));
+        self::assertSame([], $gefragt);
+
+        $keys = $this->keys(new SystemCheck(null, null, $probe)->all('https://belege.example'));
+        self::assertSame('config_exposure', end($keys));
+        self::assertCount(1, $gefragt);
+    }
+
+    /**
+     * The file-system side of issue #101: every existing directory next to
+     * the docroot must carry a locking .htaccess. Read only - the page never
+     * writes one.
+     */
+    public function testDirectoryLocksAreReadFromTheFileSystem(): void
+    {
+        $base = $this->tempDir();
+        mkdir($base . '/shared');
+        mkdir($base . '/current');
+        $this->aufraeumen[] = $base . '/shared';
+        $this->aufraeumen[] = $base . '/current';
+
+        $offen = new SystemCheck()->directoryLocks($base);
+        self::assertSame(CheckStatus::Warn, $offen->status);
+        self::assertSame('fehlt in shared/, current/', $offen->actual);
+        self::assertFileDoesNotExist($base . '/shared/.htaccess', 'the check only looks');
+        self::assertStringNotContainsString($base, implode(' ', $offen->toArray()));
+
+        file_put_contents($base . '/shared/.htaccess', DenyHtaccess::CONTENT);
+        file_put_contents($base . '/current/.htaccess', "<Files x>\nRequire all denied\n</Files>\n");
+        self::assertSame('fehlt in current/', new SystemCheck()->directoryLocks($base)->actual);
+
+        file_put_contents($base . '/current/.htaccess', DenyHtaccess::CONTENT);
+        $zu = new SystemCheck()->directoryLocks($base);
+        self::assertSame(CheckStatus::Ok, $zu->status);
+        self::assertSame('gesperrt', $zu->actual);
+    }
+
+    public function testTheLockCheckJoinsWithASharedDirectory(): void
+    {
+        $base = $this->tempDir();
+        mkdir($base . '/shared');
+        $this->aufraeumen[] = $base . '/shared';
+
+        $keys = $this->keys(new SystemCheck(null, null, null, $base . '/shared')->all());
+
+        self::assertContains('directory_locks', $keys);
     }
 
     /**

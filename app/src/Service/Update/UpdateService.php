@@ -240,7 +240,12 @@ final class UpdateService
             // .htaccess and .user.ini travel with the release too, and a
             // tightened CSP would otherwise never reach an existing
             // installation. Hand-edited files are kept and only reported.
-            $docrootMeldungen = $this->switcher->refreshDocrootFiles();
+            // shared/, releases/ and current/ get their deny-all .htaccess
+            // here when setup.php was older than issue #101.
+            $docrootMeldungen = [
+                ...$this->switcher->refreshDocrootFiles(),
+                ...$this->switcher->lockPrivateDirectories(),
+            ];
 
             try {
                 $this->selfTest($baseUrl);
@@ -279,8 +284,13 @@ final class UpdateService
 
         try {
             $this->switcher->rollback();
+            // The previous release may predate issue #101 and come back as
+            // current/ without its deny-all .htaccess.
             $state = $state->mit(
-                meldung: 'Rollback durchgeführt – vorheriges Release ist wieder aktiv.',
+                meldung: implode(' ', [
+                    'Rollback durchgeführt – vorheriges Release ist wieder aktiv.',
+                    ...$this->switcher->lockPrivateDirectories(),
+                ]),
                 fertig: true,
             );
         } catch (\Throwable $e) {
