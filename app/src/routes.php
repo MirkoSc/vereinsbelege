@@ -30,6 +30,7 @@ use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
+use App\App\ErstattungController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
@@ -194,8 +195,11 @@ use App\View\View;
  *        reason as $mail: only the work lists "Offen" need the database
  *        (issue #69/M10-5). Optional like $nextcloudAdmin.
  * @param (\Closure(): VaultRotationController)|null $tresorRotation built
- *        lazily (issue #90); optional and last for the same reason as
+ *        lazily (issue #90); optional for the same reason as
  *        $nextcloudAdmin.
+ * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
+ *        same reason as $mail: only the reimbursement page needs the
+ *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -247,6 +251,7 @@ return static function (
     ?\Closure $abgleich = null,
     ?\Closure $offen = null,
     ?\Closure $tresorRotation = null,
+    ?\Closure $erstattungen = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -259,6 +264,7 @@ return static function (
     $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
     $offen ??= static fn(): never => throw new \LogicException('The work lists are not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
+    $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -709,6 +715,15 @@ return static function (
     $post('/app/buchungen/umbuchungen', $kontenPflege, static fn(Request $r) => $buchungen()->umbuchungenErkennen($r));
     $post('/app/buchungen/{id:\d+}/umbuchung', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungPaaren($r, $params));
     $post('/app/buchungen/{id:\d+}/umbuchung/loesen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungLoesen($r, $params));
+
+    // Reimbursements for one booking (M10-3, issue #67, docs/spec/
+    // 04-bank-und-abgleich.md section 5): open reimbursements of the
+    // counterparty's IBAN and their combinations. Permission `matching.edit`
+    // for reading and allocating - it is the matching. CSRF on the POST;
+    // without the unlocked vault nothing is read or written
+    // (App\App\ErstattungController).
+    $get('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->ansicht($r, $params));
+    $post('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->zuordnen($r, $params));
 
     // Rules "kein Beleg nötig" / category (M9-6, issue #64, docs/spec/
     // 04-bank-und-abgleich.md section 5). Permission: reading `bank.view` -

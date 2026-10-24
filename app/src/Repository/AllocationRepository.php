@@ -88,22 +88,30 @@ final readonly class AllocationRepository
     }
 
     /**
+     * @param bool $sperren locking read: sees what other transactions
+     *        committed since this one's snapshot (REPEATABLE READ) and locks
+     *        the rows - for every sum checked or derived inside a transaction
+     *
      * @return list<AllocationRecord>
      */
-    public function forInvoice(int $invoiceId): array
+    public function forInvoice(int $invoiceId, bool $sperren = false): array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM allocation WHERE invoice_id = ? ORDER BY id');
+        $stmt = $this->pdo->prepare('SELECT * FROM allocation WHERE invoice_id = ? ORDER BY id' . ($sperren ? ' FOR UPDATE' : ''));
         $stmt->execute([$invoiceId]);
 
         return array_map(AllocationRecord::fromRow(...), $stmt->fetchAll());
     }
 
     /**
+     * @param bool $sperren locking read: sees what other transactions
+     *        committed since this one's snapshot (REPEATABLE READ) and locks
+     *        the rows - for every sum checked or derived inside a transaction
+     *
      * @return list<AllocationRecord>
      */
-    public function forTransaction(int $transactionId): array
+    public function forTransaction(int $transactionId, bool $sperren = false): array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM allocation WHERE transaction_id = ? ORDER BY id');
+        $stmt = $this->pdo->prepare('SELECT * FROM allocation WHERE transaction_id = ? ORDER BY id' . ($sperren ? ' FOR UPDATE' : ''));
         $stmt->execute([$transactionId]);
 
         return array_map(AllocationRecord::fromRow(...), $stmt->fetchAll());
@@ -161,9 +169,10 @@ final readonly class AllocationRepository
         return $ergebnis;
     }
 
-    public function countForInvoice(int $invoiceId): int
+    /** @param bool $sperren locking read, as forTransaction() */
+    public function countForInvoice(int $invoiceId, bool $sperren = false): int
     {
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM allocation WHERE invoice_id = ?');
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM allocation WHERE invoice_id = ?' . ($sperren ? ' FOR UPDATE' : ''));
         $stmt->execute([$invoiceId]);
 
         return (int) $stmt->fetchColumn();
