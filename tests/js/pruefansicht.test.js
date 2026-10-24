@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ZOOM_STUFEN, seiteKlemmen, seitenText, zoomStufe, kategoriePasst, rollePasst } = require('../../public/js/pruefansicht.js');
+const { ZOOM_STUFEN, seiteKlemmen, seitenText, zoomStufe, kategoriePasst, rollePasst, lernenGilt } = require('../../public/js/pruefansicht.js');
 
 // The review page (issue #37/M6-3): page flipping, zoom and the direction
 // filter of public/js/pruefansicht.js.
@@ -43,4 +43,11 @@ test('an expense takes suppliers, income takes payers, "beide" fits both', () =>
     assert.equal(rollePasst('einnahme', 'lieferant'), false);
     assert.equal(rollePasst('ausgabe', 'beide'), true);
     assert.equal(rollePasst('einnahme', 'beide'), true);
+});
+
+test('the offer to teach the supplier holds only while its partner stays chosen (issue #201)', () => {
+    assert.equal(lernenGilt('12', '12'), true);
+    assert.equal(lernenGilt('13', '12'), false, 'another partner chosen');
+    assert.equal(lernenGilt('', '12'), false, 'no partner chosen');
+    assert.equal(lernenGilt('', ''), false, 'nothing offered');
 });
