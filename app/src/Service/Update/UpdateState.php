@@ -16,6 +16,9 @@ final readonly class UpdateState
 {
     /**
      * @param list<string> $meldungen German log lines for the admin UI
+     * @param bool $weiter the step that answered is not through yet and
+     *        wants to be called again (the backup step, issue #208). Only
+     *        ever set on the answer of that step: every other mit() clears it.
      */
     public function __construct(
         public string $aktuelleVersion,
@@ -26,6 +29,7 @@ final readonly class UpdateState
         public bool $fertig = false,
         public ?string $fehler = null,
         public array $meldungen = [],
+        public bool $weiter = false,
     ) {
     }
 
@@ -34,6 +38,7 @@ final readonly class UpdateState
         ?string $fehler = null,
         ?string $meldung = null,
         ?bool $fertig = null,
+        bool $weiter = false,
     ): self {
         return new self(
             aktuelleVersion: $this->aktuelleVersion,
@@ -44,6 +49,7 @@ final readonly class UpdateState
             fertig: $fertig ?? $this->fertig,
             fehler: $fehler,
             meldungen: $meldung !== null ? [...$this->meldungen, $meldung] : $this->meldungen,
+            weiter: $weiter,
         );
     }
 
@@ -61,6 +67,7 @@ final readonly class UpdateState
             'fertig' => $this->fertig,
             'fehler' => $this->fehler,
             'meldungen' => $this->meldungen,
+            'weiter' => $this->weiter,
         ];
     }
 
@@ -80,6 +87,7 @@ final readonly class UpdateState
             fertig: (bool) ($data['fertig'] ?? false),
             fehler: isset($data['fehler']) ? (string) $data['fehler'] : null,
             meldungen: array_values(array_map(strval(...), (array) ($data['meldungen'] ?? []))),
+            weiter: (bool) ($data['weiter'] ?? false),
         );
     }
 }

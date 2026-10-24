@@ -18,6 +18,10 @@ test('the chain goes on until the server reports the backup finished', () => {
 test('the status line names the phase and the blob progress', () => {
     assert.equal(statusText({ phase: 'dump', fertig: false }), 'Datenbank wird gesichert …');
     assert.equal(
+        statusText({ phase: 'dump', fertig: false, dump_zeilen: 1200 }),
+        'Datenbank wird gesichert … (1200 Zeilen)',
+    );
+    assert.equal(
         statusText({ phase: 'blobs', fertig: false, blob_dateien: 200, blob_gesamt: 450 }),
         'Belegdateien: 200 von 450 gesichert …',
     );

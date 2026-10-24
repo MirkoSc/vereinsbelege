@@ -352,12 +352,17 @@ $updates = static fn(): UpdateController => new UpdateController(
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
         migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
-        backups: new BackupService(
+        backups: new BackupErstellung(
+            new BackupService(
+                $connections->pdo(),
+                $paths->backupDir(),
+                $paths->configFile(),
+                $version->value,
+                $paths->blobDir(),
+            ),
             $connections->pdo(),
             $paths->backupDir(),
             $paths->configFile(),
-            $version->value,
-            $paths->blobDir(),
         ),
     ),
     $maintenance,

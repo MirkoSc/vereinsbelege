@@ -86,10 +86,31 @@ final class ZipAnhang
      */
     public function eintrag(string $name, $quelle, int $methode = self::STORE, int $stufe = 1): int
     {
+        $offen = $this->eintragBeginnen($name, $methode);
+        $offen = $this->eintragFortsetzen($offen, $quelle, $stufe);
+        $this->eintragBeenden($offen);
+
+        return (int) $offen['roh'];
+    }
+
+    /**
+     * Starts an entry whose content follows in several requests (issue
+     * #208: the database dump of a large archive does not fit into one).
+     * Writes the local header and returns the open entry as JSON-safe data
+     * for eintragFortsetzen()/eintragBeenden() - the caller keeps it with
+     * the committed lengths of the work files, so a step that died is run
+     * again from the same data.
+     *
+     * @return array<string, mixed>
+     */
+    public function eintragBeginnen(string $name, int $methode = self::STORE): array
+    {
         if ($name === '' || str_starts_with($name, '/') || str_contains($name, '\\') || in_array('..', explode('/', $name), true)) {
             throw new \InvalidArgumentException('Invalid entry name.');
         }
-
+        if ($methode !== self::STORE && $methode !== self::DEFLATE) {
+            throw new \InvalidArgumentException('Unsupported compression method.');
+        }
         $offset = $this->position();
         $this->schreibe($this->archiv, pack(
             'VvvvvvVVVvv',
@@ -106,19 +127,44 @@ final class ZipAnhang
             20,
         ) . $name . pack('vvPP', 0x0001, 16, 0, 0));
 
+        return [
+            'name' => $name,
+            'methode' => $methode,
+            'offset' => $offset,
+            'crc' => base64_encode(serialize(hash_init('crc32b'))),
+            'roh' => 0,
+            'gepackt' => 0,
+        ];
+    }
+
+    /**
+     * Appends $quelle (until its end) to an open entry.
+     *
+     * With DEFLATE every call is a deflate stream of its own that ends in a
+     * sync flush - byte-aligned blocks without the final bit, so the pieces
+     * of all calls form one valid deflate stream that eintragBeenden()
+     * closes with a final empty block. The CRC runs on across calls as a
+     * serialized hash context.
+     *
+     * @param array<string, mixed> $offen
+     * @param resource $quelle
+     * @return array<string, mixed> the open entry after this piece
+     */
+    public function eintragFortsetzen(array $offen, $quelle, int $stufe = 1): array
+    {
+        $crc = $this->crcKontext($offen);
         $deflate = null;
-        if ($methode === self::DEFLATE) {
+        if ($offen['methode'] === self::DEFLATE) {
             $deflate = deflate_init(ZLIB_ENCODING_RAW, ['level' => max(1, min(9, $stufe))]);
             if ($deflate === false) {
                 throw new \RuntimeException('deflate_init failed.');
             }
-        } elseif ($methode !== self::STORE) {
-            throw new \InvalidArgumentException('Unsupported compression method.');
         }
-
-        $crc = hash_init('crc32b');
-        $roh = 0;
-        $gepackt = 0;
+        $roh = (int) $offen['roh'];
+        $gepackt = (int) $offen['gepackt'];
+        // The last block is held back: deflate_add() returns nothing for a
+        // flush without data, so the sync flush rides on the last block.
+        $vorrat = null;
         while (!feof($quelle)) {
             $block = fread($quelle, self::BLOCK);
             if ($block === false) {
@@ -129,22 +175,51 @@ final class ZipAnhang
             }
             hash_update($crc, $block);
             $roh += strlen($block);
-            $daten = $deflate === null ? $block : deflate_add($deflate, $block, ZLIB_NO_FLUSH);
-            if ($daten === false) {
+            if ($deflate === null) {
+                $gepackt += strlen($block);
+                $this->schreibe($this->archiv, $block);
+                continue;
+            }
+            if ($vorrat !== null) {
+                $gepackt += $this->packe($deflate, $vorrat, ZLIB_NO_FLUSH);
+            }
+            $vorrat = $block;
+        }
+        if ($deflate !== null && $vorrat !== null) {
+            $gepackt += $this->packe($deflate, $vorrat, ZLIB_SYNC_FLUSH);
+        }
+
+        return [
+            ...$offen,
+            'crc' => base64_encode(serialize($crc)),
+            'roh' => $roh,
+            'gepackt' => $gepackt,
+        ];
+    }
+
+    /**
+     * Closes an open entry: the final deflate block, CRC and sizes patched
+     * into its local header, its central directory record.
+     *
+     * @param array<string, mixed> $offen
+     */
+    public function eintragBeenden(array $offen): void
+    {
+        $name = (string) $offen['name'];
+        $methode = (int) $offen['methode'];
+        $offset = (int) $offen['offset'];
+        $roh = (int) $offen['roh'];
+        $gepackt = (int) $offen['gepackt'];
+        if ($methode === self::DEFLATE) {
+            $deflate = deflate_init(ZLIB_ENCODING_RAW, ['level' => 1]);
+            $schluss = $deflate === false ? false : deflate_add($deflate, '', ZLIB_FINISH);
+            if ($schluss === false) {
                 throw new \RuntimeException('deflate_add failed.');
             }
-            $gepackt += strlen($daten);
-            $this->schreibe($this->archiv, $daten);
+            $gepackt += strlen($schluss);
+            $this->schreibe($this->archiv, $schluss);
         }
-        if ($deflate !== null) {
-            $rest = deflate_add($deflate, '', ZLIB_FINISH);
-            if ($rest === false) {
-                throw new \RuntimeException('deflate_add failed.');
-            }
-            $gepackt += strlen($rest);
-            $this->schreibe($this->archiv, $rest);
-        }
-        $pruefsumme = (int) hexdec(hash_final($crc));
+        $pruefsumme = (int) hexdec(hash_final($this->crcKontext($offen)));
 
         // Patch CRC and the zip64 sizes into the local header.
         $ende = $this->position();
@@ -174,8 +249,36 @@ final class ZipAnhang
             self::ATTRIBUTE,
             self::UNBEKANNT_32,
         ) . $name . pack('vvPPP', 0x0001, 24, $roh, $gepackt, $offset));
+    }
 
-        return $roh;
+    /**
+     * @return int bytes written
+     */
+    private function packe(\DeflateContext $deflate, string $daten, int $flush): int
+    {
+        $gepackt = deflate_add($deflate, $daten, $flush);
+        if ($gepackt === false) {
+            throw new \RuntimeException('deflate_add failed.');
+        }
+        $this->schreibe($this->archiv, $gepackt);
+
+        return strlen($gepackt);
+    }
+
+    /**
+     * @param array<string, mixed> $offen
+     */
+    private function crcKontext(array $offen): \HashContext
+    {
+        $kontext = unserialize(
+            (string) base64_decode((string) ($offen['crc'] ?? ''), true),
+            ['allowed_classes' => [\HashContext::class]],
+        );
+        if (!$kontext instanceof \HashContext) {
+            throw new \RuntimeException('Die Arbeitsdatei des Backups ist beschädigt.');
+        }
+
+        return $kontext;
     }
 
     /**

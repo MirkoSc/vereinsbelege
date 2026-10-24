@@ -456,8 +456,8 @@ Variante:
   schreibt. Ergebnis und Format sind dieselben wie bei `create()`.
   Verworfen: Backup über die Seite nur ohne Blobs (unvollständig bei
   Backend `fs`), Blobs per `ZipArchive` portionsweise (Kopie des ganzen
-  Archivs je Portion). Der Dump bleibt ein einzelner Request – wie in der
-  Update-Kette; bei sehr großen `db`-Blob-Beständen ist das die Grenze.
+  Archivs je Portion). Der Dump war zunächst ein einzelner Request (auch in
+  der Update-Kette); seit #208 läuft er ebenfalls in Schritten (E-34).
 - **Download eines Backups mit `config.php` nur per POST mit dem aktuellen
   Passwort** (zusätzlich zu `admin.system` und CSRF), Fehlversuche begrenzt.
   Ein solches ZIP enthält den Server-Schlüssel; eine liegengelassene,
@@ -507,3 +507,50 @@ harten Prozessabbruch (Session nicht mehr geschrieben) der Rest des Blocks
 kann doppelt laufen – dann hilft nur ein
 Restore von vorn. Ganz schließen ließe sich das nur mit einem
 Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
+
+## E-34 ❓ Datenbank-Dump als Schrittkette (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #208, 06 §2, ergänzt E-30 und E-31*
+
+Mit Backend `db` liegen die Belege als `file_blob_chunk`-Zeilen im Dump; ein
+Dump in einem Request blieb bei einigen GB im Zeitlimit hängen – eine nicht
+erklärte dritte Ausnahme von CLAUDE.md §1. Getroffen ohne Rückfrage:
+
+- **Portionen nach Primärschlüssel (Keyset), nicht nach `OFFSET`:** jede
+  Portion kostet gleich viel, auch tief in `file_blob_chunk`; der Stand
+  ist der letzte geschriebene Schlüssel. Alle Tabellen des Schemas haben
+  einen Primärschlüssel; eine ohne ginge in einem Teil (wie bisher).
+- **Budget je Schritt: 32 MiB Dump-Text oder 8 s**, geprüft nach jedem Teil
+  (Tabellenkopf oder 100 Zeilen), mindestens ein Teil. Eine Portion
+  `file_blob_chunk` ist bis zu ~50 MiB Hex – gelesen ungepuffert und in
+  INSERTs zu 512 KiB geschrieben, der Speicher bleibt klein.
+- **Direkt in den ZIP-Eintrag, kein zweiter Durchgang:** jeder Schritt
+  hängt seinen Teil als Deflate-Strom mit Sync-Flush an den offenen Eintrag
+  `dump.sql` an, der CRC läuft als serialisierter `HashContext` im Stand
+  mit. Verworfen: erst eine Dump-Datei über viele Schritte, dann packen –
+  das Packen von Gigabytes wäre wieder ein langer Request bzw. bräuchte
+  dieselbe Mechanik, und der Platz würde doppelt belegt.
+- **Format unverändert:** die Teile ergeben byte-gleich dieselbe Datei wie
+  `dump()` am Stück (dieselben Anweisungen, Zeilen jetzt nach
+  Primärschlüssel sortiert); Restore (#120) und Installer bleiben gleich.
+- **Update-Kette nutzt dieselbe Kette** (ohne Dateien von Backend `fs`,
+  ohne `config.php`), ein Aufruf bis 5 s, Antwort `weiter`, die Seite ruft
+  den Schritt erneut auf. Eine Erstellung von der Admin-Seite blockiert den
+  Update-Schritt (Fehler, wiederholbar) statt parallel zu laufen.
+- **Härtung des Einspielens (aus dem Review von #206):** Markierung
+  „Schritt läuft“ in der Installer-Session; nach hartem Abbruch gelten
+  1062/1050 nur bei der ersten Anweisung des nächsten Schritts als schon
+  angewendet. Damit hängt ein Restore nach einem Abbruch durch das
+  Zeitlimit nicht mehr an der einen doppelt laufenden Anweisung (Rest des
+  offenen Punkts aus E-31: geht die Session selbst verloren, bleibt nur ein
+  Restore von vorn).
+
+Offen für Mirko:
+- **Kein konsistenter Schnappschuss.** Der Dump läuft jetzt über Minuten
+  statt Sekunden; wer währenddessen Belege ändert, kann Tabellen in
+  unterschiedlichem Stand im Backup haben (z. B. Chunks eines neuen Belegs
+  ohne seine `file_blob`-Zeile). Vorher galt das auch, nur in einem kurzen
+  Fenster. Abhilfe wäre Wartungsmodus während des Dumps (sperrt den
+  Verein aus) oder ein Hinweis „während des Backups nichts ändern“ – nicht
+  umgesetzt.
+- Budgets (32 MiB / 8 s / 5 s im Update) sind geschätzt, nicht auf dem
+  Zielhost gemessen.
