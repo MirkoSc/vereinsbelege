@@ -71,6 +71,8 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
 
     private const string CSV = __DIR__ . '/../fixtures/bank/';
 
+    private const string CAMT = __DIR__ . '/../fixtures/camt053/';
+
     private Vault $tresor;
     private AuditLog $audit;
     private int $userId;
@@ -345,6 +347,148 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         self::assertSame(BalanceCheck::Ok, $this->importe()->find($id)?->balanceCheck);
     }
 
+    /**
+     * CAMT.053 (issue #91) runs through the same pipeline: account by IBAN,
+     * preview with balance check and pending entries, step chain, encrypted
+     * bookings with the same fields as MT940.
+     */
+    public function testACamt053FileIsPreviewedThenImportedLikeMt940(): void
+    {
+        $konto = $this->bankkonto('Vereinskonto VR', 'DE93876543210007654321', '812,05', '2023-12-29');
+
+        $id = self::importId($this->hochladen((string) file_get_contents(self::CAMT . 'vrbank-053-001-08.xml'), 'auszug.xml'));
+        $import = $this->importe()->find($id);
+        self::assertSame($konto, $import?->accountId, 'The account follows from the IBAN of Acct/Id.');
+        self::assertSame('camt053', $import->format);
+        $roh = $this->roh('bank_import') . $this->roh('file_blob') . $this->roh('file_blob_chunk');
+        foreach (['Mustermann', 'Telefon', 'DE93876543210007654321', 'BkToCstmrStmt', 'auszug.xml'] as $klartext) {
+            self::assertStringNotContainsString($klartext, $roh, $klartext . ' must only be stored encrypted');
+        }
+
+        $seite = $this->get('/app/konten/import/' . $id);
+        self::assertStringContainsString('<td>CAMT.053</td>', $seite->body);
+        self::assertStringContainsString('29.12.2023 – 02.01.2024', $seite->body);
+        self::assertSame(['6', '6', '0', '1'], self::zahlen($seite->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)', 'vorgemerkte Umsätze (übersprungen)']));
+        self::assertStringContainsString('Salden stimmen', $seite->body);
+        self::assertStringContainsString('Anschluss an den Kontostand vor dem 29.12.2023', $seite->body);
+
+        self::assertSame(302, $this->post('/app/konten/import/' . $id . '/uebernehmen')->status);
+        $this->alleSchritte($id);
+
+        $import = $this->importe()->find($id);
+        self::assertSame(BankImportStatus::Fertig, $import?->status);
+        self::assertSame(BalanceCheck::Ok, $import->balanceCheck);
+        self::assertSame(['gesamt' => 6, 'neu' => 6, 'duplikat' => 0, 'fehler' => 0, 'vorgemerkt' => 1, 'vor_stichtag' => 0], $import->stats?->toArray());
+
+        $zeilen = $this->buchungen($konto);
+        self::assertSame(['2023-12-29', '2024-01-02', '2024-01-02', '2024-01-02', '2024-01-02', '2024-01-02'], array_column($zeilen, 'booking_date'));
+        self::assertSame('2023-12-29', $zeilen[1]['value_date']);
+        self::assertSame(['einnahme', 'ausgabe', 'ausgabe', 'ausgabe', 'einnahme', 'einnahme'], array_column($zeilen, 'direction'));
+        $roh = $this->roh('bank_transaction');
+        foreach (['Mustermann', 'Telefon', 'DE54120500000003333333', 'TEL-000123', 'Startgeld'] as $klartext) {
+            self::assertStringNotContainsString($klartext, $roh, $klartext . ' must only be stored encrypted');
+        }
+        self::assertSame(
+            $this->tresor->blindIndex()->forValue(KontoauszugImport::COUNTERPARTY_PURPOSE, 'DE54120500000003333333'),
+            $zeilen[1]['counterparty_bi'],
+        );
+        self::assertNull($zeilen[3]['counterparty_bi'], 'A batch has no single counterparty.');
+        self::assertSame([
+            'amount' => -1999,
+            'currency' => 'EUR',
+            'counterparty_name' => 'Telefonanbieter Muster AG',
+            'counterparty_iban' => 'DE54120500000003333333',
+            'purpose' => 'Telefon Vereinsheim 12/2023 Kundennr. 0815',
+            'eref' => 'TK-2023-12-998877',
+            'mref' => 'TEL-000123',
+            'cred' => 'DE11ZZZ00000000001',
+            'gvc' => '105',
+            'booking_text' => 'BASISLASTSCHRIFT',
+        ], $this->daten($zeilen[1]));
+
+        self::assertSame(
+            ['format' => 'camt053', 'gesamt' => 6, 'neu' => 6, 'duplikat' => 0, 'fehler' => 0, 'vorgemerkt' => 1, 'vor_stichtag' => 0, 'saldenpruefung' => 'ok'],
+            $this->audit->details($this->protokoll($id)[0], $this->tresor),
+        );
+        self::assertStringContainsString('CAMT.053', $this->get('/app/konten/import')->body);
+    }
+
+    public function testSwitchingFromMt940ToCamt053ForTheSamePeriodAddsNothing(): void
+    {
+        $konto = $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban(), '1.523,40', '2024-03-11');
+        $this->importiere(self::sparkasse());
+
+        $id = self::importId($this->hochladen((string) file_get_contents(self::CAMT . 'sparkasse-053-001-02.xml'), 'auszug.xml'));
+        self::assertSame($konto, $this->importe()->find($id)?->accountId);
+        $seite = $this->get('/app/konten/import/' . $id);
+        self::assertSame(['5', '0', '5'], self::zahlen($seite->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertCount(5, $this->buchungen($konto));
+    }
+
+    /**
+     * A batch booking has another purpose in MT940 than in CAMT.053; without
+     * a counterparty it is still found by day and amount - in both
+     * directions, and only once per stored booking.
+     */
+    public function testABatchBookingIsFoundAcrossFormatsByDayAndAmount(): void
+    {
+        $konto = $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban(), '100,00', '2024-04-01');
+        $mt940 = ":20:STARTUMSE\r\n:25:12345678/0001234567\r\n:28C:00020/001\r\n:60F:C240401EUR100,00\r\n"
+            . ":61:2404020402DR30,00N191NONREF\r\n:86:191?00SAMMEL-UEBERWEISUNG?100599?20SAMMLER MIT 2 POSTEN?21REF 4711\r\n"
+            . ":62F:C240402EUR70,00\r\n-\r\n";
+        $sammel = '<Ntry><Amt Ccy="EUR">30.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2024-04-02</Dt></BookgDt>'
+            . '<NtryDtls><Btch><NbOfTxs>2</NbOfTxs></Btch>'
+            . '<TxDtls><RltdPties><Cdtr><Nm>Turnverein Musterdorf</Nm></Cdtr><CdtrAcct><Id><IBAN>DE52120300001111111111</IBAN></Id></CdtrAcct></RltdPties><RmtInf><Ustrd>Startgeld A</Ustrd></RmtInf></TxDtls>'
+            . '<TxDtls><RltdPties><Cdtr><Nm>SV Beispielstadt</Nm></Cdtr><CdtrAcct><Id><IBAN>DE23120906400007654321</IBAN></Id></CdtrAcct></RltdPties><RmtInf><Ustrd>Startgeld B</Ustrd></RmtInf></TxDtls>'
+            . '</NtryDtls><AddtlNtryInf>SAMMEL-UEBERWEISUNG</AddtlNtryInf></Ntry>';
+        $camt = static fn(string $eintraege, string $schluss): string => '<?xml version="1.0" encoding="UTF-8"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt><Id>S20</Id>'
+            . '<Acct><Id><IBAN>' . self::sparkasseIban() . '</IBAN></Id></Acct>'
+            . '<Bal><Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">100.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-04-01</Dt></Dt></Bal>'
+            . '<Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">' . $schluss . '</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-04-02</Dt></Dt></Bal>'
+            . $eintraege . '</Stmt></BkToCstmrStmt></Document>';
+
+        $this->importiere($mt940);
+        $id = self::importId($this->hochladen($camt($sammel, '70.00'), 'auszug.xml'));
+        self::assertSame(['1', '0', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertCount(1, $this->buchungen($konto));
+
+        // A second batch of the same day and amount is new: one stored booking matches one.
+        $id = self::importId($this->hochladen($camt($sammel . $sammel, '40.00'), 'auszug.xml'));
+        self::assertSame(['2', '1', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertCount(2, $this->buchungen($konto));
+
+        // And back: the MT940 file finds its batch among the CAMT bookings.
+        $andersherum = $this->bankkonto('Zweitkonto', 'DE41500105170123456789', '100,00', '2024-04-01');
+        $camtZweit = str_replace(self::sparkasseIban(), 'DE41500105170123456789', $camt($sammel, '70.00'));
+        $this->importiere($camtZweit);
+        $id = self::importId($this->hochladen(str_replace(':25:12345678/0001234567', ':25:DE41500105170123456789', $mt940)));
+        self::assertSame($andersherum, $this->importe()->find($id)?->accountId);
+        self::assertSame(['1', '0', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+    }
+
+    public function testAZipOfDailyCamtStatementsIsOneImportAndConnectsToTheOpeningBalance(): void
+    {
+        $konto = $this->bankkonto('Girokonto ING', 'DE41500105170123456789', '-20,00', '2024-04-01');
+
+        $id = self::importId($this->hochladen((string) file_get_contents(self::CAMT . 'tagesauszuege-053-001-04.zip'), 'auszuege.zip', ['format' => 'camt053']));
+        $seite = $this->get('/app/konten/import/' . $id);
+        self::assertSame(['2', '2'], self::zahlen($seite->body, ['Buchungen in der Datei', 'davon neu']));
+        self::assertStringContainsString('Salden stimmen', $seite->body);
+        self::assertStringContainsString('Übergang zum Auszug vom 03.04.2024', $seite->body);
+
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertSame(['2024-04-02', '2024-04-03'], array_column($this->buchungen($konto), 'booking_date'));
+        self::assertSame(BalanceCheck::Ok, $this->importe()->find($id)?->balanceCheck);
+    }
+
     public function testACsvExportAsksForItsAccountAndChecksTheBalanceColumn(): void
     {
         $konto = $this->bankkonto('Vereinskonto VR', 'DE89370400440532013000', '4.535,00', '2024-03-01');
@@ -502,6 +646,18 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
 
         $falschesFormat = $this->hochladen(self::sparkasse(), 'auszug.sta', ['format' => 'csv:1']);
         self::assertSame(422, $falschesFormat->status);
+
+        $camt052 = $this->hochladen('<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"><BkToCstmrAcctRpt/></Document>', 'bericht.xml');
+        self::assertSame(422, $camt052->status);
+        self::assertStringContainsString('CAMT.052-Umsatzbericht', $camt052->body);
+
+        $kaputtesXml = $this->hochladen(str_replace('<Amt Ccy="EUR">250.00</Amt>', '<Amt Ccy="EUR">2x50.00</Amt>', (string) file_get_contents(self::CAMT . 'sparkasse-053-001-02.xml')), 'auszug.xml');
+        self::assertSame(422, $kaputtesXml->status);
+        self::assertStringContainsString('Die CAMT.053-Datei ist nicht lesbar: Auszug 1, Buchung 2', $kaputtesXml->body);
+        self::assertStringNotContainsString('2x50', $kaputtesXml->body);
+
+        $camtAlsMt940 = $this->hochladen((string) file_get_contents(self::CAMT . 'sparkasse-053-001-02.xml'), 'auszug.xml', ['format' => 'mt940']);
+        self::assertSame(422, $camtAlsMt940->status);
 
         self::assertSame(422, $this->hochladen("   \r\n")->status);
         self::assertSame(422, $this->post('/app/konten/import')->status, 'No file at all.');

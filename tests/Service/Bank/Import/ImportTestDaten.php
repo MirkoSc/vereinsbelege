@@ -21,6 +21,8 @@ final class ImportTestDaten
 
     public const string CSV = __DIR__ . '/../../../fixtures/bank/';
 
+    public const string CAMT = __DIR__ . '/../../../fixtures/camt053/';
+
     public const int SPARKASSE_ID = 1;
 
     public const int VR_BANK_ID = 2;

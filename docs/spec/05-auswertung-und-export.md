@@ -232,6 +232,74 @@ leer → Ebene entfällt).
     sieht so nur seine eigenen Läufe. Alle Routen verlangen `export.zip`.
   - Offene Läufe bleiben als Verlauf stehen. Sie markieren nichts, ein
     Aufräumen ist nicht nötig.
+- **Nextcloud-Ablage (issue #95):** Statt das ZIP herunter- und wieder
+  hochzuladen, legt die Laufseite einen Export-Lauf direkt in einen Ordner
+  der Vereins-Nextcloud (WebDAV). Entscheidungen (vorläufig, autonom
+  getroffen – Bestätigung durch Mirko offen, E-22):
+  - **Kein ZIP auf dem Server.** Ein serverseitig erzeugtes ZIP bräuchte
+    Klartext auf Platte oder einen langen Request; die Ausnahme oben gilt
+    nur für den Browser-Download. Stattdessen geht **jede Datei einzeln**
+    hoch – mit genau den Pfaden und Namen des ZIP (`ZipExport::
+    vorbereiten()`, Muster M12-1, inkl. `_Originale`/`_Wiedervorlage`),
+    `index.csv` **zuletzt**. Ziel: `<Ordner>/Belege_2026/…`. Entschlüsselt
+    wird chunkweise direkt in den PUT (`CURLOPT_READFUNCTION`), nichts
+    landet auf Platte.
+  - **Schrittkette in der Nutzer-Session** (CLAUDE.md §1, §4):
+    `POST /app/export/lauf/{id}/nextcloud` prüft Ziel und Ordner (PROPFIND)
+    und legt `export_run_upload` an (bzw. setzt sie zurück);
+    `public/js/nextcloud.js` ruft danach `POST …/nextcloud/schritt` (JSON)
+    auf, bis `fertig`. Ein Schritt legt höchstens 20 Dateien ab und beginnt
+    nach 8 s keine neue; der Cursor rückt **nach jeder Datei** per
+    bedingtem UPDATE (`WHERE next_index = ?`) – zwei Tabs zählen nichts
+    doppelt. Ein fehlgeschlagener Schritt (Netz, 401, 507 …) bewegt nichts,
+    der nächste versucht dieselbe Datei; eine unlesbare Datei (Blob defekt)
+    meldet sich als Fehler, nicht als HTTP 500. Ändert sich der Plan
+    unterwegs (ein Beleg gelöscht, abgelehnt, umdatiert, sein PDF fertig –
+    erkannt an `plan_hash`, einem HMAC mit dem Blind-Index-Schlüssel des
+    Tresors über Pfade und Blob-IDs), beginnt die Kette
+    von vorn; schon Abgelegtes zählt dann als vorhanden, nichts wird
+    übersprungen oder vorzeitig fertig. Ein geschlossener Tab hält einfach
+    an; die Seite bietet „Weiter ablegen“.
+  - **Nie überschreiben, schon Vorhandenes überspringen.** Je Datei:
+    PROPFIND auf den Zielnamen. Nichts da → fehlende Ordner per MKCOL
+    (405 = gibt es schon), PUT mit `OC-Checksum: SHA1:…`, danach Größe per
+    PROPFIND prüfen. Dieselbe Datei da (SHA-1 aus `oc:checksums`; ohne
+    Prüfsumme – von Hand abgelegt – bei gleicher Größe per GET der Inhalt)
+    → übersprungen („vorhanden“).
+    Eine **andere** Datei da → nächster freier Name „ (2)“, „ (3)“ …
+    (wie die Kollisionen im ZIP, höchstens 50 Varianten), gezählt als
+    „umbenannt“. Die `index.csv` nennt dann den vom Muster vergebenen Namen;
+    die Laufseite weist darauf hin. Typischer Fall: ein Lauf „nur noch nicht
+    exportierte“ in denselben Jahresordner – seine `index.csv` wird so zu
+    `index (2).csv`, die erste bleibt.
+  - **„Nur noch nicht exportierte“** wirkt über den Lauf: abgelegt werden
+    die Belege des Laufs. Die Ablage **markiert nichts**; bestätigt wird wie
+    beim Download von Hand („Vollständig gespeichert“). Audit
+    `export.nextcloud` (Entity `export_run`) beim Abschluss mit Anzahl
+    Belege/Dateien und den drei Zählern, nie Namen.
+  - **Rechte:** `export.zip` **ohne Scope** – der Ordner ist das Archiv
+    des Vereins; wer nur eingeschränkt exportieren darf (z. B. ein
+    Steuerberater mit Zeitraum-Scope), sieht den Abschnitt nicht, die
+    Routen antworten 404. Tresor nötig (Ziel und Belege), CSRF auf beiden Routen.
+  - **Ziel** (`nextcloud_target`, 02 „Fachdaten“): WebDAV-Adresse des
+    Ordners, Benutzer, **App-Passwort** – im **Tresor** (`data_enc`, nur in
+    der Session lesbar), nicht mit dem Server-Schlüssel wie die KI-Keys:
+    das Passwort öffnet das Vereinsarchiv, und ohne Tresor gibt es ohnehin
+    nichts abzulegen. Seite `/admin/export/nextcloud` (Recht
+    `admin.settings`, verlinkt von `/admin/export`): Speichern (leeres
+    Passwortfeld behält das alte – nur bei unveränderter Adresse, damit es
+    nie an einen anderen Server geht; das Passwort geht nie zurück an den
+    Browser), „Verbindung testen“ (PROPFIND auf den Ordner), Entfernen.
+    Audit `einstellung.nextcloud` nur mit `aktion` (`gespeichert`/
+    `entfernt`), ohne Adresse oder Benutzer. Regeln
+    (`NextcloudZiel::pruefen()`): nur `https://`, ohne Zugangsdaten, Query,
+    Fragment, Leer- und Steuerzeichen, ≤ 500 Zeichen; Benutzer ohne „:“.
+  - **HTTP:** `App\Service\Export\Nextcloud\CurlWebDav` über ext-curl
+    (keine Prozessaufrufe), Basic Auth, nur HTTPS, **keine Redirects** (die
+    Zugangsdaten gingen mit), kurze Timeouts (PUT 25 s, sonst 20 s). Die
+    PROPFIND-Antwort liest `DavAntwort` mit DOM ohne Netz und ohne
+    Entitäten (`DOCTYPE` wird abgelehnt), höchstens 1 MiB. Fehlermeldungen
+    nennen nie einen Pfad.
 
 ## 3. Archiv-Import (Bestandsdaten)
 
@@ -369,3 +437,19 @@ Für „nur noch nicht exportierte“ prüft er:
 - **Scope:** Die Option wirkt zusammen mit dem Zeitraum-Scope; fremde Läufe
   ergeben 404 für eingeschränkte Rollen.
 - **CSRF** ist auf allen Lauf-Routen Pflicht.
+Umgesetzt (issue #95, Nextcloud-Ablage): `tests/Integration/NextcloudAblageFlowTest.php`
+gegen einen nachgebauten WebDAV-Ordner (`tests/Support/FakeWebDav.php`):
+- **Gleiche Pfade wie das ZIP**, `index.csv` zuletzt, in mehreren kurzen
+  Schritten; ein Audit; kein Klartext in `var/tmp`; der Lauf bleibt offen.
+- **Idempotenz:** Erneutes Ablegen lädt nichts hoch (Prüfsumme); ein
+  fehlgeschlagener Schritt bewegt den Cursor nicht; der Cursor rückt nur
+  von dort weiter, wo er gelesen wurde (zwei Tabs).
+- **Nie überschreiben:** fremde Datei gleichen Namens bleibt, unsere wird
+  „ (2)“; von Hand abgelegte gleiche Datei zählt als vorhanden, gleich
+  große andere nicht; ein unterwegs geänderter Plan beginnt von vorn.
+- **Ziel im Tresor**, Passwort nie in der Seite, Audit ohne Adresse;
+  `http://` und Zugangsdaten in der Adresse werden abgelehnt.
+- **Rechte/CSRF/Tresor:** Scope-Rolle 404, ohne Tresor bzw. Token nichts.
+Dazu `tests/Service/Export/Nextcloud/` (Adressprüfung, PROPFIND-Antwort inkl.
+XXE-Versuch, Namensvarianten) und `tests/js/nextcloud.test.js`. Die echte
+Vereins-Nextcloud ist eine manuelle Abnahme (Prüfliste im PR).

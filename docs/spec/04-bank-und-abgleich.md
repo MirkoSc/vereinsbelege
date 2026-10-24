@@ -140,6 +140,97 @@ reine Werteobjekte, nichts wird gespeichert oder geloggt; die Fehlermeldung
   Abweichung ist eine Warnung, kein Abbruch; Fehlen von `:25:`, `:60x:`
   oder `:62x:` ist ein Fehler.
 
+## 2a. CAMT.053-Import
+
+**Umsetzung (issue #91):** eigener Parser `Service/Bank/Camt053Parser`
+(reines PHP auf ext-dom, keine Bibliothek) liefert dieselben Werteobjekte
+wie MT940 (`Kontoauszug`, `Kontoangabe`, `Saldo`, `Umsatz`,
+`Umsatzdetails`) plus die Zahl übersprungener vorgemerkter Einträge
+(`Camt053Ergebnis`). Damit laufen Vorschau, Saldenprüfung, Dedup-Schlüssel,
+Schrittkette und Regeln unverändert durch die Import-Pipeline (§4).
+Nichts wird gespeichert oder geloggt; `Camt053Exception` nennt nur die
+Position (Datei im ZIP, Auszug, Buchung, Element), nie den Inhalt.
+Festgelegte Regeln:
+
+- **Versionen:** camt.053.001.02 bis .08 (und spätere gleicher Struktur).
+  Elemente werden über ihren lokalen Namen gefunden, der Namensraum wird
+  nicht ausgewertet (auch ohne oder mit Präfix). Versionsunterschiede:
+  `<Sts>BOOK</Sts>` bzw. `<Sts><Cd>BOOK</Cd></Sts>`, `Cdtr/Nm` bzw.
+  `Cdtr/Pty/Nm`, `BIC` bzw. `BICFI`.
+- **Datei:** eine XML-Datei mit einem oder mehreren `Stmt`, oder ein
+  **ZIP** mit mehreren solchen Dateien (Tagesauszüge eines Zeitraums). Aus
+  dem ZIP zählen nur `.xml`-Einträge (ohne `__MACOSX/` und Punktdateien),
+  höchstens 5 MB je Datei und 10 MB entpackt insgesamt – gelesen mit
+  `App\Service\Archiv\ZipLeser` im Speicher, nichts landet in `var/tmp`.
+  Jeder Schritt der Kette liest die Datei neu (wie bei MT940/CSV); ein Jahr
+  Tagesauszüge mit 7.300 Buchungen (4,5 MB XML) dauert rund 0,5 s bei
+  35 MB Speicher. Derselbe Auszug (`Stmt/Id`) zweimal wird einmal gelesen
+  (auch seine vorgemerkten Einträge zählen einmal). Die Auszüge werden nach
+  Anfangs-, dann Schlusssaldo-Datum, dann Auszugsnummer sortiert (sonst
+  stabil), damit Reihenfolge und laufende Dedup-Nummer nicht von der
+  Dateireihenfolge im ZIP abhängen. Ein `DOCTYPE` wird abgelehnt – vor dem
+  Parsen per Bytesuche und danach am Dokument (UTF-16) –, keine Entitäten,
+  kein Netz. Fehlermeldungen zählen „XML-Datei n im ZIP“ und „Auszug n“ je
+  Datei.
+- **Konto:** `Acct/Id/IBAN` (als Kontozeile und für die Zuordnung über
+  `iban_bi`), sonst `Acct/Id/Othr/Id` nur als Rohwert („Merken“ wie bei
+  MT940). Auszüge mehrerer Konten in einer Datei/einem ZIP → abgelehnt.
+- **Salden:** Anfang = `OPBD`, sonst `PRCD` (so liefern es die meisten
+  deutschen Banken, datiert auf den Vortag), sonst das erste `ITBD`;
+  Schluss = `CLBD`, sonst das letzte `ITBD` (dann als Zwischensaldo wie
+  `:62M:`). Andere Saldenarten (`CLAV`, `FWAV` …) werden ignoriert. Fehlt
+  Anfang oder Schluss, ist das ein Fehler.
+- **Einträge:** nur Status `BOOK`; `PDNG`/`INFO` werden übersprungen und als
+  „vorgemerkt“ gezählt (wie bei CSV). Je `Ntry` ein `Umsatz`: Betrag als
+  Dezimalzahl mit Punkt (mehr als zwei Nachkommastellen nur als Nullen),
+  Vorzeichen aus `CdtDbtInd`, `RvslInd` setzt `storno` (das Vorzeichen
+  bleibt die Wirkung auf den Saldo, wie `RC`/`RD`). Buchungsdatum
+  `BookgDt`, Valuta `ValDt` (fehlt eins, gilt das andere); `DtTm` zählt als
+  Kalendertag in Europe/Berlin.
+- **Bankcode:** `BkTxCd/Prtry/Cd` im DK-Format „NTRF+166+931“ →
+  Buchungsschlüssel, GVC, Textschlüsselergänzung; ohne ihn der
+  `SubFmlyCd` als Buchungsschlüssel. `AddtlNtryInf` (sonst `AddtlTxInf`)
+  ist der Buchungstext.
+- **Details** (`NtryDtls/TxDtls`): Gegenseite bei einer Gutschrift der
+  Zahler (`Dbtr`, `DbtrAcct`, `DbtrAgt`), bei einer Lastschrift/Überweisung
+  der Empfänger (`Cdtr` …), bei einem Storno die Gegenseite der
+  ursprünglichen Richtung. `EndToEndId` (ohne `NOTPROVIDED`) → `EREF` und
+  Kundenreferenz, `MndtId` → `MREF`, Gläubiger-ID (`Cdtr/…/PrvtId/Othr/Id`)
+  → `CRED`, `UltmtDbtr`/`UltmtCdtr` → `ABWA`/`ABWE`. Verwendungszweck =
+  die `Ustrd`-Elemente verbunden (ein volles 140-Zeichen-Element wird
+  direkt fortgesetzt, sonst mit Leerzeichen), ohne `Ustrd` die strukturierte
+  Referenz (`Strd/CdtrRefInf/Ref`), ohne beides der Buchungstext.
+- **Sammelbuchung** (mehrere `TxDtls` in einem `Ntry`): bleibt **eine**
+  Buchung (so stimmt der Saldo und so zeigt sie auch MT940); die
+  Verwendungszwecke aller Posten werden mit „ / “ verbunden, Gegenseite und
+  Einzelreferenzen bleiben leer.
+- Keine Migration: `bank_import.format` ist `camt053`; der Blob trägt den
+  Typ `application/xml` bzw. `application/zip`.
+- **Dedup MT940 ↔ CAMT:** Dieselben Buchungen ergeben bei den deutschen
+  Banken in beiden Formaten denselben Schlüssel (Zweck = `SVWZ+` bzw.
+  `Ustrd`, Gegen-IBAN, Datum, Betrag) – der Test mit den Sparkasse-Fixtures
+  belegt das; garantiert ist es nur, wenn die Bank denselben Zweck liefert.
+  Für Sammelbuchungen (und Entgelte), deren Zweck sich zwischen den
+  Formaten unterscheidet, greift der **Ersatzabgleich** (§4).
+- **Fremdwährung:** Ein `Ntry`, dessen `Amt/@Ccy` von der Währung des
+  Schlusssaldos abweicht, macht die Datei unlesbar (Meldung mit Auszug und
+  Buchung). UTF-16-Dateien (mit BOM) werden erkannt und gelesen.
+
+**Pflicht-Tests (issue #91):** `Camt053ParserTest` (Versionen .02/.04/.08
+und beliebiger, fehlender oder präfixierter Namensraum; ZIP mit mehreren
+Tagesauszügen, sortiert, fremde Dateien ignoriert, doppelter Auszug einmal;
+PRCD/OPBD/CLBD/ITBD; nur `BOOK`, vorgemerkt gezählt; Storno beider
+Richtungen; Sammelbuchung; Gegenseite je Richtung; SEPA-Schlüssel;
+`Ustrd`-Fügung, `Strd`; `DtTm` in Europe/Berlin; dieselben Buchungen wie
+die MT940-Fixture; Ablehnungen ohne Inhalt inkl. DOCTYPE, camt.052/.054,
+zu großes ZIP), `KontoauszugLeserTest` (Erkennung XML/ZIP, ZIP mit MT940
+kein MT940, mehrere Konten), `SaldenpruefungTest` (CAMT ok/abweichend,
+Tageskette im ZIP), `DedupschluesselTest` (MT940 → CAMT gleiche Schlüssel,
+ZIP ↔ einzelner Tag), `KontoauszugImportFlowTest` (VR-Bank .08
+verschlüsselt mit Vorschau, vorgemerkt, Gegenseite und Audit; Wechsel
+MT940 → CAMT ohne neue Buchungen; ZIP mit Anschluss; Ablehnungen ohne
+Speichern).
+
 ## 3. CSV-Import
 
 - **Profile** (`csv_profile`): Trennzeichen, Encoding, Datumsformat,
@@ -151,7 +242,8 @@ reine Werteobjekte, nichts wird gespeichert oder geloggt; die Fehlermeldung
   `tests/fixtures/bank/`): **Sparkasse CSV-CAMT** und **VR Bank CSV-CAMT**
   (Varianten V2/V8 der Kopfzeilen berücksichtigen).
 - **Empfehlung für den Verein: MT940** als Standard-Import (enthält Anfangs-
-  und Schlusssaldo → Saldenprüfung möglich); CSV-CAMT als gleichwertige
+  und Schlusssaldo → Saldenprüfung möglich), gleichwertig **CAMT.053**
+  (XML, §2a – Nachfolger von MT940, ebenfalls mit Salden); CSV-CAMT als gleichwertige
   Alternative, dort ohne Saldenprüfung, stattdessen Abgleich gegen den
   zuletzt bekannten Kontostand, falls die Datei Salden-Spalten hat. Weitere per Assistent: Datei hochladen → Spalten
   zuordnen mit Live-Vorschau der ersten 10 Zeilen → als Profil speichern.
@@ -222,20 +314,23 @@ Alles braucht den entsperrten Tresor, nur „Verwerfen“ nicht. Festgelegte
 Regeln:
 
 - **Upload** über ein normales Formular (höchstens 2 MB, wie der
-  CSV-Assistent), nicht über die Chunk-Komponente: Kontoauszüge sind klein,
+  CSV-Assistent; ein CAMT-ZIP mit seiner gepackten Größe), nicht über die Chunk-Komponente: Kontoauszüge sind klein,
   und die Komponente nimmt nur Bilder/PDF unter `document.submit_internal`
   an. Die Datei wird einmal probegelesen und dann unverändert als
   verschlüsselter Blob gespeichert (Originalname nur in `meta_enc`). Was
   sich nicht importieren lässt, wird abgelehnt, **ohne** etwas zu speichern:
   unlesbar, leer, keine Buchung, CSV ohne passendes Format (mit Link auf
-  „CSV-Formate“), MT940 mit Auszügen **mehrerer Konten** (ein Import gehört
-  zu einem Konto). Meldungen nennen höchstens Zeile und Feld.
-- **Format:** „Automatisch“ erkennt MT940 an `:20:`/`{1:` in den ersten
-  Zeilen, sonst CSV über die Profil-Erkennung (§3); wählbar sind auch MT940
-  oder ein bestimmtes CSV-Format. Gespeichert als `mt940` bzw.
+  „CSV-Formate“), MT940/CAMT.053 mit Auszügen **mehrerer Konten** (ein
+  Import gehört zu einem Konto). Meldungen nennen höchstens Zeile und Feld.
+- **Format:** „Automatisch“ erkennt CAMT.053 an XML (`<` am Anfang) oder
+  einem ZIP – vor MT940, weil ein unkomprimiertes ZIP den Text seiner
+  Dateien enthält –, dann MT940 an `:20:`/`{1:` in den ersten Zeilen, sonst
+  CSV über die Profil-Erkennung (§3); wählbar sind auch MT940, CAMT.053
+  oder ein bestimmtes CSV-Format. Gespeichert als `mt940`, `camt053` bzw.
   `csv:<profil-id>` – jeder Schritt liest die Datei genau so wie die
-  Vorschau.
-- **Konto:** (1) die IBAN aus `:25:` bzw. BLZ/Kontonummer als deutsche IBAN
+  Vorschau. Ein camt.052-Bericht oder eine camt.054-Datei wird mit Hinweis
+  auf CAMT.053 abgelehnt.
+- **Konto:** (1) die IBAN aus `:25:` (CAMT: `Acct/Id/IBAN`) bzw. BLZ/Kontonummer als deutsche IBAN
   (`App\Domain\Iban::ausBlzUndKonto()`) über `iban_bi`; (2) sonst das Konto
   des letzten fertigen Imports mit derselben Kontozeile (`source_bi`,
   „Merken“); (3) sonst die Auswahl im Formular; (4) sonst fragt die Vorschau
@@ -261,9 +356,21 @@ Regeln:
   Leerraum spielen keine Rolle. Ein Wechsel zwischen MT940 und CSV für
   denselben Zeitraum wird nur erkannt, wenn die Bank in beiden Formaten
   denselben Zweck liefert – nicht garantiert.
+- **Ersatzabgleich** (issue #91, ohne Migration): Eine Buchung der Datei
+  **ohne Gegen-IBAN** (Sammelbuchung, Entgelt), deren Schlüssel neu ist,
+  gilt trotzdem als Duplikat, wenn das Konto eine **importierte** Buchung
+  ohne Gegenseite mit gleichem Buchungstag und Betrag hat, die nicht aus
+  dieser Datei stammt (ihr Schlüssel ist keiner der Datei). Eins zu eins in
+  Dateireihenfolge gezählt – zwei solche Buchungen eines Tages brauchen zwei
+  gespeicherte. So bleibt eine Sammelbuchung beim Wechsel MT940 ↔ CAMT.053
+  eine Buchung, obwohl MT940 und CAMT ihr verschiedene Zwecke geben. Jeder
+  Schritt der Kette rechnet das gleich (die selbst geschriebenen Zeilen
+  tragen Schlüssel der Datei); das Netz `UNIQUE(account_id, dedup_bi)`
+  bleibt unberührt. Manuelle Buchungen zählen nicht mit.
 - **Saldenprüfung** (`Saldenpruefung`, Ergebnis `ok`/`abweichung`/`n.v.` in
   `balance_check`, Differenzen nur in der Vorschau): MT940 je Auszug
-  Anfang + Umsätze = Schluss und lückenlos von Auszug zu Auszug; CSV mit
+  Anfang + Umsätze = Schluss und lückenlos von Auszug zu Auszug (ebenso
+  CAMT.053, auch über die Tagesauszüge eines ZIP); CSV mit
   „Saldo nach Buchung“ als Kette Zeile für Zeile; CSV ohne Salden `n.v.`.
   Dazu der **Anschluss** („zuletzt bekannter Kontostand“, §3): Anfangsstand
   der Datei vor ihrem ersten Buchungstag gegen Anfangssaldo + gespeicherte

@@ -132,6 +132,24 @@ Benutzer in `user_key` (`kdf_ops`, `kdf_mem`, `kdf_alg`); ältere Konten
 angehoben. **Keine Kalibrierung im Installer** – das Profil ist fest, ob es
 auf einem Host trägt, zeigt vorher der Hosting-Check. Einzelheiten und
 Speicher-Überlegung: 01 §2 „Argon2id-Profil der Umhüllung".
+## E-22 ✅ (vorläufig) Nextcloud-Ablage: einzelne Dateien statt ZIP, Ziel im Tresor
+*Betrifft: issue #95 (Backlog) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Der Export kann direkt in einen Ordner der Vereins-Nextcloud gelegt werden
+(WebDAV). Entschieden wurde:
+- **Kein serverseitiges ZIP**, sondern jede Datei einzeln mit den Pfaden
+  und Namen des ZIP-Exports, `index.csv` zuletzt – als idempotente
+  Schrittkette kurzer Requests in der Nutzer-Session. Ein Server-ZIP
+  bräuchte Klartext auf Platte oder einen langen Request (CLAUDE.md §1, §4).
+- **Nie überschreiben:** Schon vorhandene gleiche Dateien (SHA-1, sonst
+  Größe) werden übersprungen, eine andere Datei gleichen Namens bleibt und
+  die neue bekommt „ (2)“.
+- **Adresse, Benutzer und App-Passwort liegen im Tresor**, nicht beim
+  Server-Schlüssel – das Passwort öffnet das Archiv des Vereins.
+- Die Ablage **markiert den Lauf nicht** als exportiert; das bleibt die
+  Bestätigung von Hand. Nur `export.zip` ohne Scope darf ablegen.
+
+Details: 05 §2 „Nextcloud-Ablage“.
 
 ## E-20 ⏳ Live-Kamera: Viereck anzeigen, automatisch auslösen nur auf Wunsch
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #146)*
@@ -253,3 +271,25 @@ wird HEIC übersprungen. Details: Spec 03 §1 „HEIC".
   kopiert, damit die Historie ein gelöschtes Profil überlebt.
 - Anzeige: letzte 30 Tage, je Anbieter die neuesten 25 Aufrufe; keine
   Bereinigung, kein Filter/Export.
+
+## Issue #91 CAMT.053-Import: Abgrenzungen (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+Details in 04 §2a. Getroffen ohne Rückfrage, jeweils die konservative
+Variante:
+
+- **Sammelbuchung bleibt eine Buchung.** Ein `Ntry` mit mehreren `TxDtls`
+  wird nicht in Einzelposten aufgeteilt – so stimmen Saldo und Abgleich mit
+  dem Kontoauszug überein und MT940 zeigt es genauso. Die Zwecke aller
+  Posten werden verbunden; eine Gegenseite gibt es dann nicht. Damit sie
+  beim Formatwechsel nicht doppelt kommt, gilt eine Buchung ohne
+  Gegen-IBAN auch über Tag + Betrag als vorhanden (Ersatzabgleich, 04 §4) –
+  Restrisiko: zwei verschiedene Buchungen ohne Gegenseite mit gleichem Tag
+  und Betrag aus verschiedenen Formaten werden als eine erkannt. Aufteilen
+  (z. B. für die Zuordnung einzelner Rechnungen) wäre ein eigenes Issue.
+- **Nur gebuchte Einträge.** `PDNG`/`INFO` werden übersprungen und als
+  „vorgemerkt“ gezählt – wie vorgemerkte CSV-Zeilen.
+- **camt.052 (untertägiger Umsatzbericht) und camt.054 werden abgelehnt**
+  mit dem Hinweis, CAMT.053 zu exportieren – sie haben keinen festen
+  Schlusssaldo bzw. sind keine Kontoauszüge.
+- **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
+  Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
+  10 MB entpackt.
