@@ -90,7 +90,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - Mehrere Worker sind technisch möglich, v1 unterstützt **einen** aktiven.
 - Entkoppeln im Admin: Grants löschen, Zugang sperren, sofortige Rückkehr
   zum Browser-Weg.
-- **Stand M7b-1 (issue #51, Migration 038, E-28):** Tabellen `worker`,
+- **Stand M7b-1 (issue #51, Migration 036, E-28):** Tabellen `worker`,
   `worker_pairing`, `worker_nonce`. Admin-Seite `/admin/worker`
   (`admin.settings`): Kopplungscode erzeugen (Crockford-Base32 `ABCD-EFGH`,
   nur als HMAC gespeichert, nur angezeigt in der Antwort, ein neuer ersetzt
