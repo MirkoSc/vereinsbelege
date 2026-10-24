@@ -189,15 +189,19 @@ selbst trägt sein eigenes Versionsbyte (Tabelle oben).
 aktuelle Profil (`KdfParameters::isWeakerThanDefaults()`: weniger
 Durchläufe **oder** weniger Speicher), umhüllt
 `App\Service\Account\LoginService` nach erfolgreichem Entsperren dasselbe
-Schlüsselpaar mit demselben Passwort neu – frisches Salt, aktuelles Profil
-(`UserKey::upgradedWrapping()`). Das Schlüsselpaar bleibt, die Freigabe
+Schlüsselpaar mit demselben Passwort neu – frisches Salt, jeder
+Kostenfaktor mindestens auf dem aktuellen Profil (`UserKey::upgradedWrapping()`,
+`KdfParameters::raisedToDefaults()`: je Faktor das Maximum aus gespeichertem
+und aktuellem Wert). Das Schlüsselpaar bleibt, die Freigabe
 gilt also weiter. Geschrieben wird nur, wenn die Zeile noch genau die
 gerade geöffnete ist (`UserKeyRepository::replaceWrapping()`,
 Compare-and-Swap auf `public_key` und `wrapped_private_key`): ein
 Passwortwechsel oder Reset, der dazwischen festgeschrieben wird, gewinnt –
 sonst stünde wieder eine Umhüllung unter dem alten Passwort in der Zeile.
-Das Anheben ist „best effort": scheitert die Ableitung, bleibt die alte
-Zeile, die nächste Anmeldung versucht es erneut. Der Passwortwechsel hebt
+Das Anheben ist „best effort": scheitert die Ableitung oder das Schreiben,
+bleibt die alte Zeile, die nächste Anmeldung versucht es erneut. Liest der
+neue Code zwischen den Updater-Schritten „switch" und „migrate" eine Zeile
+ohne `kdf_alg`, gilt der Vorgabewert (Argon2id v1.3). Der Passwortwechsel hebt
 ebenfalls an (`UserKey::rewrap()`). Stärkere gespeicherte Werte bleiben
 unangetastet – wird das Profil im Code einmal gesenkt, gilt das nur für
 neue Umhüllungen.

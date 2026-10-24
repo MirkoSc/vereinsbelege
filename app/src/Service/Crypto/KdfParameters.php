@@ -103,20 +103,28 @@ final readonly class KdfParameters
     }
 
     /**
-     * A fresh salt at the same cost - what a password change needs, so that
-     * two wrapped keys of the same user never share a salt.
+     * Fresh salt, and each cost factor at least the current profile's: what a
+     * new wrapping of an existing key gets (login upgrade, password change).
+     * Taken per factor, so that a row stronger in one factor and weaker in
+     * the other is raised where it lacks and kept where it has more.
      */
-    public function withNewSalt(): self
+    public function raisedToDefaults(): self
     {
-        return new self(random_bytes(self::SALT_BYTES), $this->opsLimit, $this->memLimit, $this->algorithm);
+        return new self(
+            random_bytes(self::SALT_BYTES),
+            max($this->opsLimit, self::DEFAULT_OPSLIMIT),
+            max($this->memLimit, self::DEFAULT_MEMLIMIT),
+            self::ALGORITHM,
+        );
     }
 
     /**
      * Whether a wrapping written with these parameters is cheaper to attack
-     * than one written with the current profile - then the next moment the
-     * password is in hand (login, password change) wraps it again. Higher
-     * stored values are left alone: lowering the profile in code must not
-     * quietly weaken accounts that already have more.
+     * than one written with the current profile in at least one factor - then
+     * the next moment the password is in hand (login, password change) wraps
+     * it again, with raisedToDefaults(). Higher stored values are never
+     * lowered: lowering the profile in code must not quietly weaken accounts
+     * that already have more.
      */
     public function isWeakerThanDefaults(): bool
     {

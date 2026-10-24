@@ -124,21 +124,19 @@ final readonly class UserKey
      * "Benutzer-Lebenszyklus"). The key pair stays the same, so existing vault
      * grants keep working - no admin has to approve anything again.
      *
-     * The new wrapping gets a fresh salt, and picks up raised defaults if the
-     * old row still carries weaker ones.
+     * The new wrapping gets a fresh salt, and picks up raised defaults where
+     * the old row still carries weaker ones (KdfParameters::raisedToDefaults()).
      */
     public function rewrap(
         #[\SensitiveParameter] string $oldPassword,
         #[\SensitiveParameter] string $newPassword,
     ): self {
-        $kdf = $this->kdf->isWeakerThanDefaults() ? KdfParameters::defaults() : $this->kdf->withNewSalt();
-
-        return self::wrap($this->unwrap($oldPassword), $newPassword, $kdf);
+        return self::wrap($this->unwrap($oldPassword), $newPassword, $this->kdf->raisedToDefaults());
     }
 
     /**
-     * The same key pair under the same password, wrapped again with the
-     * current profile and a fresh salt - or null when this wrapping already
+     * The same key pair under the same password, wrapped again with a fresh
+     * salt and at least the current profile - or null when this wrapping already
      * is at least that strong (issue #100). For the login, which has just
      * unwrapped the pair and holds the password anyway; the caller passes the
      * pair in so that the expensive derivation is not run twice.
@@ -156,7 +154,7 @@ final readonly class UserKey
             throw new CryptoException('The key pair does not belong to this wrapping.');
         }
 
-        return self::wrap($pair, $password, KdfParameters::defaults());
+        return self::wrap($pair, $password, $this->kdf->raisedToDefaults());
     }
 
     /**

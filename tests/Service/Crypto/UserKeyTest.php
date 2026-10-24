@@ -337,7 +337,41 @@ final class UserKeyTest extends TestCase
         );
 
         self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $kdf->algorithm);
-        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $kdf->withNewSalt()->algorithm);
+        self::assertSame(SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13, $kdf->raisedToDefaults()->algorithm);
+    }
+
+    /**
+     * Raising works per factor: what a row lacks is raised, what it has more
+     * of is kept - an upgrade never lowers a cost factor.
+     */
+    public function testRaisingKeepsTheStrongerFactor(): void
+    {
+        $mehrDurchlaeufe = KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            KdfParameters::DEFAULT_OPSLIMIT + 1,
+            SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+        )->raisedToDefaults();
+        $mehrSpeicher = KdfParameters::fromStorage(
+            random_bytes(KdfParameters::SALT_BYTES),
+            SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
+            KdfParameters::DEFAULT_MEMLIMIT * 2,
+        )->raisedToDefaults();
+
+        self::assertSame(KdfParameters::DEFAULT_OPSLIMIT + 1, $mehrDurchlaeufe->opsLimit);
+        self::assertSame(KdfParameters::DEFAULT_MEMLIMIT, $mehrDurchlaeufe->memLimit);
+        self::assertSame(KdfParameters::DEFAULT_OPSLIMIT, $mehrSpeicher->opsLimit);
+        self::assertSame(KdfParameters::DEFAULT_MEMLIMIT * 2, $mehrSpeicher->memLimit);
+        self::assertFalse($mehrDurchlaeufe->isWeakerThanDefaults());
+        self::assertFalse($mehrSpeicher->isWeakerThanDefaults());
+    }
+
+    public function testRaisingAlwaysTakesAFreshSalt(): void
+    {
+        $kdf = KdfParameters::defaults();
+
+        self::assertNotSame($kdf->salt, $kdf->raisedToDefaults()->salt);
+        self::assertSame($kdf->opsLimit, $kdf->raisedToDefaults()->opsLimit);
+        self::assertSame($kdf->memLimit, $kdf->raisedToDefaults()->memLimit);
     }
 
     /**
