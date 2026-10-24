@@ -497,6 +497,31 @@ final readonly class JobRepository
     }
 
     /**
+     * Sends the still pending jobs of one type for one row back to their
+     * first step (issue #90: a duplicate index half computed under the old
+     * vault key must not be finished under the new one). Returns the rows
+     * MySQL reports as changed - not a reliable "was there one"; ask
+     * offenFuer() for that.
+     */
+    public function setzeZurueck(string $typ, string $refType, int $refId, ?\DateTimeImmutable $now = null): int
+    {
+        $stmt = $this->pdo->prepare(
+            "UPDATE job SET step = '', state = '[]', updated_at = ?
+             WHERE typ = ? AND ref_type = ? AND ref_id = ? AND status IN (?, ?)",
+        );
+        $stmt->execute([
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $typ,
+            $refType,
+            $refId,
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+        ]);
+
+        return $stmt->rowCount();
+    }
+
+    /**
      * Housekeeping for the cron: removes jobs that are done and will not run
      * again. `fehler` stays - someone should look at it.
      */

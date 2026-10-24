@@ -71,10 +71,19 @@ final class PendingLogin
         $vaultEntry = null;
         if ($vault !== null && $vault->isUnlocked()) {
             $nonce = random_bytes(self::NONCE_BYTES);
+            $previous = [];
+            foreach ($vault->previousVersions() as $version) {
+                // Older generations of a rotation in progress (issue #90),
+                // the same way SessionVault keeps them.
+                $olderNonce = random_bytes(self::NONCE_BYTES);
+                $previous[$version] = chr(self::VERSION) . $olderNonce
+                    . sodium_crypto_secretbox($vault->generation($version)->secretKey(), $olderNonce, $sessionKey);
+            }
             $vaultEntry = [
                 'cipher' => chr(self::VERSION) . $nonce . sodium_crypto_secretbox($vault->secretKey(), $nonce, $sessionKey),
                 'public_key' => $vault->publicKey(),
                 'version' => $vault->version,
+                'previous' => $previous,
             ];
         }
 
@@ -163,16 +172,6 @@ final class PendingLogin
      */
     private function unlockVault(array $entry, string $cookieValue): ?Vault
     {
-        $cipher = (string) ($entry['cipher'] ?? '');
-        if (strlen($cipher) < 1 + self::NONCE_BYTES + self::MAC_BYTES) {
-            throw new CryptoException('The stored pending vault is too short.');
-        }
-
-        $version = ord($cipher[0]);
-        if ($version !== self::VERSION) {
-            throw new CryptoException(sprintf('The pending vault has unknown format version %d.', $version));
-        }
-
         try {
             $sessionKey = sodium_base642bin($cookieValue, SODIUM_BASE64_VARIANT_URLSAFE_NO_PADDING, '');
         } catch (\SodiumException) {
@@ -182,18 +181,53 @@ final class PendingLogin
             return null;
         }
 
+        $secretKey = self::openEntry((string) ($entry['cipher'] ?? ''), $sessionKey);
+        if ($secretKey === null) {
+            sodium_memzero($sessionKey);
+
+            return null;
+        }
+
+        $previous = [];
+        $olderEntries = $entry['previous'] ?? [];
+        foreach (is_array($olderEntries) ? $olderEntries : [] as $version => $cipher) {
+            $olderSecretKey = self::openEntry((string) $cipher, $sessionKey);
+            if ($olderSecretKey === null) {
+                sodium_memzero($sessionKey);
+
+                return null;
+            }
+            $previous[(int) $version] = $olderSecretKey;
+        }
+        sodium_memzero($sessionKey);
+
+        return Vault::unlocked((string) $entry['public_key'], $secretKey, (int) $entry['version'], $previous);
+    }
+
+    /**
+     * One stored entry (version(1) | nonce(24) | secretbox) opened with K_s;
+     * null when the key does not fit.
+     *
+     * @throws CryptoException for a format this release does not know
+     */
+    private static function openEntry(string $cipher, #[\SensitiveParameter] string $sessionKey): ?string
+    {
+        if (strlen($cipher) < 1 + self::NONCE_BYTES + self::MAC_BYTES) {
+            throw new CryptoException('The stored pending vault is too short.');
+        }
+
+        $version = ord($cipher[0]);
+        if ($version !== self::VERSION) {
+            throw new CryptoException(sprintf('The pending vault has unknown format version %d.', $version));
+        }
+
         $secretKey = sodium_crypto_secretbox_open(
             substr($cipher, 1 + self::NONCE_BYTES),
             substr($cipher, 1, self::NONCE_BYTES),
             $sessionKey,
         );
-        sodium_memzero($sessionKey);
 
-        if ($secretKey === false) {
-            return null;
-        }
-
-        return Vault::unlocked((string) $entry['public_key'], $secretKey, (int) $entry['version']);
+        return $secretKey === false ? null : $secretKey;
     }
 
     /**

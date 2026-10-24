@@ -54,6 +54,67 @@ final readonly class VaultGrantRepository
     }
 
     /**
+     * Every grant of a user, newest generation first - during a key rotation
+     * (issue #90) a user holds one of the old and one of the new generation,
+     * and the login opens both.
+     *
+     * @return list<VaultGrant>
+     */
+    public function allForUser(int $userId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT sealed_private_key FROM vault_grant WHERE user_id = ? ORDER BY vault_version DESC',
+        );
+        $stmt->execute([$userId]);
+
+        return array_map(
+            static fn(mixed $sealed): VaultGrant => VaultGrant::fromStorage((string) $sealed),
+            $stmt->fetchAll(\PDO::FETCH_COLUMN),
+        );
+    }
+
+    /**
+     * Who holds a grant of $vaultVersion, with the public key a grant of the
+     * next generation is sealed to (issue #90: re-sealing needs no password,
+     * box_seal only needs U_pub). Ordered by user for a stable result.
+     *
+     * @return list<array{userId: int, publicKey: string, grantedBy: int|null}>
+     */
+    public function holdersOf(int $vaultVersion, bool $sperren = false): array
+    {
+        // $sperren (inside the caller's transaction): locks the grants read,
+        // and the scan's range, so no grant of this generation can appear
+        // until the caller commits.
+        $stmt = $this->pdo->prepare(
+            'SELECT g.user_id, k.public_key, g.granted_by FROM vault_grant g
+             JOIN user_key k ON k.user_id = g.user_id
+             WHERE g.vault_version = ? ORDER BY g.user_id' . ($sperren ? ' FOR UPDATE' : ''),
+        );
+        $stmt->execute([$vaultVersion]);
+
+        return array_map(
+            static fn(array $row): array => [
+                'userId' => (int) $row['user_id'],
+                'publicKey' => (string) $row['public_key'],
+                'grantedBy' => $row['granted_by'] === null ? null : (int) $row['granted_by'],
+            ],
+            $stmt->fetchAll(\PDO::FETCH_ASSOC),
+        );
+    }
+
+    /**
+     * Ends a generation's access for everybody - the last step of a key
+     * rotation, once every data key is sealed to the successor.
+     */
+    public function deleteVersion(int $vaultVersion): int
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM vault_grant WHERE vault_version = ?');
+        $stmt->execute([$vaultVersion]);
+
+        return $stmt->rowCount();
+    }
+
+    /**
      * Revokes every grant of a user, all generations (docs/spec/
      * 01-sicherheit.md section 2): used by the password reset of M3-5,
      * whose new key pair could not open the old grants anyway - deleting

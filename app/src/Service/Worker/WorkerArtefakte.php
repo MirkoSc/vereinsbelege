@@ -267,6 +267,17 @@ final readonly class WorkerArtefakte
             throw new WorkerArtefaktFehler('upload_unbekannt', 404);
         }
 
+        // Announced under an older vault generation, and a key rotation
+        // (issue #90) has since made a new one current: a blob stored now
+        // could slip past the rotation's re-sealing. Start over with the
+        // current VK_pub from the job's context.
+        $tresor = $this->vaults->current();
+        if ($tresor === null || !WorkerKrypto::istTresorDek($zeile['dek_sealed'], $tresor->version)) {
+            $this->verwerfen($upload);
+
+            throw new WorkerArtefaktFehler('dek_veraltet', 409);
+        }
+
         try {
             $stand = $this->ablage->status($upload->uploadId);
         } catch (UploadException) {

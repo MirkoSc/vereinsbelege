@@ -53,6 +53,18 @@ Der Worker erhält **nie** den Tresor-Private-Key.
   selbst nicht mehr lesen.
 - Nach Abschluss (oder Abbruch nach max. Versuchen) werden die
   `worker_grant`- und `worker_context`-Zeilen **gelöscht**.
+- **Tresor-Schlüsselrotation** (01 §2, issue #90): Worker-Ergebnisse sind an
+  den jeweils aktuellen `VK_pub` versiegelt (`vault.current()`, ab dem Start
+  einer Rotation die neue Generation) und werden wie jede `dek_sealed`-Spalte
+  von der Rotation erfasst. `worker_grant`/`worker_context` sind an `W_pub`
+  versiegelt und von der Rotation nicht betroffen. Während einer Rotation
+  (`vault`: mehr als eine Generation ohne `retired_at`,
+  `VaultRepository::rotationInProgress()`) werden keine neuen Worker-Grants
+  aus der Session heraus erteilt – die Sitzungen sind dann ohnehin gesperrt
+  (umgesetzt in `WorkerFreigaben::ausSession()`, #52). Ein Ergebnis-Upload,
+  dessen `dek_sealed` nicht (mehr) zur aktuellen Generation gehört, wird beim
+  Festschreiben mit 409 `dek_veraltet` verworfen; der Worker holt den
+  aktuellen `VK_pub` aus dem Job-Kontext und meldet neu an.
 - Dokumente, die vor der Aktivierung eingingen: Ein angemeldeter Nutzer kann
   sie „an den Worker übergeben" – die Session entschlüsselt den DEK und
   versiegelt ihn an `W_pub`.

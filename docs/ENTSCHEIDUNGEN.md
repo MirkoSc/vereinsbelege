@@ -825,6 +825,43 @@ IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
 Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ob Paare
 nur mit Namensähnlichkeit (ohne Anker) doch als Vorschlag erscheinen sollen.
 
+## E-32 ❓ Tresor-Schlüsselrotation (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage:
+
+- **Nur `dek_sealed` neu versiegeln, Daten nicht neu verschlüsseln.** Die
+  DEKs bleiben; das hält jeden Schritt kurz und Blobs unberührt.
+  Rest-Exposure: Wer alten `VK_priv` **und** alte Daten (DB-Kopie, Backup)
+  hat, liest das damals Vorhandene weiter. Ein vollständiges Neu-
+  Verschlüsseln wäre ein eigenes Issue.
+- **Freigaben ohne Passwort neu versiegeln** (`box_seal` an `U_pub`) – kein
+  Konto muss sich für die Rotation anmelden.
+- **Neuer Wiederherstellungsschlüssel mit Bestätigung** (letzte Gruppe); der
+  alte bleibt für Backups von vor der Rotation nötig und wird beim Eingeben
+  als „abgelöst“ erkannt.
+- **Audit-Log:** `dek_sealed` bleibt (Hash-Kette), der neue Schlüssel steht in
+  `dek_resealed`; mit dem alten Schlüssel bleiben die Audit-Details von vor
+  der Rotation lesbar.
+- **Neue Generation erst nach Bestätigung des Papierschlüssels in Gebrauch**
+  (bis dahin „vorgemerkt“, nichts wird an sie versiegelt, Umschlüsseln
+  gesperrt); bis dahin ist **Abbrechen** ohne Folgen möglich, danach geht
+  die Kette nur vorwärts.
+- **Während der Rotation sind `/app` und `/admin` gesperrt** – außer
+  Rotation, eigener Sicherheit und den Auswegen Wiederherstellung, Update,
+  Wartung, Backups; die öffentliche Einreichung läuft weiter.
+  Wiederherstellung nimmt den Papierschlüssel jeder aktiven Generation an
+  (Passwort-Reset mitten in der Rotation). Passwort-Resets werden während der
+  Rotation nicht gesperrt (das sperrte Vergessliche ganz aus).
+- **Index-Handler-Fehler** an einer Zeile leeren deren Indexe statt die Kette
+  anzuhalten.
+- **Blind Indexes** werden neu berechnet; `document.content_bi` (müsste alle
+  Dateien lesen) und `bank_import.source_bi` (müsste alle Auszüge parsen)
+  werden geleert – der Inhaltsindex entsteht per Job neu, der Kontovorschlag
+  beim nächsten Auszug fällt einmal weg. Dedup-Schlüssel behalten ihre
+  Laufnummer; passt keine, bekommt die Buchung die nächste freie.
+- **Unlesbare Zeilen** (DEK öffnet schon vor der Rotation nicht) halten den
+  Abschluss nicht auf, werden gezählt und im Audit-Log genannt.
+- **Abschluss beendet alle Sitzungen** (auch weitere des rotierenden Admins).
+
 ## E-39 ❓ Worker-Grants, Worker-Kontext und Artefakt-Upload (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #52/M7b-2, 07 §3 und §5, 02 „Betrieb“, Migration 041*
 

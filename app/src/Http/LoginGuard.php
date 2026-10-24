@@ -52,6 +52,10 @@ final readonly class LoginGuard
      *        wait for this account's session-worker, null when it has no
      *        right for any job type - the header count (issue #29/M4-7,
      *        docs/spec/06-betrieb.md section 4, App\Service\Job\JobRunner::offen()).
+     * @param (\Closure(): bool)|null $rotationLaeuft whether a vault key
+     *        rotation runs (issue #90, App\Repository\VaultRepository::
+     *        rotationInProgress()) - asked once the account may otherwise
+     *        proceed.
      */
     public function __construct(
         private Session $session,
@@ -60,8 +64,19 @@ final readonly class LoginGuard
         private \Closure $benutzer,
         private ?\Closure $ausstehendeFreigaben = null,
         private ?\Closure $offeneJobs = null,
+        private ?\Closure $rotationLaeuft = null,
     ) {
     }
+
+    /**
+     * Pages that stay open while a vault key rotation runs (issue #90): the
+     * rotation itself and the account's own security settings. Everything
+     * else in /app and /admin waits - a session that still holds only the
+     * old key must not write data sealed to it, and reading half-rotated
+     * data is not worth the edge cases. The public submission keeps working;
+     * it seals to the newest generation.
+     */
+    public const string ROTATION_SEITE = '/admin/tresor/rotation';
 
     /**
      * Wraps a handler in the check its route declares. The wrapper is what
@@ -150,7 +165,58 @@ final readonly class LoginGuard
             return Response::redirect('/app/sicherheit/einrichten');
         }
 
-        return $this->darf($request, $zugriff, $benutzer->berechtigungen) ? null : $this->verweigern($api);
+        if (!$this->darf($request, $zugriff, $benutzer->berechtigungen)) {
+            return $this->verweigern($api);
+        }
+
+        if ($this->rotationLaeuft !== null && !self::waehrendRotationOffen($request->path) && ($this->rotationLaeuft)()) {
+            return $this->rotationSperre($api, $benutzer->berechtigungen);
+        }
+
+        return null;
+    }
+
+    /**
+     * Besides the rotation and the account's own security pages, the ways
+     * out stay open: recovery with a paper key (the only way back after a
+     * password reset), update and maintenance (the way to fix a broken
+     * release without FTP), backups (ciphertext only).
+     */
+    private const array WAEHREND_ROTATION_OFFEN = [
+        self::ROTATION_SEITE,
+        '/app/sicherheit',
+        '/admin/wiederherstellen',
+        '/admin/update',
+        '/admin/wartung',
+        '/admin/backups',
+    ];
+
+    private static function waehrendRotationOffen(string $pfad): bool
+    {
+        foreach (self::WAEHREND_ROTATION_OFFEN as $offen) {
+            if ($pfad === $offen || str_starts_with($pfad, $offen . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function rotationSperre(bool $api, Berechtigungen $berechtigungen): ResponseInterface
+    {
+        if ($api) {
+            return Response::json(['fehler' => 'Der Tresor-Schlüssel wird gerade gewechselt. Bitte später erneut versuchen.'], 409);
+        }
+        if ($berechtigungen->darf(Permission::AdminVaultGrant)) {
+            return Response::redirect(self::ROTATION_SEITE);
+        }
+
+        return Response::html($this->view->render('error', [
+            'title' => 'Schlüsselwechsel läuft',
+            'message' => 'Der Tresor-Schlüssel des Vereins wird gerade gewechselt. Bis das abgeschlossen ist, '
+                . 'sind Belege und Einstellungen gesperrt. Danach bitte neu anmelden.',
+            'startseite' => '/',
+        ], Area::App), 503);
     }
 
     private function darf(Request $request, Zugriff $zugriff, Berechtigungen $berechtigungen): bool

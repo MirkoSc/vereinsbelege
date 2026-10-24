@@ -148,6 +148,16 @@ final readonly class RecoveryKey
     }
 
     /**
+     * The vault public key this recovery key belongs to - lets a caller tell
+     * a key of a replaced generation (issue #90) from one of another
+     * installation.
+     */
+    public function publicKey(): string
+    {
+        return sodium_crypto_box_publickey_from_secretkey($this->secretKey);
+    }
+
+    /**
      * @param string $vaultPublicKey `vault.public_key` of this installation
      *
      * @throws CryptoException when the key belongs to another installation

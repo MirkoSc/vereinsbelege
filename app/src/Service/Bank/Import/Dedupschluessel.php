@@ -61,14 +61,42 @@ final class Dedupschluessel
         return (string) preg_replace('/[^\p{L}\p{N}]+/u', '', mb_strtolower($zweck, 'UTF-8'));
     }
 
+    /**
+     * The key of a booking that is already stored, from its decrypted
+     * values and running number - what the vault key rotation recomputes
+     * (issue #90). The same values an import saw give the same key.
+     */
+    public static function fuerBuchung(
+        BlindIndex $index,
+        int $kontoId,
+        \DateTimeImmutable $buchungsdatum,
+        int $cent,
+        string $verwendungszweck,
+        string $iban,
+        int $nummer,
+    ): string {
+        return $index->forValue(self::ZWECK, self::basisAus($kontoId, $buchungsdatum, $cent, $verwendungszweck, $iban) . '|' . $nummer);
+    }
+
     private static function basis(int $kontoId, ImportPosten $p): string
+    {
+        return self::basisAus(
+            $kontoId,
+            $p->umsatz->buchungsdatum,
+            $p->umsatz->cent,
+            $p->umsatz->details->verwendungszweck ?? '',
+            $p->umsatz->details->iban ?? '',
+        );
+    }
+
+    private static function basisAus(int $kontoId, \DateTimeImmutable $buchungsdatum, int $cent, string $verwendungszweck, string $iban): string
     {
         return json_encode([
             $kontoId,
-            $p->umsatz->buchungsdatum->format('Y-m-d'),
-            $p->umsatz->cent,
-            self::zweck($p->umsatz->details->verwendungszweck ?? ''),
-            Iban::normalisieren($p->umsatz->details->iban ?? ''),
+            $buchungsdatum->format('Y-m-d'),
+            $cent,
+            self::zweck($verwendungszweck),
+            Iban::normalisieren($iban),
         ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     }
 }

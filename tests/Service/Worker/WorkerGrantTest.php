@@ -385,6 +385,40 @@ final class WorkerGrantTest extends WorkerTestCase
         self::assertNull($this->uploads->find($artefaktId), 'A failed attempt leaves no upload behind.');
     }
 
+    public function testAnUploadAnnouncedUnderTheOldVaultGenerationIsRefusedAfterARotationStarted(): void
+    {
+        [$doc] = $this->dokumentMitBlob();
+        [$id, $schluessel] = $this->koppeln();
+        $this->heartbeat($id, $schluessel);
+        $this->jobs->enqueue('render_pages', JobExecutor::Worker, 'document', $doc);
+        $job = $this->claimen($id, $schluessel);
+
+        $dek = DataKey::generate();
+        $writer = BlobCipher::writer($dek);
+        $chiffrat = $writer->write('Seite') . $writer->finish();
+        $angemeldet = $this->anmelden($id, $schluessel, $job, [
+            'kind' => 'page_image',
+            'seq' => 0,
+            'dek_sealed' => base64_encode(WorkerKrypto::fuerTresorVersiegeln($dek, $this->vault->publicKey(), $this->vault->version)),
+            'header' => base64_encode($writer->header()),
+            'groesse' => strlen($chiffrat),
+            'sha256' => hash('sha256', $chiffrat),
+        ]);
+        self::assertSame(201, $angemeldet->status, $angemeldet->body);
+        $artefaktId = (int) self::daten($angemeldet)['artefakt_id'];
+        self::assertSame(200, $this->chunk($id, $schluessel, $job, $artefaktId, 0, $chiffrat)->status);
+
+        // A rotation's new generation is confirmed and therefore current.
+        $neu = Vault::create($this->vault->version + 1);
+        (new \App\Repository\VaultRepository($this->pdo()))->insert($neu->publicKey(), $neu->version);
+        $blobsVorher = $this->blobAnzahl();
+
+        self::assertSame('dek_veraltet', self::daten($this->festschreiben($id, $schluessel, $job, $artefaktId))['fehler'] ?? null);
+        self::assertSame($blobsVorher, $this->blobAnzahl());
+        self::assertNull($this->uploads->find($artefaktId));
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+    }
+
     // ---------------------------------------------------------- AI config
 
     public function testTheAiConfigurationIsSealedToTheWorkerAndResealedOnChange(): void
