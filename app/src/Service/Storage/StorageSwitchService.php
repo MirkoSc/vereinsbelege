@@ -60,7 +60,27 @@ final readonly class StorageSwitchService
         private BlobRepository $repository,
         private BlobService $blobs,
         private SettingRepository $settings,
+        private ?\Closure $backupLaeuft = null,
     ) {
+    }
+
+    /**
+     * Moving and cleaning up wait while a backup is being made (issue
+     * #208): its dump runs over many requests, and a blob moved between the
+     * dump of `file_blob` and that of `file_blob_chunk` - or after its file
+     * list was fixed - would be missing from the backup. Checking only
+     * reads and stays allowed.
+     *
+     * $backupLaeuft: \Closure(): bool, BackupErstellung::laeuft().
+     */
+    private function nichtWaehrendEinesBackups(): void
+    {
+        if ($this->backupLaeuft !== null && ($this->backupLaeuft)() === true) {
+            throw new \RuntimeException(
+                'Gerade wird ein Backup erstellt – der Umzug geht weiter, sobald es fertig ist. '
+                . 'Bitte danach erneut starten.',
+            );
+        }
     }
 
     /** The backend new blobs are written to - and the target of the chain. */
@@ -111,6 +131,7 @@ final readonly class StorageSwitchService
      */
     public function move(): StorageState
     {
+        $this->nichtWaehrendEinesBackups();
         $target = $this->target();
         $start = hrtime(true);
         $cursor = 0;
@@ -160,6 +181,7 @@ final readonly class StorageSwitchService
      */
     public function cleanUp(): StorageState
     {
+        $this->nichtWaehrendEinesBackups();
         $chunks = $this->repository->deleteStrayChunks();
 
         $files = 0;

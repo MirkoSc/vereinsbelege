@@ -564,8 +564,8 @@ Variante:
   schreibt. Ergebnis und Format sind dieselben wie bei `create()`.
   Verworfen: Backup über die Seite nur ohne Blobs (unvollständig bei
   Backend `fs`), Blobs per `ZipArchive` portionsweise (Kopie des ganzen
-  Archivs je Portion). Der Dump bleibt ein einzelner Request – wie in der
-  Update-Kette; bei sehr großen `db`-Blob-Beständen ist das die Grenze.
+  Archivs je Portion). Der Dump war zunächst ein einzelner Request (auch in
+  der Update-Kette); seit #208 läuft er ebenfalls in Schritten (E-34).
 - **Download eines Backups mit `config.php` nur per POST mit dem aktuellen
   Passwort** (zusätzlich zu `admin.system` und CSRF), Fehlversuche begrenzt.
   Ein solches ZIP enthält den Server-Schlüssel; eine liegengelassene,
@@ -615,6 +615,128 @@ harten Prozessabbruch (Session nicht mehr geschrieben) der Rest des Blocks
 kann doppelt laufen – dann hilft nur ein
 Restore von vorn. Ganz schließen ließe sich das nur mit einem
 Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).
+
+## E-34 ❓ Datenbank-Dump als Schrittkette (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #208, 06 §2, ergänzt E-30 und E-31*
+
+Mit Backend `db` liegen die Belege als `file_blob_chunk`-Zeilen im Dump; ein
+Dump in einem Request blieb bei einigen GB im Zeitlimit hängen – eine nicht
+erklärte dritte Ausnahme von CLAUDE.md §1. Getroffen ohne Rückfrage:
+
+- **Portionen nur für `file_blob_chunk` und `audit_log`, nach
+  Primärschlüssel (Keyset), nicht nach `OFFSET`:** jede Portion kostet
+  gleich viel, auch tief in `file_blob_chunk`; der Stand ist der letzte
+  geschriebene Schlüssel. Alle anderen Tabellen in einem `SELECT` je Teil
+  (konsistent je Tabelle wie vorher): Tabellen wie `supplier_key` oder mit
+  `uq_allocation_pair` werden per Löschen + Neu-Einfügen gepflegt, über
+  mehrere Portionen könnte derselbe Unique-Wert doppelt in den Dump kommen
+  und das Backup wäre nicht einspielbar (Hinweis aus dem Review).
+- **Budget je Schritt: 32 MiB Dump-Text oder 8 s**, geprüft nach jedem Teil
+  (Tabellenkopf oder 100 Zeilen), mindestens ein Teil. Eine Portion
+  `file_blob_chunk` ist bis zu ~50 MiB Hex – gelesen ungepuffert und in
+  INSERTs zu 512 KiB geschrieben, der Speicher bleibt klein.
+- **In den offenen ZIP-Eintrag, kein Pack-Durchgang am Ende:** jeder
+  Schritt schreibt seinen Teil (≤ Budget + eine Portion) in eine
+  Arbeitsdatei und hängt ihn gleich als Deflate-Strom mit Sync-Flush an den
+  offenen Eintrag `dump.sql` an; der CRC läuft als serialisierter
+  `HashContext` im Stand mit. Verworfen: erst eine Dump-Datei über viele
+  Schritte, dann packen – das Packen von Gigabytes wäre wieder ein langer
+  Request, und der Platz würde doppelt belegt. (Die kleine Arbeitsdatei je
+  Schritt ließe sich durch direktes Packen sparen – bewusst einfach
+  gehalten.)
+- **Speicher-Umzug wartet auf das Backup:** `move()`/`cleanUp()` lehnen ab,
+  solange eine Erstellung läuft – sonst könnte ein Beleg, der zwischen dem
+  Dump von `file_blob` und `file_blob_chunk` umzieht, im Backup fehlen und
+  die Kette trotzdem „erstellt“ melden.
+- **Format unverändert:** die Teile ergeben byte-gleich dieselbe Datei wie
+  `dump()` am Stück (dieselben Anweisungen, Zeilen jetzt nach
+  Primärschlüssel sortiert); Restore (#120) und Installer bleiben gleich.
+- **Update-Kette nutzt dieselbe Kette** (ohne Dateien von Backend `fs`,
+  ohne `config.php`), ein Aufruf beginnt bis 5 s lang Schritte, Antwort
+  `weiter`, die Seite ruft den Schritt erneut auf. Eine Erstellung von der
+  Admin-Seite blockiert den Update-Schritt (Fehler, wiederholbar) statt
+  parallel zu laufen; die Kette des Updates erscheint umgekehrt auf
+  `/admin/backups` als laufend und lässt sich dort abbrechen (Ausweg, wenn
+  sie dauerhaft scheitert). Ist die Kette fertig, aber die Antwort an die
+  Update-Seite verloren gegangen, startet eine Wiederholung ein neues
+  Backup (doppelte Arbeit, kein Datenverlust).
+- **Härtung des Einspielens (aus dem Review von #206):** Markierung
+  „Schritt läuft“ in der Installer-Session; nach hartem Abbruch gelten
+  1062/1050 nur bei der ersten Anweisung des nächsten Schritts als schon
+  angewendet. Damit hängt ein Restore nach einem Abbruch durch das
+  Zeitlimit nicht mehr an der einen doppelt laufenden Anweisung (Rest des
+  offenen Punkts aus E-31: geht die Session selbst verloren, bleibt nur ein
+  Restore von vorn).
+
+Offen für Mirko:
+- **Kein konsistenter Schnappschuss.** Der Dump läuft jetzt über Minuten
+  statt Sekunden; wer währenddessen Belege ändert, kann Tabellen in
+  unterschiedlichem Stand im Backup haben (z. B. Chunks eines neuen Belegs
+  ohne seine `file_blob`-Zeile). Vorher galt das auch, nur in einem kurzen
+  Fenster. Abhilfe wäre Wartungsmodus während des Dumps (sperrt den
+  Verein aus) oder ein Hinweis „während des Backups nichts ändern“ – nicht
+  umgesetzt.
+- Budgets (32 MiB / 8 s / 5 s im Update) sind geschätzt, nicht auf dem
+  Zielhost gemessen.
+
+## E-35 ✅ Punktebewertung und Auto-Zuordnung: konservativ, ohne gespeicherte Vorschläge (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-2 (issue #66), 04 §5 „Punktebewertung“*
+
+- **Automatisch nur, wenn eindeutig – von beiden Seiten:** Score ≥ Schwelle
+  (85), Vorsprung ≥ Abstand (20) vor dem Zweitbesten **sowohl** unter den
+  Kandidaten des Belegs **als auch** unter denen der Buchung (ein
+  Gleichstand ist nie eindeutig, der Abstand ist mindestens 1), und „Betrag vollständig gedeckt“ heißt:
+  offener Betrag des Belegs **=** noch nicht zugeordneter Betrag der
+  Buchung. Damit sind Sammelzahlung, Rate und Skonto nie automatisch,
+  sondern Vorschläge mit dem Teilbetrag `min(offen Beleg, offen Buchung)`.
+- **Betragssignale am offenen Betrag:** „exakt“ vergleicht mit dem noch
+  offenen Betrag (bei teilbezahlten Belegen dem Rest), „Skonto“ nur nach
+  unten (bis 3 % weniger), nie mehr.
+- **Kennungen im Zweck** (Rechnungs-, Kundennummer): verglichen nach
+  Kleinschreibung, Trennzeichen in der Kennung egal, über Verwendungszweck
+  **und** End-to-End-Referenz (Trennzeichen im Zweck bleiben Grenzen);
+  mindestens 3 Zeichen mit einer Ziffer, und eine Ziffernkante darf keine
+  weitere Ziffer direkt berühren („815“ steckt nicht in „20260815“).
+- **Kandidaten:** nur Belege mit Dokumentstatus `geprueft`/
+  `festgeschrieben` (KI-Werte sind Vorschläge, ungeprüfte Beträge sollen
+  nichts automatisch ausgleichen), Zahlungsweg `konto`/`erstattung`, noch
+  nicht ausgeglichen; Buchungen außer `zugeordnet` und außer Ausgaben mit
+  „kein Beleg nötig“ (bewusst ohne Beleg), und nur ab dem Fensterbeginn des
+  ältesten offenen Belegs – ohne offenen Beleg wird keine Buchung
+  entschlüsselt. Beides im Zugriffsbereich von `matching.edit`.
+- **Vorschläge werden nicht gespeichert:** Sie werden bei jedem Aufruf der
+  Seite in der Session neu berechnet (keine Migration, kein veralteter
+  Vorschlag). „Übernehmen“ bewertet das Paar neu, lehnt ab, wenn es unter
+  `vorschlag_ab` gefallen ist oder sich der angezeigte Betrag geändert hat,
+  und schreibt über `Zuordnung` (`vorschlag_bestaetigt`, Score, `rule_trace`). Angezeigt
+  werden je Beleg bis zu drei Paare ab einer Mindestpunktzahl (`vorschlag_ab`,
+  Start 40 – nicht in der Spec-Tabelle).
+- **Parameter** als ein Setting `abgleich_parameter` (JSON), auf der
+  Abgleich-Seite mit `matching.edit` änderbar; fehlende oder ungültige Werte
+  fallen auf die Startwerte zurück.
+- **Kandidatenindex statt Kreuzprodukt, ein kurzer Request:** bewertet
+  wird nur, was mit dem Beleg einen Anker teilt – offener Betrag exakt oder
+  in der Skonto-Spanne, Lieferanten-/Einreicher-IBAN, Mandat/Gläubiger-ID,
+  Rechnungs- oder Kundennummer im Zweck (Hash-Maps bzw. eine Textsuche je
+  Lauf, `App\Service\Bank\Kandidatenindex`). Ein Betrag, den mehr als 25
+  Buchungen teilen (Beiträge, Gebühren), ist kein Anker. Für alle nicht
+  bewerteten Paare einer Seite steht die **Obergrenze**, die sie höchstens
+  erreichen könnten (Name + Datum, bei gekapptem Betrag + Betragspunkte),
+  in der Abstandsprüfung – so macht das Weglassen kein Paar eindeutiger,
+  als es ist. Folge: Ein Paar ganz ohne Anker (nur Name/Datum) erscheint nie
+  als Vorschlag. Jede Zeile wird einmal entschlüsselt, Zuordnungssummen
+  gebündelt gelesen, Buchungen nur in den Richtungen offener Belege und
+  in deren Währung verglichen. Der Seitenaufruf rechnet nichts; erst
+  „Abgleich berechnen“ (`?berechnen=1`). Gemessen ohne DB: 600 Belege ×
+  2.500 Buchungen < 0,5 s (Test-Grenze 5 s). Eine Schrittkette ist damit
+  nicht nötig.
+
+Offen für Mirko: „Verwerfen“ eines Vorschlags (braucht eine Tabelle, M10-4);
+Auto-Abgleich direkt nach dem Kontoauszug-Import statt per Knopf; ob
+ungeprüfte Belege wenigstens als Vorschlag erscheinen sollen; Lernen von
+IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
+Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ob Paare
+nur mit Namensähnlichkeit (ohne Anker) doch als Vorschlag erscheinen sollen.
 
 ## E-32 ❓ Tresor-Schlüsselrotation (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage:

@@ -231,7 +231,9 @@ Generation, damit danach auch ein Rollback wieder geht.
     mitsichern“ (Standard aus; Hinweis: Server-Schlüssel, Betriebsdaten
     lesbar). **Erstellt wird als Schrittkette** (`App\Service\Backup\
     BackupErstellung`, `public/js/backups.js`, je ein
-    `POST /admin/backups/schritt`): (1) Dump + ggf. `config.php`, (2) die
+    `POST /admin/backups/schritt`): (1) der Dump **in Teilen** (siehe
+    „Dump in Schritten“) direkt in den offenen ZIP-Eintrag `dump.sql`,
+    mit dem letzten Teil ggf. `config.php`, (2) die
     Blob-Dateien in Portionen (200 Dateien bzw. 16 MiB je Request) aus
     einer Liste, die direkt nach dem Dump festgehalten wird – fehlt eine
     gelistete Datei später (Löschen, Speicher-Umzug) oder ist sie nicht
@@ -255,8 +257,44 @@ Generation, damit danach auch ein Rollback wieder geht.
     wurde. Eine zweite Erstellung
     während einer laufenden → 409; eine seit `VERWAIST_NACH_SEKUNDEN`
     (1 h) nicht fortgesetzte darf ein neuer Start verwerfen;
-    `POST /admin/backups/abbrechen` räumt auf. Der Dump selbst bleibt **ein**
-    Request (wie im `backup`-Schritt der Update-Kette).
+    `POST /admin/backups/abbrechen` räumt auf.
+  - *Dump in Schritten (#208, E-34 – vorläufig):* `MysqlDumper::schritt()`
+    schreibt je Aufruf Teile – Kopf einer Tabelle (`DROP`/`CREATE`), alle
+    Zeilen einer Tabelle in **einem** `SELECT` (konsistenter
+    InnoDB-Snapshot der Tabelle, wie vor #208) oder – nur für die großen,
+    nur wachsenden Tabellen `MysqlDumper::TABLES_IN_PORTIONS`
+    (`file_blob_chunk`, `audit_log`; kein Unique-Schlüssel außer dem
+    Primärschlüssel) – **eine Portion von 100 Zeilen nach Primärschlüssel**
+    ab dem zuletzt geschriebenen Schlüssel (Keyset: `k1 >= ? AND (k1 > ? OR
+    (k1 = ? AND k2 > ?))`, `ORDER BY` Schlüssel, `LIMIT 100`). Tabellen wie
+    `supplier_key`, die bei jedem Speichern gelöscht und mit neuen IDs neu
+    eingefügt werden, könnten in Portionen denselben Unique-Wert zweimal in
+    den Dump bringen (Restore 1062). Geschrieben wird, bis das Budget des
+    Schritts erreicht ist: **32 MiB Dump-Text oder 8 s** (nach dem Teil,
+    der es überschreitet; mindestens ein Teil je Schritt). Der Stand
+    (Tabellenliste vom Start, Index, letzter Schlüssel – binäre Schlüssel
+    hex) ist reines JSON und liegt in `erstellung.json` (`dump`), zusammen
+    mit dem offenen ZIP-Eintrag (`dump_eintrag`: Offset des lokalen
+    Headers, bisherige Größen, CRC-Zwischenstand als serialisierter
+    `HashContext`) und den bestätigten Längen der Arbeitsdateien. Jeder
+    Schritt packt seinen Teil als eigenen Deflate-Strom mit Sync-Flush an
+    (`ZipAnhang::eintragFortsetzen()`), der letzte schließt mit einem
+    leeren Endblock ab und trägt CRC und Größen nach
+    (`eintragBeenden()`) – zusammen ein gültiger Deflate-Strom. Ein
+    abgebrochener Schritt läuft vom selben Stand erneut und schreibt
+    dieselben Anweisungen: keine Zeile doppelt, keine fehlt. Die Teile
+    hintereinander sind **byte-gleich** mit `MysqlDumper::dump()` am Stück
+    (CLI/`create()`), also einspielbar wie bisher (`SqlSplitter` und
+    strömend, #120). Kein konsistenter Schnappschuss: wer während
+    der Kette schreibt, kann zwischen Tabellen bzw. Portionen einen anderen
+    Stand sehen (vorher genauso, nur über einen kürzeren Zeitraum; Hinweis
+    in E-34). Damit dabei keine Belege fehlen, **verschiebt der
+    Speicher-Umzug nichts, solange eine Erstellung läuft**
+    (`StorageSwitchService::move()`/`cleanUp()` → Fehler „Gerade wird ein
+    Backup erstellt …“, Prüfen bleibt erlaubt). Die Seite zeigt den
+    Fortschritt als Zeilenzahl (`dump_zeilen`). Jeder Schritt schreibt
+    seinen Teil zuerst in eine Arbeitsdatei `erstellung_<id>.dump.part`
+    (Backup-Verzeichnis, nach dem Schritt gelöscht) und packt ihn dann.
   - Download `GET /admin/backups/{name}`: nur über `BackupService::path()`
     (Muster + Datei im Backup-Verzeichnis, sonst 404), gestreamt per
     `StreamResponse` in Stücken zu 1 MiB, Zeitlimit je Stück neu gesetzt
@@ -277,11 +315,20 @@ Generation, damit danach auch ein Rollback wieder geht.
   überschreiben (issue #155). `path()` akzeptiert genau dieses Muster, `list()`
   sortiert nach Namen absteigend (`_` sortiert hinter `.`, das spätere Backup
   steht oben).
-- *Update-Kette:* sichert nie mit `config.php` und **nie mit Blobs**. Der
-  `backup`-Schritt ist ein einzelner kurzer Request, ein Update fasst
-  `shared/var/blobs/` gar nicht an, und kaputtgehen kann dabei das Schema –
-  genau das holt der Dump zurück. Ein ZIP über Gigabytes an Belegdateien
-  passt auf dem Zielhost in keinen Request.
+- *Update-Kette:* sichert nie mit `config.php` und **nie mit den Dateien
+  von Backend `fs`** – ein Update fasst `shared/var/blobs/` gar nicht an,
+  kaputtgehen kann dabei das Schema, und genau das holt der Dump zurück.
+  Der `backup`-Schritt nutzt dieselbe Schrittkette wie die Admin-Seite
+  (`BackupErstellung::starten(mitBlobs: false, zweck: 'update')`, #208):
+  ein Aufruf beginnt Schritte, solange `UpdateService::BACKUP_SEKUNDEN`
+  (5 s) nicht um sind (der letzte läuft mit seinem eigenen Budget zu Ende,
+  ein Aufruf dauert also höchstens 5 s + ein Schritt), und antwortet mit
+  `weiter: true`, solange die Kette nicht fertig ist; der Schritt bleibt
+  dann offen (`abgeschlossener_schritt` unverändert), `public/js/update.js`
+  ruft ihn erneut auf. Mit Backend `db` (Belege als Zeilen im Dump) sind
+  das viele Aufrufe, eine kleine Datenbank ist in einem fertig. Läuft
+  gerade eine Erstellung von der Admin-Seite, scheitert der Schritt mit
+  Fehler (wiederholbar).
 - *Platzbedarf:* mit Blobs ist ein Backup so groß wie der Belegbestand;
   Rotation 10 heißt dann zehnmal so viel. Die Admin-Seite weist darauf
   hin.
@@ -305,8 +352,15 @@ Generation, damit danach auch ein Rollback wieder geht.
   ab (Zeitlimit – PHP speichert die Session auch dann), setzt der nächste
   hinter der letzten bestätigten Anweisung an statt den ganzen Block zu
   wiederholen. Nur die eine Anweisung, die beim Abbruch gerade lief, kann
-  ein zweites Mal laufen (ein doppeltes INSERT endet mit SQLSTATE 23000 →
-  Restore von vorn). Fortschritt: `offset`/`gesamt` sind in der Dump-Phase Bytes,
+  ein zweites Mal laufen. Dafür setzt der Installer zu Beginn jedes
+  Einspiel-Schritts `install_restore.schritt_laeuft` und löscht es am Ende
+  (auch bei Fehler); findet ein Schritt die Markierung noch gesetzt, brach
+  der vorige hart ab, und **nur für seine erste Anweisung** gelten 1062
+  (doppelter Schlüssel) bzw. 1050 (Tabelle existiert) als „schon
+  angewendet“ und werden übersprungen (`RestoreService::anwenden(…,
+  vielleichtSchonAngewendet: true)`, #208/E-34). Sicher, weil jede Anweisung
+  des Dumps atomar ist (ein `CREATE TABLE` bzw. ein mehrzeiliges INSERT, das
+  InnoDB ganz oder gar nicht anwendet); jeder andere Fehler bleibt einer. Fortschritt: `offset`/`gesamt` sind in der Dump-Phase Bytes,
   die Seite zeigt „Anweisung X eingespielt (P %)“. Eine Restore-Session
   einer älteren Version (Statement-Index in `offset`, kein `dump_offset`)
   wird einmalig umgerechnet: Datei bis zu dieser Anweisung lesen, nichts
@@ -462,7 +516,14 @@ einspielbares Backup samt Blobs, `config.php` nur auf Wunsch, Portionen,
 abgebrochener Schritt läuft erneut, zweiter Start abgelehnt, verwaiste Kette
 ersetzbar, Abbrechen räumt auf, fertige Kette wird nicht zweimal fertig,
 verschwundene Belegdatei bricht ab, Abbruch nach dem `rename()` wird
-nachgeholt);
+nachgeholt); `DumpInSchrittenTest` (#208: großer synthetischer
+`file_blob_chunk`-Bestand über mehrere Portionen und Blob-IDs, Teile mit
+wiederholten Schritten byte-gleich zum Dump am Stück, Kette mit
+abgebrochenen Dump-Schritten ergibt ein Backup, das strömend eingespielt
+`file_blob_chunk` identisch zurückbringt, eine zwischen den Schritten
+umgeschriebene Tabelle mit Unique-Schlüssel bleibt einspielbar, 1062/1050 nur bei der ersten
+Anweisung nach hartem Abbruch übersprungen); `UpdateChainTest` (Schritt
+`backup` antwortet `weiter`, bis seine Kette fertig ist);
 `BackupPageFlowTest` (Seite mit Checkbox – Standard aus – und Warnung,
 Erstellen → Liste → Download, Checkbox wirkt, Backup mit `config.php` nur mit
 Passwort und CSRF, Fehlversuche begrenzt, Download nur aus dem

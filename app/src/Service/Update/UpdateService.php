@@ -6,7 +6,7 @@ namespace App\Service\Update;
 
 use App\Config\Paths;
 use App\Repository\SettingRepository;
-use App\Service\Backup\BackupService;
+use App\Service\Backup\BackupErstellung;
 use App\Service\Migration\Migrator;
 
 /**
@@ -32,6 +32,14 @@ final class UpdateService
      */
     public const array STEPS = ['check', 'download', 'extract', 'backup', 'switch', 'migrate', 'finish'];
 
+    /**
+     * A call of the backup step starts no further chain step after this
+     * many seconds. The step already running finishes on its own budget
+     * (BackupErstellung::DUMP_SEKUNDEN plus one portion), so a call lasts
+     * at most this plus one step - inside max_execution_time = 30.
+     */
+    public const float BACKUP_SEKUNDEN = 5.0;
+
     public function __construct(
         private readonly Paths $paths,
         private readonly string $currentVersion,
@@ -39,7 +47,8 @@ final class UpdateService
         private readonly ReleaseDownloader $downloader,
         private readonly ReleaseSwitcher $switcher,
         private readonly Migrator $migrator,
-        private readonly BackupService $backups,
+        private readonly BackupErstellung $backups,
+        private readonly float $backupSekunden = self::BACKUP_SEKUNDEN,
         /**
          * Why a rollback must not happen right now, or null (issue #90):
          * a release before migration 039 reads `vault` as "newest row is
@@ -170,17 +179,38 @@ final class UpdateService
      * installation. Without config.php: the server key stays out of files
      * that may be copied around (docs/spec/06-betrieb.md section 2).
      *
-     * Without blobs either: this step is a single short request, and an
-     * update never touches shared/var/blobs/ - what it can break is the
-     * schema, and that is what the dump brings back. A ZIP over gigabytes of
-     * receipt files would not fit into one request on the target host.
+     * Without blob files either: an update never touches shared/var/blobs/
+     * - what it can break is the schema, and that is what the dump brings
+     * back.
+     *
+     * The same step chain as "Backup jetzt erstellen" (BackupErstellung):
+     * with storage backend `db` the receipts are rows of the dump, which
+     * then takes many requests (issue #208). One call runs steps for up to
+     * BACKUP_SEKUNDEN and answers `weiter` while the chain is not through;
+     * the page calls the step again. A small database is done in one call.
      */
     public function backup(): UpdateState
     {
         return $this->step('backup', function (UpdateState $state): UpdateState {
-            $name = $this->backups->create(mitConfig: false, mitBlobs: false);
+            $stand = $this->backups->stand();
+            $eigene = $stand !== null
+                && ($stand['zweck'] ?? null) === BackupErstellung::ZWECK_UPDATE
+                && $this->backups->laeuft();
+            if (!$eigene) {
+                $this->backups->starten(mitConfig: false, mitBlobs: false, zweck: BackupErstellung::ZWECK_UPDATE);
+            }
 
-            return $state->mit(meldung: 'Backup erstellt: ' . $name);
+            $beginn = hrtime(true);
+            do {
+                $stand = $this->backups->schritt();
+            } while ($stand['phase'] !== BackupErstellung::PHASE_FERTIG
+                && (hrtime(true) - $beginn) / 1e9 < $this->backupSekunden);
+
+            if ($stand['phase'] !== BackupErstellung::PHASE_FERTIG) {
+                return $state->mit(weiter: true);
+            }
+
+            return $state->mit(meldung: 'Backup erstellt: ' . (string) $stand['name']);
         });
     }
 
@@ -344,7 +374,10 @@ final class UpdateService
         }
 
         try {
-            $state = $work($state)->mit(abgeschlossenerSchritt: $schritt);
+            $neu = $work($state);
+            // A step that answers `weiter` is not through: it stays the
+            // open step, so a reload resumes it instead of skipping it.
+            $state = $neu->weiter ? $neu : $neu->mit(abgeschlossenerSchritt: $schritt);
         } catch (\Throwable $e) {
             $state = $state->mit(fehler: $e->getMessage());
         }

@@ -30,6 +30,7 @@ use App\App\CsvFormatController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\AbgleichController;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -122,6 +123,7 @@ use App\Service\Archiv\ArchivImport;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupErstellung;
 use App\Service\Backup\BackupService;
+use App\Service\Bank\Abgleich;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungen;
@@ -377,12 +379,17 @@ $updates = static fn(): UpdateController => new UpdateController(
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
         migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
-        backups: new BackupService(
+        backups: new BackupErstellung(
+            new BackupService(
+                $connections->pdo(),
+                $paths->backupDir(),
+                $paths->configFile(),
+                $version->value,
+                $paths->blobDir(),
+            ),
             $connections->pdo(),
             $paths->backupDir(),
             $paths->configFile(),
-            $version->value,
-            $paths->blobDir(),
         ),
         rollbackHindernis: static fn(): ?string => new VaultRepository($connections->pdo())->rollbackHindernis(),
     ),
@@ -488,9 +495,15 @@ $einreichenUploads = static fn(): EinreichungUploadController => new Einreichung
 // Storage administration (issue #12): the backend for new blobs and the step
 // chain that carries the existing ones over. Built lazily like $updates - it
 // needs the database, the public pages must not pay for that.
-$storage = static function () use ($connections, $paths, $view, $auditFor): StorageController {
+$storage = static function () use ($connections, $paths, $view, $auditFor, $version): StorageController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
+    $backupLaeuft = static fn(): bool => new BackupErstellung(
+        new BackupService($pdo, $paths->backupDir(), $paths->configFile(), $version->value, $paths->blobDir()),
+        $pdo,
+        $paths->backupDir(),
+        $paths->configFile(),
+    )->laeuft();
 
     return new StorageController(
         $view,
@@ -499,6 +512,7 @@ $storage = static function () use ($connections, $paths, $view, $auditFor): Stor
             $blobs,
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             new SettingRepository($pdo),
+            $backupLaeuft,
         ),
         $auditFor($pdo),
     );
@@ -735,6 +749,30 @@ $buchungsregeln = static function () use ($connections, $view, $auditFor): Buchu
         new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings)),
         $kategorien,
         $auditFor($pdo),
+    );
+};
+
+// Matching receipt <-> booking (M10-2, issue #66): scores decrypted
+// receipts and bookings in the session - only this page opens the connection.
+$abgleichSeite = static function () use ($connections, $view, $auditFor): AbgleichController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+    $audit = $auditFor($pdo);
+    $transaktionen = new BankTransactionRepository($pdo);
+    $rechnungen = new InvoiceRepository($pdo);
+
+    return new AbgleichController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Abgleich(
+            $rechnungen,
+            $transaktionen,
+            new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+            new Zuordnung($pdo, new AllocationRepository($pdo), $rechnungen, $transaktionen, new BankAccountService($pdo, new BankAccountRepository($pdo)), $audit),
+            new SettingRepository($pdo),
+        ),
+        $audit,
     );
 };
 
@@ -1555,6 +1593,7 @@ $router = new Router();
     $workerAuth,
     $workerApi,
     $workerAdmin,
+    $abgleichSeite,
     $tresorRotation,
 );
 

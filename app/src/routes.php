@@ -29,6 +29,7 @@ use App\App\ArchivImportController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\AbgleichController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
@@ -185,6 +186,9 @@ use App\View\View;
  * @param (\Closure(): SerienController)|null $serien built lazily, same
  *        reason as $mail: only the recurring series pages need the database
  *        (issue #57/M8-1). Optional like $nextcloudAdmin.
+ * @param (\Closure(): AbgleichController)|null $abgleich built lazily, same
+ *        reason as $mail: only the matching page needs the database
+ *        (issue #66/M10-2). Optional like $nextcloudAdmin.
  * @param (\Closure(): VaultRotationController)|null $tresorRotation built
  *        lazily (issue #90); optional and last for the same reason as
  *        $nextcloudAdmin.
@@ -236,6 +240,7 @@ return static function (
     ?\Closure $workerAuth = null,
     ?\Closure $workerApi = null,
     ?\Closure $workerAdmin = null,
+    ?\Closure $abgleich = null,
     ?\Closure $tresorRotation = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -246,6 +251,7 @@ return static function (
     $workerAuth ??= static fn(): never => throw new \LogicException('The worker signature check is not wired into this route table.');
     $workerApi ??= static fn(): never => throw new \LogicException('The worker API is not wired into this route table.');
     $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
+    $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -596,6 +602,16 @@ return static function (
     $get('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->formular($r, $params));
     $post('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->speichern($r, $params));
     $post('/app/serien/{id:\d+}/verwerfen', $documentEdit, static fn(Request $r, array $params) => $serien()->verwerfen($r, $params));
+
+    // Matching receipt <-> booking (M10-2, issue #66, docs/spec/
+    // 04-bank-und-abgleich.md section 5 "Punktebewertung"): automatic
+    // allocation, suggestions, the points as settings - all `matching.edit`,
+    // CSRF on the writes, the unlocked vault for scoring (amounts, names).
+    $abgleichRecht = Zugriff::recht(Permission::MatchingEdit);
+    $get('/app/abgleich', $abgleichRecht, static fn(Request $r) => $abgleich()->seite($r));
+    $post('/app/abgleich/ausfuehren', $abgleichRecht, static fn(Request $r) => $abgleich()->ausfuehren($r));
+    $post('/app/abgleich/uebernehmen', $abgleichRecht, static fn(Request $r) => $abgleich()->uebernehmen($r));
+    $post('/app/abgleich/einstellungen', $abgleichRecht, static fn(Request $r) => $abgleich()->einstellungen($r));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
