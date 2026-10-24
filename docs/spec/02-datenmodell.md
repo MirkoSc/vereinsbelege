@@ -18,7 +18,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `user_role` | user_id, role_id – PK beide; Rolle `ON DELETE RESTRICT` (Migration 010, M3-6) | – |
 | `user_cost_center` | user_id, cost_center_id (Scope „Vereinsverantwortlicher"; Migration 010, M3-6) | – |
 | `user_scope` | user_id PK, period_from NULL, period_to NULL (Zeitraum-Scope externer Konten, Grenzen inklusive; Migration 010, M3-6) | – |
-| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem (Migration 006, M3-2) | – (selbst gewrappt) |
+| `user_key` | user_id, public_key, wrapped_private_key, kdf_salt, kdf_ops, kdf_mem, kdf_alg (Migration 006, M3-2; `kdf_alg` seit Migration 033, issue #100) | – (selbst gewrappt) |
 | `vault` | version, public_key, created_at (Migration 004, M2-4) | – |
 | `vault_grant` | user_id, vault_version, sealed_private_key, granted_by, granted_at (Migration 006, M3-2) | – (versiegelt) |
 | `mfa_totp` | user_id, secret_enc, confirmed_at, created_at (Migration 008, M3-4) | S |
@@ -57,9 +57,12 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 - `user.last_login_at` und `user.password_hash` schreibt seit M3-3 der Login
   (`App\Service\Account\LoginService`): den Hash nur dann neu, wenn
   `password_needs_rehash()` angehobene Kostenfaktoren meldet – der Klartext
-  liegt in genau diesem Moment ohnehin vor. `user_key` bleibt dabei
-  unberührt: das KEK-Salt ist bewusst vom Passwort-Hash getrennt (01 §3),
-  die Umhüllung wird erst beim echten Passwortwechsel erneuert (M3-5). Seit
+  liegt in genau diesem Moment ohnehin vor. `user_key` schreibt der Login
+  nur, wenn die Umhüllung ein schwächeres Argon2id-Profil trägt als das
+  aktuelle (issue #100, 01 §2 „Argon2id-Profil der Umhüllung"): dasselbe
+  Schlüsselpaar, frisches Salt, per Compare-and-Swap
+  (`UserKeyRepository::replaceWrapping()`); das KEK-Salt bleibt dabei
+  bewusst vom Passwort-Hash getrennt (01 §3). Seit
   M3-4 (issue #17) ist „Passwort stimmt" nicht mehr dasselbe wie „Anmeldung
   abgeschlossen" – `last_login_at` wird deshalb nicht mehr in `attempt()`
   gesetzt, sondern in `LoginService::registerSuccess()`, das

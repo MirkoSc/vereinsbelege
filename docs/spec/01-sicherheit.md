@@ -50,7 +50,7 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 | Feld (Tresor) | `*_enc` | `Version(1) \| Nonce(24) \| XChaCha20-Poly1305-IETF`, AAD = `tabelle\|id\|spalte` |
 | Betriebsdaten (Server-Schlüssel) | `*_enc` | `Version(1) \| Nonce(24) \| secretbox` |
 | Datenschlüssel | `dek_sealed` | `Tresor-Version(1) \| box_seal(DEK, VK_pub)` |
-| Benutzer-Privatkey | `user_key.wrapped_private_key` | `Version(1) \| Nonce(24) \| secretbox(U_priv, KEK)`, KEK = Argon2id(Passwort, `kdf_salt`, `kdf_ops`, `kdf_mem`) |
+| Benutzer-Privatkey | `user_key.wrapped_private_key` | `Version(1) \| Nonce(24) \| secretbox(U_priv, KEK)`, KEK = Argon2id(Passwort, `kdf_salt`, `kdf_ops`, `kdf_mem`, `kdf_alg`) – Profil siehe „Argon2id-Profil der Umhüllung" |
 | Tresor-Freigabe | `vault_grant.sealed_private_key` | `Tresor-Version(1) \| box_seal(VK_priv, U_pub)` |
 | Wiederherstellungsschlüssel | – (nur Papier) | `Version(1) \| VK_priv(32) \| Prüfsumme(2)`, Crockford-Base32 |
 | Blind Index | `*_bi` | rohe 32 Byte `HMAC-SHA256(BIK, zweck \| 0x00 \| normalisierter Wert)` |
@@ -71,10 +71,12 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   sie ebenso, damit eine Generation ihre Grants findet;
   `vault_grant.vault_version` spiegelt das Byte nur für SQL.
 - Die KDF-Parameter stehen je Benutzer im Klartext daneben
-  (`kdf_salt`, `kdf_ops`, `kdf_mem`), damit die Vorgaben später angehoben
-  werden können, ohne bestehende Benutzer auszusperren: eine alte Zeile wird
-  mit ihren eigenen Parametern geöffnet und beim nächsten Passwortwechsel auf
-  den aktuellen Stand gehoben.
+  (`kdf_salt`, `kdf_ops`, `kdf_mem`, seit Migration 033 auch `kdf_alg`),
+  damit die Vorgaben später angehoben werden können, ohne bestehende
+  Benutzer auszusperren: eine alte Zeile wird mit ihren eigenen Parametern
+  geöffnet und bei der nächsten Anmeldung (oder beim nächsten
+  Passwortwechsel) auf den aktuellen Stand gehoben – Einzelheiten unter
+  „Argon2id-Profil der Umhüllung".
 - Das Versionsbyte des Wiederherstellungsschlüssels ist die Version **dieser
   Kodierung**, nicht die Tresor-Generation – ein gedruckter Schlüssel muss
   auch für eine Installation lesbar bleiben, die das Format inzwischen
@@ -124,8 +126,96 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
 - Jeder Request hinter der Anmeldung prüft das Konto erneut
   (`App\Http\LoginGuard`): Sperren oder Ablaufdatum wirken sofort, nicht
   erst beim nächsten Login.
-- Argon2id-Parameter: `OPSLIMIT_INTERACTIVE`/`MEMLIMIT_INTERACTIVE`
-  (64 MiB) als Default; im Hosting-Check verifizieren (memory_limit!).
+- Argon2id-Parameter: seit issue #100 das Profil MODERATE, siehe der
+  folgende Abschnitt.
+
+### Argon2id-Profil der Umhüllung (issue #100)
+
+**Entscheidung** (vorläufig, autonom getroffen – Bestätigung durch Mirko
+offen, siehe E-19): neue Umhüllungen von `U_priv` verwenden das libsodium-
+Profil **MODERATE** – `opslimit` 3, `memlimit` 256 MiB, Argon2id v1.3
+(`App\Service\Crypto\KdfParameters::defaults()`). Bis issue #100 war es
+INTERACTIVE (2 Durchläufe, 64 MiB). Das Login-Passwort selbst
+(`password_hash`, §3) ist davon nicht betroffen – es behält die
+PHP-Vorgaben.
+
+Gemessen mit `tools/hosting-check.php` auf dem Zielhost (M0, 21.09.2026,
+[Hosting-Befunde](../hosting-befunde.md)):
+
+| Vorgang | Dauer |
+|---|---|
+| `sodium_crypto_pwhash` INTERACTIVE (64 MiB, 2 Durchläufe) | 52–56 ms |
+| `sodium_crypto_pwhash` MODERATE (256 MiB, 3 Durchläufe) | 309–321 ms |
+| `password_hash(PASSWORD_ARGON2ID)` | 166–170 ms |
+| `memory_limit` | 384 MiB |
+
+Begründung: Die Umhüllung wird je Anmeldung genau einmal abgeleitet. Eine
+Anmeldung kostet damit rund 0,5 s (Passwort prüfen + Umhüllung öffnen),
+bei der einmaligen Anhebung eines alten Kontos zusätzlich ~0,3 s – weit
+innerhalb von `max_execution_time` und für den Menschen kaum spürbar. Ein
+Angreifer mit einem gestohlenen Datenbank-Dump zahlt dagegen je Rateversuch
+den sechsfachen Rechen- und Speicheraufwand (3 × 256 MiB statt 2 × 64 MiB),
+und 256 MiB je parallelem Versuch bremsen GPU-Angriffe zusätzlich. Gerade
+die Umhüllung ist das lohnende Ziel: sie schützt den Tresor, nicht nur das
+Konto.
+
+**Speicher:** libsodium belegt die 256 MiB selbst, außerhalb der
+Speicherverwaltung von PHP. `memory_limit` zählt sie deshalb nicht mit und
+verhindert sie auch nicht (lokal geprüft: MODERATE läuft mit
+`memory_limit=32M`, `memory_get_peak_usage()` bleibt bei ~2 MiB); begrenzt
+wird nur durch das RAM bzw. die Prozessgrenzen des Hosts. Ein PHP-FPM-
+Prozess bearbeitet einen Request nach dem anderen, rechnet also höchstens
+einen solchen Hash zugleich; parallele Anmeldungen laufen in getrennten
+Prozessen und brauchen für ~0,3 s je 256 MiB. Für die Handvoll Konten eines
+Vereins ist das unkritisch, gehört aber festgehalten. Bekommt libsodium den
+Speicher nicht, scheitert die Ableitung mit `SodiumException` („internal
+error") → `CryptoException`: beim Anlegen einer Umhüllung (Installer,
+Einladung, Reset, Passwortwechsel) wird dann nichts geschrieben, weil alle
+vier vor ihrer Transaktion umhüllen; beim Anheben im Login bleibt die alte,
+gültige Umhüllung stehen.
+
+**Versioniert gespeichert** je Benutzer in `user_key`: `kdf_salt`,
+`kdf_ops`, `kdf_mem` und `kdf_alg` (Migration 033). `kdf_alg` ist die
+libsodium-Kennung, die Algorithmus **und** Argon2-Version zusammen benennt
+(2 = `SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13`, Argon2id v1.3) – libsodium kennt
+kein Argon2id anderer Version, eine eigene Versionsspalte trüge immer
+denselben Wert. Alle Zeilen vor Migration 033 sind Argon2id v1.3, daher der
+Vorgabewert 2; er hält auch das vorige Release schreibfähig. Eine
+unbekannte Kennung lehnt `KdfParameters` ab, statt einen falschen Schlüssel
+abzuleiten, der wie ein falsches Passwort aussähe. Das Format der Umhüllung
+selbst trägt sein eigenes Versionsbyte (Tabelle oben).
+
+**Anheben bei der nächsten Anmeldung:** Ist eine Zeile schwächer als das
+aktuelle Profil (`KdfParameters::isWeakerThanDefaults()`: weniger
+Durchläufe **oder** weniger Speicher), umhüllt
+`App\Service\Account\LoginService` nach erfolgreichem Entsperren dasselbe
+Schlüsselpaar mit demselben Passwort neu – frisches Salt, jeder
+Kostenfaktor mindestens auf dem aktuellen Profil (`UserKey::upgradedWrapping()`,
+`KdfParameters::raisedToDefaults()`: je Faktor das Maximum aus gespeichertem
+und aktuellem Wert). Das Schlüsselpaar bleibt, die Freigabe
+gilt also weiter. Geschrieben wird nur, wenn die Zeile noch genau die
+gerade geöffnete ist (`UserKeyRepository::replaceWrapping()`,
+Compare-and-Swap auf `public_key` und `wrapped_private_key`): ein
+Passwortwechsel oder Reset, der dazwischen festgeschrieben wird, gewinnt –
+sonst stünde wieder eine Umhüllung unter dem alten Passwort in der Zeile.
+Das Anheben ist „best effort": scheitert die Ableitung oder das Schreiben,
+bleibt die alte Zeile, die nächste Anmeldung versucht es erneut. Liest der
+neue Code zwischen den Updater-Schritten „switch" und „migrate" eine Zeile
+ohne `kdf_alg`, gilt der Vorgabewert (Argon2id v1.3). Der Passwortwechsel hebt
+ebenfalls an (`UserKey::rewrap()`). Stärkere gespeicherte Werte bleiben
+unangetastet – wird das Profil im Code einmal gesenkt, gilt das nur für
+neue Umhüllungen.
+
+**Keine Kalibrierung im Installer** (ebenfalls vorläufig, E-19): das Profil
+ist eine feste Konstante, kein je Installation gemessener Wert. Eine
+Messung im Installer erfasst einen Augenblick ohne Last, macht jede
+Installation anders (Tests, Fehlersuche) und würde auf einem schwachen Host
+still die Sicherheit senken. Ob MODERATE trägt, zeigt vorher der
+Hosting-Check (06 §5, Zeile „pwhash MODERATE" mit Budget 1 s); ein Host,
+auf dem es nicht trägt, ist ein Befund mit Folge-Issue, kein stiller
+Rückfall. Ein späterer Profilwechsel ist eine Änderung von
+`KdfParameters::DEFAULT_*`; bestehende Konten öffnen weiter mit ihren
+gespeicherten Werten und werden bei der nächsten Anmeldung angehoben.
 
 ### Benutzer-Lebenszyklus und Schlüssel
 - **Einladung**: Admin legt Benutzer (E-Mail, Rollen) an → Einladungs-Mail
@@ -660,7 +750,12 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 ## Pflicht-Tests
 
 Krypto-Roundtrips (Feld, Blob, Sealed-DEK), AAD-Vertauschung schlägt fehl,
-Blind Index deterministisch; Benutzer-Lebenszyklus (Einladung → Freigabe →
+Blind Index deterministisch; Argon2id-Profil (issue #100): Vorgabe ist
+MODERATE, eine Umhüllung des älteren INTERACTIVE-Profils öffnet weiter
+(auch ohne `kdf_alg` geschrieben, wie vom vorigen Release), wird beim Login
+angehoben und öffnet danach erneut, ein dazwischen festgeschriebener
+Passwortwechsel wird nicht überschrieben, unbekannter Algorithmus
+abgelehnt; Benutzer-Lebenszyklus (Einladung → Freigabe →
 Passwort ändern → Reset → erneute Freigabe) inkl. „ohne Grant kein
 Entschlüsseln"; Wiederherstellungsschlüssel-Flow; Session ohne Cookie
 `__Host-vk` kann nicht entschlüsseln; TOTP (RFC-6238-Testvektoren),
