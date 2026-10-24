@@ -20,7 +20,7 @@
 // scripts), a require() in Node (tests/js).
 const erfassenHilfen = typeof module === 'object' && module.exports
     ? require('./einreichen.js')
-    : { seitenVerschieben: seitenVerschieben, seitenEntfernen: seitenEntfernen, istHeic: istHeic, HEIC_HINWEIS: HEIC_HINWEIS, aufbereitetListe: aufbereitetListe };
+    : { seitenVerschieben: seitenVerschieben, seitenEntfernen: seitenEntfernen, istHeic: istHeic, aufbereitetListe: aufbereitetListe };
 
 /** A new, empty receipt at the end of the list. */
 function belegAnlegen(belege, id) {
@@ -545,16 +545,16 @@ function initErfassen() {
                 if (ergebnis.scanDatei !== null) {
                     seite.datei = ergebnis.scanDatei;
                 }
-                if (ergebnis.heicNichtLesbar) {
-                    zeigeUploadFehler(erfassenHilfen.HEIC_HINWEIS);
-                }
                 if (ergebnis.aufbereitet !== null) {
                     vorschauFreigeben(seite);
                     seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
                 }
             } catch (fehler) {
                 seite.status = 'fehler';
-                seite.fehler = fehler.message;
+                seite.fehler = fehler.heic ? 'HEIC nicht lesbar' : fehler.message;
+                if (fehler.heic) {
+                    zeigeUploadFehler(fehler.message);
+                }
             }
             renderSeiten(belegId);
         });

@@ -157,16 +157,23 @@ Bedienung:
   und MP4 abgelehnt). Endung und MIME-Typ des Browsers zählen nicht.
 - **E-10 bleibt:** Das HEIC ist das **Original**, das im Browser erzeugte
   JPEG die **aufbereitete Fassung**. Der Server liest nie HEIC (GD kann es
-  nicht): ohne aufbereitete Fassung scheitert `pdf_erzeugen` mit einem
-  verständlichen Hinweis, die KI-Auslesung überspringt die Seite.
+  nicht), deshalb nimmt der Client ein HEIC **nur zusammen mit dem JPEG**
+  an. Absicherung auf dem Server: `pdf_erzeugen` scheitert bei einem
+  HEIC-Original ohne aufbereitete Fassung mit verständlichem Hinweis, die
+  KI-Auslesung überspringt die Seite (die Blob-Metadaten der öffentlichen
+  Einreichung sind versiegelt, eine Prüfung beim Absenden ist dort nicht
+  möglich). Im **Archiv-Import** wird HEIC übersprungen („HEIC wird im
+  Archiv-Import nicht unterstützt – bitte als JPEG/PDF beilegen“).
 - **Browser:** Nur eigene Dekoder (`createImageBitmap`, Safari kann HEIC),
   keine Bibliothek: ein WASM-Dekoder bräuchte `'wasm-unsafe-eval'` in der
   CSP (CLAUDE.md §4). Die Fähigkeitsprüfung ist der Versuch selbst –
-  schlägt er fehl (Chrome/Firefox), wird nur das Original hochgeladen und
-  der Hinweis `HEIC_HINWEIS` gezeigt. Das JPEG (Qualität 0,95) läuft durch
-  dieselbe Scanner-Pipeline wie JPEG/PNG; scheitert der Scanner, ist das
-  umgewandelte JPEG selbst die aufbereitete Fassung. „Zuschneiden" arbeitet
-  auf dem JPEG.
+  schlägt er fehl (Chrome/Firefox), wird die Seite **vor dem Upload
+  abgelehnt** mit der bisherigen Fehlermeldung (`HEIC_HINWEIS`, ergänzt um
+  den iPhone-Tipp Einstellungen › Kamera › Formate › „Maximale
+  Kompatibilität“). Das JPEG (Qualität 0,95) läuft durch dieselbe
+  Scanner-Pipeline wie JPEG/PNG; scheitert der Scanner, ist das
+  umgewandelte JPEG selbst die aufbereitete Fassung. „Zuschneiden"
+  arbeitet auf dem JPEG.
 
 ## 2. Bildaufbereitung (im Browser)
 

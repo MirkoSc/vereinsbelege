@@ -24,6 +24,13 @@ const scannerHilfen = typeof module === 'object' && module.exports
 /** JPEG quality of the processed page (spec: "Qualität ~0.85"). */
 const SCAN_QUALITAET = 0.85;
 
+/**
+ * Shown when a HEIC photo cannot be decoded here. The page is refused before
+ * any upload: the server cannot read HEIC, so a HEIC original is only taken
+ * together with the JPEG made in the browser (docs/spec/03 section 1).
+ */
+const HEIC_HINWEIS = 'HEIC-Bilder werden von diesem Browser nicht unterstützt. Bitte als JPEG oder PNG wählen, oder das Foto direkt aufnehmen. iPhone-Tipp: Einstellungen › Kamera › Formate › „Maximale Kompatibilität“.';
+
 /** JPEG quality of a converted HEIC photo - it is the scanner's input, not the end product. */
 const HEIC_QUALITAET = 0.95;
 
@@ -108,12 +115,13 @@ function startEcken(gefunden, breite, hoehe, interaktiv) {
  *   heicWandeln  - optional, (datei) => Promise<File|null>: HEIC to JPEG
  *
  * Resolves `{ abgebrochen: true }` on a cancel, otherwise `{ blobId,
- * aufbereitetId, aufbereitet, serverFallback, heicNichtLesbar, scanDatei }`:
+ * aufbereitetId, aufbereitet, serverFallback, scanDatei }`:
  * `aufbereitet` is the processed File (for the preview) or null,
  * `serverFallback` says the image was not processed here and the server will
- * do it, `heicNichtLesbar` that a HEIC file could not be converted (only the
- * original went up), `scanDatei` the JPEG converted from a HEIC original
- * (the input of "Zuschneiden") or null.
+ * do it, `scanDatei` the JPEG converted from a HEIC original
+ * (the input of "Zuschneiden") or null. A HEIC file the browser cannot
+ * decode rejects with an Error (`heic: true`, message HEIC_HINWEIS) before
+ * anything is uploaded.
  */
 async function seiteVerarbeiten(datei, optionen) {
     // A HEIC photo is converted first where the browser can decode it; the
@@ -130,18 +138,11 @@ async function seiteVerarbeiten(datei, optionen) {
             }
         }
         if (quelle === null) {
-            // Not decodable here: only the original goes up.
-            const unlesbar = await optionen.hochladen(datei);
+            // Not decodable here: refused before anything is uploaded.
+            const abgelehnt = new Error(HEIC_HINWEIS);
+            abgelehnt.heic = true;
 
-            return {
-                abgebrochen: false,
-                blobId: unlesbar.blob_id,
-                aufbereitetId: null,
-                aufbereitet: null,
-                serverFallback: false,
-                heicNichtLesbar: true,
-                scanDatei: null,
-            };
+            throw abgelehnt;
         }
     }
 
@@ -178,7 +179,6 @@ async function seiteVerarbeiten(datei, optionen) {
         aufbereitetId: verarbeitet === null ? null : verarbeitet.blob_id,
         aufbereitet: aufbereitet,
         serverFallback: serverFallback,
-        heicNichtLesbar: false,
         scanDatei: konvertiert ? quelle : null,
     };
 }
@@ -360,6 +360,7 @@ if (typeof module === 'object' && module.exports) {
     module.exports = {
         SCAN_QUALITAET,
         HEIC_QUALITAET,
+        HEIC_HINWEIS,
         kannScannen,
         istScanbar,
         istHeicDatei,

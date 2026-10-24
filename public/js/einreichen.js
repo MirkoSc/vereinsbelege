@@ -38,8 +38,8 @@ function seitenEntfernen(seiten, id) {
 /**
  * HEIC/HEIF (docs/spec/03-erfassung-und-ki.md section 1): converted to JPEG
  * in the browser where it can decode it (heicZuJpeg() in
- * public/js/scanner/scanner.js), otherwise a clear hint - the HEIC file is
- * uploaded as the original either way.
+ * public/js/scanner/scanner.js), otherwise the page is refused with a clear
+ * hint before any upload. A HEIC original only goes up together with its JPEG.
  */
 function istHeic(datei) {
     const typ = (datei && datei.type) || '';
@@ -47,9 +47,6 @@ function istHeic(datei) {
 
     return typ === 'image/heic' || typ === 'image/heif' || /\.hei[cf]$/i.test(name);
 }
-
-/** Shown when a HEIC photo could not be converted in this browser. */
-const HEIC_HINWEIS = 'HEIC wird von diesem Browser nicht unterstützt. Das Foto wurde trotzdem eingereicht, kann aber nicht automatisch aufbereitet werden – bitte als JPEG aufnehmen oder teilen (iPhone: Einstellungen › Kamera › Formate › „Maximale Kompatibilität“).';
 
 /**
  * The processed version of every page, parallel to the originals
@@ -487,16 +484,16 @@ function initEinreichen() {
             if (ergebnis.scanDatei !== null) {
                 seite.datei = ergebnis.scanDatei;
             }
-            if (ergebnis.heicNichtLesbar) {
-                zeigeUploadFehler(HEIC_HINWEIS);
-            }
             if (ergebnis.aufbereitet !== null) {
                 vorschauFreigeben(seite);
                 seite.vorschauUrl = URL.createObjectURL(ergebnis.aufbereitet);
             }
         } catch (problem) {
             seite.status = 'fehler';
-            seite.fehler = problem.message;
+            seite.fehler = problem.heic ? 'HEIC nicht lesbar' : problem.message;
+            if (problem.heic) {
+                zeigeUploadFehler(problem.message);
+            }
         }
         renderSeiten();
     }
@@ -633,5 +630,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, HEIC_HINWEIS, aufbereitetListe, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
+    module.exports = { seitenVerschieben, seitenEntfernen, istHeic, aufbereitetListe, einreichenNutzlast, powLoesen, seiteHochladen, absenden };
 }
