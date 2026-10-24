@@ -196,7 +196,7 @@ final readonly class Posteingang
             'chunks' => $this->blobs->openRead($blob, $vault),
             'mime' => $meta->mimeType,
             'dateiname' => sprintf('%s-%d.%s', $name, $position + 1, $endung),
-            'anhang' => $meta->mimeType === MagicBytes::XML,
+            'anhang' => $meta->mimeType === MagicBytes::XML || $meta->mimeType === MagicBytes::HEIC,
         ];
     }
 
