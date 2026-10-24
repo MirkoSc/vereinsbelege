@@ -726,11 +726,12 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         // Every controller closure of app/src/routes.php in order: the
-        // guard second, the export 36th, the Nextcloud settings 38th.
-        $controller = array_fill(0, 38, $unerreichbar);
+        // guard second, the export 36th, the full-text search 38th, the
+        // Nextcloud settings 39th.
+        $controller = array_fill(0, 39, $unerreichbar);
         $controller[1] = $guard;
         $controller[35] = $export;
-        $controller[37] = $nextcloudAdmin;
+        $controller[38] = $nextcloudAdmin;
 
         $router = new Router();
         (require dirname(__DIR__, 2) . '/app/src/routes.php')($router, $view, ...$controller);

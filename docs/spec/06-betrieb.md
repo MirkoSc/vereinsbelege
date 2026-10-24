@@ -392,6 +392,11 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     verschlüsselten Datei – wie „Verwerfen“ auf der Import-Seite. Bestätigte
     Importe bleiben: ihre Datei ist das Original der Buchungen. Braucht keinen
     Tresor.
+  - *Suchindexe* (issue #94, 03 §10): `SuchindexCleanupTask`
+    (`suchindex_aufraeumen`, in `aufraeumen`) löscht die verschlüsselten
+    Session-Indexe der Volltextsuche unter `shared/var/tmp/suche/`, deren
+    neueste Datei älter als 24 h ist – Sessions, die ohne Abmelden endeten.
+    Nur Dateizeiten, kein Tresor, keine DB.
   - *Wartungsmodus:* der Shim lässt `/cron` nicht durch (nur `/admin`, `/css/`,
     `/js/`); der Aufruf bekommt 503 und der nächste Minutenlauf holt nach.
   - *Antwort:* JSON `status` (`ok`/`fehler`/`laeuft_bereits`), `aufgaben`,
