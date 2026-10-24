@@ -345,6 +345,38 @@ final class UmbuchungFlowTest extends DatabaseTestCase
     }
 
     /**
+     * A booking page loaded before an automatic pairing: saving it must not
+     * bring the receipt need back - compared with the locked row.
+     */
+    public function testAStalePageDoesNotUndoAPairing(): void
+    {
+        $giro = $this->bankkonto('Girokonto', self::GIRO_IBAN);
+        $kasse = $this->konto(['art' => 'kasse', 'name' => 'Barkasse', 'opening_balance' => '0,00', 'opening_date' => '2026-01-01']);
+        $einzahlung = $this->importierteBuchung($giro, '2026-03-10', 15000, 'Bareinzahlung', '', '');
+        $felder = [
+            'konto' => (string) $kasse, 'datum' => '2026-03-10', 'betrag' => '150,00', 'richtung' => 'ausgabe',
+            'kategorie' => (string) $this->kategorie('Sonstiges'), 'zweck' => 'Zur Bank gebracht', 'gegenseite' => '', 'beleg' => '',
+        ];
+        $this->post('/app/buchungen', $felder);
+        $kassenbuchung = (int) $this->pdo()->query("SELECT id FROM bank_transaction WHERE source = 'manuell'")->fetchColumn();
+        $veraltet = $this->buchungAus($kassenbuchung);
+        self::assertTrue($veraltet->docRequired);
+
+        $this->umbuchungen()->paaren($this->tresor, $kassenbuchung, $einzahlung, UmbuchungMethode::Auto, $this->userId, '192.0.2.1', new \DateTimeImmutable());
+
+        try {
+            $this->buchungen()->aendern($this->tresor, $veraltet, [...$felder, 'zweck' => 'Zur Sparkasse gebracht'], new \DateTimeImmutable());
+            self::fail('the stale receipt need must not win');
+        } catch (BankRuleViolation $e) {
+            self::assertSame('beleg', $e->feld);
+        }
+        $nachher = $this->buchungAus($kassenbuchung);
+        self::assertSame(BankTransactionSetBy::Umbuchung, $nachher->docSource);
+        self::assertFalse($nachher->docRequired);
+        self::assertSame(BankTransactionDocStatus::NichtNoetig, $nachher->docStatus);
+    }
+
+    /**
      * A rule that set only the receipt status before the pairing is
      * forgotten on unpairing, so it may act on the booking again.
      */

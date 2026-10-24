@@ -207,6 +207,11 @@ final readonly class Buchungen
             // direction and account, and needs no receipt by being one.
             $umbuchung = $record->docSource === BankTransactionSetBy::Umbuchung;
             $gesperrt = array_values(array_intersect(['account_id', 'amount', 'direction', 'doc_required'], $geaendert));
+            // Paired since the page was loaded: the receipt need is compared
+            // with the locked row, not with the stale one.
+            if ($umbuchung && $neu->belegNoetig !== $record->docRequired && !in_array('doc_required', $gesperrt, true)) {
+                $gesperrt[] = 'doc_required';
+            }
             if ($umbuchung && $gesperrt !== []) {
                 throw new BankRuleViolation(
                     'Die Buchung ist als Umbuchung zwischen eigenen Konten verknüpft – Konto, Betrag, Richtung und Beleg-Bedarf lassen sich erst ändern, wenn die Umbuchung gelöst ist.',
