@@ -11,6 +11,9 @@ use App\Domain\AuditEntry;
 use App\Domain\BalanceCheck;
 use App\Domain\BankAccountKind;
 use App\Domain\BankImportStatus;
+use App\Domain\BankTransactionDirection;
+use App\Domain\BankTransactionDocStatus;
+use App\Domain\BankTransactionSource;
 use App\Domain\Iban;
 use App\Domain\SystemRole;
 use App\Http\Cookie;
@@ -32,6 +35,7 @@ use App\Repository\CategoryRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
+use App\Repository\TransferRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
@@ -46,6 +50,8 @@ use App\Service\Bank\Import\Dedupschluessel;
 use App\Service\Bank\Import\ImportFormat;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Bank\Import\KontoauszugLeser;
+use App\Service\Bank\Umbuchungen;
+use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
@@ -250,6 +256,30 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
             $z['category_id'] === null ? null : (int) $z['category_id'], $z['category_source'],
             $z['rule_id'] === null ? null : (int) $z['rule_id'],
         ], $this->buchungen($konto)));
+    }
+
+    /**
+     * M10-6 (issue #70): after the import, a transfer to another own account
+     * is recognised - the counter booking came earlier - and both halves
+     * need no receipt.
+     */
+    public function testTheImportRecognisesATransferToAnOwnAccount(): void
+    {
+        $konto = $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban(), '1.523,40', '2024-03-11');
+        // The fixture's 120,00 transfer goes to this IBAN - here an own account.
+        $spar = $this->bankkonto('Sparkonto', 'DE52120300001111111111');
+        $gegen = $this->gegenbuchung($spar, '2024-03-12', 12000);
+
+        $this->importiere(self::sparkasse());
+
+        $paare = $this->pdo()->query('SELECT out_transaction_id, in_transaction_id, method FROM transfer')->fetchAll();
+        self::assertCount(1, $paare);
+        self::assertSame($gegen, (int) $paare[0]['in_transaction_id']);
+        self::assertSame('auto', $paare[0]['method']);
+        $ausgabe = array_values(array_filter($this->buchungen($konto), static fn(array $z): bool => (int) $z['id'] === (int) $paare[0]['out_transaction_id']));
+        self::assertCount(1, $ausgabe);
+        self::assertSame(['umbuchung', 0, 'nicht_noetig'], [$ausgabe[0]['doc_source'], (int) $ausgabe[0]['doc_required'], $ausgabe[0]['doc_status']]);
+        self::assertSame(1, (int) $this->pdo()->query("SELECT COUNT(*) FROM bank_transaction WHERE doc_source = 'umbuchung' AND account_id = " . $konto)->fetchColumn());
     }
 
     public function testTheSameExportTwiceAddsNothing(): void
@@ -824,6 +854,33 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         ], new \DateTimeImmutable())->id;
     }
 
+    /** An income without counterparty on $konto, encrypted under the test vault. */
+    private function gegenbuchung(int $konto, string $datum, int $cent): int
+    {
+        $repository = new BankTransactionRepository($this->pdo());
+        $key = DataKey::generate();
+        $id = $repository->insert(
+            $konto,
+            null,
+            new \DateTimeImmutable($datum),
+            null,
+            BankTransactionDirection::Einnahme,
+            $this->tresor->sealDataKey($key),
+            random_bytes(32),
+            null,
+            BankTransactionDocStatus::NichtNoetig,
+            false,
+            BankTransactionSource::Import,
+            new \DateTimeImmutable(),
+        ) ?? self::fail();
+        $repository->setCiphertext($id, FieldCipher::encrypt($key, (string) json_encode([
+            'amount' => $cent, 'currency' => 'EUR', 'counterparty_name' => '', 'counterparty_iban' => '',
+            'purpose' => 'Übertrag', 'eref' => '', 'mref' => '', 'cred' => '', 'gvc' => '', 'booking_text' => 'Gutschrift',
+        ]), new FieldContext('bank_transaction', $id, 'data_enc')));
+
+        return $id;
+    }
+
     private function importe(): BankImportRepository
     {
         return new BankImportRepository($this->pdo());
@@ -1034,6 +1091,7 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
             $this->audit,
             $this->regeln(),
             schrittPosten: $this->schrittPosten,
+            umbuchungen: new Umbuchungen($pdo, new TransferRepository($pdo), new BankTransactionRepository($pdo), new BankAccountService($pdo, $kontoRecords), $this->audit),
         );
     }
 

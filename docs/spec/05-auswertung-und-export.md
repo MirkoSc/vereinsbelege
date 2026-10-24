@@ -11,6 +11,10 @@ Grundlage wählbar: **Belege** (Rechnungsdatum, Brutto) oder **Buchungen**
 (Zahlungsfluss, Konto – Default, weil Einnahmen oft ohne Beleg sind).
 Zeitraum: Kalenderjahr (= Geschäftsjahr)/Quartal/Monat/frei,
 Vorjahresvergleich. Externe Konten sehen nur ihren freigegebenen Zeitraum.
+**Umbuchungen eigene Konten** (M10-6, 04 §5 „Stand M10-6“, E-38) sind
+weder Einnahme noch Ausgabe: Auswertungen auf Buchungsbasis lassen
+Buchungen mit `doc_source = umbuchung` aus Einnahmen, Ausgaben und
+Kategorien heraus; Kontostände und Salden je Konto enthalten sie.
 
 Ansichten:
 - **Dashboard**: Einnahmen/Ausgaben/Saldo lfd. Jahr, Kontostände je Konto,
