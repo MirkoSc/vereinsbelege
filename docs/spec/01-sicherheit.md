@@ -507,8 +507,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
     (`einreichung_pausiert`): `/einreichen` zeigt dann nur einen Hinweis,
     Absenden und Upload antworten mit 503 – für den Fall, dass trotzdem
     Spam auftritt.
-- Dateiprüfung serverseitig über Magic Bytes (JPEG, PNG, HEIC→ablehnen mit
-  Hinweis bzw. clientseitig konvertiert, PDF; seit M7-4 E-Rechnungs-XML nur
+- Dateiprüfung serverseitig über Magic Bytes (JPEG, PNG, HEIC als Original
+  (im Browser zusätzlich nach JPEG gewandelt, 03 §1), PDF; seit M7-4 E-Rechnungs-XML nur
   mit CII-/UBL-Wurzel und ohne DOCTYPE, ausgeliefert nur als Download –
   03 §3).
 - Einreicher erhält Referenznummer + optional Bestätigungsmail (ohne

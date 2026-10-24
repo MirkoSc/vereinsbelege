@@ -8,8 +8,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     SCAN_QUALITAET,
+    HEIC_HINWEIS,
     kannScannen,
     istScanbar,
+    istHeicDatei,
+    heicJpegName,
     aufbereitetName,
     startEcken,
     seiteVerarbeiten,
@@ -99,7 +102,7 @@ test('a processed image uploads the original first, then the processed version',
     });
 
     assert.deepEqual(upload.reihenfolge, ['foto.jpg', 'foto-aufbereitet.jpg']);
-    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: 11, aufbereitet: scan, serverFallback: false });
+    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: 11, aufbereitet: scan, serverFallback: false, scanDatei: null });
 });
 
 test('cancelling the editor uploads nothing at all', async () => {
@@ -131,7 +134,7 @@ test('a browser that cannot process uploads the original only and marks the serv
 
     assert.equal(gefragt, false);
     assert.deepEqual(upload.reihenfolge, ['foto.png']);
-    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: null, aufbereitet: null, serverFallback: true });
+    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: null, aufbereitet: null, serverFallback: true, scanDatei: null });
 });
 
 test('processing that fails on one image still uploads its original for the server fallback', async () => {
@@ -162,7 +165,7 @@ test('a PDF is uploaded as it is, without processing and without a server fallba
     });
 
     assert.deepEqual(upload.reihenfolge, ['rechnung.pdf']);
-    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: null, aufbereitet: null, serverFallback: false });
+    assert.deepEqual(ergebnis, { abgebrochen: false, blobId: 10, aufbereitetId: null, aufbereitet: null, serverFallback: false, scanDatei: null });
 });
 
 test('a failed upload rejects, so the page shows the error', async () => {
@@ -208,4 +211,89 @@ test('only a full quad is noted, and odd keys are ignored instead of throwing', 
     eckenVormerken('name.jpg', [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]);
     assert.equal(vorgemerkteEcken(null), null);
     assert.equal(vorgemerkteEcken('name.jpg'), null);
+});
+
+test('HEIC is recognised by MIME type or extension', () => {
+    assert.equal(istHeicDatei({ type: 'image/heic', name: 'a.heic' }), true);
+    assert.equal(istHeicDatei({ type: 'image/heif', name: 'a.heif' }), true);
+    assert.equal(istHeicDatei({ type: '', name: 'IMG_0001.HEIC' }), true);
+    assert.equal(istHeicDatei({ type: 'image/jpeg', name: 'a.jpg' }), false);
+    assert.equal(istHeicDatei(null), false);
+});
+
+test('the converted HEIC gets a .jpg name', () => {
+    assert.equal(heicJpegName('IMG_0001.HEIC'), 'IMG_0001.jpg');
+    assert.equal(heicJpegName('a.b.heif'), 'a.b.jpg');
+    assert.equal(heicJpegName(''), 'foto.jpg');
+});
+
+function heicOptionen(ueberschreiben) {
+    const aufrufe = [];
+
+    return Object.assign({
+        aufrufe: aufrufe,
+        kann: true,
+        heicWandeln: async function (datei) {
+            return { name: 'foto.jpg', type: 'image/jpeg', quelle: datei.name };
+        },
+        aufbereiten: async function (bild) {
+            aufrufe.push('aufbereiten:' + bild.name);
+
+            return { name: 'foto-aufbereitet.jpg', type: 'image/jpeg' };
+        },
+        hochladen: async function (teil) {
+            aufrufe.push('hochladen:' + teil.name);
+
+            return { blob_id: 'blob-' + aufrufe.length };
+        },
+    }, ueberschreiben || {});
+}
+
+test('a HEIC photo is converted, scanned, and uploaded as original plus processed JPEG', async () => {
+    const optionen = heicOptionen();
+    const ergebnis = await seiteVerarbeiten({ name: 'foto.heic', type: 'image/heic' }, optionen);
+
+    assert.deepEqual(optionen.aufrufe, ['aufbereiten:foto.jpg', 'hochladen:foto.heic', 'hochladen:foto-aufbereitet.jpg']);
+    assert.equal(ergebnis.serverFallback, false);
+    assert.equal(ergebnis.scanDatei.name, 'foto.jpg');
+    assert.ok(ergebnis.aufbereitetId);
+});
+
+test('a converted HEIC is the processed version when the scanner cannot run', async () => {
+    const optionen = heicOptionen({ kann: false });
+    const ergebnis = await seiteVerarbeiten({ name: 'foto.heic', type: 'image/heic' }, optionen);
+
+    assert.deepEqual(optionen.aufrufe, ['hochladen:foto.heic', 'hochladen:foto.jpg']);
+    assert.equal(ergebnis.aufbereitet.name, 'foto.jpg');
+    assert.equal(ergebnis.serverFallback, false);
+});
+
+test('a converted HEIC is the processed version when the scanner fails', async () => {
+    const optionen = heicOptionen({ aufbereiten: async function () { throw new Error('kaputt'); } });
+    const ergebnis = await seiteVerarbeiten({ name: 'foto.heic', type: 'image/heic' }, optionen);
+
+    assert.deepEqual(optionen.aufrufe, ['hochladen:foto.heic', 'hochladen:foto.jpg']);
+    assert.equal(ergebnis.scanDatei.name, 'foto.jpg');
+});
+
+test('a cancelled editor uploads nothing for a HEIC photo either', async () => {
+    const optionen = heicOptionen({ aufbereiten: async function () { return null; } });
+    const ergebnis = await seiteVerarbeiten({ name: 'foto.heic', type: 'image/heic' }, optionen);
+
+    assert.equal(ergebnis.abgebrochen, true);
+    assert.deepEqual(optionen.aufrufe, []);
+});
+
+test('a browser that cannot decode HEIC refuses the page before any upload', async () => {
+    for (const wandeln of [undefined, async function () { throw new Error('nicht lesbar'); }]) {
+        const optionen = heicOptionen({ heicWandeln: wandeln });
+
+        await assert.rejects(
+            seiteVerarbeiten({ name: 'foto.heic', type: 'image/heic' }, optionen),
+            function (fehler) {
+                return fehler.heic === true && fehler.message === HEIC_HINWEIS;
+            },
+        );
+        assert.deepEqual(optionen.aufrufe, [], 'nothing is uploaded');
+    }
 });

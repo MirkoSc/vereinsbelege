@@ -8,8 +8,7 @@ Mobile-first, eine Seite, kein Login. Ablauf:
    - „Foto aufnehmen": Live-Kamera (`getUserMedia`, Rückkamera) mit
      Rahmen-Overlay; Fallback `<input type="file" accept="image/*"
      capture="environment">` (iOS/ältere Browser).
-   - „Bild wählen" (JPEG/PNG; HEIC wird im Browser, wenn möglich, konvertiert,
-     sonst verständliche Fehlermeldung).
+   - „Bild wählen" (JPEG/PNG; HEIC/HEIF, seit #147: siehe „HEIC" unten).
    - „PDF oder E-Rechnung wählen" (PDF, ZUGFeRD/Factur-X-PDF oder
      XRechnung als XML-Datei, seit M7-4 – Abschnitt 3).
    - Mehrere Seiten pro Beleg: „Weitere Seite hinzufügen", Reihenfolge per
@@ -149,6 +148,32 @@ Bedienung:
   Karte „Seite fotografieren“.
 - Der Posteingang zeigt die aufbereitete Fassung mit „Original öffnen“
   (`Posteingang::seiten()`, `Document::blobIds()` enthält beide).
+
+### HEIC (Issue #147, vorläufig)
+
+- **Server:** `MagicBytes` erkennt HEIC/HEIF am `ftyp`-Kopf (Hauptmarke
+  `heic`, `heix`, `hevc`, `hevx`, `heim`, `heis`, `hevm`, `hevs`; bei `mif1`/
+  `msf1` nur mit HEVC-Marke unter den kompatiblen Marken – so bleiben AVIF
+  und MP4 abgelehnt). Endung und MIME-Typ des Browsers zählen nicht.
+- **E-10 bleibt:** Das HEIC ist das **Original**, das im Browser erzeugte
+  JPEG die **aufbereitete Fassung**. Der Server liest nie HEIC (GD kann es
+  nicht), deshalb nimmt der Client ein HEIC **nur zusammen mit dem JPEG**
+  an. Absicherung auf dem Server: `pdf_erzeugen` scheitert bei einem
+  HEIC-Original ohne aufbereitete Fassung mit verständlichem Hinweis, die
+  KI-Auslesung überspringt die Seite (die Blob-Metadaten der öffentlichen
+  Einreichung sind versiegelt, eine Prüfung beim Absenden ist dort nicht
+  möglich). Im **Archiv-Import** wird HEIC übersprungen („HEIC wird im
+  Archiv-Import nicht unterstützt – bitte als JPEG/PDF beilegen“).
+- **Browser:** Nur eigene Dekoder (`createImageBitmap`, Safari kann HEIC),
+  keine Bibliothek: ein WASM-Dekoder bräuchte `'wasm-unsafe-eval'` in der
+  CSP (CLAUDE.md §4). Die Fähigkeitsprüfung ist der Versuch selbst –
+  schlägt er fehl (Chrome/Firefox), wird die Seite **vor dem Upload
+  abgelehnt** mit der bisherigen Fehlermeldung (`HEIC_HINWEIS`, ergänzt um
+  den iPhone-Tipp Einstellungen › Kamera › Formate › „Maximale
+  Kompatibilität“). Das JPEG (Qualität 0,95) läuft durch dieselbe
+  Scanner-Pipeline wie JPEG/PNG; scheitert der Scanner, ist das
+  umgewandelte JPEG selbst die aufbereitete Fassung. „Zuschneiden"
+  arbeitet auf dem JPEG.
 
 ## 2. Bildaufbereitung (im Browser)
 
@@ -718,7 +743,8 @@ in einem Lauf ab, nicht eines je Datei.
   Uploads hoch (Abschnitt 1).
 
 **Pflicht-Tests (Upload):** `MagicBytesTest` (die erlaubten Typen inkl.
-XRechnung CII/UBL mit BOM und ohne Prolog, ZIP/ELF/HTML/Text/GIF/HEIC/leer/
+XRechnung CII/UBL mit BOM und ohne Prolog, HEIC (`heic`/`heix`, `mif1` mit
+HEVC-Marke), ZIP/ELF/HTML/Text/GIF/AVIF/MP4/abgeschnittener ftyp-Kopf/leer/
 zu kurz abgelehnt, PDF-Kopf mit Versatz abgelehnt, HTML/SVG/beliebiges XML/
 XML mit DOCTYPE/ZUGFeRD 1.0 abgelehnt); `UploadServiceTest` (leere Datei und Datei über dem Limit vor der
 Übertragung abgelehnt, Limit selbst erlaubt, zu langer Chunk abgelehnt und
