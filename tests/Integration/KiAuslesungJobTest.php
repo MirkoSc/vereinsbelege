@@ -153,6 +153,17 @@ final class KiAuslesungJobTest extends DatabaseTestCase
         self::assertSame(2090, $inhalt['versuch']['aufruf']['tokens_gesamt']);
 
         $this->assertKeinKlartext($id);
+
+        // M7-8: the call log has one operating-data row, nothing of the receipt.
+        $protokoll = $this->pdo()->query('SELECT * FROM ai_call_log')->fetchAll();
+        self::assertCount(1, $protokoll);
+        self::assertSame($this->standardId, (int) $protokoll[0]['provider_id']);
+        self::assertSame('gpt-6-luna-2026-08-01', $protokoll[0]['model']);
+        self::assertSame('extract-v1', $protokoll[0]['prompt_version']);
+        self::assertSame('gueltig', $protokoll[0]['status']);
+        self::assertSame(2090, (int) $protokoll[0]['total_tokens']);
+        self::assertSame(0, (int) $protokoll[0]['is_repair']);
+        self::assertStringNotContainsString('RE-2026-0815', implode('|', array_map('strval', $protokoll[0])), 'no business data in the log');
     }
 
     public function testEachCallIsAStepOfItsOwnAndARepairFollowsAnAnswerThatDoesNotFit(): void
