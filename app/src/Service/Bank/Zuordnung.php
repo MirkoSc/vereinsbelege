@@ -323,6 +323,32 @@ final readonly class Zuordnung
         );
     }
 
+    /**
+     * The allocated sum of many receipts at once, by invoice id - each
+     * allocation decrypted once, one query per 500 receipts (the matching,
+     * issue #66). Receipts without allocation are left out (0).
+     *
+     * @param list<int> $invoiceIds
+     *
+     * @return array<int, int>
+     */
+    public function summenJeBeleg(Vault $vault, array $invoiceIds): array
+    {
+        return array_map(fn(array $liste): int => $this->summe($vault, $liste), $this->zuordnungen->forInvoices($invoiceIds));
+    }
+
+    /**
+     * The same for bookings, by transaction id.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, int>
+     */
+    public function summenJeBuchung(Vault $vault, array $transactionIds): array
+    {
+        return array_map(fn(array $liste): int => $this->summe($vault, $liste), $this->zuordnungen->forTransactions($transactionIds));
+    }
+
     /** @param bool $sperren locking read, as zahlungsstand() */
     public function hatZuordnungen(int $invoiceId, bool $sperren = false): bool
     {
@@ -422,7 +448,7 @@ final readonly class Zuordnung
      * The booking direction a receipt is settled by: its own - a credit
      * note the opposite, money flows back.
      */
-    private static function erwarteteRichtung(InvoiceRecord $beleg): string
+    public static function erwarteteRichtung(InvoiceRecord $beleg): string
     {
         $eigene = $beleg->direction->value;
         if ($beleg->docType !== InvoiceType::Gutschrift) {

@@ -486,6 +486,9 @@ final readonly class Buchungen
             ruleId: $record->ruleId,
             docSource: $record->docSource,
             categorySource: $record->categorySource,
+            endToEndRef: $text('eref'),
+            mandateRef: $text('mref'),
+            creditorId: $text('cred'),
         );
     }
 }

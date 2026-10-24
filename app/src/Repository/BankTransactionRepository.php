@@ -345,6 +345,53 @@ final readonly class BankTransactionRepository
     }
 
     /**
+     * Bookings the matching may score (M10-2, issue #66): not yet fully
+     * allocated, within $bereich (a booking has no cost center - a
+     * cost-center scope sees none), booked on or after $ab. An expense
+     * marked "kein Beleg nötig" is left out - someone decided it gets no
+     * receipt -, income is not (it needs none by default, E-17, yet an
+     * outgoing invoice is settled by it). $richtungen: only these
+     * directions (null = both) - no open outgoing invoice, no income read.
+     * $ids narrows to those rows.
+     *
+     * @param list<int>|null $ids
+     * @param list<BankTransactionDirection>|null $richtungen
+     *
+     * @return list<BankTransactionRecord>
+     */
+    public function abgleichKandidaten(Zugriffsbereich $bereich, ?\DateTimeImmutable $ab = null, ?array $ids = null, ?array $richtungen = null): array
+    {
+        if ($ids === [] || $richtungen === []) {
+            return [];
+        }
+        [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
+        $sql = "SELECT t.* FROM bank_transaction t
+                WHERE {$bedingung} AND t.doc_status <> ? AND NOT (t.doc_status = ? AND t.direction = ?)";
+        array_push(
+            $parameter,
+            BankTransactionDocStatus::Zugeordnet->value,
+            BankTransactionDocStatus::NichtNoetig->value,
+            BankTransactionDirection::Ausgabe->value,
+        );
+        if ($richtungen !== null) {
+            $sql .= sprintf(' AND t.direction IN (%s)', implode(',', array_fill(0, count($richtungen), '?')));
+            array_push($parameter, ...array_map(static fn(BankTransactionDirection $r): string => $r->value, $richtungen));
+        }
+        if ($ab !== null) {
+            $sql .= ' AND t.booking_date >= ?';
+            $parameter[] = $ab->format('Y-m-d');
+        }
+        if ($ids !== null) {
+            $sql .= sprintf(' AND t.id IN (%s)', implode(',', array_fill(0, count($ids), '?')));
+            array_push($parameter, ...$ids);
+        }
+        $stmt = $this->pdo->prepare($sql . ' ORDER BY t.booking_date, t.id');
+        $stmt->execute($parameter);
+
+        return array_map(self::hydrate(...), $stmt->fetchAll());
+    }
+
+    /**
      * Lets a rule act on one booking: the receipt status when $docRequired
      * is given, the category when $categoryId is given. Only while no rule
      * has touched the row - returns whether it was written.

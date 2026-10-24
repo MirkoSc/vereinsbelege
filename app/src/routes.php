@@ -29,6 +29,7 @@ use App\App\ArchivImportController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
+use App\App\AbgleichController;
 use App\App\ErstattungController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
@@ -186,6 +187,9 @@ use App\View\View;
  * @param (\Closure(): SerienController)|null $serien built lazily, same
  *        reason as $mail: only the recurring series pages need the database
  *        (issue #57/M8-1). Optional like $nextcloudAdmin.
+ * @param (\Closure(): AbgleichController)|null $abgleich built lazily, same
+ *        reason as $mail: only the matching page needs the database
+ *        (issue #66/M10-2). Optional like $nextcloudAdmin.
  * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
  *        same reason as $mail: only the reimbursement page needs the
  *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
@@ -237,6 +241,7 @@ return static function (
     ?\Closure $workerAuth = null,
     ?\Closure $workerApi = null,
     ?\Closure $workerAdmin = null,
+    ?\Closure $abgleich = null,
     ?\Closure $erstattungen = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -247,6 +252,7 @@ return static function (
     $workerAuth ??= static fn(): never => throw new \LogicException('The worker signature check is not wired into this route table.');
     $workerApi ??= static fn(): never => throw new \LogicException('The worker API is not wired into this route table.');
     $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
+    $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
     $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -598,6 +604,16 @@ return static function (
     $post('/app/serien/{id:\d+}', $documentEdit, static fn(Request $r, array $params) => $serien()->speichern($r, $params));
     $post('/app/serien/{id:\d+}/verwerfen', $documentEdit, static fn(Request $r, array $params) => $serien()->verwerfen($r, $params));
 
+    // Matching receipt <-> booking (M10-2, issue #66, docs/spec/
+    // 04-bank-und-abgleich.md section 5 "Punktebewertung"): automatic
+    // allocation, suggestions, the points as settings - all `matching.edit`,
+    // CSRF on the writes, the unlocked vault for scoring (amounts, names).
+    $abgleichRecht = Zugriff::recht(Permission::MatchingEdit);
+    $get('/app/abgleich', $abgleichRecht, static fn(Request $r) => $abgleich()->seite($r));
+    $post('/app/abgleich/ausfuehren', $abgleichRecht, static fn(Request $r) => $abgleich()->ausfuehren($r));
+    $post('/app/abgleich/uebernehmen', $abgleichRecht, static fn(Request $r) => $abgleich()->uebernehmen($r));
+    $post('/app/abgleich/einstellungen', $abgleichRecht, static fn(Request $r) => $abgleich()->einstellungen($r));
+
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
     // Vorstand, Finanzen, Kassenprüfer, Steuerberater) to see the list, an
@@ -669,9 +685,8 @@ return static function (
     // for reading and allocating - it is the matching. CSRF on the POST;
     // without the unlocked vault nothing is read or written
     // (App\App\ErstattungController).
-    $abgleich = Zugriff::recht(Permission::MatchingEdit);
-    $get('/app/buchungen/{id:\d+}/erstattung', $abgleich, static fn(Request $r, array $params) => $erstattungen()->ansicht($r, $params));
-    $post('/app/buchungen/{id:\d+}/erstattung', $abgleich, static fn(Request $r, array $params) => $erstattungen()->zuordnen($r, $params));
+    $get('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->ansicht($r, $params));
+    $post('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->zuordnen($r, $params));
 
     // Rules "kein Beleg nötig" / category (M9-6, issue #64, docs/spec/
     // 04-bank-und-abgleich.md section 5). Permission: reading `bank.view` -

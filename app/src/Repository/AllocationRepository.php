@@ -143,6 +143,32 @@ final readonly class AllocationRepository
         return $ergebnis;
     }
 
+    /**
+     * The allocations of many bookings at once (the matching, issue #66),
+     * grouped by transaction id - in chunks, so the IN list stays short.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, list<AllocationRecord>>
+     */
+    public function forTransactions(array $transactionIds): array
+    {
+        $ergebnis = [];
+        foreach (array_chunk(array_values(array_unique($transactionIds)), 500) as $teil) {
+            $stmt = $this->pdo->prepare(sprintf(
+                'SELECT * FROM allocation WHERE transaction_id IN (%s) ORDER BY transaction_id, id',
+                implode(',', array_fill(0, count($teil), '?')),
+            ));
+            $stmt->execute($teil);
+            foreach ($stmt->fetchAll() as $row) {
+                $record = AllocationRecord::fromRow($row);
+                $ergebnis[$record->transactionId][] = $record;
+            }
+        }
+
+        return $ergebnis;
+    }
+
     /** @param bool $sperren locking read, as forTransaction() */
     public function countForInvoice(int $invoiceId, bool $sperren = false): int
     {
