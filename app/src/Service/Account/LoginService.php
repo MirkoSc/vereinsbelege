@@ -141,16 +141,57 @@ final readonly class LoginService
     private function entsperren(User $user, #[\SensitiveParameter] string $password): LoginResult
     {
         $userKey = $this->userKeys->forUser($user->id);
-        $grant = $this->grants->forUser($user->id);
-        $vault = $this->vaults->current();
+        $grants = $this->grants->allForUser($user->id);
+        // Generations still in use: one normally, two while a key rotation
+        // runs (issue #90) - a grant of a retired generation opens nothing.
+        $generationen = [];
+        foreach ($this->vaults->active() as $generation) {
+            $generationen[$generation->version] = $generation;
+        }
+        $neueste = $generationen === [] ? null : $generationen[max(array_keys($generationen))];
 
-        if ($userKey === null || $grant === null || $vault === null) {
+        if ($userKey === null || $grants === [] || $neueste === null) {
+            return LoginResult::erfolg($user, null, VaultAccess::KeineFreigabe);
+        }
+
+        // The newest generation must be among the grants: a session seals
+        // everything new with its newest key, and that must never be a key
+        // that is on its way out.
+        $hatNeueste = false;
+        foreach ($grants as $grant) {
+            $hatNeueste = $hatNeueste || $grant->vaultVersion === $neueste->version;
+        }
+        if (!$hatNeueste) {
             return LoginResult::erfolg($user, null, VaultAccess::KeineFreigabe);
         }
 
         try {
             $paar = $userKey->unwrap($password);
-            $entsperrt = $grant->open($paar, $vault->publicKey(), $vault->version);
+            $entsperrt = null;
+            $aeltere = [];
+            foreach ($grants as $grant) {
+                $generation = $generationen[$grant->vaultVersion] ?? null;
+                if ($generation === null) {
+                    continue;
+                }
+                if ($generation->version === $neueste->version) {
+                    $entsperrt = $grant->open($paar, $generation->publicKey, $generation->version);
+                    continue;
+                }
+                // An older generation during a rotation: a grant that does
+                // not open costs this session the old rows, not the login.
+                try {
+                    $aeltere[] = $grant->open($paar, $generation->publicKey, $generation->version);
+                } catch (CryptoException) {
+                    continue;
+                }
+            }
+            if ($entsperrt === null) {
+                throw new CryptoException('The grant of the newest generation is missing.');
+            }
+            foreach ($aeltere as $aelter) {
+                $entsperrt = $entsperrt->withPrevious($aelter);
+            }
         } catch (CryptoException) {
             // The password verified but does not open the wrapping, or the
             // grant belongs to another key pair or another generation. Not a

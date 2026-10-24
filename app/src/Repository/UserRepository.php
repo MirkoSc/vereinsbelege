@@ -131,6 +131,17 @@ final readonly class UserRepository
     }
 
     /**
+     * Ends every session of every account (issue #90): after a key
+     * rotation, no session may keep the old vault key. The rotating admin's
+     * own session adopts the new value right after (Session::adoptEpoch()) -
+     * its other sessions end like everybody else's.
+     */
+    public function bumpSessionEpochAll(): void
+    {
+        $this->pdo->exec('UPDATE `user` SET session_epoch = session_epoch + 1');
+    }
+
+    /**
      * Records which second factor an account has committed to
      * (docs/spec/01-sicherheit.md section 3, issue #17). `null` clears it -
      * used when a method is abandoned mid-setup or replaced by another one

@@ -83,6 +83,7 @@ final class UpdateChainTest extends DatabaseTestCase
         string $version = '1.0.0',
         int $dumpBytes = BackupErstellung::DUMP_BYTES,
         float $backupSekunden = UpdateService::BACKUP_SEKUNDEN,
+        ?\Closure $rollbackHindernis = null,
     ): UpdateService {
         $downloader = new ReleaseDownloader(function (string $url) use ($antworten): string {
             if (!isset($antworten[$url])) {
@@ -117,6 +118,7 @@ final class UpdateChainTest extends DatabaseTestCase
                 $dumpBytes,
             ),
             backupSekunden: $backupSekunden,
+            rollbackHindernis: $rollbackHindernis,
         );
     }
 
@@ -414,6 +416,27 @@ final class UpdateChainTest extends DatabaseTestCase
         // The previous release in this fixture predates issue #101 - it
         // comes back as current/ without a .htaccess, the rollback adds one.
         self::assertSame(DenyHtaccess::CONTENT, file_get_contents($this->base . '/current/.htaccess'));
+    }
+
+    /**
+     * Issue #90: an older release reads `vault` as "newest row is the key" -
+     * while a vault key rotation runs, the rollback is refused and the new
+     * release stays active.
+     */
+    public function testRollbackIsRefusedWhileAVaultKeyRotationRuns(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+
+        $this->service($antworten)->check();
+        $this->service($antworten)->download();
+        $this->service($antworten)->extract();
+        $this->service($antworten)->switchRelease();
+
+        $state = $this->service($antworten, rollbackHindernis: static fn(): string => 'Rotation erst abschließen')->rollback();
+
+        self::assertSame('Rotation erst abschließen', $state->fehler);
+        self::assertSame("1.1.0\n", file_get_contents($this->base . '/current/VERSION'));
     }
 
     public function testAStepWithoutAPreparedUpdateFails(): void
