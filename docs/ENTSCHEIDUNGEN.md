@@ -678,3 +678,62 @@ Offen für Mirko:
   umgesetzt.
 - Budgets (32 MiB / 8 s / 5 s im Update) sind geschätzt, nicht auf dem
   Zielhost gemessen.
+
+## E-35 ✅ Punktebewertung und Auto-Zuordnung: konservativ, ohne gespeicherte Vorschläge (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-2 (issue #66), 04 §5 „Punktebewertung“*
+
+- **Automatisch nur, wenn eindeutig – von beiden Seiten:** Score ≥ Schwelle
+  (85), Vorsprung ≥ Abstand (20) vor dem Zweitbesten **sowohl** unter den
+  Kandidaten des Belegs **als auch** unter denen der Buchung (ein
+  Gleichstand ist nie eindeutig, der Abstand ist mindestens 1), und „Betrag vollständig gedeckt“ heißt:
+  offener Betrag des Belegs **=** noch nicht zugeordneter Betrag der
+  Buchung. Damit sind Sammelzahlung, Rate und Skonto nie automatisch,
+  sondern Vorschläge mit dem Teilbetrag `min(offen Beleg, offen Buchung)`.
+- **Betragssignale am offenen Betrag:** „exakt“ vergleicht mit dem noch
+  offenen Betrag (bei teilbezahlten Belegen dem Rest), „Skonto“ nur nach
+  unten (bis 3 % weniger), nie mehr.
+- **Kennungen im Zweck** (Rechnungs-, Kundennummer): verglichen nach
+  Kleinschreibung, Trennzeichen in der Kennung egal, über Verwendungszweck
+  **und** End-to-End-Referenz (Trennzeichen im Zweck bleiben Grenzen);
+  mindestens 3 Zeichen mit einer Ziffer, und eine Ziffernkante darf keine
+  weitere Ziffer direkt berühren („815“ steckt nicht in „20260815“).
+- **Kandidaten:** nur Belege mit Dokumentstatus `geprueft`/
+  `festgeschrieben` (KI-Werte sind Vorschläge, ungeprüfte Beträge sollen
+  nichts automatisch ausgleichen), Zahlungsweg `konto`/`erstattung`, noch
+  nicht ausgeglichen; Buchungen außer `zugeordnet` und außer Ausgaben mit
+  „kein Beleg nötig“ (bewusst ohne Beleg), und nur ab dem Fensterbeginn des
+  ältesten offenen Belegs – ohne offenen Beleg wird keine Buchung
+  entschlüsselt. Beides im Zugriffsbereich von `matching.edit`.
+- **Vorschläge werden nicht gespeichert:** Sie werden bei jedem Aufruf der
+  Seite in der Session neu berechnet (keine Migration, kein veralteter
+  Vorschlag). „Übernehmen“ bewertet das Paar neu, lehnt ab, wenn es unter
+  `vorschlag_ab` gefallen ist oder sich der angezeigte Betrag geändert hat,
+  und schreibt über `Zuordnung` (`vorschlag_bestaetigt`, Score, `rule_trace`). Angezeigt
+  werden je Beleg bis zu drei Paare ab einer Mindestpunktzahl (`vorschlag_ab`,
+  Start 40 – nicht in der Spec-Tabelle).
+- **Parameter** als ein Setting `abgleich_parameter` (JSON), auf der
+  Abgleich-Seite mit `matching.edit` änderbar; fehlende oder ungültige Werte
+  fallen auf die Startwerte zurück.
+- **Kandidatenindex statt Kreuzprodukt, ein kurzer Request:** bewertet
+  wird nur, was mit dem Beleg einen Anker teilt – offener Betrag exakt oder
+  in der Skonto-Spanne, Lieferanten-/Einreicher-IBAN, Mandat/Gläubiger-ID,
+  Rechnungs- oder Kundennummer im Zweck (Hash-Maps bzw. eine Textsuche je
+  Lauf, `App\Service\Bank\Kandidatenindex`). Ein Betrag, den mehr als 25
+  Buchungen teilen (Beiträge, Gebühren), ist kein Anker. Für alle nicht
+  bewerteten Paare einer Seite steht die **Obergrenze**, die sie höchstens
+  erreichen könnten (Name + Datum, bei gekapptem Betrag + Betragspunkte),
+  in der Abstandsprüfung – so macht das Weglassen kein Paar eindeutiger,
+  als es ist. Folge: Ein Paar ganz ohne Anker (nur Name/Datum) erscheint nie
+  als Vorschlag. Jede Zeile wird einmal entschlüsselt, Zuordnungssummen
+  gebündelt gelesen, Buchungen nur in den Richtungen offener Belege und
+  in deren Währung verglichen. Der Seitenaufruf rechnet nichts; erst
+  „Abgleich berechnen“ (`?berechnen=1`). Gemessen ohne DB: 600 Belege ×
+  2.500 Buchungen < 0,5 s (Test-Grenze 5 s). Eine Schrittkette ist damit
+  nicht nötig.
+
+Offen für Mirko: „Verwerfen“ eines Vorschlags (braucht eine Tabelle, M10-4);
+Auto-Abgleich direkt nach dem Kontoauszug-Import statt per Knopf; ob
+ungeprüfte Belege wenigstens als Vorschlag erscheinen sollen; Lernen von
+IBAN/Mandatsreferenz beim Lieferanten nach Bestätigung (mit Rückfrage);
+Einreicher-IBAN für das Erstattungssignal kommt mit M10-3 (#67); ob Paare
+nur mit Namensähnlichkeit (ohne Anker) doch als Vorschlag erscheinen sollen.

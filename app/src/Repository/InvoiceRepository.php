@@ -11,6 +11,7 @@ use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\PaymentStatus;
+use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Service\Export\ExportBeleg;
 use App\Service\Export\ExportFilter;
@@ -271,6 +272,43 @@ final readonly class InvoiceRepository
             'SELECT * FROM invoice WHERE id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') ORDER BY invoice_date, id',
         );
         $stmt->execute(array_values($ids));
+
+        return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * Receipts the matching may score (M10-2, issue #66): checked or locked,
+     * expecting a booking and not yet settled, within $bereich. $ids narrows
+     * to those rows (accepting one suggestion).
+     *
+     * @param list<int>|null $ids
+     *
+     * @return list<InvoiceRecord>
+     */
+    public function abgleichKandidaten(Zugriffsbereich $bereich, ?array $ids = null): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        [$bedingung, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $sql = "SELECT i.* FROM invoice i JOIN document d ON d.id = i.document_id
+                WHERE {$bedingung} AND d.status IN (?, ?) AND i.payment_kind IN (?, ?) AND i.payment_status IN (?, ?, ?)";
+        array_push(
+            $parameter,
+            DocumentStatus::Geprueft->value,
+            DocumentStatus::Festgeschrieben->value,
+            Zahlungsweg::Konto->value,
+            Zahlungsweg::Erstattung->value,
+            PaymentStatus::Offen->value,
+            PaymentStatus::Teilbezahlt->value,
+            PaymentStatus::ErstattungOffen->value,
+        );
+        if ($ids !== null) {
+            $sql .= sprintf(' AND i.id IN (%s)', implode(',', array_fill(0, count($ids), '?')));
+            array_push($parameter, ...$ids);
+        }
+        $stmt = $this->pdo->prepare($sql . ' ORDER BY i.invoice_date, i.id');
+        $stmt->execute($parameter);
 
         return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
     }

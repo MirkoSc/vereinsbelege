@@ -454,6 +454,17 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/buchungen/regeln/standard', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/buchungen/regeln/7/loeschen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/buchungen/regeln', false],
+            // Abgleich (M10-2): matching.edit - Admin and Finanzen; the
+            // reading roles see bookings and receipts but do not allocate.
+            [SystemRole::Admin, HttpMethod::Get, '/app/abgleich', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/abgleich', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/abgleich/ausfuehren', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/abgleich/uebernehmen', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/abgleich/einstellungen', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/abgleich', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/abgleich/ausfuehren', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/abgleich/uebernehmen', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/abgleich/einstellungen', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/designsystem', false],
@@ -709,6 +720,8 @@ final class RoutePermissionMatrixTest extends TestCase
             workerAuth: $stellvertreter,
             workerApi: $stellvertreter,
             workerAdmin: $stellvertreter,
+            // The matching page (issue #66/M10-2), optional.
+            abgleich: $stellvertreter,
         );
 
         return $router;
