@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\Admin;
 
 use App\Domain\AuditAction;
-use App\Http\FileResponse;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Http\StreamResponse;
 use App\Repository\UserRepository;
+use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
 use App\Service\Audit\AuditLog;
 use App\Service\Backup\BackupErstellung;
@@ -31,7 +32,7 @@ use App\View\View;
  * and a backup made with "config.php mitsichern" carries exactly that key.
  * Such a backup is therefore downloaded only by POST with CSRF and the
  * account's current password (rate limited per account like a password
- * change); the plain GET answers 403 for it. Every download and every
+ * change, sharing its counter); the plain GET answers 403 for it. Every download and every
  * finished backup is in the audit log.
  *
  * ---------------------------------------------------------------------
@@ -42,8 +43,11 @@ use App\View\View;
  */
 final readonly class BackupController
 {
-    /** Wrong passwords at the download, counted per account in `rate_limit`. */
-    public const string LIMIT_DOWNLOAD = 'backup.download';
+    /** Bytes per piece of the download; the time limit restarts after each. */
+    private const int BLOCK = 1024 * 1024;
+
+    /** Seconds allowed per piece - a stalled client ends the request. */
+    private const int SEKUNDEN_JE_BLOCK = 30;
 
     public function __construct(
         private View $view,
@@ -108,7 +112,6 @@ final readonly class BackupController
             return Response::json(['fehler' => 'Sitzung abgelaufen – bitte die Seite neu laden.'], 403);
         }
 
-        $vorher = $this->erstellung->stand();
         try {
             $stand = $this->erstellung->schritt();
         } catch (BackupLaeuftBereits $e) {
@@ -117,9 +120,9 @@ final readonly class BackupController
             return Response::json(['fehler' => $e->getMessage()], 500);
         }
 
-        // Only the step that finished the backup writes a row; a repeated
-        // request on a finished chain does not.
-        if ($stand['phase'] === BackupErstellung::PHASE_FERTIG && ($vorher['phase'] ?? null) !== BackupErstellung::PHASE_FERTIG) {
+        // Only the step that finished the backup writes a row - decided
+        // under the chain's lock, so a second tab never writes it again.
+        if ($stand['gerade_fertig'] === true) {
             $this->audit->record(AuditAction::BackupErstellt, $this->session->userId(), $request->ip, details: [
                 'name' => (string) $stand['name'],
                 'config_enthalten' => (bool) $stand['config_enthalten'],
@@ -219,7 +222,7 @@ final readonly class BackupController
         // download.
         $this->session->schliessen();
 
-        return new FileResponse($pfad, [
+        return new StreamResponse(self::stuecke($pfad), [
             'Content-Type' => 'application/zip',
             // $name passed BackupService::path(): backup_<digits>[_n].zip,
             // nothing that needs quoting.
@@ -230,6 +233,36 @@ final readonly class BackupController
         ]);
     }
 
+    /**
+     * The file in pieces, the time limit restarted for each (CLAUDE.md
+     * section 1: the streamed download is the one request allowed to run
+     * long - it holds no state on the server, and a broken one is simply
+     * started again).
+     *
+     * @return \Generator<int, string>
+     */
+    private static function stuecke(string $pfad): \Generator
+    {
+        $datei = fopen($pfad, 'rb');
+        if ($datei === false) {
+            throw new \RuntimeException('Backup kann nicht gelesen werden.');
+        }
+        try {
+            while (!feof($datei)) {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(self::SEKUNDEN_JE_BLOCK);
+                }
+                $stueck = fread($datei, self::BLOCK);
+                if ($stueck === false) {
+                    return;
+                }
+                yield $stueck;
+            }
+        } finally {
+            fclose($datei);
+        }
+    }
+
     private function passwortFehler(#[\SensitiveParameter] string $passwort): ?string
     {
         $userId = $this->session->userId();
@@ -237,16 +270,16 @@ final readonly class BackupController
             return 'Bitte erneut anmelden.';
         }
         $konto = (string) $userId;
-        if ($this->limits->isBlocked(self::LIMIT_DOWNLOAD, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT)) {
+        if ($this->limits->isBlocked(PasswordChange::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT)) {
             return 'Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.';
         }
         $user = $this->users->findById($userId);
         if ($user === null || !$this->passwords->verify($passwort, $user->passwordHash)) {
-            $this->limits->registerFailure(self::LIMIT_DOWNLOAD, $konto);
+            $this->limits->registerFailure(PasswordChange::LIMIT_ACCOUNT, $konto);
 
             return 'Das Passwort ist falsch – das Backup wurde nicht heruntergeladen.';
         }
-        $this->limits->reset(self::LIMIT_DOWNLOAD, $konto);
+        $this->limits->reset(PasswordChange::LIMIT_ACCOUNT, $konto);
 
         return null;
     }

@@ -107,7 +107,7 @@ final readonly class BackupErstellung
                 'offset' => 0,
                 'zentral' => 0,
                 'eintraege' => 0,
-                'cursor' => '',
+                'liste_offset' => 0,
                 'blob_dateien' => 0,
                 'blob_bytes' => 0,
                 'blob_gesamt' => 0,
@@ -115,7 +115,7 @@ final readonly class BackupErstellung
             ];
             $this->speichern($stand);
 
-            return $stand;
+            return [...$stand, 'gerade_fertig' => false];
         });
     }
 
@@ -123,7 +123,10 @@ final readonly class BackupErstellung
      * Runs the next step of the running chain.
      *
      * @return array<string, mixed> the state after the step; `phase` is
-     *         PHASE_FERTIG and `name` set once the backup exists
+     *         PHASE_FERTIG and `name` set once the backup exists.
+     *         `gerade_fertig` is true only in the answer of the one step
+     *         that finished it - decided under the lock, so two tabs cannot
+     *         both report (and audit) the same backup.
      */
     public function schritt(): array
     {
@@ -133,15 +136,20 @@ final readonly class BackupErstellung
                 throw new \RuntimeException('Es läuft keine Backup-Erstellung.');
             }
             if ($stand['phase'] === self::PHASE_FERTIG) {
-                return $stand;
+                return [...$stand, 'gerade_fertig' => false];
             }
 
             $archivPfad = $this->arbeitsdatei($stand, 'zip.part');
             $zentralPfad = $this->arbeitsdatei($stand, 'zentral.part');
             if ($stand['phase'] !== self::PHASE_DUMP && (!is_file($archivPfad) || !is_file($zentralPfad))) {
+                $gerettet = $this->nachAbbruchDerUebergabe($stand);
+                if ($gerettet !== null) {
+                    return $gerettet;
+                }
                 throw new \RuntimeException('Die Arbeitsdatei des Backups fehlt – bitte abbrechen und neu starten.');
             }
 
+            $vorher = $stand;
             $archiv = $this->oeffnen($archivPfad, (int) $stand['offset']);
             $zentral = $this->oeffnen($zentralPfad, (int) $stand['zentral']);
             try {
@@ -160,12 +168,12 @@ final readonly class BackupErstellung
             }
 
             if ($stand['phase'] === self::PHASE_FERTIG) {
-                $stand = $this->uebergeben($stand, $archivPfad, $zentralPfad);
+                return $this->uebergeben($vorher, $stand, $archivPfad);
             }
             $stand['aktualisiert'] = $this->jetzt()->getTimestamp();
             $this->speichern($stand);
 
-            return $stand;
+            return [...$stand, 'gerade_fertig' => false];
         });
     }
 
@@ -227,56 +235,89 @@ final readonly class BackupErstellung
             $eintraege++;
         }
 
+        // The blob files to pack, fixed right after the dump: the rows in
+        // the dump and this list belong together. Later steps read it from
+        // where the last one stopped instead of listing the tree again.
+        $liste = '';
+        $anzahl = 0;
+        foreach ($this->backups->blobFiles() as $eintrag => $pfad) {
+            $liste .= $eintrag . "\t" . $pfad . "\n";
+            $anzahl++;
+        }
+        if (file_put_contents($this->arbeitsdatei($stand, 'liste.part'), $liste) === false) {
+            throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
+        }
+
         return [
             ...$stand,
             'phase' => self::PHASE_BLOBS,
             'config_enthalten' => $configDabei,
             'eintraege' => $eintraege,
-            'blob_gesamt' => count($this->backups->blobFiles()),
+            'liste_offset' => 0,
+            'blob_gesamt' => $anzahl,
         ];
     }
 
     /**
-     * Appends the next portion of blob files, in the sorted order of their
-     * entry names after `cursor`. A file deleted meanwhile is skipped; one
-     * added meanwhile is taken if it sorts behind the cursor - either way
-     * it has no row in the dump taken at the start.
+     * Appends the next portion of the blob files listed after the dump.
+     *
+     * A listed file that is gone or unreadable stops the chain with an
+     * error rather than being left out: its row is in the dump, and a
+     * backup that silently lacks a receipt file must never be reported as
+     * made. (A storage switch or a deletion while the chain runs causes
+     * this - starting the backup again fixes it.)
      *
      * @param array<string, mixed> $stand
      * @return array<string, mixed>
      */
     private function blobs(array $stand, ZipAnhang $zip): array
     {
-        $cursor = (string) $stand['cursor'];
-        $dateien = 0;
-        $bytes = 0;
-        $fertig = true;
-        foreach ($this->backups->blobFiles() as $eintrag => $pfad) {
-            $eintrag = (string) $eintrag;
-            if (strcmp($eintrag, $cursor) <= 0) {
-                continue;
+        $liste = @fopen($this->arbeitsdatei($stand, 'liste.part'), 'rb');
+        if ($liste === false) {
+            throw new \RuntimeException('Die Arbeitsdatei des Backups fehlt – bitte abbrechen und neu starten.');
+        }
+        try {
+            if (fseek($liste, (int) $stand['liste_offset']) !== 0) {
+                throw new \RuntimeException('Die Arbeitsdatei des Backups ist beschädigt.');
             }
-            if ($dateien >= self::PORTION_DATEIEN || ($dateien > 0 && $bytes >= self::PORTION_BYTES)) {
-                $fertig = false;
-                break;
+            $offset = (int) $stand['liste_offset'];
+            $dateien = 0;
+            $bytes = 0;
+            $fertig = false;
+            while (true) {
+                $zeile = fgets($liste);
+                if ($zeile === false) {
+                    $fertig = true;
+                    break;
+                }
+                if ($dateien >= self::PORTION_DATEIEN || ($dateien > 0 && $bytes >= self::PORTION_BYTES)) {
+                    // Portion full; this line is the next step's first.
+                    break;
+                }
+                [$eintrag, $pfad] = explode("\t", rtrim($zeile, "\n"), 2) + [1 => ''];
+                $quelle = is_file($pfad) ? @fopen($pfad, 'rb') : false;
+                if ($quelle === false) {
+                    throw new \RuntimeException(
+                        'Eine Belegdatei ist seit Beginn des Backups verschwunden oder nicht lesbar '
+                        . '(z. B. durch einen Speicher-Umzug) – bitte das Backup abbrechen und neu starten.',
+                    );
+                }
+                try {
+                    $bytes += $zip->eintrag($eintrag, $quelle);
+                } finally {
+                    fclose($quelle);
+                }
+                $dateien++;
+                $offset += strlen($zeile);
             }
-            $quelle = @fopen($pfad, 'rb');
-            if ($quelle === false) {
-                continue;
-            }
-            try {
-                $bytes += $zip->eintrag($eintrag, $quelle);
-            } finally {
-                fclose($quelle);
-            }
-            $dateien++;
-            $cursor = $eintrag;
+        } finally {
+            fclose($liste);
         }
 
         return [
             ...$stand,
             'phase' => $fertig ? self::PHASE_ABSCHLUSS : self::PHASE_BLOBS,
-            'cursor' => $cursor,
+            'liste_offset' => $offset,
             'eintraege' => (int) $stand['eintraege'] + $dateien,
             'blob_dateien' => (int) $stand['blob_dateien'] + $dateien,
             'blob_bytes' => (int) $stand['blob_bytes'] + $bytes,
@@ -305,23 +346,84 @@ final readonly class BackupErstellung
      * rename() replaces the empty placeholder reserveName() created, so
      * list() never sees a half-written archive.
      *
-     * @param array<string, mixed> $stand
+     * The reserved name is saved BEFORE the rename (with the state of
+     * before the last step): if the request dies right after the rename,
+     * the next step finds the backup under that name instead of reporting
+     * a missing work file (nachAbbruchDerUebergabe()).
+     *
+     * @param array<string, mixed> $vorher state before the last step
+     * @param array<string, mixed> $stand state after it
      * @return array<string, mixed>
      */
-    private function uebergeben(array $stand, string $archivPfad, string $zentralPfad): array
+    private function uebergeben(array $vorher, array $stand, string $archivPfad): array
     {
+        $this->platzhalterLoeschen($vorher);
         [$name, $zielPfad] = $this->backups->reserveName(new \DateTimeImmutable((string) $stand['gestartet']));
+        $this->speichern([...$vorher, 'ziel' => $name]);
         if (!@rename($archivPfad, $zielPfad)) {
             @unlink($zielPfad);
             throw new \RuntimeException('Das fertige Backup konnte nicht abgelegt werden.');
         }
-        @chmod($zielPfad, 0600);
-        if (is_file($zentralPfad)) {
-            unlink($zentralPfad);
-        }
-        $this->backups->rotate();
 
-        return [...$stand, 'name' => $name];
+        return $this->abschliessen([...$stand, 'ziel' => $name], $name);
+    }
+
+    /**
+     * The work file is gone in a later phase: if the last step died after
+     * moving the finished archive onto its name, finish the chain now.
+     *
+     * @param array<string, mixed> $stand
+     * @return array<string, mixed>|null
+     */
+    private function nachAbbruchDerUebergabe(array $stand): ?array
+    {
+        $ziel = $stand['ziel'] ?? null;
+        if ($stand['phase'] !== self::PHASE_ABSCHLUSS || !is_string($ziel)) {
+            return null;
+        }
+        $pfad = $this->backups->path($ziel);
+        if ($pfad === null || filesize($pfad) === 0) {
+            return null;
+        }
+
+        return $this->abschliessen([...$stand, 'phase' => self::PHASE_FERTIG], $ziel);
+    }
+
+    /**
+     * @param array<string, mixed> $stand
+     * @return array<string, mixed>
+     */
+    private function abschliessen(array $stand, string $name): array
+    {
+        $fertig = [...$stand, 'phase' => self::PHASE_FERTIG, 'name' => $name, 'aktualisiert' => $this->jetzt()->getTimestamp()];
+        $this->speichern($fertig);
+        $this->arbeitsdateienLoeschen();
+        try {
+            $this->backups->rotate();
+        } catch (\Throwable) {
+            // The backup exists and is recorded; the next backup rotates
+            // again. Failing here would only hide that it was made.
+        }
+
+        return [...$fertig, 'gerade_fertig' => true];
+    }
+
+    /**
+     * An earlier attempt of the hand-over may have left its reserved,
+     * still empty placeholder behind.
+     *
+     * @param array<string, mixed> $stand
+     */
+    private function platzhalterLoeschen(array $stand): void
+    {
+        $ziel = $stand['ziel'] ?? null;
+        if (!is_string($ziel)) {
+            return;
+        }
+        $pfad = $this->backups->path($ziel);
+        if ($pfad !== null && filesize($pfad) === 0) {
+            @unlink($pfad);
+        }
     }
 
     /**

@@ -214,6 +214,63 @@ final class BackupErstellungTest extends DatabaseTestCase
         self::assertSame([], glob($this->backupDir . '/erstellung_*.part'), 'no work file left');
     }
 
+    /**
+     * A listed blob file that vanished while the chain ran (deletion,
+     * storage switch) stops the chain - never a backup silently missing a
+     * file whose row is in the dump.
+     */
+    public function testAVanishedBlobFileStopsTheChain(): void
+    {
+        $name = bin2hex(random_bytes(16));
+        $pfad = $this->blobDir . '/' . substr($name, 0, 2) . '/' . $name;
+        mkdir(dirname($pfad));
+        file_put_contents($pfad, random_bytes(100));
+
+        $erstellung = $this->erstellung();
+        $erstellung->starten(false);
+        $erstellung->schritt();
+        unlink($pfad);
+
+        try {
+            $erstellung->schritt();
+            self::fail('the chain must stop');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('verschwunden', $e->getMessage());
+        }
+        self::assertSame([], $this->backups()->list(), 'no backup reported as made');
+    }
+
+    /**
+     * The request died right after moving the archive onto its name: the
+     * next step finds the backup instead of reporting a missing work file.
+     */
+    public function testAHandOverThatDiedAfterTheRenameIsFinishedByTheNextStep(): void
+    {
+        $erstellung = $this->erstellung();
+        $stand = $erstellung->starten(false);
+        do {
+            $stand = $erstellung->schritt();
+        } while ($stand['phase'] !== BackupErstellung::PHASE_ABSCHLUSS);
+
+        // Simulate the crash: the archive lies under its reserved name, the
+        // saved state still says "abschluss".
+        $gespeichert = $stand;
+        unset($gespeichert['gerade_fertig']);
+        $fertig = $erstellung->schritt();
+        self::assertTrue($fertig['gerade_fertig']);
+        $gespeichert['ziel'] = $fertig['name'];
+        file_put_contents($this->backupDir . '/erstellung.json', json_encode($gespeichert, JSON_THROW_ON_ERROR));
+        touch($this->backupDir . '/erstellung_' . $stand['id'] . '.zentral.part');
+
+        $nochmal = $erstellung->schritt();
+
+        self::assertSame(BackupErstellung::PHASE_FERTIG, $nochmal['phase']);
+        self::assertSame($fertig['name'], $nochmal['name']);
+        self::assertTrue($nochmal['gerade_fertig']);
+        self::assertCount(1, $this->backups()->list());
+        self::assertFalse($erstellung->schritt()['gerade_fertig'], 'reported once');
+    }
+
     public function testASecondStartWhileOneRunsIsRefused(): void
     {
         $erstellung = $this->erstellung();
@@ -248,7 +305,10 @@ final class BackupErstellungTest extends DatabaseTestCase
         $erstellung->starten(false);
         $stand = $this->bisFertig($erstellung);
 
-        self::assertSame($stand['name'], $erstellung->schritt()['name']);
+        self::assertTrue($stand['gerade_fertig']);
+        $nochmal = $erstellung->schritt();
+        self::assertSame($stand['name'], $nochmal['name']);
+        self::assertFalse($nochmal['gerade_fertig'], 'only the finishing step reports it');
         self::assertCount(1, $this->backups()->list());
     }
 

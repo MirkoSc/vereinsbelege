@@ -9,7 +9,6 @@ use App\Config\Paths;
 use App\Domain\AuditAction;
 use App\Domain\AuditEntry;
 use App\Domain\SystemRole;
-use App\Http\FileResponse;
 use App\Http\HttpMethod;
 use App\Http\Kernel;
 use App\Http\LoginGuard;
@@ -19,6 +18,7 @@ use App\Http\ResponseInterface;
 use App\Http\Router;
 use App\Http\Session;
 use App\Http\StaticFileHandler;
+use App\Http\StreamResponse;
 use App\Repository\AuditLogRepository;
 use App\Repository\RateLimitRepository;
 use App\Repository\RoleRepository;
@@ -123,8 +123,13 @@ final class BackupPageFlowTest extends DatabaseTestCase
         self::assertStringContainsString('ohne config.php', $seite->body);
 
         $download = $this->dispatch(new Request(HttpMethod::Get, '/admin/backups/' . $name));
-        self::assertInstanceOf(FileResponse::class, $download);
-        self::assertSame(realpath($this->backupDir . '/' . $name), realpath($download->filePath));
+        self::assertInstanceOf(StreamResponse::class, $download);
+        $inhalt = '';
+        foreach ($download->chunks as $stueck) {
+            $inhalt .= $stueck;
+        }
+        self::assertSame((string) file_get_contents($this->backupDir . '/' . $name), $inhalt, 'the whole file, streamed');
+        self::assertSame((string) filesize($this->backupDir . '/' . $name), $download->headers['Content-Length']);
         self::assertSame('attachment; filename="' . $name . '"', $download->headers['Content-Disposition']);
         self::assertSame('no-store', $download->headers['Cache-Control']);
 
@@ -155,15 +160,15 @@ final class BackupPageFlowTest extends DatabaseTestCase
         $name = $this->erstellen(true);
 
         $get = $this->dispatch(new Request(HttpMethod::Get, '/admin/backups/' . $name));
-        self::assertNotInstanceOf(FileResponse::class, $get);
+        self::assertNotInstanceOf(StreamResponse::class, $get);
         self::assertInstanceOf(Response::class, $get);
         self::assertSame(403, $get->status);
 
         $ohneCsrf = $this->dispatch(new Request(HttpMethod::Post, '/admin/backups/' . $name, post: ['passwort' => self::PASSWORT]));
-        self::assertNotInstanceOf(FileResponse::class, $ohneCsrf);
+        self::assertNotInstanceOf(StreamResponse::class, $ohneCsrf);
 
         $falsch = $this->post('/admin/backups/' . $name, ['passwort' => 'falsch']);
-        self::assertNotInstanceOf(FileResponse::class, $falsch);
+        self::assertNotInstanceOf(StreamResponse::class, $falsch);
         self::assertInstanceOf(Response::class, $falsch);
         self::assertSame('/admin/backups', $falsch->headers['Location'] ?? null);
 
@@ -174,7 +179,7 @@ final class BackupPageFlowTest extends DatabaseTestCase
         self::assertStringContainsString('autocomplete="current-password"', $seite->body);
 
         $richtig = $this->post('/admin/backups/' . $name, ['passwort' => self::PASSWORT]);
-        self::assertInstanceOf(FileResponse::class, $richtig);
+        self::assertInstanceOf(StreamResponse::class, $richtig);
 
         $heruntergeladen = $this->audit(AuditAction::BackupHeruntergeladen);
         self::assertCount(1, $heruntergeladen, 'only the confirmed download is logged');
@@ -189,7 +194,7 @@ final class BackupPageFlowTest extends DatabaseTestCase
 
         $antwort = $this->post('/admin/backups/' . $name, ['passwort' => self::PASSWORT]);
 
-        self::assertNotInstanceOf(FileResponse::class, $antwort);
+        self::assertNotInstanceOf(StreamResponse::class, $antwort);
     }
 
     public function testTheDownloadServesOnlyFilesFromTheBackupDirectory(): void
@@ -205,7 +210,7 @@ final class BackupPageFlowTest extends DatabaseTestCase
             '/admin/backups/erstellung.json',
         ] as $pfad) {
             $antwort = $this->dispatch(new Request(HttpMethod::Get, $pfad));
-            self::assertNotInstanceOf(FileResponse::class, $antwort, $pfad);
+            self::assertNotInstanceOf(StreamResponse::class, $antwort, $pfad);
             self::assertInstanceOf(Response::class, $antwort);
             self::assertSame(404, $antwort->status, $pfad);
         }
@@ -213,7 +218,7 @@ final class BackupPageFlowTest extends DatabaseTestCase
         // Also when the controller is reached with a forged name.
         $controller = $this->controller();
         $antwort = $controller->download(new Request(HttpMethod::Get, '/admin/backups/x'), ['name' => '../' . basename($this->configFile)]);
-        self::assertNotInstanceOf(FileResponse::class, $antwort);
+        self::assertNotInstanceOf(StreamResponse::class, $antwort);
     }
 
     public function testWithoutTheRightEveryRouteAnswers403(): void

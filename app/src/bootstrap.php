@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Admin\BackupController;
 use App\Admin\CategoryController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
@@ -13,7 +14,6 @@ use App\Admin\NextcloudSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
-use App\Admin\BackupController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
@@ -912,8 +912,6 @@ $exportAdmin = static function () use ($connections, $view, $auditFor): ExportSe
     return new ExportSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
 };
 
-// The Nextcloud target of the export (issue #95, 05 section 2): vault data,
-// the page needs the session's unlocked vault. Permission: `admin.settings`.
 // Backups page (issue #112): list, step chain, download. Built lazily like
 // $mail - only these routes open the connection. No vault: the backup holds
 // business data as ciphertext only.
@@ -939,6 +937,8 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
     );
 };
 
+// The Nextcloud target of the export (issue #95, 05 section 2): vault data,
+// the page needs the session's unlocked vault. Permission: `admin.settings`.
 $nextcloudAdmin = static function () use ($connections, $view, $auditFor): NextcloudSettingsController {
     $pdo = $connections->pdo();
 
