@@ -1448,6 +1448,27 @@ final class PruefungFlowTest extends DatabaseTestCase
         $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
         self::assertMatchesRegularExpression('/<option value="' . $baelle . '" selected>/', $seite);
         self::assertStringContainsString('Vorgeschlagen von: wie die letzten 2 geprüften Belege des Lieferanten', $seite);
+
+        // Only receipts within the reader's scope teach: both are dated March.
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2026-06-01'), null);
+        self::assertStringContainsString('Vorgeschlagen von: KI 0,60', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+    }
+
+    public function testTheCategoryFollowsTheSupplierTheArchiveSet(): void
+    {
+        $ausruestung = $this->kategorie('Sportausrüstung & Trikots');
+        $lieferant = $this->supplierService()->anlegen($this->tresor, [
+            'name' => 'Vereinsbedarf Nord', 'rolle' => 'lieferant', 'kategorie' => (string) $ausruestung,
+        ], new \DateTimeImmutable())->id;
+        $id = $this->beleg(quelle: DocumentSource::Archiv);
+        $this->kiLesen([$this->kiAntwort(['category_id' => $this->ausgabeKategorie])]);
+        $this->vorgabe($id, new ArchivVorgabe(pfad: 'Vereinsbedarf Nord/2026/Rechnung.pdf', lieferantId: $lieferant, lieferantName: 'Vereinsbedarf Nord'));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+
+        self::assertMatchesRegularExpression('/<option value="' . $lieferant . '" selected>/', $seite, 'the archive names the supplier');
+        self::assertMatchesRegularExpression('/<option value="' . $ausruestung . '" selected>/', $seite, 'its default, not the AI\'s category');
+        self::assertStringContainsString('Vorgeschlagen von: Standard-Kategorie des Lieferanten', $seite);
     }
 
     public function testTheSuggestedCategoryCanBeChangedBeforeSaving(): void

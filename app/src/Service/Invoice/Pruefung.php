@@ -510,10 +510,11 @@ final readonly class Pruefung
      * stays empty. The person confirms or changes it by saving.
      *
      * @param array<string, string> $felder after vorbelegen()
+     * @param Zugriffsbereich $bereich the reader's scope - only receipts within it are learnt from
      *
      * @return array{felder: array<string, string>, vorschlag: ?KategorieVorschlag}
      */
-    public function kategorieVorschlagen(array $felder, ?KiAuszug $ki, Vault $vault): array
+    public function kategorieVorschlagen(array $felder, ?KiAuszug $ki, Vault $vault, Zugriffsbereich $bereich): array
     {
         $richtung = InvoiceDirection::tryFrom($felder['richtung'] ?? '') ?? InvoiceDirection::Ausgabe;
         $lieferantId = $felder['lieferant'] ?? '';
@@ -536,18 +537,19 @@ final readonly class Pruefung
         $kiKategorie = is_int($extraktion['category_id'] ?? null) ? $extraktion['category_id'] : null;
         $konfidenz = is_array($extraktion['confidence'] ?? null) ? ($extraktion['confidence']['category'] ?? null) : null;
 
+        $kategorien = [];
+        foreach ($this->kategorien->all() as $kategorie) {
+            $kategorien[$kategorie->id] = $kategorie;
+        }
+
         $vorschlag = Kategorisierung::vorschlagen(
             $this->regeln->fuerImport($vault),
             $beleg,
             $lieferant?->defaultCategoryId,
-            $lieferant === null ? [] : $this->invoices->letzteGeprueftenKategorien($lieferant->id, Kategorisierung::GELERNT_AB),
+            fn(): array => $lieferant === null ? [] : $this->invoices->letzteGeprueftenKategorien($lieferant->id, Kategorisierung::GELERNT_AB, $bereich),
             $kiKategorie,
             is_int($konfidenz) || is_float($konfidenz) ? (float) $konfidenz : null,
-            function (int $id) use ($richtung): bool {
-                $kategorie = $this->kategorien->find($id);
-
-                return $kategorie !== null && $kategorie->active && $richtung->passtZuKategorie($kategorie->direction);
-            },
+            static fn(int $id): bool => isset($kategorien[$id]) && $kategorien[$id]->active && $richtung->passtZuKategorie($kategorien[$id]->direction),
         );
         $felder['kategorie'] = $vorschlag === null ? '' : (string) $vorschlag->kategorieId;
 

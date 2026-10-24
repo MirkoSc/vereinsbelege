@@ -46,31 +46,13 @@ final class Regelabgleich
 
     public static function trifft(AssignmentRule $regel, Buchungsmerkmale $buchung): bool
     {
-        if ($regel->stichwort === '' && $regel->gegenseite === '') {
-            return false;
-        }
-        if ($regel->direction !== null && $regel->direction !== $buchung->richtung) {
-            return false;
-        }
-
-        if ($regel->stichwort !== '') {
-            $stichwort = self::normalisieren($regel->stichwort);
-            if (!str_contains(self::normalisieren($buchung->zweck), $stichwort)
-                && !str_contains(self::normalisieren($buchung->buchungstext), $stichwort)) {
-                return false;
-            }
-        }
-
-        if ($regel->gegenseite !== '') {
-            $treffer = $regel->gegenseiteIstIban()
-                ? $buchung->gegenseiteIban !== '' && Iban::normalisieren($buchung->gegenseiteIban) === Iban::normalisieren($regel->gegenseite)
-                : str_contains(self::normalisieren($buchung->gegenseiteName), self::normalisieren($regel->gegenseite));
-            if (!$treffer) {
-                return false;
-            }
-        }
-
-        return true;
+        return self::trifftMerkmale(
+            $regel,
+            $buchung->richtung->value,
+            [$buchung->zweck, $buchung->buchungstext],
+            [$buchung->gegenseiteName],
+            [$buchung->gegenseiteIban],
+        );
     }
 
     /**
@@ -82,14 +64,30 @@ final class Regelabgleich
      */
     public static function trifftBeleg(AssignmentRule $regel, Belegmerkmale $beleg): bool
     {
+        return self::trifftMerkmale($regel, $beleg->richtung->value, [$beleg->zweck], $beleg->partnerNamen, $beleg->partnerIbans);
+    }
+
+    /**
+     * The one matching logic of bookings and receipts.
+     *
+     * @param list<string> $texte where the keyword may stand
+     * @param list<string> $namen names of the counterparty
+     * @param list<string> $ibans IBANs of the counterparty, empty ones ignored
+     */
+    private static function trifftMerkmale(AssignmentRule $regel, string $richtung, array $texte, array $namen, array $ibans): bool
+    {
         if ($regel->stichwort === '' && $regel->gegenseite === '') {
             return false;
         }
-        if ($regel->direction !== null && $regel->direction->value !== $beleg->richtung->value) {
+        if ($regel->direction !== null && $regel->direction->value !== $richtung) {
             return false;
         }
-        if ($regel->stichwort !== '' && !str_contains(self::normalisieren($beleg->zweck), self::normalisieren($regel->stichwort))) {
-            return false;
+
+        if ($regel->stichwort !== '') {
+            $stichwort = self::normalisieren($regel->stichwort);
+            if (!array_any($texte, static fn(string $text): bool => str_contains(self::normalisieren($text), $stichwort))) {
+                return false;
+            }
         }
         if ($regel->gegenseite === '') {
             return true;
@@ -97,23 +95,12 @@ final class Regelabgleich
 
         if ($regel->gegenseiteIstIban()) {
             $iban = Iban::normalisieren($regel->gegenseite);
-            foreach ($beleg->partnerIbans as $partnerIban) {
-                if (Iban::normalisieren($partnerIban) === $iban) {
-                    return true;
-                }
-            }
 
-            return false;
+            return array_any($ibans, static fn(string $wert): bool => $wert !== '' && Iban::normalisieren($wert) === $iban);
         }
-
         $muster = self::normalisieren($regel->gegenseite);
-        foreach ($beleg->partnerNamen as $name) {
-            if (str_contains(self::normalisieren($name), $muster)) {
-                return true;
-            }
-        }
 
-        return false;
+        return array_any($namen, static fn(string $name): bool => str_contains(self::normalisieren($name), $muster));
     }
 
     /**

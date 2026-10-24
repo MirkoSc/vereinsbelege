@@ -25,7 +25,8 @@ use App\Service\Bank\Regelabgleich;
  *
  * Each candidate counts only if the category is usable for the receipt -
  * active and fitting its direction ($passt) -, otherwise the next one is
- * asked. Plain PHP, no database: the caller hands in what it read.
+ * asked. Plain PHP, no database: the caller hands in what it read - the
+ * receipts only when they are asked for.
  */
 final class Kategorisierung
 {
@@ -38,22 +39,22 @@ final class Kategorisierung
     }
 
     /**
-     * @param list<AssignmentRule> $regeln the active rules, in any order
-     * @param list<?int> $letzteKategorien categories of the supplier's newest checked receipts, newest first
+     * @param list<AssignmentRule> $regeln the rules, in any order (inactive ones are skipped)
+     * @param \Closure(): list<?int> $letzteKategorien categories of the supplier's newest checked receipts, newest first - called only if neither a rule nor the default decides
      * @param \Closure(int): bool $passt whether a category is usable for this receipt
      */
     public static function vorschlagen(
         array $regeln,
         Belegmerkmale $beleg,
         ?int $lieferantStandard,
-        array $letzteKategorien,
+        \Closure $letzteKategorien,
         ?int $kiKategorie,
         ?float $kiKonfidenz,
         \Closure $passt,
     ): ?KategorieVorschlag {
         usort($regeln, static fn(AssignmentRule $a, AssignmentRule $b): int => $a->id <=> $b->id);
         foreach ($regeln as $regel) {
-            if ($regel->active && $regel->categoryId !== null && $passt($regel->categoryId) && Regelabgleich::trifftBeleg($regel, $beleg)) {
+            if ($regel->active && $regel->categoryId !== null && Regelabgleich::trifftBeleg($regel, $beleg) && $passt($regel->categoryId)) {
                 return new KategorieVorschlag($regel->categoryId, KategorieHerkunft::Regel, $beleg->richtung, regel: $regel->label);
             }
         }
@@ -62,7 +63,7 @@ final class Kategorisierung
             return new KategorieVorschlag($lieferantStandard, KategorieHerkunft::Lieferant, $beleg->richtung);
         }
 
-        $gelernt = self::gelernt($letzteKategorien);
+        $gelernt = self::gelernt($letzteKategorien());
         if ($gelernt !== null && $passt($gelernt)) {
             return new KategorieVorschlag($gelernt, KategorieHerkunft::Gelernt, $beleg->richtung);
         }

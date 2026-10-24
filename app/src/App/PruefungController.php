@@ -148,14 +148,6 @@ final readonly class PruefungController
             ['felder' => $felder, 'hinweise' => $hinweise] = $this->pruefung->vorbelegen($felder, $eRechnung->extraktion, $tresor);
         }
 
-        // The category in a fixed order (issue #49/M7-7): a rule of the
-        // club, the supplier's default, then the AI - on the partner and
-        // purpose filled in so far.
-        $kategorie = null;
-        if ($vorbelegbar) {
-            ['felder' => $felder, 'vorschlag' => $kategorie] = $this->pruefung->kategorieVorschlagen($felder, $ki, $tresor);
-        }
-
         // From the archive import (issue #77/M12-3): what the path said lies
         // over what was read automatically - the archive was sorted by a
         // person.
@@ -164,9 +156,14 @@ final readonly class PruefungController
         if ($archiv !== null) {
             ['felder' => $felder, 'hinweise' => $archivHinweise] = $archiv->ueberlagern($leer, $felder, $eRechnung?->gelesen() === true ? 'E-Rechnung' : 'KI');
         }
-        if ($kategorie !== null && ($felder['kategorie'] ?? '') !== (string) $kategorie->kategorieId) {
-            // The archive chose another one - its notes say so.
-            $kategorie = null;
+
+        // The category in a fixed order (issue #49/M7-7): a rule of the
+        // club, the supplier's default, then the AI - on partner, direction
+        // and purpose as filled in now. A category from the archive stays,
+        // a person sorted it.
+        $kategorie = null;
+        if ($vorbelegbar && $archiv?->kategorieId === null) {
+            ['felder' => $felder, 'vorschlag' => $kategorie] = $this->pruefung->kategorieVorschlagen($felder, $ki, $tresor, $this->bereich());
         }
 
         $unsicher = $ki === null ? [] : self::unsichereFelder($ki->unsicher, $leer, $nachKi, $felder);
@@ -583,7 +580,7 @@ final readonly class PruefungController
             'archivHinweise' => $archivHinweise,
             'ki' => $ki,
             'unsicher' => $unsicher,
-            'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(),
+            'kategorieHerkunft' => $kategorieVorschlag?->beschreibung(regelName: $this->berechtigungen()->darf(Permission::BankView)),
             'kiLaeuft' => $kiOffen && $this->pruefung->kiLaeuft($document),
             'kiAnstossbar' => $kiOffen && $this->pruefung->kiAnstossbar($document),
             'scripts' => ['/js/pruefansicht.js'],

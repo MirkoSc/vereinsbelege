@@ -146,21 +146,22 @@ final readonly class InvoiceRepository
      * The categories of a supplier's newest checked receipts, newest first
      * (M7-7, issue #49: the learnt default, App\Service\Invoice\
      * Kategorisierung) - checked or locked, also those still pointing at a
-     * supplier merged into this one. NULL for a receipt without category.
+     * supplier merged into this one, only within the reader's scope. NULL
+     * for a receipt without category.
      *
      * @return list<?int>
      */
-    public function letzteGeprueftenKategorien(int $supplierId, int $anzahl): array
+    public function letzteGeprueftenKategorien(int $supplierId, int $anzahl, Zugriffsbereich $bereich): array
     {
+        [$scope, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
         $stmt = $this->pdo->prepare(sprintf(
             'SELECT i.category_id FROM invoice i JOIN supplier s ON s.id = i.supplier_id
-             WHERE (i.supplier_id = ? OR s.merged_into = ?) AND i.checked_at IS NOT NULL
+             WHERE (i.supplier_id = ? OR s.merged_into = ?) AND i.checked_at IS NOT NULL AND %s
              ORDER BY i.checked_at DESC, i.id DESC LIMIT %d',
+            $scope,
             max(1, $anzahl),
         ));
-        $stmt->bindValue(1, $supplierId, \PDO::PARAM_INT);
-        $stmt->bindValue(2, $supplierId, \PDO::PARAM_INT);
-        $stmt->execute();
+        $stmt->execute([$supplierId, $supplierId, ...$parameter]);
 
         return array_map(
             static fn(mixed $id): ?int => $id === null ? null : (int) $id,

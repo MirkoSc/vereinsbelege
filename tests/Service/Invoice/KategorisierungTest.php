@@ -77,6 +77,7 @@ final class KategorisierungTest extends TestCase
         self::assertSame(self::REGEL, $vorschlag?->kategorieId);
         self::assertSame(KategorieHerkunft::Regel, $vorschlag->herkunft);
         self::assertSame('Regel „Regel 1“', $vorschlag->beschreibung());
+        self::assertSame('Regel', $vorschlag->beschreibung(regelName: false), 'for whom may not read the rules');
     }
 
     public function testTheSupplierDefaultComesBeforeWhatWasLearntAndTheAi(): void
@@ -110,6 +111,25 @@ final class KategorisierungTest extends TestCase
         self::assertSame('KI 0,82', $vorschlag->beschreibung());
         self::assertSame('KI', self::vorschlagen([], standard: null, letzte: [], konfidenz: null)?->beschreibung());
         self::assertNull(self::vorschlagen([], standard: null, letzte: [], ki: null));
+    }
+
+    public function testTheReceiptsAreReadOnlyWhenNeitherRuleNorDefaultDecides(): void
+    {
+        $gelesen = 0;
+        $letzte = static function () use (&$gelesen): array {
+            $gelesen++;
+
+            return [self::GELERNT, self::GELERNT];
+        };
+        $beleg = self::beleg(zweck: 'Zehn Bälle');
+        $passt = static fn(int $id): bool => true;
+
+        Kategorisierung::vorschlagen([self::regel(stichwort: 'Bälle')], $beleg, null, $letzte, self::KI, null, $passt);
+        Kategorisierung::vorschlagen([], $beleg, self::STANDARD, $letzte, self::KI, null, $passt);
+        self::assertSame(0, $gelesen);
+
+        Kategorisierung::vorschlagen([], $beleg, null, $letzte, self::KI, null, $passt);
+        self::assertSame(1, $gelesen);
     }
 
     public function testOnlyTheNewestCheckedReceiptsCountAndTheyMustAgree(): void
@@ -170,7 +190,7 @@ final class KategorisierungTest extends TestCase
             $regeln,
             self::beleg(zweck: 'Zehn Bälle', namen: ['Sporthaus Beispiel GmbH']),
             $standard,
-            $letzte,
+            static fn(): array => $letzte,
             $ki,
             $konfidenz,
             $passt ?? static fn(int $id): bool => true,
