@@ -181,6 +181,38 @@ test('a failed upload rejects, so the page shows the error', async () => {
     );
 });
 
+// Start corners handed over by the live camera (issue #146).
+const { eckenVormerken, vorgemerkteEcken } = require('../../public/js/scanner/scanner.js');
+
+test('the live camera can note start corners for exactly the file it captured', () => {
+    const foto = { name: 'kamera-20261024-101500.jpg', type: 'image/jpeg' };
+    const anderes = { name: 'bild.jpg', type: 'image/jpeg' };
+    const ecken = [{ x: 10, y: 20 }, { x: 300, y: 25 }, { x: 290, y: 400 }, { x: 12, y: 390 }];
+
+    assert.equal(vorgemerkteEcken(foto), null, 'nothing noted: the editor detects itself');
+    eckenVormerken(foto, ecken);
+
+    assert.deepEqual(vorgemerkteEcken(foto), ecken);
+    assert.equal(vorgemerkteEcken(anderes), null, 'another file keeps its own detection');
+
+    ecken[0].x = 999;
+    vorgemerkteEcken(foto)[1].x = 999;
+    assert.deepEqual(vorgemerkteEcken(foto)[0], { x: 10, y: 20 }, 'copied on the way in');
+    assert.deepEqual(vorgemerkteEcken(foto)[1], { x: 300, y: 25 }, 'and on the way out');
+});
+
+test('only a full quad is noted, and odd keys are ignored instead of throwing', () => {
+    const foto = { name: 'a.jpg' };
+    eckenVormerken(foto, [{ x: 1, y: 1 }]);
+    eckenVormerken(foto, null);
+    assert.equal(vorgemerkteEcken(foto), null);
+
+    eckenVormerken(null, [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]);
+    eckenVormerken('name.jpg', [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]);
+    assert.equal(vorgemerkteEcken(null), null);
+    assert.equal(vorgemerkteEcken('name.jpg'), null);
+});
+
 test('HEIC is recognised by MIME type or extension', () => {
     assert.equal(istHeicDatei({ type: 'image/heic', name: 'a.heic' }), true);
     assert.equal(istHeicDatei({ type: 'image/heif', name: 'a.heif' }), true);

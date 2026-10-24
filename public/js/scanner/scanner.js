@@ -183,7 +183,51 @@ async function seiteVerarbeiten(datei, optionen) {
     };
 }
 
+/**
+ * Corners handed over with a file - the live camera (kamera.js, issue #146)
+ * notes the quad it saw stable at the moment of capture, in the photo's own
+ * pixels. Keyed by the File object itself, so nothing about the receipt
+ * leaves the page and the entry goes away with the file.
+ */
+const vorgemerkteEckenSpeicher = new WeakMap();
+
+function eckenVormerken(datei, ecken) {
+    if (datei && typeof datei === 'object' && Array.isArray(ecken) && ecken.length === 4) {
+        vorgemerkteEckenSpeicher.set(datei, ecken.map(function (p) {
+            return { x: p.x, y: p.y };
+        }));
+    }
+}
+
+/** The noted corners of `datei` (a copy), or null. */
+function vorgemerkteEcken(datei) {
+    const ecken = datei && typeof datei === 'object' ? vorgemerkteEckenSpeicher.get(datei) : undefined;
+
+    return ecken === undefined ? null : ecken.map(function (p) {
+        return { x: p.x, y: p.y };
+    });
+}
+
 // --- Browser only from here on --------------------------------------------
+
+/**
+ * Detected corners for an image: kantenErkennen() on the photo itself
+ * first - it sees the very frame that was captured, at a finer scale than
+ * the live preview. Only when it finds nothing, the quad the live camera
+ * saw stable (if it fits inside the image), else null.
+ */
+function erkannteEcken(datei, bild) {
+    const gefunden = kantenErkennen(bild);
+    if (gefunden !== null) {
+        return gefunden;
+    }
+    const vorgemerkt = vorgemerkteEcken(datei);
+    const passt = vorgemerkt !== null && vorgemerkt.every(function (p) {
+        return p.x >= 0 && p.y >= 0 && p.x <= bild.width && p.y <= bild.height;
+    });
+
+    return passt ? vorgemerkt : null;
+}
 
 /** An ImageBitmap's pixels as the { width, height, data } shape of the scanner functions. */
 function bildAusBitmap(bitmap) {
@@ -258,7 +302,7 @@ async function scanQuelle(datei) {
 async function automatischAufbereiten(datei) {
     const quelle = await scanQuelle(datei);
     try {
-        const ecken = startEcken(kantenErkennen(quelle.bild), quelle.bitmap.width, quelle.bitmap.height, false);
+        const ecken = startEcken(erkannteEcken(datei, quelle.bild), quelle.bitmap.width, quelle.bitmap.height, false);
 
         return await alsJpegDatei(ergebnisErzeugen(quelle.bild, ecken, 'sw'), datei.name);
     } finally {
@@ -340,7 +384,7 @@ async function scannerOeffnen(dialog, datei) {
             dialog.showModal();
             // Bound after showModal(): the editor sizes itself from the
             // dialog's laid-out width.
-            const ecken = startEcken(kantenErkennen(quelle.bild), quelle.bitmap.width, quelle.bitmap.height, true);
+            const ecken = startEcken(erkannteEcken(datei, quelle.bild), quelle.bitmap.width, quelle.bitmap.height, true);
             editor = eckEditorBinden(wurzel, quelle.bitmap, ecken);
         } catch (problem) {
             beenden(problem instanceof Error ? problem : new Error(String(problem)));
@@ -368,5 +412,7 @@ if (typeof module === 'object' && module.exports) {
         aufbereitetName,
         startEcken,
         seiteVerarbeiten,
+        eckenVormerken,
+        vorgemerkteEcken,
     };
 }
