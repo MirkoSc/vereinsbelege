@@ -92,12 +92,16 @@ final readonly class TransferRepository
 
     /**
      * Takes the mark back: the receipt status returns to the default of the
-     * booking's direction ($belegNoetig, App\Service\Bank\BelegStandard).
+     * booking's direction ($belegNoetig, App\Service\Bank\BelegStandard). A
+     * rule that only set the receipt status before the pairing is forgotten,
+     * so it may act on the booking again; one that set the category stays.
      */
     public function aufheben(int $transactionId, bool $belegNoetig, \DateTimeImmutable $now): void
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE bank_transaction SET doc_required = ?, doc_status = ?, doc_source = ?, updated_at = ? WHERE id = ? AND doc_source = ?',
+            "UPDATE bank_transaction SET doc_required = ?, doc_status = ?, doc_source = ?, updated_at = ?,
+                                         rule_id = IF(category_source = 'regel', rule_id, NULL)
+              WHERE id = ? AND doc_source = ?",
         );
         $stmt->execute([
             $belegNoetig ? 1 : 0,
@@ -110,29 +114,51 @@ final readonly class TransferRepository
     }
 
     /**
+     * First and last booking date of an import's bookings - the range the
+     * recognition after that import starts from. Null without bookings.
+     *
+     * @return array{\DateTimeImmutable, \DateTimeImmutable}|null
+     */
+    public function zeitraumDesImports(int $importId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT MIN(booking_date), MAX(booking_date) FROM bank_transaction WHERE import_id = ?');
+        $stmt->execute([$importId]);
+        $zeile = $stmt->fetch(\PDO::FETCH_NUM);
+        if ($zeile === false || $zeile[0] === null) {
+            return null;
+        }
+
+        return [new \DateTimeImmutable((string) $zeile[0]), new \DateTimeImmutable((string) $zeile[1])];
+    }
+
+    /**
      * Bookings that may still become a transfer and whose counterparty IBAN
      * is one of $counterpartyBis (blind indexes of the own accounts' IBANs
      * under the purpose of `bank_transaction.counterparty_bi`) - the
      * starting points of the automatic recognition. Not paired yet, no
-     * receipt allocated; within $bereich (period scope on booking_date).
+     * receipt allocated; within $bereich (period scope on booking_date) and,
+     * when given, $von <= booking_date <= $bis.
      *
      * @param list<string> $counterpartyBis raw 32-byte values
      *
      * @return list<array{string, BankTransactionRecord}> counterparty_bi and row, oldest first
      */
-    public function mitEigenerGegenseite(array $counterpartyBis, Zugriffsbereich $bereich): array
+    public function mitEigenerGegenseite(array $counterpartyBis, Zugriffsbereich $bereich, ?\DateTimeImmutable $von = null, ?\DateTimeImmutable $bis = null): array
     {
         $treffer = [];
         foreach (array_chunk($counterpartyBis, self::IN_MAX) as $teil) {
             [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
-            $sql = 'SELECT t.* FROM bank_transaction t WHERE ' . $bedingung . self::offen()
+            array_push($parameter, ...self::offenParameter());
+            $zeitraum = '';
+            if ($von !== null && $bis !== null) {
+                $zeitraum = ' AND t.booking_date >= ? AND t.booking_date <= ?';
+                array_push($parameter, $von->format('Y-m-d'), $bis->format('Y-m-d'));
+            }
+            $sql = 'SELECT t.* FROM bank_transaction t WHERE ' . $bedingung . self::offen() . $zeitraum
                 . sprintf(' AND t.counterparty_bi IN (%s) ORDER BY t.booking_date, t.id', implode(',', array_fill(0, count($teil), '?')));
             $stmt = $this->pdo->prepare($sql);
             $i = 1;
             foreach ($parameter as $wert) {
-                $stmt->bindValue($i++, $wert);
-            }
-            foreach (self::offenParameter() as $wert) {
                 $stmt->bindValue($i++, $wert);
             }
             foreach ($teil as $bi) {

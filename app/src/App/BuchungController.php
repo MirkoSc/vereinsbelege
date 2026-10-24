@@ -371,6 +371,11 @@ final readonly class BuchungController
         }
 
         try {
+            // Unpairing rewrites the partner too: it must be within the same scope.
+            $paar = $this->umbuchungen->fuerBuchung($buchung->id);
+            if ($paar !== null && $this->buchungen->finde($tresor, $paar->partnerVon($buchung->id), $this->bereich(Permission::BankBook)) === null) {
+                throw new BankRuleViolation('Die Gegenbuchung liegt außerhalb Ihres Zugriffsbereichs – lösen kann die Umbuchung nur, wer beide Buchungen bearbeiten darf.');
+            }
             $this->umbuchungen->loesen($buchung->id, $this->session->userId(), $request->ip, new \DateTimeImmutable());
         } catch (BankRuleViolation $e) {
             $this->session->flash($e->getMessage(), FlashArt::Fehler);

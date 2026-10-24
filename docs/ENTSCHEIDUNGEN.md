@@ -372,8 +372,9 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   anderen eigenen Kontos (Blind Index, kein Entschlüsseln aller Buchungen),
   auf diesem Konto gibt es **genau eine** Gegenbuchung mit gleichem Betrag,
   Gegenrichtung, ±5 Tagen und leerer oder passender Gegenseiten-IBAN – und
-  diese hat ihrerseits keinen zweiten Kandidaten. Läuft nach jedem
-  Kontoauszug-Import (über alle Buchungen, nur Struktur wird geschrieben)
+  diese hat ihrerseits keinen zweiten Kandidaten. Läuft im letzten
+  Import-Schritt (Ausgangsbuchungen im Datumsbereich der Datei ±5 Tage,
+  Gegenbuchungen überall, nur Struktur wird geschrieben)
   und per Knopf „Umbuchungen erkennen“ (Zugriffsbereich des Klickenden).
   Alles andere – v. a. Bank ↔ Kasse, wo die Bank keine IBAN meldet – paart
   ein Mensch an der Buchung (Auswahl: anderes Konto, gleicher Betrag,

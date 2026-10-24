@@ -18,7 +18,6 @@ use App\Domain\BankTransactionSource;
 use App\Domain\BlobMeta;
 use App\Domain\Buchungsmerkmale;
 use App\Domain\Iban;
-use App\Domain\Zugriffsbereich;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
@@ -297,6 +296,13 @@ final readonly class KontoauszugImport
             return new ImportStand(BankImportStatus::Laeuft, $bis, $gesamt);
         }
 
+        // Transfers between own accounts (M10-6), before the import counts as
+        // done - if this fails, the next call of the last step runs it again
+        // (idempotent). Starting from this file's dates; the counter booking
+        // may come with this file or have come with an earlier one. Only
+        // structure is written; the person sees the pairs in the list.
+        $this->umbuchungen?->nachImport($vault, $id, $import->importedBy, $ip, $now);
+
         $neu = $this->buchungen->countForImport($id);
         $vorher = $import->stats ?? new BankImportStats(gesamt: $gesamt);
         $stats = new BankImportStats(
@@ -313,10 +319,6 @@ final readonly class KontoauszugImport
                 ...$stats->toArray(),
                 'saldenpruefung' => $import->balanceCheck->value ?? '',
             ], $now);
-            // Transfers between own accounts (M10-6): the counter booking
-            // may come with this file or have come with an earlier one. Only
-            // structure is written; the person sees the pairs in the list.
-            $this->umbuchungen?->erkennen($vault, Zugriffsbereich::unbeschraenkt(), $import->importedBy, $ip, $now);
         }
 
         return new ImportStand(BankImportStatus::Fertig, $gesamt, $gesamt);

@@ -319,6 +319,7 @@ final class UmbuchungFlowTest extends DatabaseTestCase
             $antwort = $this->post('/app/buchungen/' . $kassenbuchung, [...$felder, $feld => $wert]);
             self::assertSame(422, $antwort->status, $feld);
             self::assertStringContainsString('erst ändern, wenn die Umbuchung gelöst ist', $antwort->body);
+            self::assertMatchesRegularExpression('#id="buchung-' . $feld . '" name="' . $feld . '"[^>]*aria-invalid="true"#', $antwort->body, 'the field that caused it is marked');
         }
         self::assertSame(302, $this->post('/app/buchungen/' . $kassenbuchung, [...$felder, 'zweck' => 'Zur Sparkasse gebracht'])->status);
         $nachher = $this->buchungAus($kassenbuchung);
@@ -341,6 +342,47 @@ final class UmbuchungFlowTest extends DatabaseTestCase
         $regel = $regeln->finde($this->tresor, $regelId) ?? self::fail();
         $regeln->anwenden($this->tresor, $regel, Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable());
         self::assertSame(BankTransactionSetBy::Umbuchung, $this->buchungAus($einzahlung)->docSource);
+    }
+
+    /**
+     * A rule that set only the receipt status before the pairing is
+     * forgotten on unpairing, so it may act on the booking again.
+     */
+    public function testUnpairingLetsARuleActAgain(): void
+    {
+        [$giro, $spar] = $this->zweiBankkonten();
+        $ab = $this->importierteBuchung($giro, '2026-03-02', -50000, 'Übertrag Rücklage', '', '');
+        $an = $this->importierteBuchung($spar, '2026-03-02', 50000, 'Übertrag Rücklage', '', '');
+        $regeln = new Buchungsregeln($this->pdo(), new AssignmentRuleRepository($this->pdo()), new BankTransactionRepository($this->pdo()), new CategoryRepository($this->pdo()), new SettingRepository($this->pdo()));
+        $regelId = $regeln->anlegen($this->tresor, ['bezeichnung' => 'Rücklage', 'stichwort' => 'Rücklage', 'gegenseite' => '', 'richtung' => '', 'kein_beleg' => Buchungsregeln::KEIN_BELEG, 'kategorie' => ''], $this->userId, new \DateTimeImmutable());
+        $regel = $regeln->finde($this->tresor, $regelId) ?? self::fail();
+        $regeln->anwenden($this->tresor, $regel, Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable());
+        self::assertSame(BankTransactionSetBy::Regel, $this->buchungAus($ab)->docSource);
+
+        $this->umbuchungen()->paaren($this->tresor, $ab, $an, UmbuchungMethode::Manuell, $this->userId, '192.0.2.1', new \DateTimeImmutable());
+        $this->umbuchungen()->loesen($ab, $this->userId, '192.0.2.1', new \DateTimeImmutable());
+        self::assertNull($this->buchungAus($ab)->ruleId);
+        self::assertSame(BankTransactionSetBy::Standard, $this->buchungAus($ab)->docSource);
+
+        $regeln->anwenden($this->tresor, $regel, Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable());
+        self::assertSame(BankTransactionSetBy::Regel, $this->buchungAus($ab)->docSource, 'the rule acts again');
+        self::assertSame(BankTransactionDocStatus::NichtNoetig, $this->buchungAus($ab)->docStatus);
+    }
+
+    /** Unpairing rewrites both bookings: whoever may not edit the partner may not unpair. */
+    public function testThePartnerOutsideTheScopeIsNotUnpaired(): void
+    {
+        [$giro, $spar] = $this->zweiBankkonten();
+        $alt = $this->importierteBuchung($giro, '2026-01-02', -50000, 'Übertrag', '', '');
+        $neu = $this->importierteBuchung($spar, '2026-03-02', 50000, 'Übertrag', '', '');
+        $this->umbuchungen()->paaren($this->tresor, $alt, $neu, UmbuchungMethode::Manuell, $this->userId, '192.0.2.1', new \DateTimeImmutable());
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2026-02-01'), null);
+
+        self::assertStringContainsString('Die Gegenbuchung liegt außerhalb Ihres Zugriffsbereichs.', $this->get('/app/buchungen/' . $neu)->body);
+        $antwort = $this->post('/app/buchungen/' . $neu . '/umbuchung/loesen', []);
+        self::assertSame('/app/buchungen/' . $neu, $antwort->headers['Location'] ?? null);
+        self::assertStringContainsString('außerhalb Ihres Zugriffsbereichs', $_SESSION['flash']['text'] ?? '');
+        self::assertNotNull($this->umbuchungen()->fuerBuchung($neu));
     }
 
     /** Readers see the pair; only `bank.book` pairs, unpairs and recognises. CSRF and the vault as everywhere. */

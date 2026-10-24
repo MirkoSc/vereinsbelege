@@ -570,16 +570,23 @@ und Einreichung).
   Handbuchung lässt sich nicht löschen und nicht in Konto, Betrag,
   Richtung oder Beleg-Bedarf ändern (Zweck, Datum, Kategorie schon).
   **Lösen** löscht das Paar und setzt beide auf den Beleg-Standard ihrer
-  Richtung (`standard`, Setting `buchung_einnahme_beleg_noetig`).
+  Richtung (`standard`, Setting `buchung_einnahme_beleg_noetig`); eine
+  Regel, die nur den Beleg-Bedarf gesetzt hatte, wird vergessen (`rule_id`
+  NULL) und darf wieder wirken. Lösen darf nur, wer **beide** Buchungen im
+  `bank.book`-Scope hat. Regeln und „Einordnung“ prüfen `doc_source =
+  umbuchung` zusätzlich im `UPDATE` (gleichzeitiges Paaren gewinnt).
 - **Automatisch erkannt** (`Umbuchungen::erkennen()`, Methode `auto`): Die
   Gegenseiten-IBAN einer Buchung (Blind Index `counterparty_bi`) ist die
   IBAN eines **anderen** eigenen Kontos, dort liegt **genau eine** offene
   Gegenbuchung mit gleichem Betrag, Gegenrichtung, höchstens 5 Tage
   Abstand und leerer oder zum ersten Konto passender Gegenseiten-IBAN – und
   diese hat umgekehrt ebenfalls nur diesen einen Kandidaten. Alles
-  Uneindeutige bleibt liegen. Läuft am Ende jedes Kontoauszug-Imports (über
-  alle Buchungen – die Gegenbuchung kann aus einem früheren Import stammen)
-  und per Knopf **„Umbuchungen erkennen“** in der Buchungsliste (im
+  Uneindeutige bleibt liegen. Läuft im letzten Schritt jedes
+  Kontoauszug-Imports, **bevor** er als fertig gilt (scheitert sie, wiederholt
+  der nächste Aufruf des Schritts sie): Ausgangsbuchungen im Datumsbereich
+  der Datei ±5 Tage, Gegenbuchungen auf allen Konten (auch aus früheren
+  Importen), ohne Zeitraum-Scope – geschrieben wird nur Struktur. Außerdem
+  per Knopf **„Umbuchungen erkennen“** in der Buchungsliste (im
   Zeitraum-Scope des Klickenden).
 - **Von Hand** (an der Buchung, `bank.book`): Auswahl „Gegenbuchung“ –
   offene Buchungen anderer Konten mit Gegenrichtung und gleichem Betrag,

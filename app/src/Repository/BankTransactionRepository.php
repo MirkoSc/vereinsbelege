@@ -296,7 +296,12 @@ final readonly class BankTransactionRepository
         \DateTimeImmutable $now,
     ): void {
         $stmt = $this->pdo->prepare(
-            "UPDATE bank_transaction SET category_id = ?, category_source = ?, doc_required = ?, doc_status = IF(doc_status IN ('zugeordnet', 'teilweise'), doc_status, ?), doc_source = ?,
+            // A transfer between own accounts (M10-6) keeps its receipt
+            // status even when it was paired after the page was loaded.
+            "UPDATE bank_transaction SET category_id = ?, category_source = ?,
+                                         doc_required = IF(doc_source = 'umbuchung', doc_required, ?),
+                                         doc_status = IF(doc_status IN ('zugeordnet', 'teilweise') OR doc_source = 'umbuchung', doc_status, ?),
+                                         doc_source = IF(doc_source = 'umbuchung', doc_source, ?),
                                          rule_id = ?, updated_at = ?
              WHERE id = ? AND source = ?",
         );
@@ -362,7 +367,13 @@ final readonly class BankTransactionRepository
         if ($docRequired !== null && $docStatus !== null) {
             // A status derived from allocations (M10-1) is only ever written by
             // App\Service\Bank\Zuordnung - a concurrent allocation wins.
-            array_push($teile, 'doc_required = ?', "doc_status = IF(doc_status IN ('zugeordnet', 'teilweise'), doc_status, ?)", 'doc_source = ?');
+            // A transfer between own accounts (M10-6) the same: paired meanwhile, it stays.
+            array_push(
+                $teile,
+                "doc_required = IF(doc_source = 'umbuchung', doc_required, ?)",
+                "doc_status = IF(doc_status IN ('zugeordnet', 'teilweise') OR doc_source = 'umbuchung', doc_status, ?)",
+                "doc_source = IF(doc_source = 'umbuchung', doc_source, ?)",
+            );
             array_push($parameter, $docRequired ? 1 : 0, $docStatus->value, BankTransactionSetBy::Regel->value);
         }
         if ($categoryId !== null) {

@@ -140,8 +140,15 @@ final readonly class Umbuchungen
      * and it has no second candidate either. Returns how many were paired.
      * Called after every statement import and from the booking list.
      */
-    public function erkennen(Vault $vault, Zugriffsbereich $bereich, ?int $userId, string $ip, \DateTimeImmutable $now): int
-    {
+    public function erkennen(
+        Vault $vault,
+        Zugriffsbereich $bereich,
+        ?int $userId,
+        string $ip,
+        \DateTimeImmutable $now,
+        ?\DateTimeImmutable $von = null,
+        ?\DateTimeImmutable $bis = null,
+    ): int {
         // Own IBAN -> account, keyed by the blind index the import writes
         // into `counterparty_bi`. A cash box has no IBAN.
         $kontoNachBi = [];
@@ -160,7 +167,7 @@ final readonly class Umbuchungen
 
         $gepaart = [];
         $anzahl = 0;
-        foreach ($this->umbuchungen->mitEigenerGegenseite(array_keys($kontoNachBi), $bereich) as [$bi, $record]) {
+        foreach ($this->umbuchungen->mitEigenerGegenseite(array_keys($kontoNachBi), $bereich, $von, $bis) as [$bi, $record]) {
             $zielKonto = $kontoNachBi[$bi];
             if ($zielKonto === $record->accountId || isset($gepaart[$record->id])) {
                 continue;
@@ -187,6 +194,30 @@ final readonly class Umbuchungen
         }
 
         return $anzahl;
+    }
+
+    /**
+     * The recognition at the end of a statement import: starting points
+     * within the file's dates (plus the window, so a counter booking of this
+     * file finds an earlier start), keeping the last step short. Over all
+     * bookings - pairing writes structure only.
+     */
+    public function nachImport(Vault $vault, int $importId, ?int $userId, string $ip, \DateTimeImmutable $now): int
+    {
+        $zeitraum = $this->umbuchungen->zeitraumDesImports($importId);
+        if ($zeitraum === null) {
+            return 0;
+        }
+
+        return $this->erkennen(
+            $vault,
+            Zugriffsbereich::unbeschraenkt(),
+            $userId,
+            $ip,
+            $now,
+            $zeitraum[0]->modify('-' . self::FENSTER_TAGE . ' days'),
+            $zeitraum[1]->modify('+' . self::FENSTER_TAGE . ' days'),
+        );
     }
 
     /** The transfer a booking is part of, if any. */

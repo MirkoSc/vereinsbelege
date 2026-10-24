@@ -206,8 +206,17 @@ final readonly class Buchungen
             // A transfer between own accounts (M10-6) relies on amount,
             // direction and account, and needs no receipt by being one.
             $umbuchung = $record->docSource === BankTransactionSetBy::Umbuchung;
-            if ($umbuchung && array_intersect(['amount', 'direction', 'account_id', 'doc_required'], $geaendert) !== []) {
-                throw new BankRuleViolation('Die Buchung ist als Umbuchung zwischen eigenen Konten verknüpft – Konto, Betrag, Richtung und Beleg-Bedarf lassen sich erst ändern, wenn die Umbuchung gelöst ist.', 'betrag');
+            $gesperrt = array_values(array_intersect(['account_id', 'amount', 'direction', 'doc_required'], $geaendert));
+            if ($umbuchung && $gesperrt !== []) {
+                throw new BankRuleViolation(
+                    'Die Buchung ist als Umbuchung zwischen eigenen Konten verknüpft – Konto, Betrag, Richtung und Beleg-Bedarf lassen sich erst ändern, wenn die Umbuchung gelöst ist.',
+                    match ($gesperrt[0]) {
+                        'account_id' => 'konto',
+                        'amount' => 'betrag',
+                        'direction' => 'richtung',
+                        default => 'beleg',
+                    },
+                );
             }
             // A receipt already allocated (M10-1, fully or in part) stays
             // allocated; otherwise the status follows the choice.
