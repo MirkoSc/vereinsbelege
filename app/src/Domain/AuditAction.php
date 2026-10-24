@@ -107,6 +107,11 @@ enum AuditAction: string
     // The matching run (M10-2, issue #66): counts only.
     case AbgleichAusgefuehrt = 'abgleich.ausgefuehrt';
 
+    // Transfers between own accounts (M10-6, issue #70): the two booking
+    // ids and the method, never an amount.
+    case UmbuchungVerknuepft = 'umbuchung.verknuepft';
+    case UmbuchungGeloest = 'umbuchung.geloest';
+
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
     /** Internal capture (issue #28/M4-6): the capturing account acts. */
@@ -239,6 +244,8 @@ enum AuditAction: string
             self::ZuordnungGeloest => 'Zuordnung Beleg ↔ Buchung gelöst',
             self::BelegDifferenzAbgeschlossen => 'Zahlungsdifferenz des Belegs abgeschlossen',
             self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
+            self::UmbuchungVerknuepft => 'Umbuchung zwischen eigenen Konten verknüpft',
+            self::UmbuchungGeloest => 'Umbuchung zwischen eigenen Konten gelöst',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
@@ -317,6 +324,7 @@ enum AuditAction: string
             self::RegelAngelegt, self::RegelGeaendert, self::RegelGeloescht,
             self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
             self::ZuordnungAngelegt, self::ZuordnungGeloest => 'allocation',
+            self::UmbuchungVerknuepft, self::UmbuchungGeloest => 'transfer',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -357,6 +365,7 @@ enum AuditAction: string
             'bank_transaction' => 'Buchung',
             'assignment_rule' => 'Buchungsregel',
             'allocation' => 'Zuordnung Beleg ↔ Buchung',
+            'transfer' => 'Umbuchung',
             'document' => 'Beleg',
             'worker' => 'Worker',
             default => $entity,

@@ -18,4 +18,5 @@ enum BankTransactionSetBy: string
     case Standard = 'standard';
     case Regel = 'regel';
     case Manuell = 'manuell';
+    case Umbuchung = 'umbuchung';
 }

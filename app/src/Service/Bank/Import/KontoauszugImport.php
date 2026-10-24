@@ -30,6 +30,7 @@ use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Camt053Parser;
 use App\Service\Bank\Kontoangabe;
+use App\Service\Bank\Umbuchungen;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -95,6 +96,7 @@ final readonly class KontoauszugImport
         private Buchungsregeln $regeln,
         private KontoauszugLeser $leser = new KontoauszugLeser(),
         private int $schrittPosten = self::SCHRITT_POSTEN,
+        private ?Umbuchungen $umbuchungen = null,
     ) {
     }
 
@@ -293,6 +295,13 @@ final readonly class KontoauszugImport
         if ($bis < $gesamt) {
             return new ImportStand(BankImportStatus::Laeuft, $bis, $gesamt);
         }
+
+        // Transfers between own accounts (M10-6), before the import counts as
+        // done - if this fails, the next call of the last step runs it again
+        // (idempotent). Starting from this file's dates; the counter booking
+        // may come with this file or have come with an earlier one. Only
+        // structure is written; the person sees the pairs in the list.
+        $this->umbuchungen?->nachImport($vault, $id, $import->importedBy, $ip, $now);
 
         $neu = $this->buchungen->countForImport($id);
         $vorher = $import->stats ?? new BankImportStats(gesamt: $gesamt);

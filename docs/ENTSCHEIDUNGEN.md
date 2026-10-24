@@ -347,6 +347,49 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - **Umbuchungen eigene Konten (M10-6)** brauchen keine Allocation: Das sind
   Buchung↔Buchung-Paare; vorgesehen ist eine eigene Verknüpfung plus ein
   `doc_source`-Wert, der beide auf `nicht_noetig` setzt.
+
+## E-38 ✅ Umbuchungen eigene Konten: eigenes Paar, `doc_source = umbuchung`, nur Eindeutiges automatisch (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-6 (issue #70, Migration 039), 02 „Fachdaten“, 04 §5 „Stand M10-6“, 05 (Auswertungen)*
+
+- **Eigene Tabelle `transfer`** (Buchung ↔ Buchung, wie in E-27
+  vorgesehen): Ausgabe auf dem abgebenden, Einnahme auf dem empfangenden
+  eigenen Konto (Bank oder Kasse), je Buchung höchstens ein Paar. Kein
+  Betrag in der Zeile – beide Buchungen haben ihn schon; Bedingung ist
+  **gleicher Betrag**, Gegenrichtung, verschiedene Konten. Verworfen:
+  Allocation-Zeilen ohne Beleg (vermischt zwei Bedeutungen) und eine
+  Partner-Spalte an `bank_transaction` (zwei Zeilen müssten sich
+  gegenseitig konsistent halten).
+- **Status:** Beide Hälften bekommen `doc_source = umbuchung`,
+  `doc_required = 0`, `doc_status = nicht_noetig` – kein neuer
+  `doc_status`-Wert, damit Listen, Filter und Scoring (M10-2, M10-5)
+  Umbuchungen ohne Änderung als „kein Beleg nötig“ sehen; wer sie
+  unterscheiden muss, prüft `doc_source`. Regeln und „Einordnung“ lassen
+  den Beleg-Bedarf einer Umbuchung in Ruhe; eine Umbuchung nimmt keine
+  Zuordnung an und eine Buchung mit Zuordnung wird keine Umbuchung.
+  Lösen setzt beide auf den **Standard ihrer Richtung** zurück – eine
+  vorher von Hand oder per Regel gesetzte Wahl ist danach weg.
+- **Automatisch nur Eindeutiges:** Die IBAN der Gegenseite ist die eines
+  anderen eigenen Kontos (Blind Index, kein Entschlüsseln aller Buchungen),
+  auf diesem Konto gibt es **genau eine** Gegenbuchung mit gleichem Betrag,
+  Gegenrichtung, ±5 Tagen und leerer oder passender Gegenseiten-IBAN – und
+  diese hat ihrerseits keinen zweiten Kandidaten. Läuft im letzten
+  Import-Schritt (Ausgangsbuchungen im Datumsbereich der Datei ±5 Tage,
+  Gegenbuchungen überall, nur Struktur wird geschrieben)
+  und per Knopf „Umbuchungen erkennen“ (Zugriffsbereich des Klickenden).
+  Alles andere – v. a. Bank ↔ Kasse, wo die Bank keine IBAN meldet – paart
+  ein Mensch an der Buchung (Auswahl: anderes Konto, gleicher Betrag,
+  Gegenrichtung, ±31 Tage).
+- **Auswertung:** Umbuchungen zählen weder als Einnahme noch als Ausgabe.
+  Die Buchungsliste zeigt sie als eigene Zeile „Umbuchungen eigene Konten“
+  (Summe mit Vorzeichen); der Saldo enthält sie weiterhin, weil er den
+  Kontostand erklärt. Spätere Auswertungen (M11) filtern
+  `doc_source = umbuchung` heraus.
+- **Offen für Mirko:** ob Abweichungen im Betrag (Gebühr bei der
+  Umbuchung) erlaubt sein sollen – derzeit nein; ob das Zeitfenster (5/31
+  Tage) passt; ob nach dem Lösen die frühere Beleg-Wahl wiederhergestellt
+  werden soll (dafür müsste sie gespeichert werden); ob die automatische
+  Erkennung beim Import auf den Zugriffsbereich des Importierenden
+  beschränkt werden soll.
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,

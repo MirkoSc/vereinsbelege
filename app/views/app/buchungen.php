@@ -13,6 +13,7 @@
  * `regel` in the query narrows the list to the bookings of one rule.
  *
  * @var bool $entsperrt
+ * @var string $csrf
  * @var \App\Service\Bank\BuchungFilter $filter
  * @var bool $filterAktiv
  * @var array<int, \App\Domain\BankAccount> $konten
@@ -20,12 +21,16 @@
  * @var list<\App\Domain\BankTransaction> $buchungen
  * @var int $einnahmen sum of the income shown, in cents
  * @var int $ausgaben sum of the expenses shown, in cents (negative)
+ * @var int $umbuchungen net sum of the transfers between own accounts shown, in cents (M10-6) - neither income nor expense
+ * @var int $umbuchungAnzahl how many of the bookings shown are transfers
+ * @var bool $umbuchungenErkennbar transfers between own accounts are wired in
  * @var bool $darfBuchen holds `bank.book`
  * @var \App\Service\Bank\BelegStandard $belegStandard
  */
 
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionDocStatus;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\BankTransactionSource;
 use App\Service\Bank\BuchungFilter;
 use App\Service\Processing\Betrag;
@@ -58,6 +63,18 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
                 <a class="knopf knopf-primaer" href="/app/buchungen/neu<?= $filter->kontoId === null ? '' : '?konto=' . e((string) $filter->kontoId) ?>">Neue Buchung</a>
                 <a class="knopf" href="/app/buchungen/neu?richtung=einnahme<?= $filter->kontoId === null ? '' : '&amp;konto=' . e((string) $filter->kontoId) ?>">Einnahme ohne Beleg</a>
             </p>
+            <?php if ($umbuchungenErkennbar): ?>
+                <form method="post" action="/app/buchungen/umbuchungen" class="formular">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <p class="feld-hilfe">
+                        Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto) werden nach jedem Import erkannt und verknüpft;
+                        sie zählen weder als Einnahme noch als Ausgabe. Für früher erfasste Buchungen:
+                    </p>
+                    <p class="knopfreihe">
+                        <button type="submit" class="knopf">Umbuchungen erkennen</button>
+                    </p>
+                </form>
+            <?php endif; ?>
         <?php endif; ?>
 
         <?php if ($filter->regelId !== null): ?>
@@ -146,7 +163,10 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
                     <tbody>
                         <tr><th scope="row">Einnahmen</th><td class="zahl"><?= $betrag($einnahmen) ?></td></tr>
                         <tr><th scope="row">Ausgaben</th><td class="zahl"><?= $betrag($ausgaben) ?></td></tr>
-                        <tr><th scope="row">Saldo</th><td class="zahl"><strong><?= $betrag($einnahmen + $ausgaben) ?></strong></td></tr>
+                        <?php if ($umbuchungAnzahl > 0): ?>
+                            <tr><th scope="row">Umbuchungen eigene Konten <span class="gedaempft">(<?= e((string) $umbuchungAnzahl) ?>, weder Einnahme noch Ausgabe)</span></th><td class="zahl"><?= $betrag($umbuchungen) ?></td></tr>
+                        <?php endif; ?>
+                        <tr><th scope="row">Saldo</th><td class="zahl"><strong><?= $betrag($einnahmen + $ausgaben + $umbuchungen) ?></strong></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -182,6 +202,9 @@ $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
                                     <?php endif; ?>
                                     <?php if ($buchung->ruleId !== null): ?>
                                         <span class="marke">Regel</span>
+                                    <?php endif; ?>
+                                    <?php if ($buchung->docSource === BankTransactionSetBy::Umbuchung): ?>
+                                        <span class="marke">Umbuchung</span>
                                     <?php endif; ?>
                                 </td>
                                 <td data-label="Kategorie">
