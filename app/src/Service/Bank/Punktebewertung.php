@@ -125,10 +125,17 @@ final class Punktebewertung
      * An amount shared by too many bookings is not used as an anchor; the
      * ceiling of both sides then includes the amount points.
      *
+     * A pair the user discarded (M10-4, E-41, $verworfen keyed
+     * "invoiceId:transactionId") is not scored: it counts like an unscored
+     * pair - only with the ceiling -, so it is never suggested or allocated
+     * automatically, and the user's "no" no longer stands in the way of the
+     * other candidates.
+     *
      * @param list<AbgleichBeleg> $belege
      * @param list<AbgleichBuchung> $buchungen
+     * @param array<string, true> $verworfen
      */
-    public static function planen(array $belege, array $buchungen, Abgleichsparameter $p): Abgleichsplan
+    public static function planen(array $belege, array $buchungen, Abgleichsparameter $p, array $verworfen = []): Abgleichsplan
     {
         $index = new Kandidatenindex($buchungen, $p);
         $nachId = [];
@@ -154,6 +161,9 @@ final class Punktebewertung
             [$kandidaten, $gekappt] = $index->kandidaten($beleg, $betragGekappt);
             $jeBeleg[$beleg->id] = [];
             foreach ($kandidaten as $id) {
+                if (isset($verworfen[$beleg->id . ':' . $id])) {
+                    continue;
+                }
                 $bewertung = self::bewerten($beleg, $nachId[$id], $p);
                 if ($bewertung === null) {
                     continue;

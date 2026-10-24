@@ -615,7 +615,8 @@ schreibt nichts, Zugriffsbereich, Seite),
   der Session neu berechnet; „Übernehmen“ bewertet neu (abgelehnt unter
   `vorschlag_ab` oder bei geändertem Betrag) und ordnet als
   `vorschlag_bestaetigt` zu. Jede Zuordnung bleibt über `Zuordnung::loesen`
-  lösbar.
+  lösbar. Ein **verworfenes** Paar (M10-4, E-41) wird nicht
+  bewertet – weder Vorschlag noch automatisch.
 - **Kandidaten:** Belege mit Dokument `geprueft`/`festgeschrieben`,
   Zahlungsweg `konto`/`erstattung`, Status offen/teilbezahlt/
   erstattung_offen; Buchungen mit Status ≠ `zugeordnet`, ohne Ausgaben mit
@@ -658,6 +659,80 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   machen" (Gegenseite/Stichwort → immer „kein Beleg nötig" + Kategorie).
 - Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto)
   werden automatisch erkannt und paarweise verknüpft.
+
+#### Stand M10-4: Abgleich-Oberfläche (issue #68, Migration 042, E-41)
+
+- **Seite** `/app/abgleich` (`matching.edit`, CSRF auf allen POST, ohne
+  entsperrten Tresor nichts): oben wie bisher „Abgleich berechnen“ mit
+  „N eindeutige Zuordnungen anlegen“ und den Vorschlägen, je Vorschlag
+  „Übernehmen“ **und „Verwerfen“**. Darunter Filter und zwei Listen
+  nebeneinander (ab 64rem, darunter untereinander): **offene Belege**
+  (Kandidaten wie M10-2: geprüft/festgeschrieben, Zahlungsweg `konto`/
+  `erstattung`, nicht ausgeglichen) | **Buchungen ohne Beleg** (`fehlt`/
+  `teilweise`, mit dem Teil, den noch kein Beleg erklärt), beide älteste
+  zuerst, je 25 je Seite (`App\Service\Bank\AbgleichFilter`). Der Aufruf
+  bewertet nichts; entschlüsselt wird nur die gezeigte Seite.
+- **Filter:** Konto (nur Buchungen), Zeitraum (Beleg- bzw. Buchungsdatum),
+  Betrag (Brutto/Betrag oder offener Rest, ohne Vorzeichen), Suche
+  (Lieferant, Rechnungsnummer, Zweck bzw. Gegenseite, IBAN, Zweck). Konto,
+  Zeitraum, gewählter Beleg und Seiten stehen in der URL; **Betrag und
+  Suche sind Vereinsdaten** und kommen nur per `POST /app/abgleich/filter`
+  (die Seite wird direkt gezeigt, Blättern sendet sie per Formular erneut,
+  nach einer Aktion entfallen sie). Mit Betrag/Suche wird die ganze
+  Kandidatenmenge einer Seite entschlüsselt, sonst nur die Seite.
+- **Gewählter Beleg** (`?beleg=ID`, im Zugriffsbereich – Belegdatum und
+  Kostenstelle): Brutto, zugeordnet, offen, Zahlungsstatus; die
+  **Zuordnungen** mit „Lösen“ (nur wenn auch die Buchung im
+  Zugriffsbereich liegt – sonst „außerhalb Ihres Bereichs“ ohne Details);
+  **Differenz abschließen** (Grund `skonto`/`gutschrift`/`sonstiges`,
+  nur wenn ein Teil zugeordnet ist und ein Rest fehlt) bzw. „Differenz
+  wieder öffnen“; solange er eine Buchung annimmt, die **passenden
+  Buchungen**: alle offenen Buchungen seiner Richtung und Währung im
+  Zugriffsbereich (ohne Umbuchungen), nach Punkten (M10-2) sortiert,
+  verworfene Paare zuletzt und markiert, die besten 20 (mehr über die
+  Filter). Je Buchung ein Betragsfeld, vorbelegt mit `min(offen Beleg,
+  offen Buchung)` – kleiner eingetragen ist es eine **Teilzuordnung**
+  (Rate, Sammelzahlung) – und „Zuordnen“; ab `vorschlag_ab` Punkten
+  „Als Vorschlag verwerfen“, ein verworfenes „Wieder vorschlagen“.
+- **Von Hand zuordnen** (`POST /app/abgleich/zuordnen`, Felder beleg,
+  buchung, betrag in Euro): beide Seiten müssen Kandidaten im
+  Zugriffsbereich sein; geschrieben über `Zuordnung::zuordnen()` mit
+  Methode `manuell`, `score`/`rule_trace` der Bewertung (falls bewertbar)
+  zur Nachvollziehbarkeit. Alle Grenzen (≤ offen auf beiden Seiten,
+  Richtung, Zahlungsweg, Umbuchung) prüft `Zuordnung` unter den Sperren.
+- **Lösen** (`POST /app/abgleich/loesen`, Felder beleg, zuordnung): die
+  Zuordnung muss zum Beleg gehören, Beleg und Buchung im Zugriffsbereich.
+  **Differenz** (`POST /app/abgleich/differenz`, Feld grund oder
+  `oeffnen`): Beleg im Zugriffsbereich.
+- **Verwerfen** (`POST /app/abgleich/verwerfen`, Felder beleg, buchung,
+  optional `zuruecknehmen=1`): speichert das Paar in `match_rejection`
+  (nur IDs, wer, wann). `Punktebewertung::planen()` bewertet ein
+  verworfenes Paar nicht – es zählt wie ein nicht bewertetes Paar nur mit
+  der Obergrenze –, „Übernehmen“ lehnt es ab, von Hand zuordnen bleibt
+  möglich. Verwerfen nur, solange beide Seiten Kandidaten im
+  Zugriffsbereich sind; Zurücknehmen mit beiden Seiten im Zugriffsbereich.
+- **Weitere Wege bleiben an der Buchung** (verlinkt aus der Liste, eigene
+  Rechte): „kein Beleg nötig“, Regeln und Umbuchung paaren (M9-6/M10-6,
+  `bank.book`) auf `/app/buchungen/{id}`; bei einer Ausgabe mit
+  Gegen-IBAN zusätzlich „Erstattung?“ auf `/app/buchungen/{id}/erstattung`
+  (M10-3).
+- **Mobil** (360 px): alles Karten und umbrechende Formulare, kein
+  Tabellen-Scrollen; zwei Spalten erst ab 64rem.
+- **Audit:** Zuordnen/Lösen/Differenz wie M10-1 (`zuordnung.angelegt` mit
+  Methode `manuell`, `zuordnung.geloest`, `beleg.differenz_*`);
+  `abgleich.vorschlag_verworfen` / `abgleich.vorschlag_zurueckgenommen`
+  (invoice_id, transaction_id) – nie ein Betrag, Name oder Suchbegriff.
+
+**Pflicht-Tests M10-4:** `AbgleichFlowTest` (verworfenes Paar weder
+Vorschlag noch Übernehmen, Rest wird eindeutig, Zurücknehmen; verworfenes
+eindeutiges Paar nicht automatisch; Verwerfen nur offen und im
+Zugriffsbereich; von Hand mit Teilbeträgen, Grenze, Differenz abschließen
+und öffnen, Lösen; Lösen/Differenz/Zuordnen außerhalb des Bereichs
+abgelehnt; Listen blättern und filtern, nur fehlende Belege, Kostenstellen-
+Scope; Seite ohne Betrag/Suche in Links), `PunktebewertungTest`
+(verworfenes Paar nur mit Obergrenze), `AbgleichFilterTest` (GET nur
+Struktur, POST Betrag/Suche nie in der URL), `RoutePermissionMatrixTest`
+(`matching.edit` für alle neuen Routen).
 
 ### Stand M10-6: Umbuchungen eigene Konten (issue #70, Migration 039, E-38)
 

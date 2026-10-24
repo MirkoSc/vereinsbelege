@@ -624,6 +624,13 @@ return static function (
     $post('/app/abgleich/ausfuehren', $abgleichRecht, static fn(Request $r) => $abgleich()->ausfuehren($r));
     $post('/app/abgleich/uebernehmen', $abgleichRecht, static fn(Request $r) => $abgleich()->uebernehmen($r));
     $post('/app/abgleich/einstellungen', $abgleichRecht, static fn(Request $r) => $abgleich()->einstellungen($r));
+    // The matching page (M10-4, issue #68, E-41): amount/search filter by
+    // POST, manual allocation, release, difference, discarding a suggestion.
+    $post('/app/abgleich/filter', $abgleichRecht, static fn(Request $r) => $abgleich()->filtern($r));
+    $post('/app/abgleich/zuordnen', $abgleichRecht, static fn(Request $r) => $abgleich()->zuordnen($r));
+    $post('/app/abgleich/loesen', $abgleichRecht, static fn(Request $r) => $abgleich()->loesen($r));
+    $post('/app/abgleich/differenz', $abgleichRecht, static fn(Request $r) => $abgleich()->differenz($r));
+    $post('/app/abgleich/verwerfen', $abgleichRecht, static fn(Request $r) => $abgleich()->verwerfen($r));
     // Work lists "Offen" (M10-5, issue #69, docs/spec/04-bank-und-abgleich.md
     // section 5 "Übersichten", E-37), read-only: unpaid receipts and open
     // reimbursements `report.view` (its scope filters in SQL), bookings

@@ -15,11 +15,14 @@ use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditLog;
+use App\Domain\Differenzgrund;
 use App\Service\Bank\Abgleich;
+use App\Service\Bank\AbgleichFilter;
 use App\Service\Bank\Abgleichsparameter;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Processing\Betrag;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -34,8 +37,15 @@ use App\View\View;
  * its scope. Receipts and bookings are vault data: without an unlocked
  * vault the page says so and neither scores nor writes. Nothing of either
  * side goes into a URL, a flash message or the audit log - ids and counts
- * only. The full matching page (two lists, manual allocation, discarding
- * suggestions) is M10-4.
+ * only.
+ *
+ * The matching page (M10-4, issue #68, E-41) adds both lists side by side
+ * with filters and paging, one selected receipt with its allocations
+ * ("Lösen"), the difference and the bookings that could take it (manual
+ * allocation with a part amount), and "Verwerfen" for a suggestion.
+ * Account, period, receipt and page travel in the URL; amount and search
+ * text are club data and only come by POST (/app/abgleich/filter), which
+ * renders the page directly.
  */
 final readonly class AbgleichController
 {
@@ -61,7 +71,134 @@ final readonly class AbgleichController
         // (?berechnen=1, also where the writes return to) decrypts and scores.
         $berechnen = ($request->query['berechnen'] ?? '') === '1';
 
-        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], berechnen: $berechnen);
+        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], berechnen: $berechnen, filter: AbgleichFilter::aus($request->query));
+    }
+
+    /** Amount and search text by POST - rendered, never put into a URL. */
+    public function filtern(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+
+        return $this->anzeigen($request, $this->abgleich->parameter(), null, [], filter: AbgleichFilter::aus([], self::felder($request)));
+    }
+
+    public function zuordnen(Request $request): ResponseInterface
+    {
+        return $this->schreiben($request, function (Vault $tresor, int $beleg) use ($request): string {
+            $buchung = self::id($request, 'buchung');
+            $betrag = Betrag::parse(self::text($request, 'betrag'));
+            if ($buchung === null) {
+                throw new BankRuleViolation('Bitte eine Buchung wählen.');
+            }
+            if ($betrag === null || $betrag <= 0) {
+                throw new BankRuleViolation('Bitte einen Betrag größer als null angeben, z. B. 12,50.', 'betrag');
+            }
+            $this->abgleich->zuordnenVonHand($tresor, $this->bereich(), $beleg, $buchung, $betrag, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+
+            return 'Beleg und Buchung sind einander zugeordnet.';
+        });
+    }
+
+    public function loesen(Request $request): ResponseInterface
+    {
+        return $this->schreiben($request, function (Vault $tresor, int $beleg) use ($request): string {
+            $zuordnung = self::id($request, 'zuordnung') ?? throw new BankRuleViolation('Diese Zuordnung gibt es nicht (mehr).');
+            $this->abgleich->loesen($tresor, $this->bereich(), $beleg, $zuordnung, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+
+            return 'Zuordnung gelöst. Beleg und Buchung sind wieder offen, soweit nichts anderes sie ausgleicht.';
+        });
+    }
+
+    public function differenz(Request $request): ResponseInterface
+    {
+        return $this->schreiben($request, function (Vault $tresor, int $beleg) use ($request): string {
+            $wert = self::text($request, 'grund');
+            $grund = $wert === 'oeffnen' ? null : (Differenzgrund::tryFrom($wert) ?? throw new BankRuleViolation('Bitte einen Grund für die Differenz wählen.', 'grund'));
+            $this->abgleich->differenz($tresor, $this->bereich(), $beleg, $grund, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+
+            return $grund === null ? 'Differenz wieder geöffnet – der Rest ist wieder offen.' : 'Differenz abgeschlossen – der Beleg gilt als ausgeglichen.';
+        });
+    }
+
+    public function verwerfen(Request $request): ResponseInterface
+    {
+        return $this->schreiben($request, function (Vault $tresor, int $beleg) use ($request): string {
+            $buchung = self::id($request, 'buchung') ?? throw new BankRuleViolation('Bitte eine Buchung wählen.');
+            $userId = $this->session->userId();
+            if (self::text($request, 'zuruecknehmen') === '1') {
+                if ($this->abgleich->wiederVorschlagen($this->bereich(), $beleg, $buchung)) {
+                    $this->audit->record(AuditAction::AbgleichVorschlagZurueckgenommen, $userId, $request->ip, details: ['invoice_id' => $beleg, 'transaction_id' => $buchung]);
+                }
+
+                return 'Das Paar wird wieder bewertet und vorgeschlagen.';
+            }
+            if ($this->abgleich->verwerfen($this->bereich(), $beleg, $buchung, $userId, new \DateTimeImmutable())) {
+                $this->audit->record(AuditAction::AbgleichVorschlagVerworfen, $userId, $request->ip, details: ['invoice_id' => $beleg, 'transaction_id' => $buchung]);
+            }
+
+            return 'Vorschlag verworfen – dieses Paar wird nicht mehr vorgeschlagen oder automatisch zugeordnet.';
+        });
+    }
+
+    /**
+     * The common frame of the writes on one receipt: CSRF, unlocked vault,
+     * the receipt id, then back to the page - to the suggestions when the
+     * form came from there, otherwise to the receipt with the structural
+     * filters. A refused rule becomes the error message.
+     *
+     * @param \Closure(Vault, int): string $aktion returns the message
+     */
+    private function schreiben(Request $request, \Closure $aktion): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt();
+        }
+        $filter = AbgleichFilter::aus(self::felder($request));
+        $ziel = self::text($request, 'zurueck') === 'vorschlaege' ? self::BERECHNET : $filter->url();
+        $beleg = self::id($request, 'beleg');
+        if ($beleg === null) {
+            return Response::redirect($ziel);
+        }
+
+        try {
+            $this->session->flash($aktion($tresor, $beleg));
+        } catch (BankRuleViolation $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+        }
+
+        return Response::redirect($ziel . ($ziel === self::BERECHNET ? '' : '#beleg'));
+    }
+
+    /**
+     * The form fields as strings.
+     *
+     * @return array<string, string>
+     */
+    private static function felder(Request $request): array
+    {
+        $felder = [];
+        foreach ($request->post as $name => $wert) {
+            if (is_string($name) && is_string($wert)) {
+                $felder[$name] = $wert;
+            }
+        }
+
+        return $felder;
+    }
+
+    private static function id(Request $request, string $feld): ?int
+    {
+        $wert = self::text($request, $feld);
+
+        return ctype_digit($wert) && strlen($wert) <= 18 && (int) $wert > 0 ? (int) $wert : null;
     }
 
     public function ausfuehren(Request $request): ResponseInterface
@@ -153,15 +290,21 @@ final readonly class AbgleichController
     /**
      * @param array<string, string> $felder what was sent, shown again after an error
      */
-    private function anzeigen(Request $request, Abgleichsparameter $parameter, ?BankRuleViolation $fehler, array $felder, int $status = 200, bool $berechnen = false): ResponseInterface
+    private function anzeigen(Request $request, Abgleichsparameter $parameter, ?BankRuleViolation $fehler, array $felder, int $status = 200, bool $berechnen = false, ?AbgleichFilter $filter = null): ResponseInterface
     {
         $tresor = $this->tresor($request);
+        $filter ??= new AbgleichFilter();
+        $bereich = $this->bereich();
 
         return Response::html($this->view->render('app/abgleich', [
             'title' => 'Abgleich',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
-            'stand' => $tresor === null || !$berechnen ? null : $this->abgleich->planen($tresor, $this->bereich()),
+            'filter' => $filter,
+            'konten' => $tresor === null ? [] : $this->abgleich->konten($tresor),
+            'liste' => $tresor === null ? null : $this->abgleich->liste($tresor, $bereich, $filter),
+            'detail' => $tresor === null || $filter->belegId === null ? null : $this->abgleich->detail($tresor, $bereich, $filter->belegId, $filter),
+            'stand' => $tresor === null || !$berechnen ? null : $this->abgleich->planen($tresor, $bereich),
             'parameter' => $parameter,
             'fehler' => $fehler,
             'felder' => $felder,
