@@ -633,6 +633,8 @@ final class RoutePermissionMatrixTest extends TestCase
             $stellvertreter,
             $stellvertreter,
             $stellvertreter,
+            // The Nextcloud settings (issue #95), the optional last one.
+            $stellvertreter,
         );
 
         return $router;

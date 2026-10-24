@@ -119,6 +119,25 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ✅ (vorläufig) Nextcloud-Ablage: einzelne Dateien statt ZIP, Ziel im Tresor
+*Betrifft: issue #95 (Backlog) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Der Export kann direkt in einen Ordner der Vereins-Nextcloud gelegt werden
+(WebDAV). Entschieden wurde:
+- **Kein serverseitiges ZIP**, sondern jede Datei einzeln mit den Pfaden
+  und Namen des ZIP-Exports, `index.csv` zuletzt – als idempotente
+  Schrittkette kurzer Requests in der Nutzer-Session. Ein Server-ZIP
+  bräuchte Klartext auf Platte oder einen langen Request (CLAUDE.md §1, §4).
+- **Nie überschreiben:** Schon vorhandene gleiche Dateien (SHA-1, sonst
+  Größe) werden übersprungen, eine andere Datei gleichen Namens bleibt und
+  die neue bekommt „ (2)“.
+- **Adresse, Benutzer und App-Passwort liegen im Tresor**, nicht beim
+  Server-Schlüssel – das Passwort öffnet das Archiv des Vereins.
+- Die Ablage **markiert den Lauf nicht** als exportiert; das bleibt die
+  Bestätigung von Hand. Nur `export.zip` ohne Scope darf ablegen.
+
+Details: 05 §2 „Nextcloud-Ablage“.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

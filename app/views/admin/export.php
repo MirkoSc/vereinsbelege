@@ -35,6 +35,7 @@ use App\Service\Export\PfadMuster;
     <?php if ($darfExportieren): ?>
         <p><a href="/app/export">Zum ZIP-Export</a></p>
     <?php endif; ?>
+    <p><a href="/admin/export/nextcloud">Nextcloud-Ablage einrichten</a> – Exporte direkt in die Vereins-Nextcloud legen.</p>
 
     <?php if ($fehler !== null): ?>
         <p class="hinweis hinweis-fehler" role="alert"><?= e($fehler) ?></p>
