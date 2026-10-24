@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain;
 
 /**
- * One `export_run_upload` row (migrations/033_nextcloud.sql, issue #95):
+ * One `export_run_upload` row (migrations/034_nextcloud.sql, issue #95):
  * where the Nextcloud filing of an export run stands. Plaintext structure
  * only - a cursor and counters.
  */

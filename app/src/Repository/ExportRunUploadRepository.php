@@ -8,7 +8,7 @@ use App\Domain\ExportRunUpload;
 use App\Domain\NextcloudAblageStatus;
 
 /**
- * The table `export_run_upload` (migrations/033_nextcloud.sql, issue #95):
+ * The table `export_run_upload` (migrations/034_nextcloud.sql, issue #95):
  * the step chain that files an export run into the Nextcloud. SQL only -
  * the chain itself is App\Service\Export\Nextcloud\NextcloudAblage.
  *

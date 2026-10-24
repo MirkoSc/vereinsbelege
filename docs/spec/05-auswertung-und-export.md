@@ -235,7 +235,7 @@ leer → Ebene entfällt).
 - **Nextcloud-Ablage (issue #95):** Statt das ZIP herunter- und wieder
   hochzuladen, legt die Laufseite einen Export-Lauf direkt in einen Ordner
   der Vereins-Nextcloud (WebDAV). Entscheidungen (vorläufig, autonom
-  getroffen – Bestätigung durch Mirko offen, E-19):
+  getroffen – Bestätigung durch Mirko offen, E-20):
   - **Kein ZIP auf dem Server.** Ein serverseitig erzeugtes ZIP bräuchte
     Klartext auf Platte oder einen langen Request; die Ausnahme oben gilt
     nur für den Browser-Download. Stattdessen geht **jede Datei einzeln**
