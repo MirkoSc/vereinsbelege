@@ -15,6 +15,7 @@ use App\Domain\DocumentSource;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
+use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRole;
 use App\Installer\FirstAdminSetup;
 use App\Repository\AuditLogRepository;
@@ -80,6 +81,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
     private const string SUPPLIER_IBAN = 'DE89370400440532013000';
     private const string KONTO_IBAN = 'DE02120300000000202051';
     private const string GEGEN_IBAN = 'DE44500105175407324931';
+    private const string GELERNTE_IBAN = 'DE75512108001245126199';
 
     private ServerCrypto $crypto;
     private Vault $alt;
@@ -359,6 +361,16 @@ final class SchluesselrotationTest extends DatabaseTestCase
             'rolle' => SupplierRole::Lieferant->value,
             'iban' => self::SUPPLIER_IBAN,
         ], $now)->id;
+        // A confirmed receipt taught it an alias and a second IBAN (issue
+        // #201): learnt keys must come out of the rotation as well.
+        $service = $this->supplierService();
+        $gelernt = $service->finde($tresor, $lieferant) ?? self::fail();
+        $partner = ['name' => 'Müller Sport', 'iban' => self::GELERNTE_IBAN];
+        $merkmale = $service->lernbar($tresor, $gelernt, $partner, '');
+        self::assertSame('Müller Sport', $merkmale->alias);
+        $this->pdo()->beginTransaction();
+        $service->merkmaleErgaenzen($tresor, $lieferant, $partner, '', $merkmale->fingerabdruck($tresor->blindIndex()), $now);
+        $this->pdo()->commit();
 
         $konto = new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->anlegen($tresor, BankAccountKind::Bank, [
             'name' => 'Girokonto',
@@ -463,6 +475,11 @@ final class SchluesselrotationTest extends DatabaseTestCase
         self::assertSame(
             $this->supplierService()->keys($neu, $lieferant->data),
             new SupplierRepository($this->pdo())->keys($d['lieferant']),
+        );
+        self::assertContains(
+            [SupplierKeyKind::Iban, $index->forValue(SupplierKeyKind::Iban->purpose(), self::GELERNTE_IBAN)],
+            new SupplierRepository($this->pdo())->keys($d['lieferant']),
+            'Die gelernte IBAN wird unter dem neuen Schlüssel gefunden.',
         );
         self::assertSame($d['konto'], new BankAccountRepository($this->pdo())->idWithIban($index->forValue(BankAccountService::IBAN_PURPOSE, self::KONTO_IBAN)));
         self::assertSame(

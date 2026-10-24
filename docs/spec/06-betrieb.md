@@ -171,6 +171,14 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   dem Zugangsschritt des Installers möglich (unten, „Restore ohne
   Server-Schlüssel“, issue #154): `user.email_bi` hängt am Server-Schlüssel,
   mit einem neuen findet die Anmeldung kein Konto.
+- **Nach einer Tresor-Schlüsselrotation** (01 §2, issue #90): Backups von
+  **vor** der Rotation enthalten nur die alte Generation – eingespielt
+  öffnet sie nur der **alte** Wiederherstellungsschlüssel bzw. die damaligen
+  Passwörter. Deshalb bleibt der alte Schlüssel neben dem neuen im
+  Vereinstresor, solange solche Backups aufgehoben werden; ein Restore mit dem
+  falschen Schlüssel meldet „abgelöst“ statt „fremde Installation“.
+  Ein Backup **während** einer Rotation enthält beide Generationen samt
+  Freigaben; nach dem Einspielen geht es auf der Rotationsseite weiter.
 - **Wichtig für den Betrieb:** `shared/config.php` gehört **getrennt
   gesichert** zum Wiederherstellungsschlüssel (Ausdruck oder Kopie im
   Vereinstresor bzw. beim zweiten Vorstandsmitglied). Das Standard-Backup

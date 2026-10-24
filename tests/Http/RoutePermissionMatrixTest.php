@@ -468,16 +468,16 @@ final class RoutePermissionMatrixTest extends TestCase
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/admin/tresor/rotation')));
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Post, '/admin/tresor/rotation/schritt')));
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/app/sicherheit')));
-        $umgeleitet = $this->aufrufen($router, HttpMethod::Get, '/app/belege');
-        self::assertFalse($this->erreicht($umgeleitet));
+        $umgeleitet = $this->aufrufen($router, HttpMethod::Get, '/app/posteingang');
+        self::assertNotSame(self::ERREICHT, $umgeleitet->body);
         self::assertSame(302, $umgeleitet->status);
         self::assertSame('/admin/tresor/rotation', $umgeleitet->headers['Location'] ?? null);
-        self::assertFalse($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/admin/tresor')));
+        self::assertSame('/admin/tresor/rotation', $this->aufrufen($router, HttpMethod::Get, '/admin/tresor')->headers['Location'] ?? null);
         $json = $this->aufrufen($router, HttpMethod::Post, '/api/jobs/step');
         self::assertSame(409, $json->status);
 
         $this->anmelden(self::berechtigungen(SystemRole::Finanzen));
-        $gesperrt = $this->aufrufen($router, HttpMethod::Get, '/app/belege');
+        $gesperrt = $this->aufrufen($router, HttpMethod::Get, '/app/posteingang');
         self::assertSame(503, $gesperrt->status);
         self::assertFalse($this->erreicht($gesperrt));
         self::assertTrue($this->erreicht($this->aufrufen($router, HttpMethod::Get, '/app/sicherheit')));

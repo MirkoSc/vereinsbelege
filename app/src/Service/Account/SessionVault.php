@@ -118,6 +118,11 @@ final class SessionVault
             return null;
         }
 
+        // The stored format is checked before the cookie: a format this
+        // release does not know is a broken deployment, whatever the client
+        // sent.
+        self::pruefeFormat((string) ($stored['cipher'] ?? ''));
+
         // A cookie value is whatever the client sent: not base64 at all is a
         // wrong key like any other, not an error worth a stack trace.
         try {
@@ -157,12 +162,10 @@ final class SessionVault
     }
 
     /**
-     * One stored entry - version(1) | nonce(24) | secretbox - opened with K_s.
-     * Null when the key does not fit.
-     *
-     * @throws CryptoException for a format this release does not know
+     * @throws CryptoException for a stored entry too short to be one or of a
+     *         format version this release does not know
      */
-    private static function open(string $cipher, #[\SensitiveParameter] string $sessionKey): ?string
+    private static function pruefeFormat(string $cipher): void
     {
         if (strlen($cipher) < 1 + self::NONCE_BYTES + self::MAC_BYTES) {
             throw new CryptoException('The stored session vault is too short.');
@@ -172,6 +175,17 @@ final class SessionVault
         if ($version !== self::VERSION) {
             throw new CryptoException(sprintf('The session vault has unknown format version %d.', $version));
         }
+    }
+
+    /**
+     * One stored entry - version(1) | nonce(24) | secretbox - opened with K_s.
+     * Null when the key does not fit.
+     *
+     * @throws CryptoException for a format this release does not know
+     */
+    private static function open(string $cipher, #[\SensitiveParameter] string $sessionKey): ?string
+    {
+        self::pruefeFormat($cipher);
 
         $secretKey = sodium_crypto_secretbox_open(
             substr($cipher, 1 + self::NONCE_BYTES),

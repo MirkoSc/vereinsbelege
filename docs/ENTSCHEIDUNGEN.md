@@ -416,3 +416,31 @@ Variante:
 - **ZIP:** nur `.xml`-Einträge zählen, alles andere im Archiv (PDF-Auszüge,
   Textdateien) wird stillschweigend ignoriert; Grenzen 5 MB je Datei,
   10 MB entpackt.
+
+## E-32 ❓ Tresor-Schlüsselrotation (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage:
+
+- **Nur `dek_sealed` neu versiegeln, Daten nicht neu verschlüsseln.** Die
+  DEKs bleiben; das hält jeden Schritt kurz und Blobs unberührt.
+  Rest-Exposure: Wer alten `VK_priv` **und** alte Daten (DB-Kopie, Backup)
+  hat, liest das damals Vorhandene weiter. Ein vollständiges Neu-
+  Verschlüsseln wäre ein eigenes Issue.
+- **Freigaben ohne Passwort neu versiegeln** (`box_seal` an `U_pub`) – kein
+  Konto muss sich für die Rotation anmelden.
+- **Neuer Wiederherstellungsschlüssel mit Bestätigung** (letzte Gruppe); der
+  alte bleibt für Backups von vor der Rotation nötig und wird beim Eingeben
+  als „abgelöst“ erkannt.
+- **Audit-Log:** `dek_sealed` bleibt (Hash-Kette), der neue Schlüssel steht in
+  `dek_resealed`; mit dem alten Schlüssel bleiben die Audit-Details von vor
+  der Rotation lesbar.
+- **Während der Rotation sind `/app` und `/admin` gesperrt** (außer Rotation
+  und eigener Sicherheit), die öffentliche Einreichung läuft weiter. Kein
+  „Abbrechen“: die Kette geht nur vorwärts, jeder Schritt ist wiederholbar.
+- **Blind Indexes** werden neu berechnet; `document.content_bi` (müsste alle
+  Dateien lesen) und `bank_import.source_bi` (müsste alle Auszüge parsen)
+  werden geleert – der Inhaltsindex entsteht per Job neu, der Kontovorschlag
+  beim nächsten Auszug fällt einmal weg. Dedup-Schlüssel behalten ihre
+  Laufnummer; passt keine, bekommt die Buchung die nächste freie.
+- **Unlesbare Zeilen** (DEK öffnet schon vor der Rotation nicht) halten den
+  Abschluss nicht auf, werden gezählt und im Audit-Log genannt.
+- **Abschluss beendet alle Sitzungen** (auch weitere des rotierenden Admins).
