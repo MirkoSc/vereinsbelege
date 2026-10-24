@@ -203,6 +203,12 @@ final readonly class Buchungen
             if ($record->docStatus->hatBeleg() && (in_array('amount', $geaendert, true) || in_array('direction', $geaendert, true))) {
                 throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – Betrag und Richtung lassen sich erst ändern, wenn die Zuordnung gelöst ist.', 'betrag');
             }
+            // A transfer between own accounts (M10-6) relies on amount,
+            // direction and account, and needs no receipt by being one.
+            $umbuchung = $record->docSource === BankTransactionSetBy::Umbuchung;
+            if ($umbuchung && array_intersect(['amount', 'direction', 'account_id', 'doc_required'], $geaendert) !== []) {
+                throw new BankRuleViolation('Die Buchung ist als Umbuchung zwischen eigenen Konten verknüpft – Konto, Betrag, Richtung und Beleg-Bedarf lassen sich erst ändern, wenn die Umbuchung gelöst ist.', 'betrag');
+            }
             // A receipt already allocated (M10-1, fully or in part) stays
             // allocated; otherwise the status follows the choice.
             $status = $record->docStatus->hatBeleg()
@@ -217,7 +223,7 @@ final readonly class Buchungen
                 $neu->kategorieId,
                 $neu->belegNoetig,
                 $status,
-                $neu->belegGewaehlt ? BankTransactionSetBy::Manuell : BankTransactionSetBy::Standard,
+                $umbuchung ? BankTransactionSetBy::Umbuchung : ($neu->belegGewaehlt ? BankTransactionSetBy::Manuell : BankTransactionSetBy::Standard),
                 $now,
             );
             $this->buchungen->setCiphertext($alt->id, self::verschluesseln($vault->openDataKey($record->dekSealed), $alt->id, $neu->daten($alt->currency)));
@@ -248,6 +254,9 @@ final readonly class Buchungen
             if ($record !== null) {
                 if ($record->docStatus->hatBeleg()) {
                     throw new BankRuleViolation('Der Buchung ist ein Beleg zugeordnet – erst die Zuordnung lösen.');
+                }
+                if ($record->docSource === BankTransactionSetBy::Umbuchung) {
+                    throw new BankRuleViolation('Die Buchung ist als Umbuchung zwischen eigenen Konten verknüpft – erst die Umbuchung lösen.');
                 }
                 $this->buchungen->deleteManual($buchung->id);
             }
@@ -292,11 +301,11 @@ final readonly class Buchungen
             default => BankTransactionSetBy::Manuell,
         };
 
-        [$belegNoetig, $belegQuelle] = match ($wert('beleg')) {
-            self::BELEG_NOETIG => [true, BankTransactionSetBy::Manuell],
-            self::BELEG_NICHT_NOETIG => [false, BankTransactionSetBy::Manuell],
-            '' => [$this->belegStandard->noetig($buchung->direction), BankTransactionSetBy::Standard],
-            default => throw new BankRuleViolation('Bitte wählen, ob ein Beleg nötig ist.', 'beleg'),
+        [$belegNoetig, $belegQuelle] = match (true) {
+            // Half of a transfer between own accounts (M10-6): the receipt
+            // status is the transfer's - only unpairing changes it.
+            $buchung->docSource === BankTransactionSetBy::Umbuchung => [$buchung->docRequired, BankTransactionSetBy::Umbuchung],
+            default => $this->belegWahl($wert('beleg'), $buchung),
         };
         $belegGeaendert = $belegNoetig !== $buchung->docRequired
             || ($belegQuelle === BankTransactionSetBy::Standard) !== ($buchung->docSource === BankTransactionSetBy::Standard);
@@ -317,6 +326,23 @@ final readonly class Buchungen
         $this->buchungen->einordnen($buchung->id, $kategorieId, $kategorieQuelle, $belegNoetig, $status, $belegQuelle, $regelId, $now);
 
         return array_values($geaendert);
+    }
+
+    /**
+     * The receipt choice of the "Einordnung" form.
+     *
+     * @return array{bool, BankTransactionSetBy}
+     *
+     * @throws BankRuleViolation
+     */
+    private function belegWahl(string $wert, BankTransaction $buchung): array
+    {
+        return match ($wert) {
+            self::BELEG_NOETIG => [true, BankTransactionSetBy::Manuell],
+            self::BELEG_NICHT_NOETIG => [false, BankTransactionSetBy::Manuell],
+            '' => [$this->belegStandard->noetig($buchung->direction), BankTransactionSetBy::Standard],
+            default => throw new BankRuleViolation('Bitte wählen, ob ein Beleg nötig ist.', 'beleg'),
+        };
     }
 
     /** Whether income needs a receipt by default - for the labels of the forms. */

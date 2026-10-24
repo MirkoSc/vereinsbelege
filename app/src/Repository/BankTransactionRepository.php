@@ -477,6 +477,17 @@ final readonly class BankTransactionRepository
     }
 
     /**
+     * One row as a record - for App\Repository\TransferRepository (M10-6),
+     * whose lookups return bookings too.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function hydrateRow(array $row): BankTransactionRecord
+    {
+        return self::hydrate($row);
+    }
+
+    /**
      * @param array<string, mixed> $row
      */
     private static function hydrate(array $row): BankTransactionRecord

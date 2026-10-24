@@ -409,6 +409,14 @@ final class RoutePermissionMatrixTest extends TestCase
             // everything that writes.
             [SystemRole::Finanzen, HttpMethod::Post, '/app/buchungen/7/einordnung', true],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/buchungen/7/einordnung', false],
+            // Umbuchungen eigene Konten (M10-6): pairing, unpairing and the
+            // recognition write - bank.book; readers only see the pair.
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/buchungen/umbuchungen', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/buchungen/7/umbuchung', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/buchungen/7/umbuchung/loesen', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/buchungen/umbuchungen', false],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/buchungen/7/umbuchung', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/buchungen/7/umbuchung/loesen', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/buchungen/regeln', true],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/buchungen/regeln/7', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/app/buchungen/regeln/neu', true],

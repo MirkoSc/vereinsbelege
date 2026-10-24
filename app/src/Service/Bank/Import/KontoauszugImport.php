@@ -18,6 +18,7 @@ use App\Domain\BankTransactionSource;
 use App\Domain\BlobMeta;
 use App\Domain\Buchungsmerkmale;
 use App\Domain\Iban;
+use App\Domain\Zugriffsbereich;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
@@ -30,6 +31,7 @@ use App\Service\Bank\BelegStandard;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Camt053Parser;
 use App\Service\Bank\Kontoangabe;
+use App\Service\Bank\Umbuchungen;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -95,6 +97,7 @@ final readonly class KontoauszugImport
         private Buchungsregeln $regeln,
         private KontoauszugLeser $leser = new KontoauszugLeser(),
         private int $schrittPosten = self::SCHRITT_POSTEN,
+        private ?Umbuchungen $umbuchungen = null,
     ) {
     }
 
@@ -310,6 +313,10 @@ final readonly class KontoauszugImport
                 ...$stats->toArray(),
                 'saldenpruefung' => $import->balanceCheck->value ?? '',
             ], $now);
+            // Transfers between own accounts (M10-6): the counter booking
+            // may come with this file or have come with an earlier one. Only
+            // structure is written; the person sees the pairs in the list.
+            $this->umbuchungen?->erkennen($vault, Zugriffsbereich::unbeschraenkt(), $import->importedBy, $ip, $now);
         }
 
         return new ImportStand(BankImportStatus::Fertig, $gesamt, $gesamt);
