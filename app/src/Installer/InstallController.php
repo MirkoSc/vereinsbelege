@@ -530,6 +530,10 @@ final readonly class InstallController
                 (string) ($request->post['admin_password'] ?? ''),
                 $neuerSchluessel,
                 $request->ip,
+                // Inside relink()'s transaction: a config.php that cannot be
+                // written rolls the re-link back instead of leaving the one
+                // readable account under a key that exists nowhere.
+                fn() => ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel),
             );
             $unlesbar = $zugang->unreadableAccounts($neuerSchluessel, $ergebnis->userId);
         } catch (RestoreAccessException $e) {
@@ -538,7 +542,7 @@ final readonly class InstallController
             return $this->renderAccess(['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()], 422, $eingabe);
         }
 
-        $this->finishRestore($values, $neuerSchluessel);
+        $this->closeInstaller();
 
         return $this->render([
             'fertig' => true,
@@ -563,6 +567,12 @@ final readonly class InstallController
     private function finishRestore(array $values, string $serverSchluessel): void
     {
         ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
+        $this->closeInstaller();
+    }
+
+    /** What follows a written config.php: the leftovers of setup.php, the session state. */
+    private function closeInstaller(): void
+    {
         unset($_SESSION['install_restore']);
         $this->cleanUpSetupLeftovers();
     }

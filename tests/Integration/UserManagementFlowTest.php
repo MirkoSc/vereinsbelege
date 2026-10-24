@@ -47,6 +47,7 @@ use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
+use App\Service\Account\MfaMethod;
 use App\Service\Account\MfaService;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
@@ -616,12 +617,20 @@ final class UserManagementFlowTest extends DatabaseTestCase
         self::assertSame(422, $doppelt->status);
         self::assertStringContainsString('bereits einen Benutzer', $doppelt->body);
 
+        // The account also had an authenticator app - its secret is under the
+        // lost key as well.
+        new MfaTotpRepository($this->pdo())->put($id, $fremd->encrypt('JBSWY3DPEHPK3PXP'));
+        new MfaTotpRepository($this->pdo())->confirm($id);
+        new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
+
         $gespeichert = $this->alsAdmin($admin, fn() => $this->post('/admin/benutzer/' . $id, [
             'name' => 'Karl Kasse',
             'email' => 'karl.neu@example.org',
             'rolle' => [(string) $this->rolle(SystemRole::Finanzen)],
         ]));
         self::assertSame(302, $gespeichert->status);
+        self::assertNull(new MfaTotpRepository($this->pdo())->forUser($id), 'the authenticator under the lost key is reset');
+        self::assertNull(new UserRepository($this->pdo())->findById($id)?->mfaMethod);
         self::assertSame($id, $this->idVon('karl.neu@example.org'), 'the login index finds the account under the current key');
         $zeile = new UserRepository($this->pdo())->findById($id);
         self::assertNotNull($zeile);
@@ -1017,6 +1026,8 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $crypto,
             $this->freigabeHinweis(),
             $audit,
+            new MfaTotpRepository($pdo),
+            new MfaBackupCodeRepository($pdo),
         );
         $tresor = fn(): VaultGrantController => new VaultGrantController(
             $view,

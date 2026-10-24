@@ -62,7 +62,7 @@ $ziel = $neu ? '/admin/benutzer' : '/admin/benutzer/' . $user->id;
                 Server-Schlüssel verschlüsselt, der nach der Wiederherstellung eines Backups ohne
                 <code>config.php</code> nicht mehr vorliegt. Bis eine neue Adresse eingetragen ist, kann sich
                 das Konto nicht anmelden. Passwort und Tresor-Freigabe bleiben erhalten; eine eingerichtete
-                Authenticator-App funktioniert nicht mehr.
+                Authenticator-App wird beim Speichern zurückgesetzt und beim nächsten Anmelden neu eingerichtet.
             </p>
             <label for="benutzer-email">E-Mail-Adresse neu setzen <span class="pflicht" aria-hidden="true">*</span>
                 <input type="email" id="benutzer-email" name="email" value="<?= e($eingabe['email']) ?>"

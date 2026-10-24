@@ -8,6 +8,7 @@ use App\Domain\AuditAction;
 use App\Domain\Permission;
 use App\Domain\User;
 use App\Repository\AuditLogRepository;
+use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
 use App\Repository\MfaTotpRepository;
 use App\Repository\RateLimitRepository;
@@ -22,6 +23,7 @@ use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
 use App\Service\Account\VaultRecovery;
 use App\Service\Audit\AuditLog;
+use App\Service\Backup\RestoreService;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\RecoveryKeyException;
@@ -81,11 +83,10 @@ final readonly class RestoreAccess
      */
     public function serverKeyFits(string $serverKeyBase64): bool
     {
-        $roh = base64_decode($serverKeyBase64, true);
-        if ($roh === false || strlen($roh) !== ServerCrypto::KEY_BYTES) {
+        if (!RestoreService::gueltigerServerSchluessel($serverKeyBase64)) {
             return false;
         }
-        $crypto = new ServerCrypto($roh);
+        $crypto = new ServerCrypto((string) base64_decode($serverKeyBase64, true));
 
         $konten = new UserRepository($this->pdo)->all();
         if ($konten === []) {
@@ -108,9 +109,12 @@ final readonly class RestoreAccess
      * Re-links the admin account whose password is $password under the new
      * server key, authorised by the club's recovery key.
      *
-     * @param string $newServerKeyBase64 the key the installer is about to
-     *        write to config.php - what the address is encrypted with
+     * @param string $newServerKeyBase64 the key the installer writes to
+     *        config.php - what the address is encrypted with
      * @param string $ip the client address, '' for none (rate limit)
+     * @param \Closure(): void $configSchreiben writes config.php with that
+     *        key; called inside the transaction, so a key that could not be
+     *        written never becomes the only key an account is readable with
      *
      * @throws RestoreAccessException with the message for the page
      */
@@ -121,6 +125,7 @@ final readonly class RestoreAccess
         #[\SensitiveParameter] string $password,
         #[\SensitiveParameter] string $newServerKeyBase64,
         string $ip,
+        \Closure $configSchreiben,
         ?\DateTimeImmutable $now = null,
     ): RestoreAccessResult {
         $now ??= new \DateTimeImmutable();
@@ -146,11 +151,10 @@ final readonly class RestoreAccess
             throw new RestoreAccessException('Bitte das Passwort des Admin-Kontos eingeben.');
         }
 
-        $neuerSchluessel = base64_decode($newServerKeyBase64, true);
-        if ($neuerSchluessel === false || strlen($neuerSchluessel) !== ServerCrypto::KEY_BYTES) {
+        if (!RestoreService::gueltigerServerSchluessel($newServerKeyBase64)) {
             throw new RestoreAccessException('Der neue Server-Schlüssel ist ungültig.');
         }
-        $crypto = new ServerCrypto($neuerSchluessel);
+        $crypto = new ServerCrypto((string) base64_decode($newServerKeyBase64, true));
 
         $vaults = new VaultRepository($this->pdo);
         $aktuell = $vaults->current();
@@ -169,21 +173,23 @@ final readonly class RestoreAccess
         // Which account? The one that may manage accounts (it has to fix the
         // other addresses afterwards) and whose password this is. Argon2id
         // per candidate is the price of having nothing readable to go by; a
-        // club has a handful of admins, not hundreds.
+        // club has a handful of admins, not hundreds. Every candidate is
+        // checked: two admins sharing a password would make the choice a
+        // guess, and a guess would write this address onto somebody else's
+        // account.
         $users = new UserRepository($this->pdo);
         $zugriff = new UserAccessRepository($this->pdo);
         $hasher = new PasswordHasher();
-        $konto = null;
+        $treffer = [];
         foreach ($users->all() as $kandidat) {
             if (!$kandidat->mayLogIn($now) || !$zugriff->berechtigungen($kandidat->id)->darf(Permission::AdminUsers)) {
                 continue;
             }
-            if ($kandidat->passwordHash !== '' && $hasher->verify($password, $kandidat->passwordHash)) {
-                $konto = $kandidat;
-                break;
+            if ($hasher->verify($password, $kandidat->passwordHash)) {
+                $treffer[] = $kandidat;
             }
         }
-        if ($konto === null) {
+        if ($treffer === []) {
             $limits->registerFailure(self::LIMIT_IP, $ip, $now);
 
             throw new RestoreAccessException(
@@ -191,6 +197,13 @@ final readonly class RestoreAccess
                 . 'eingeben, das Benutzer verwalten darf.',
             );
         }
+        if (count($treffer) > 1) {
+            throw new RestoreAccessException(
+                'Dieses Passwort gehört zu mehreren Admin-Konten; welches gemeint ist, lässt sich nicht erkennen. '
+                . 'Bitte mit dem Passwort eines anderen Admin-Kontos verknüpfen.',
+            );
+        }
+        $konto = $treffer[0];
         $limits->reset(self::LIMIT_IP, $ip);
 
         $grants = new VaultGrantRepository($this->pdo);
@@ -226,6 +239,11 @@ final readonly class RestoreAccess
                 }
             }
 
+            // Every queued mail is ciphertext under the lost key: left in
+            // place, the first one would stop the cron's delivery for good
+            // and break the admin queue page.
+            new MailQueueRepository($this->pdo, $crypto)->deleteAll();
+
             new AuditLog(new AuditLogRepository($this->pdo), $vaults, $crypto)->record(
                 AuditAction::ZugangNeuVerknuepft,
                 $konto->id,
@@ -238,6 +256,11 @@ final readonly class RestoreAccess
                 ],
                 $now,
             );
+
+            // config.php last, but before the commit: fails the write, the
+            // account stays readable under the old (lost) key and the old
+            // config.php of "Weg 1" still fits - nothing is half done.
+            $configSchreiben();
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -255,11 +278,10 @@ final readonly class RestoreAccess
      */
     public function unreadableAccounts(string $serverKeyBase64, int $ausser): int
     {
-        $roh = base64_decode($serverKeyBase64, true);
-        if ($roh === false || strlen($roh) !== ServerCrypto::KEY_BYTES) {
-            return 0;
+        if (!RestoreService::gueltigerServerSchluessel($serverKeyBase64)) {
+            throw new \InvalidArgumentException('Not a server key.');
         }
-        $crypto = new ServerCrypto($roh);
+        $crypto = new ServerCrypto((string) base64_decode($serverKeyBase64, true));
 
         return count(array_filter(
             new UserRepository($this->pdo)->all(),

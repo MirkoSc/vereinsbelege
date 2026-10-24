@@ -50,6 +50,17 @@ final readonly class User
      * App\Http\LoginGuard uses this to force enrollment instead of letting a
      * required-but-absent factor quietly mean "none".
      */
+    /**
+     * What a row is called while its name is ciphertext under a lost server
+     * key (restore without config.php, issue #154): the id is the only
+     * readable handle it has. Used wherever ServerCrypto::decryptOrNull()
+     * came back empty.
+     */
+    public function platzhalterName(): string
+    {
+        return 'Benutzer #' . $this->id;
+    }
+
     public function mfaEingerichtet(): bool
     {
         return $this->mfaMethod !== null;

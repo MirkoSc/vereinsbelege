@@ -69,7 +69,7 @@ final readonly class VaultGrantController
         foreach ($konten as $user) {
             // A name that does not open is ciphertext under a lost server key
             // (restore without config.php, issue #154) - shown by its id.
-            $namen[$user->id] = $this->crypto->decryptOrNull($user->displayNameEnc) ?? 'Benutzer #' . $user->id;
+            $namen[$user->id] = $this->crypto->decryptOrNull($user->displayNameEnc) ?? $user->platzhalterName();
         }
 
         $wartend = [];

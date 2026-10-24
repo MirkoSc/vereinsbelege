@@ -139,8 +139,8 @@ final readonly class BackupService
      * The next free filename for this second, taken atomically: fopen() in
      * mode `x` fails when the file exists, so two backups started at once
      * cannot both claim the same name. The first gets
-     * `backup_YYYYMMDD_HHMMSS.zip`, the next ones `_2`, `_3`, ... - and
-     * because `_` sorts after `.`, list() still shows the later one first.
+     * `backup_YYYYMMDD_HHMMSS.zip`, the next ones `_2`, `_3`, ... - list()
+     * sorts naturally, so the later one still comes first.
      *
      * @return array{string, string} name and full path of the reserved file
      */
@@ -218,7 +218,9 @@ final readonly class BackupService
                 'geaendert_am' => date('Y-m-d H:i:s', (int) filemtime($path)),
             ];
         }
-        usort($backups, static fn(array $a, array $b): int => strcmp($b['name'], $a['name']));
+        // Natural order, so that the same-second suffix `_10` sorts after
+        // `_9` and `backup_X.zip` before `backup_X_2.zip` (reserveName()).
+        usort($backups, static fn(array $a, array $b): int => strnatcmp($b['name'], $a['name']));
 
         return $backups;
     }

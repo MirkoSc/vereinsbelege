@@ -210,7 +210,7 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   (`RestoreService::serverSchluesselAusConfig()`). Fehlt die Datei oder ist
   der Schlüssel ungültig, folgt der Zugangsschritt (nächster Punkt).
 
-**Restore ohne Server-Schlüssel** (issue #154, E-19 in
+**Restore ohne Server-Schlüssel** (issue #154, E-21 in
 `docs/ENTSCHEIDUNGEN.md` – vorläufig, autonom getroffen). Mit einem frisch
 erzeugten Server-Schlüssel wären `user.email_enc`, `display_name_enc`,
 `mfa_totp.secret_enc` und vor allem der Login-Index `user.email_bi` aller
@@ -238,17 +238,22 @@ Phase `zugang` (`InstallController::PHASE_ZUGANG`), die Seite springt auf
    Passwort bestimmt das Konto: unter allen anmeldefähigen Konten mit
    `admin.users` dasjenige, dessen `password_hash` verifiziert (Argon2id je
    Kandidat – ein Verein hat wenige Admins) – etwas anderes Lesbares gibt es
-   nicht. Danach in einer Transaktion: `email_enc`/`email_bi`/
-   `display_name_enc` neu unter dem **neuen** Server-Schlüssel (der im selben
-   Request erzeugt und nach `config.php` geschrieben wird), ein
+   nicht; verifizieren **mehrere**, lehnt der Schritt ab, statt zu raten.
+   Danach in einer Transaktion: `email_enc`/`email_bi`/`display_name_enc`
+   neu unter dem **neuen** Server-Schlüssel (im selben Request erzeugt), ein
    `vault_grant` aus dem wiederhergestellten Tresor, falls das Konto keinen
    hatte (wie `/admin/wiederherstellen`), TOTP-Geheimnis und Backup-Codes
    gelöscht und `mfa_method` geleert (das Geheimnis ist Chiffrat unter dem
    alten Schlüssel; `mfa_required` bleibt, der erste Login richtet den zweiten
-   Faktor neu ein; E-Mail-Codes funktionieren weiter), Audit-Eintrag
-   `tresor.zugang_neu_verknuepft` mit dem Konto als Handelndem. Falsche
-   Schlüssel oder Passwörter zählen je Client-IP gegen
-   `RateLimiter::LOGIN_LIMIT_PER_IP` (Zweck `install.zugang`).
+   Faktor neu ein; E-Mail-Codes funktionieren weiter), `mail_queue` geleert
+   (nur Chiffrat unter dem alten Schlüssel – stehen gelassen, würde die erste
+   Zeile den Versand im Cron und die Warteschlangen-Seite dauerhaft
+   blockieren), Audit-Eintrag `tresor.zugang_neu_verknuepft` mit dem Konto
+   als Handelndem, und **vor dem Commit** `config.php` mit dem neuen
+   Schlüssel – schlägt das Schreiben fehl, rollt die Neuverknüpfung zurück,
+   statt das einzige lesbare Konto unter einem Schlüssel zu lassen, der
+   nirgends liegt. Falsche Schlüssel oder Passwörter zählen je Client-IP
+   gegen `RateLimiter::LOGIN_LIMIT_PER_IP` (Zweck `install.zugang`).
    Wiederherstellungsschlüssel und Passwort werden nur im Request verwendet,
    in dem sie eingehen – nie in der Session, nie auf Platte.
 
@@ -258,9 +263,10 @@ zeigen „nicht lesbar“ bzw. „Benutzer #id“, Mails an solche Konten entfal
 bis ein Admin unter `/admin/benutzer/<id>` eine neue Adresse einträgt – das
 Formular bietet das Feld genau dann an, wenn die gespeicherte Adresse nicht
 aufgeht (`UserRepository::updateEmail()`, Eindeutigkeit über den Blind
-Index, Audit-Detail `email_neu_gesetzt`). Passwort, Schlüsselpaar und
-Freigabe dieser Konten sind unberührt, ihre Authenticator-Apps nicht mehr
-gültig. API-Schlüssel der KI-Anbieter, SMTP-Passwort und die Mail-Warteschlange
+Index, Audit-Detail `email_neu_gesetzt`; eine Authenticator-App wird dabei
+wie bei Weg 2 zurückgesetzt, ihr Geheimnis ist ebenso Chiffrat unter dem
+alten Schlüssel). Passwort, Schlüsselpaar und Freigabe dieser Konten sind
+unberührt. API-Schlüssel der KI-Anbieter, SMTP-Passwort und die Mail-Warteschlange
 sind verloren (die Leser liefern dafür schon „nicht gesetzt“). Eine
 Rekonstruktion der Adressen aus Tresor-Daten gibt es nicht – sie liegen
 nirgends unter dem Tresor (Folge-Idee: eine an `VK_pub` versiegelte Kopie je
@@ -300,15 +306,19 @@ neuen Blind Index auffindbar, Adresse/Name lesbar, TOTP entfernt,
 Freigabe/Schlüsselpaar öffnen den Tresor weiter, Audit-Eintrag, Schlüssel
 und Passwort in keiner Spalte; Konto ohne Grant bekommt einen; falsches
 Passwort, fremder und vertippter Wiederherstellungsschlüssel → 422 ohne
-Schreiben; alter Server-Schlüssel wird nur übernommen, wenn er ein Konto
+Schreiben; zwei Admins mit demselben Passwort → abgelehnt; Mail-Warteschlange
+geleert; fehlgeschlagenes Schreiben von `config.php` rollt zurück und Weg 1
+geht danach noch; alter Server-Schlüssel wird nur übernommen, wenn er ein Konto
 öffnet, hochgeladene `config.php` wird nie ausgeführt und nur ihr Schlüssel
 übernommen; offener Zugangsschritt wird bei erneutem Absenden gezeigt,
 Schritt-Endpunkt 409, „Neu beginnen“ räumt auf; CSRF und 409 ohne
 Wiederherstellung); `BackupRestoreRoundtripTest` zusätzlich: zwei Backups in
 derselben Sekunde überschreiben sich nicht und sind beide in `list()`/`path()`,
-Begrenzung des Suffixes; `BackupCliOptionsTest` (`--help`, unbekannte Option
+Begrenzung des Suffixes, natürliche Sortierung ab `_10` samt Rotation;
+`BackupCliOptionsTest` (`--help`, unbekannte Option
 abgelehnt); `UserManagementFlowTest` (unlesbare Adresse wird angezeigt,
-neu gesetzt, Anmeldung danach möglich, lesbare Adresse nicht änderbar);
+neu gesetzt samt TOTP-Reset, Anmeldung danach möglich, lesbare Adresse
+nicht änderbar);
 `tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen,
 Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
 

@@ -887,6 +887,8 @@ $benutzer = static function () use ($connections, $view, $serverCrypto, $paths, 
         $serverCrypto,
         $freigabeHinweisFor($pdo),
         $auditFor($pdo),
+        new MfaTotpRepository($pdo),
+        new MfaBackupCodeRepository($pdo),
         $logger,
     );
 };
@@ -1222,7 +1224,7 @@ $guard = static fn(): LoginGuard => new LoginGuard(
                 $user,
                 // A name under a lost server key (restore without config.php,
                 // issue #154) must not lock the one account that can fix it.
-                $serverCrypto->decryptOrNull($user->displayNameEnc) ?? 'Benutzer #' . $user->id,
+                $serverCrypto->decryptOrNull($user->displayNameEnc) ?? $user->platzhalterName(),
                 new UserAccessRepository($connections->pdo())->berechtigungen($userId),
             );
     },

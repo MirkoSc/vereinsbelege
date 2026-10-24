@@ -14,11 +14,14 @@ use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\AuthTokenRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\MfaBackupCodeRepository;
+use App\Repository\MfaTotpRepository;
 use App\Repository\RoleRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
+use App\Service\Account\MfaMethod;
 use App\Service\Account\RoleRuleViolation;
 use App\Service\Account\UserAdministration;
 use App\Service\Account\UserRuleViolation;
@@ -66,6 +69,9 @@ final readonly class UserController
         private ServerCrypto $crypto,
         private FreigabeBenachrichtigung $freigabeHinweis,
         private AuditLog $audit,
+        /** Both only for the authenticator reset that goes with a re-entered address (issue #154). */
+        private MfaTotpRepository $totp,
+        private MfaBackupCodeRepository $backupCodes,
         private ?FileLogger $logger = null,
     ) {
     }
@@ -83,7 +89,7 @@ final readonly class UserController
             // and the form lets the admin re-enter the address.
             $zeilen[] = [
                 'id' => $user->id,
-                'name' => $this->crypto->decryptOrNull($user->displayNameEnc) ?? self::platzhalterName($user),
+                'name' => $this->crypto->decryptOrNull($user->displayNameEnc) ?? $user->platzhalterName(),
                 'email' => $this->crypto->decryptOrNull($user->emailEnc),
                 'rollen' => array_map(static fn(Role $r): string => $r->name, $this->rollen->forUser($user->id)),
                 'status' => self::status($user, $jetzt, $this->tokens->hasUsable($user->id, Invitation::TYP, $jetzt)),
@@ -212,6 +218,15 @@ final readonly class UserController
             $this->verwaltung->umbenennen($id, $name);
             if ($emailNeuSetzen) {
                 $this->users->updateEmail($id, $this->crypto->encrypt($email), $emailBi);
+                // The authenticator secret is ciphertext under the same lost
+                // key: the login would fail at the second factor forever.
+                // Same reset as App\Installer\RestoreAccess::relink(); the
+                // next login sets the second factor up again.
+                if ($user->mfaMethod === MfaMethod::Totp) {
+                    $this->totp->delete($id);
+                    $this->backupCodes->deleteAllForUser($id);
+                    $this->users->updateMfaMethod($id, null);
+                }
             }
         } catch (UserRuleViolation | RoleRuleViolation $e) {
             return $this->formular($user, $eingabe, $e->getMessage(), 422, emailNeuSetzen: $emailNeuSetzen);
@@ -379,7 +394,7 @@ final readonly class UserController
         $jetzt = new \DateTimeImmutable();
 
         return Response::html($this->view->render('admin/benutzer-form', [
-            'title' => $user === null ? 'Benutzer einladen' : 'Benutzer ' . ($eingabe['name'] !== '' ? $eingabe['name'] : self::platzhalterName($user)),
+            'title' => $user === null ? 'Benutzer einladen' : 'Benutzer ' . ($eingabe['name'] !== '' ? $eingabe['name'] : $user->platzhalterName()),
             'user' => $user,
             'eingabe' => $eingabe,
             'emailNeuSetzen' => $emailNeuSetzen,
@@ -392,15 +407,6 @@ final readonly class UserController
             'eigenesKonto' => $user !== null && $user->id === $this->session->userId(),
             'standardTage' => AccessAssignment::EXTERN_STANDARD_TAGE,
         ], Area::Admin), $status);
-    }
-
-    /**
-     * What a row is called while its name is ciphertext under a lost server
-     * key: the id is the only readable handle it has.
-     */
-    private static function platzhalterName(User $user): string
-    {
-        return 'Benutzer #' . $user->id;
     }
 
     /**

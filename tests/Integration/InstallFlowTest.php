@@ -14,6 +14,7 @@ use App\Domain\AuditAction;
 use App\Installer\ConfigWriter;
 use App\Installer\InstallController;
 use App\Repository\AuditLogRepository;
+use App\Repository\MailQueueRepository;
 use App\Repository\MfaTotpRepository;
 use App\Repository\SettingRepository;
 use App\Repository\UserKeyRepository;
@@ -762,6 +763,8 @@ final class InstallFlowTest extends DatabaseTestCase
         new MfaTotpRepository($this->pdo())->put($userId, $alt->encrypt('JBSWY3DPEHPK3PXP'));
         new MfaTotpRepository($this->pdo())->confirm($userId);
         new UserRepository($this->pdo())->updateMfaMethod($userId, MfaMethod::Totp);
+        // ... and a mail still waiting in the queue, ciphertext under the same key.
+        new MailQueueRepository($this->pdo(), $alt)->enqueue('jemand@verein.example', 'Betreff', 'Text');
 
         $zip = $this->makeBackup(mitConfig: false);
         $this->wipeDatabase();
@@ -874,6 +877,10 @@ final class InstallFlowTest extends DatabaseTestCase
         $vault = $grant->open($userKey->unwrap($this->validPost()['admin_password']), (string) $this->pdo()->query('SELECT public_key FROM vault')->fetchColumn());
         self::assertTrue($vault->isUnlocked());
 
+        // The queue held only ciphertext under the lost key: emptied, so the
+        // cron and the admin queue page do not trip over it.
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM mail_queue')->fetchColumn());
+
         // Audited, with the account as the actor; nothing readable in the row.
         $kopf = new AuditLogRepository($this->pdo())->head();
         self::assertNotNull($kopf);
@@ -920,6 +927,76 @@ final class InstallFlowTest extends DatabaseTestCase
         $userKey = new UserKeyRepository($this->pdo())->forUser($sicherung['userId']);
         self::assertNotNull($userKey);
         self::assertTrue($grant->open($userKey->unwrap($this->validPost()['admin_password']), (string) $this->pdo()->query('SELECT public_key FROM vault')->fetchColumn())->isUnlocked());
+    }
+
+    /**
+     * Two admins with the same password cannot be told apart - nothing else
+     * about them is readable - so the step refuses rather than guessing
+     * whose account gets the typed address.
+     */
+    public function testRelinkingRefusesWhenTwoAdminsShareThePassword(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        $this->pdo()->exec(
+            "INSERT INTO `user` (email_enc, email_bi, display_name_enc, password_hash, status, mfa_required, created_at)
+             SELECT 'x', 'y', 'z', password_hash, status, mfa_required, created_at FROM `user` WHERE id = " . $sicherung['userId'],
+        );
+        $zweiteId = (int) $this->pdo()->lastInsertId();
+        $this->pdo()->exec(sprintf(
+            'INSERT INTO user_role (user_id, role_id) SELECT %d, role_id FROM user_role WHERE user_id = %d',
+            $zweiteId,
+            $sicherung['userId'],
+        ));
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => 'neu@verein.example',
+            'admin_name' => 'Admina Neu',
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('mehreren Admin-Konten', $response->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    /**
+     * config.php is written inside the re-link's transaction: when the
+     * write fails, the account is not left readable only under a key that
+     * exists nowhere, and the old config.php of "Weg 1" still fits.
+     */
+    public function testAFailedConfigWriteRollsTheRelinkBack(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+        // A directory where config.php should be: ConfigWriter cannot write.
+        mkdir($this->paths()->configFile(), 0775, true);
+        $vorher = $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch();
+
+        // file_put_contents() on a directory raises a warning before
+        // ConfigWriter turns it into the exception - swallowed here, it is
+        // the failure under test, not a defect.
+        set_error_handler(static fn(): bool => true, \E_WARNING);
+        try {
+            $this->postAccess('/install/zugang', [
+                'schluessel' => implode(' ', $sicherung['gruppen']),
+                'admin_email' => 'neu@verein.example',
+                'admin_name' => 'Admina Neu',
+                'admin_password' => $this->validPost()['admin_password'],
+            ]);
+            self::fail('an unwritable config.php has to surface');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('config.php', $e->getMessage());
+        } finally {
+            restore_error_handler();
+            rmdir($this->paths()->configFile());
+        }
+
+        self::assertSame($vorher, $this->pdo()->query('SELECT email_bi, display_name_enc FROM `user`')->fetch(), 'rolled back');
+        self::assertNotNull(new MfaTotpRepository($this->pdo())->forUser($sicherung['userId']), 'rolled back');
+        self::assertSame(InstallController::PHASE_ZUGANG, $_SESSION['install_restore']['phase'] ?? null, 'the step stays open');
+
+        $richtig = $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']]);
+        self::assertSame(200, $richtig->status, 'Weg 1 still works afterwards');
     }
 
     public function testRelinkingRefusesAWrongPasswordAndWritesNothing(): void

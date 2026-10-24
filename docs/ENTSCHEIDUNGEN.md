@@ -119,7 +119,7 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
-## E-19 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
+## E-21 ❓ Restore ohne `config.php`: Zugang über Wiederherstellungsschlüssel + Passwort
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #154)*
 
 Befund: `user.email_bi` (Login-Index), `email_enc`, `display_name_enc` und
@@ -164,8 +164,10 @@ Bewusst in Kauf genommen:
   (nicht umgesetzt, Folge-Idee): „neues Admin-Konto mit dem Wiederherstellungs-
   schlüssel anlegen“ – Tresor-Grant aus dem Papierschlüssel, wie bei der
   frischen Installation ohne neuen Tresor.
-- Haben zwei Admins dasselbe Passwort, trifft die Verknüpfung das erste
-  Konto in Id-Reihenfolge (nicht unterscheidbar; in der Praxis irrelevant).
+- Haben zwei Admins dasselbe Passwort, lehnt der Schritt ab (nicht
+  unterscheidbar; ein anderes Admin-Konto muss verknüpfen).
+- Die Mail-Warteschlange wird bei Weg 2 geleert: ihre Zeilen sind Chiffrat
+  unter dem verlorenen Schlüssel und würden sonst den Versand blockieren.
 - Folge-Idee gegen den Datenverlust der Adressen: je Konto eine an `VK_pub`
   versiegelte Kopie von Adresse und Name, dann könnte der verknüpfte Admin
   alle Konten in einer Session automatisch neu berechnen.

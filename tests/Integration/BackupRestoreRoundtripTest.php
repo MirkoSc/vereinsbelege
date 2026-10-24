@@ -414,6 +414,18 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
 
         self::assertSame([$drittes, $zweites, $erstes], array_column($service->list(), 'name'), 'newest first');
         self::assertSame($this->backupDir . '/' . $zweites, $service->path($zweites));
+
+        // From `_10` on, plain string order would put the newest behind
+        // `_2` - and rotation would then delete the newest first.
+        for ($n = 4; $n <= 11; $n++) {
+            $service->create(mitBlobs: false);
+        }
+        $namen = array_column($service->list(), 'name');
+        self::assertSame('backup_20261001_120000_11.zip', $namen[0]);
+        self::assertSame('backup_20261001_120000_10.zip', $namen[1]);
+        self::assertSame($erstes, $namen[array_key_last($namen)]);
+        self::assertCount(BackupService::KEEP, $namen, 'rotation kept the newest ten');
+        self::assertFileDoesNotExist($this->backupDir . '/' . $erstes, 'the oldest of the second is the one rotated out');
     }
 
     /**

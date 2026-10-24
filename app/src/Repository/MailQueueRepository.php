@@ -174,6 +174,17 @@ final readonly class MailQueueRepository
         return $stmt->rowCount();
     }
 
+    /**
+     * Empties the queue. After a restore without the old server key (issue
+     * #154, App\Installer\RestoreAccess) every row is ciphertext nobody can
+     * open: left in place, the first one would make the cron's claim fail
+     * on every run and the admin queue page fail to render.
+     */
+    public function deleteAll(): int
+    {
+        return (int) $this->pdo->exec('DELETE FROM mail_queue');
+    }
+
     private function attemptClaim(int $id, \DateTimeImmutable $now): bool
     {
         $jetzt = $now->format(self::FORMAT);
