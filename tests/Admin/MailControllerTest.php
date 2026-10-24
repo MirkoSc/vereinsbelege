@@ -70,6 +70,7 @@ final class MailControllerTest extends DatabaseTestCase
             'sicherheit' => 'implizit',
             'benutzer' => 'versand',
             'passwort' => 'geheim-1234',
+            'passwort_loeschen' => '1',
             'absender' => 'verein@example.test',
             'vereinsname' => 'Beispielverein',
             'oeffentliche_url' => 'http://belege.example.test',
@@ -84,6 +85,7 @@ final class MailControllerTest extends DatabaseTestCase
         self::assertStringContainsString('value="verein@example.test"', $antwort->body);
         self::assertStringContainsString('value="Beispielverein"', $antwort->body);
         self::assertStringContainsString('value="http://belege.example.test"', $antwort->body);
+        self::assertStringContainsString('name="passwort_loeschen" value="1" checked', $antwort->body);
         self::assertStringNotContainsString('geheim-1234', $antwort->body);
         // Nothing was saved.
         self::assertSame('', $this->settings->get()->host);

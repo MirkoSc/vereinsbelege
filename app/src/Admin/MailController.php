@@ -59,13 +59,19 @@ final readonly class MailController
      * @param MailSettings $einstellungen what the form shows: the stored
      *        settings, or - after a validation error - what was just typed
      */
-    private function render(?Flash $flash, MailSettings $einstellungen, int $status = 200): ResponseInterface
+    private function render(
+        ?Flash $flash,
+        MailSettings $einstellungen,
+        int $status = 200,
+        bool $passwortLoeschen = false,
+    ): ResponseInterface
     {
         return Response::html($this->view->render('admin/mail', [
             'title' => 'Mail',
             'csrf' => $this->session->csrfToken(),
             'flash' => $flash,
             'einstellungen' => $einstellungen,
+            'passwortLoeschen' => $passwortLoeschen,
             'sicherheiten' => SmtpSecurity::cases(),
             'warteschlange' => $this->queue->recent(),
         ], Area::Admin), $status);
@@ -107,6 +113,9 @@ final readonly class MailController
             // typed. The password is never put back (the field stays empty,
             // see below); the stored one is shown as before.
             $gespeichert = $this->settingsRepo->get();
+            // A flash still waiting from an earlier request would otherwise
+            // show up out of context on the next page.
+            $this->session->pullFlash();
 
             return $this->render(new Flash($fehler, FlashArt::Fehler), new MailSettings(
                 transport: $transport,
@@ -120,7 +129,7 @@ final readonly class MailController
                 antwortAn: $antwortAn,
                 vereinsname: $vereinsname,
                 oeffentlicheUrl: $oeffentlicheUrlEingabe,
-            ), 422);
+            ), 422, (string) ($request->post['passwort_loeschen'] ?? '') === '1');
         }
 
         // The form never carries the stored password back (page() never

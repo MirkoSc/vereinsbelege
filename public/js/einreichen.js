@@ -366,7 +366,9 @@ function initEinreichen() {
             seiten = seitenEntfernen(seiten, seite.id);
             // The limit message ("höchstens N Seiten") is stale as soon as
             // there is room again.
-            zeigeUploadFehler('');
+            if (uploadFehler.textContent.indexOf('Seiten je Einreichung') !== -1) {
+                zeigeUploadFehler('');
+            }
             renderSeiten();
         });
 

@@ -9,6 +9,7 @@
  *
  * @var string $csrf
  * @var \App\Service\Mail\MailSettings $einstellungen
+ * @var bool $passwortLoeschen the "clear password" box was ticked in a submission that failed validation
  * @var list<\App\Service\Mail\SmtpSecurity> $sicherheiten
  * @var list<\App\Domain\QueuedMail> $warteschlange
  */
@@ -93,7 +94,7 @@ $maskiere = static function (string $adresse): string {
             <?= $einstellungen->passwortGesetzt ? 'gesetzt' : 'nicht gesetzt' ?>.
         </p>
         <label class="feld-ankreuz">
-            <input type="checkbox" name="passwort_loeschen" value="1"> Gespeichertes Passwort löschen
+            <input type="checkbox" name="passwort_loeschen" value="1"<?= ($passwortLoeschen ?? false) ? ' checked' : '' ?>> Gespeichertes Passwort löschen
         </label>
 
         <label for="mail-absender">Absenderadresse <span class="pflicht" aria-hidden="true">*</span>
