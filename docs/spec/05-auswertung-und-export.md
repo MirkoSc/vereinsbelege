@@ -235,7 +235,7 @@ leer → Ebene entfällt).
 - **Nextcloud-Ablage (issue #95):** Statt das ZIP herunter- und wieder
   hochzuladen, legt die Laufseite einen Export-Lauf direkt in einen Ordner
   der Vereins-Nextcloud (WebDAV). Entscheidungen (vorläufig, autonom
-  getroffen – Bestätigung durch Mirko offen, E-20):
+  getroffen – Bestätigung durch Mirko offen, E-21):
   - **Kein ZIP auf dem Server.** Ein serverseitig erzeugtes ZIP bräuchte
     Klartext auf Platte oder einen langen Request; die Ausnahme oben gilt
     nur für den Browser-Download. Stattdessen geht **jede Datei einzeln**
@@ -254,8 +254,9 @@ leer → Ebene entfällt).
     doppelt. Ein fehlgeschlagener Schritt (Netz, 401, 507 …) bewegt nichts,
     der nächste versucht dieselbe Datei; eine unlesbare Datei (Blob defekt)
     meldet sich als Fehler, nicht als HTTP 500. Ändert sich der Plan
-    unterwegs (ein Beleg gelöscht, abgelehnt, verschoben – erkannt an
-    `plan_hash`, einem SHA-256 nur über die Blob-IDs), beginnt die Kette
+    unterwegs (ein Beleg gelöscht, abgelehnt, umdatiert, sein PDF fertig –
+    erkannt an `plan_hash`, einem HMAC mit dem Blind-Index-Schlüssel des
+    Tresors über Pfade und Blob-IDs), beginnt die Kette
     von vorn; schon Abgelegtes zählt dann als vorhanden, nichts wird
     übersprungen oder vorzeitig fertig. Ein geschlossener Tab hält einfach
     an; die Seite bietet „Weiter ablegen“.

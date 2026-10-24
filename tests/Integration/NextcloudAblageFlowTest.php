@@ -362,6 +362,33 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('03.02.2025', $this->dav->dateien['Belege_2025/index.csv']['inhalt']);
     }
 
+    /**
+     * A receipt re-dated mid-chain keeps its blob but changes its path: the
+     * chain starts over and the file lands under its new path too, with
+     * index.csv last. The fingerprint is no plain hash of the paths.
+     */
+    public function testARedatedReceiptMidwayStartsTheChainOver(): void
+    {
+        $this->einrichten();
+        $this->belege();
+        $lauf = $this->laufAnlegen();
+        $this->starten($lauf);
+        $vorher = new ExportRunUploadRepository($this->pdo())->find($lauf)?->planHash;
+        self::assertSame(2, $this->schritt($lauf)['verarbeitet']);
+
+        $this->pdo()->prepare('UPDATE invoice SET invoice_date = ? WHERE document_id = (SELECT MIN(document_id) FROM export_run_document WHERE export_run_id = ?)')
+            ->execute(['2025-02-04', $lauf]);
+        $this->bisFertig($lauf);
+
+        $stand = new ExportRunUploadRepository($this->pdo())->find($lauf);
+        self::assertNotSame($vorher, $stand?->planHash);
+        self::assertSame([4, 4], [$stand?->nextIndex, $stand?->total]);
+        self::assertArrayHasKey('Belege_2025/Bauhaus/2025/02. Februar/Bauhaus 04.02.2025.pdf', $this->dav->dateien);
+        self::assertSame('Belege_2025/index.csv', array_slice($this->dav->hochgeladen(), -1)[0]);
+        self::assertStringContainsString('04.02.2025', $this->dav->dateien['Belege_2025/index.csv']['inhalt']);
+        self::assertNotSame(hash('sha256', 'Belege_2025'), $stand->planHash);
+    }
+
     /** A failed step moves nothing; the next one carries on with the same file. */
     public function testAFailedStepMovesNothingAndTheNextOneGoesOn(): void
     {

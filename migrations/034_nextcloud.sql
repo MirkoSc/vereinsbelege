@@ -13,9 +13,10 @@
 -- counters, never a path or a name:
 -- - `status` `laeuft` / `fertig` (App\Domain\NextcloudAblageStatus).
 -- - `next_index` the next file of the run in upload order (index.csv last),
---   `total` the files of the run when the chain started, `plan_hash` a
---   SHA-256 over the blob ids in upload order (ids only, no names): a step
---   that finds another plan - a receipt deleted, rejected or moved - starts
+--   `total` the files of the run when the chain started, `plan_hash` an
+--   HMAC under the vault's blind index key over paths and blob ids in
+--   upload order (never a plain hash of names): a step that finds another
+--   plan - a receipt deleted, rejected, re-dated, its PDF finished - starts
 --   over from the first file, which then counts as already there.
 -- - `hochgeladen`, `vorhanden` (already in the cloud with the same content,
 --   skipped), `umbenannt` (a different file had the name; filed with a

@@ -94,7 +94,7 @@ final readonly class NextcloudAblage
         if ($plan->anzahlBelege === 0) {
             throw new NextcloudAblageFehler('Die Belege dieses Exports sind nicht mehr verfügbar – es wurde nichts abgelegt.');
         }
-        $this->uploads->starten($lauf->id, $plan->anzahlDateien(), self::planHash($plan), $userId, $now);
+        $this->uploads->starten($lauf->id, $plan->anzahlDateien(), self::planHash($plan, $vault), $userId, $now);
 
         return $this->uploads->find($lauf->id) ?? throw new \LogicException('The upload row vanished.');
     }
@@ -117,7 +117,7 @@ final readonly class NextcloudAblage
         $plan = $this->plan($lauf, $bereich, $vault);
         $gesamt = $plan->anzahlDateien();
         $index = $stand->nextIndex;
-        $hash = self::planHash($plan);
+        $hash = self::planHash($plan, $vault);
         if ($hash !== $stand->planHash) {
             // A receipt of the run was deleted, rejected or moved since the
             // chain started: the cursor no longer points at the same file.
@@ -277,12 +277,20 @@ final readonly class NextcloudAblage
     }
 
     /**
-     * What a running chain must not lose track of: which file sits at which
-     * position. Blob ids only - no name goes into the hash.
+     * What a running chain must not lose track of: which file goes where,
+     * in which order (paths and blob ids, index.csv included). The paths
+     * carry supplier names, so the fingerprint is an HMAC under the vault's
+     * blind index key - not computable without the vault, and no plain
+     * hash anyone could test names against.
      */
-    private static function planHash(ExportPlan $plan): string
+    private static function planHash(ExportPlan $plan, Vault $vault): string
     {
-        return hash('sha256', implode(',', array_column($plan->eintraege, 'blobId')) . '|' . $plan->anzahlDateien());
+        $liste = array_map(static fn(array $e): array => [$e['pfad'], $e['blobId']], $plan->eintraege);
+        $liste[] = [$plan->indexPfad, 0];
+        // Hashed first: BlindIndex::forValue() normalises case and spaces.
+        $inhalt = hash('sha256', json_encode($liste, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+
+        return bin2hex($vault->blindIndex()->forValue('export_run_upload.plan', $inhalt));
     }
 
     private function plan(ExportRun $lauf, Zugriffsbereich $bereich, Vault $vault): ExportPlan
