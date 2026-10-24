@@ -25,6 +25,16 @@ const scannerHilfen = typeof module === 'object' && module.exports
 const SCAN_QUALITAET = 0.85;
 
 /**
+ * Shown when a HEIC photo cannot be decoded here. The page is refused before
+ * any upload: the server cannot read HEIC, so a HEIC original is only taken
+ * together with the JPEG made in the browser (docs/spec/03 section 1).
+ */
+const HEIC_HINWEIS = 'HEIC-Bilder werden von diesem Browser nicht unterstützt. Bitte als JPEG oder PNG wählen, oder das Foto direkt aufnehmen. iPhone-Tipp: Einstellungen › Kamera › Formate › „Maximale Kompatibilität“.';
+
+/** JPEG quality of a converted HEIC photo - it is the scanner's input, not the end product. */
+const HEIC_QUALITAET = 0.95;
+
+/**
  * Whether this browser can process pages itself. `umgebung` is `window` in
  * the browser; tests pass a plain object.
  */
@@ -52,6 +62,25 @@ function istScanbar(datei) {
     }
 
     return /\.(jpe?g|png)$/i.test((datei && datei.name) || '');
+}
+
+/**
+ * HEIC/HEIF, the iPhone default (docs/spec/03-erfassung-und-ki.md section 1).
+ * By MIME type or extension - a file picked from the gallery often has no
+ * type. The server decides by magic bytes (App\Service\Upload\MagicBytes).
+ */
+function istHeicDatei(datei) {
+    const typ = (datei && datei.type) || '';
+    const name = (datei && datei.name) || '';
+
+    return typ === 'image/heic' || typ === 'image/heif' || /\.hei[cf]$/i.test(name);
+}
+
+/** File name of the JPEG converted from a HEIC file. */
+function heicJpegName(name) {
+    const basis = String(name || '').replace(/\.[^.\/\\]*$/, '');
+
+    return (basis === '' ? 'foto' : basis) + '.jpg';
 }
 
 /** File name of the processed version - encrypted like every name, never shown publicly. */
@@ -83,19 +112,48 @@ function startEcken(gefunden, breite, hoehe, interaktiv) {
  *   aufbereiten  - (datei) => Promise<File|null>; null = cancelled
  *   hochladen    - (datei) => Promise<{blob_id}>
  *
+ *   heicWandeln  - optional, (datei) => Promise<File|null>: HEIC to JPEG
+ *
  * Resolves `{ abgebrochen: true }` on a cancel, otherwise `{ blobId,
- * aufbereitetId, aufbereitet, serverFallback }`: `aufbereitet` is the
- * processed File (for the preview) or null, `serverFallback` says the
- * image was not processed here and the server will do it.
+ * aufbereitetId, aufbereitet, serverFallback, scanDatei }`:
+ * `aufbereitet` is the processed File (for the preview) or null,
+ * `serverFallback` says the image was not processed here and the server will
+ * do it, `scanDatei` the JPEG converted from a HEIC original
+ * (the input of "Zuschneiden") or null. A HEIC file the browser cannot
+ * decode rejects with an Error (`heic: true`, message HEIC_HINWEIS) before
+ * anything is uploaded.
  */
 async function seiteVerarbeiten(datei, optionen) {
-    const scanbar = istScanbar(datei);
+    // A HEIC photo is converted first where the browser can decode it; the
+    // JPEG then runs through the scanner like any other image. The HEIC file
+    // stays the original (E-10), the JPEG is its processed version.
+    let quelle = datei;
+    if (istHeicDatei(datei)) {
+        quelle = null;
+        if (typeof optionen.heicWandeln === 'function') {
+            try {
+                quelle = await optionen.heicWandeln(datei);
+            } catch (problem) {
+                quelle = null;
+            }
+        }
+        if (quelle === null) {
+            // Not decodable here: refused before anything is uploaded.
+            const abgelehnt = new Error(HEIC_HINWEIS);
+            abgelehnt.heic = true;
+
+            throw abgelehnt;
+        }
+    }
+
+    const konvertiert = quelle !== datei;
+    const scanbar = istScanbar(quelle);
     let aufbereitet = null;
-    let serverFallback = scanbar;
+    let serverFallback = scanbar && !konvertiert;
 
     if (scanbar && optionen.kann) {
         try {
-            aufbereitet = await optionen.aufbereiten(datei);
+            aufbereitet = await optionen.aufbereiten(quelle);
             if (aufbereitet === null) {
                 return { abgebrochen: true };
             }
@@ -105,6 +163,11 @@ async function seiteVerarbeiten(datei, optionen) {
             // original still goes up, the server takes over (GD fallback).
             aufbereitet = null;
         }
+    }
+    if (aufbereitet === null && konvertiert) {
+        // The server cannot read HEIC: the converted JPEG is the processed
+        // version even if the scanner did not run.
+        aufbereitet = quelle;
     }
 
     const original = await optionen.hochladen(datei);
@@ -116,6 +179,7 @@ async function seiteVerarbeiten(datei, optionen) {
         aufbereitetId: verarbeitet === null ? null : verarbeitet.blob_id,
         aufbereitet: aufbereitet,
         serverFallback: serverFallback,
+        scanDatei: konvertiert ? quelle : null,
     };
 }
 
@@ -149,6 +213,35 @@ function alsJpegDatei(bild, name) {
             erfuellen(new File([blob], aufbereitetName(name), { type: 'image/jpeg' }));
         }, 'image/jpeg', SCAN_QUALITAET);
     });
+}
+
+/**
+ * HEIC to JPEG with the browser's own decoder (Safari reads HEIC in
+ * createImageBitmap; Chrome/Firefox reject it - then this throws and the
+ * caller shows the hint). No library: a WASM decoder would need
+ * 'wasm-unsafe-eval' in the CSP (CLAUDE.md section 4).
+ */
+async function heicZuJpeg(datei) {
+    const bitmap = await createImageBitmap(datei, { imageOrientation: 'from-image' });
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+
+        return await new Promise(function (erfuellen, ablehnen) {
+            canvas.toBlob(function (blob) {
+                if (blob === null) {
+                    ablehnen(new Error('Das Bild konnte nicht umgewandelt werden.'));
+
+                    return;
+                }
+                erfuellen(new File([blob], heicJpegName(datei.name), { type: 'image/jpeg' }));
+            }, 'image/jpeg', HEIC_QUALITAET);
+        });
+    } finally {
+        bitmap.close();
+    }
 }
 
 /**
@@ -266,8 +359,12 @@ async function scannerOeffnen(dialog, datei) {
 if (typeof module === 'object' && module.exports) {
     module.exports = {
         SCAN_QUALITAET,
+        HEIC_QUALITAET,
+        HEIC_HINWEIS,
         kannScannen,
         istScanbar,
+        istHeicDatei,
+        heicJpegName,
         aufbereitetName,
         startEcken,
         seiteVerarbeiten,
