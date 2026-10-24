@@ -262,7 +262,45 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   `needs_review` des Ziels nicht (M6-5).
 - **Noch nicht umgesetzt:** „Neu gelernte Merkmale (weitere IBAN,
   Alias-Name) werden nach Bestätigung hinzugefügt“ (03 §7) – kein
-  Abnahmekriterium von #48, eigenes Folge-Issue.
+  Abnahmekriterium von #48, eigenes Folge-Issue (umgesetzt mit #201, E-29).
+
+## E-29 ❓ Lieferanten lernen Merkmale aus bestätigten Belegen
+*M7-6b (issue #201) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+03 §7 sagt nur „nach Bestätigung hinzugefügt“. Umgesetzt:
+- **Sichtbar und vorausgewählt:** die Prüfansicht zeigt vor dem Speichern
+  ein Ankreuzfeld „Neue Merkmale beim Lieferanten „…“ ergänzen“ mit den
+  Werten (IBAN, Name als Alias, Gläubiger-ID, Mandatsreferenz). Angekreuzt
+  ist es vorausgewählt – wer nichts tut, lässt den Lieferanten lernen; wer
+  zweifelt, nimmt den Haken heraus. Ohne Anzeige zu lernen hätte Stammdaten
+  unbemerkt verändert.
+- **Wann:** beim **ersten** Speichern bzw. „Geprüft“ des Belegs, nur für den
+  Lieferanten, den die Seite aus KI/E-Rechnung/Auflösung gewählt hat und den
+  die Person **behalten** hat (Treffer Stufe 1–4 und bestätigter Vorschlag
+  Stufe 5 – dort ist es am wertvollsten). Wählt die Person einen anderen
+  oder selbst einen (z. B. bei „mehrdeutig“), wird nichts gelernt – wer
+  selbst wählt, kann Merkmale unter „Lieferanten“ pflegen. Auch nicht bei
+  einem Partner aus der Archiv-Vorgabe und nicht bei späteren Speichervorgängen.
+- **Recht:** nur mit `supplier.manage` (es ändert Stammdaten); ohne das Recht
+  wird nichts angeboten und nichts gelernt.
+- **Was:** IBAN und Name als Alias; Gläubiger-ID nur, wenn der Lieferant
+  keine hat (eine abweichende wird gemeldet, nicht ersetzt), Mandatsreferenz
+  nur mit dieser Gläubiger-ID. **Nicht** USt-ID/Steuernummer (finden den
+  Lieferanten schon in Stufe 1, wenn vorhanden; eine abweichende wäre eher ein
+  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …).
+- **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten, oder ein Name,
+  der Name/Alias eines anderen ist → nicht lernen, die Seite nennt ihn; volle
+  Listen (20) → nicht lernen, Hinweis. Der Beleg wird immer gespeichert; das
+  Lernen läuft danach in eigener Transaktion und nur, wenn der Plan noch
+  genau dem gezeigten entspricht – sonst gar nichts (mit Hinweis), denn die
+  Person hat etwas anderes bestätigt.
+- **Vereins-IBAN:** eine IBAN eines eigenen Kontos (`bank_account`) wird nie
+  gelernt, bei der KI-Neuanlage (Stufe 6, #48) weggelassen und in Stufe 2 der
+  Auflösung ignoriert – auf Lastschrift-Rechnungen und Einnahme-Belegen ist sie
+  oft die einzige IBAN; gelernt, würde sie jeden solchen Beleg diesem
+  Lieferanten zuordnen (Hinweis aus dem Koordinator-Review).
+- `needs_review` eines von der KI angelegten Lieferanten bleibt – ein
+  bestätigter Beleg ist keine Prüfung seiner Stammdaten.
 
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
