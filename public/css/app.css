@@ -720,6 +720,10 @@ textarea[aria-invalid="true"] {
 /* --- Tabellen --- */
 
 .tabelle-rahmen {
+    /* Containing block for .visuell-versteckt cells: an absolutely
+       positioned child otherwise escapes the scroll container and widens
+       the page's scrollWidth. */
+    position: relative;
     overflow-x: auto;
     background: var(--farbe-flaeche);
     border: 1px solid var(--farbe-rand);
