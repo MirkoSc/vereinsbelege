@@ -119,6 +119,22 @@ Der Worker sieht nur wartende Dokumente, nie Archiv, Bankdaten oder
 Einreicher-IBANs. Ausfall → automatischer Rückfall auf den Browser-Weg.
 Keine Zusatzkosten; DigitalOcean nicht nötig.
 
+## E-19 ❓ Volltextsuche nur mit Session-Index
+*(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
+Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
+später Worker-OCR) legt **keinen dauerhaften Index** an – weder Klartext
+noch Wort-Blind-Indexes, die Worthäufigkeiten verrieten. Jede Session baut
+nach dem Entsperren beim ersten Aufruf der Suche einen eigenen Index per
+kurzer Schrittkette; er liegt verschlüsselt in `shared/var/tmp/suche/`, der
+Schlüssel nur an den Tresor versiegelt in der Session, und endet mit ihr
+(Details 03 §10). Weitere vorläufige Festlegungen: Recht `inbox.view` mit
+dessen Scope (Treffer verlinken in den Posteingang); Suche per POST, damit
+Suchbegriffe nicht in URLs/Logs landen; UND-Verknüpfung mit Phrasen, keine
+Platzhalter, keine Rangfolge (neueste zuerst, höchstens 50); Freitext der
+Einreichung und von Hand erfasste Belegfelder (Zweck, Notiz) gehören nicht
+zum Index – das Issue nennt nur erkannte Texte. Kosten: Der erste Aufbau
+dauert je Session einige Sekunden je 1000 Belege.
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

@@ -64,6 +64,9 @@ final readonly class AuthController
         /** @var \Closure(): AuditLog built lazily, like $login - the login
          *  FORM needs no database. */
         private \Closure $audit,
+        /** @var (\Closure(): void)|null whatever else a logout ends with
+         *  the session - the full-text index's files (issue #94). */
+        private ?\Closure $beimAbmelden = null,
     ) {
     }
 
@@ -222,6 +225,9 @@ final readonly class AuthController
         // anyway, and the cookie that would open it is deleted in the same
         // answer (docs/spec/01-sicherheit.md section 2, "Logout löscht
         // beides").
+        if ($this->beimAbmelden !== null) {
+            ($this->beimAbmelden)();
+        }
         $this->vaultSession->clear();
         $this->session->destroy();
 

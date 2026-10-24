@@ -145,4 +145,14 @@ final readonly class Paths
     {
         return $this->tmpDir() . '/upload';
     }
+
+    /**
+     * The full-text indexes of running sessions (issue #94): ciphertext
+     * only, the key is sealed in the session - removed at logout, orphans
+     * after 24 h (docs/spec/03-erfassung-und-ki.md section 10).
+     */
+    public function suchindexDir(): string
+    {
+        return $this->tmpDir() . '/suche';
+    }
 }

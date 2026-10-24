@@ -39,6 +39,7 @@ use App\App\PasswordController;
 use App\App\PasswordToolbox;
 use App\App\SecurityController;
 use App\App\PruefungController;
+use App\App\SucheController;
 use App\App\SupplierController;
 use App\Config\Config;
 use App\Config\Paths;
@@ -121,6 +122,7 @@ use App\Service\Cron\MailQueueTask;
 use App\Service\Cron\RateLimitCleanupTask;
 use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
+use App\Service\Cron\SuchindexCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Document\Duplikatindex;
@@ -164,6 +166,12 @@ use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
+use App\Service\Suche\ERechnungQuelle;
+use App\Service\Suche\KiQuelle;
+use App\Service\Suche\SitzungsSuchindex;
+use App\Service\Suche\SuchindexSpeicher;
+use App\Service\Suche\TextlayerQuelle;
+use App\Service\Suche\Volltextsuche;
 use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\ReleaseDownloader;
 use App\Service\Update\ReleaseSwitcher;
@@ -377,6 +385,9 @@ $cron = static fn(): CronController => new CronController($config, static functi
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
             // M3-5: password reset links whose 30 minutes are over.
             new AuthTokenCleanupTask(new AuthTokenRepository($pdo)),
+            // Issue #94: full-text indexes of sessions that ended without
+            // a logout.
+            new SuchindexCleanupTask(new SuchindexSpeicher($paths->suchindexDir())),
         ],
         logger: $logger,
     );
@@ -990,6 +1001,14 @@ $auth = static fn(): AuthController => new AuthController(
     static fn(): MfaService => $mfaServiceFor($connections->pdo()),
     $mfaToolbox,
     static fn(): AuditLog => $auditFor($connections->pdo()),
+    // The session's full-text index (issue #94) goes with the session -
+    // its files only; no database needed for that.
+    static function () use ($paths): void {
+        $id = new SitzungsSuchindex()->vergiss();
+        if ($id !== null) {
+            new SuchindexSpeicher($paths->suchindexDir())->loesche($id);
+        }
+    },
 );
 
 // The second factor's own confirmation controller (M3-4, issue #17): built
@@ -1094,6 +1113,35 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
         ),
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $audit),
+    );
+};
+
+// Full-text search (issue #94): the session index over the recognised
+// texts. Built lazily like the other pages. A new text source (the worker's
+// OCR, issues #51-#55) is one more entry in the list of sources.
+$sucheSeite = static function () use ($connections, $view, $paths, $kiAuslesungFor): SucheController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $documents = new DocumentRepository($pdo);
+    $artefakte = new DocumentArtifactRepository($pdo);
+    $texterkennung = new Texterkennung(
+        $documents,
+        $artefakte,
+        new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+    );
+
+    return new SucheController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Volltextsuche(
+            $documents,
+            $artefakte,
+            new SuchindexSpeicher($paths->suchindexDir()),
+            new SitzungsSuchindex(),
+            [new TextlayerQuelle($texterkennung), new ERechnungQuelle($texterkennung), new KiQuelle($kiAuslesungFor($pdo))],
+        ),
+        new CostCenterRepository($pdo),
     );
 };
 
@@ -1280,6 +1328,7 @@ $router = new Router();
     $buchungsregeln,
     $export,
     $archivImport,
+    $sucheSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

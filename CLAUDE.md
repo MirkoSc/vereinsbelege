@@ -158,6 +158,8 @@ zu erfinden.
 - Suche/Duplikaterkennung auf verschlüsselten Werten über **Blind Indexes**
   (HMAC, Schlüssel aus dem Tresor abgeleitet → nur in der Session
   berechenbar).
+  Ausnahme Volltextsuche über erkannte Texte: **kein** dauerhafter Index,
+  sondern ein verschlüsselter Session-Index (03 §10).
 - Dateien (Originalbilder, erzeugte PDFs, Kontoauszugs-Dateien) sind
   **Blobs**, verschlüsselt per libsodium secretstream. Storage-Backend
   wählbar: `db` (Chunks in `blob_chunk`) oder `fs` (`shared/var/blobs/`).

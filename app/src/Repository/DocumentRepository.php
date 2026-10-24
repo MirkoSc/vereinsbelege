@@ -193,6 +193,31 @@ final readonly class DocumentRepository
     }
 
     /**
+     * Inbox rows by id, newest id first, only those within $bereich - the
+     * full-text search (issue #94) shows its hits through this, so a hit
+     * outside the viewer's scope never reaches the page, whatever the
+     * session index holds.
+     *
+     * @param list<int> $ids
+     *
+     * @return list<InboxItem>
+     */
+    public function inboxItems(array $ids, Zugriffsbereich $bereich): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            self::INBOX_SELECT . ' WHERE d.id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') AND ' . $scope
+            . ' ORDER BY d.id DESC',
+        );
+        $stmt->execute([...array_map(intval(...), $ids), ...$parameter]);
+
+        return array_map(InboxItem::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
      * The review queue (issue #37/M6-3): every document the review page may
      * capture (App\Domain\DocumentStatus::pruefbare()), oldest first - a
      * queue is worked off in the order it came in. Narrowed to $bereich

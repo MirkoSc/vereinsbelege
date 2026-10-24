@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Domain\ArtifactKind;
 use App\Domain\DocumentArtifact;
 use App\Domain\JobExecutor;
+use App\Domain\Zugriffsbereich;
 
 /**
  * The `document_artifact` table (docs/spec/02-datenmodell.md "Fachdaten",
@@ -149,5 +150,69 @@ final readonly class DocumentArtifactRepository
         $stmt->execute([$documentId, $kind->value, $jobId]);
 
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * The next artifact rows of $kinds after id $nachId, in id order, of
+     * documents within $bereich (scope on the document like the inbox:
+     * `created_at`, `cost_center_id`) - what the full-text index (issue
+     * #94, App\Service\Suche\Volltextsuche) takes in next. Ids and
+     * document ids only; nothing is decrypted here.
+     *
+     * @param list<ArtifactKind> $kinds
+     *
+     * @return list<array{id: int, document_id: int}>
+     */
+    public function suchquellenNach(int $nachId, array $kinds, Zugriffsbereich $bereich, int $limit): array
+    {
+        if ($kinds === []) {
+            return [];
+        }
+        [$sql, $parameter] = self::suchquellenBedingung($nachId, $kinds, $bereich);
+        $stmt = $this->pdo->prepare(
+            'SELECT a.id, a.document_id FROM document_artifact a JOIN document d ON d.id = a.document_id
+             WHERE ' . $sql . ' ORDER BY a.id LIMIT ' . max(1, $limit),
+        );
+        $stmt->execute($parameter);
+
+        return array_map(
+            static fn(array $row): array => ['id' => (int) $row['id'], 'document_id' => (int) $row['document_id']],
+            $stmt->fetchAll(),
+        );
+    }
+
+    /**
+     * How many documents within $bereich have artifacts of $kinds after id
+     * $nachId - the "still to index" of the full-text index (issue #94).
+     *
+     * @param list<ArtifactKind> $kinds
+     */
+    public function zaehleSuchquellenNach(int $nachId, array $kinds, Zugriffsbereich $bereich): int
+    {
+        if ($kinds === []) {
+            return 0;
+        }
+        [$sql, $parameter] = self::suchquellenBedingung($nachId, $kinds, $bereich);
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(DISTINCT a.document_id) FROM document_artifact a JOIN document d ON d.id = a.document_id WHERE ' . $sql,
+        );
+        $stmt->execute($parameter);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * @param list<ArtifactKind> $kinds
+     *
+     * @return array{0: string, 1: list<int|string>}
+     */
+    private static function suchquellenBedingung(int $nachId, array $kinds, Zugriffsbereich $bereich): array
+    {
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+
+        return [
+            'a.id > ? AND a.kind IN (' . implode(', ', array_fill(0, count($kinds), '?')) . ') AND ' . $scope,
+            [$nachId, ...array_map(static fn(ArtifactKind $k): string => $k->value, $kinds), ...$scopeParameter],
+        ];
     }
 }
