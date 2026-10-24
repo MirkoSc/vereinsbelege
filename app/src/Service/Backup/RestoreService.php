@@ -28,13 +28,6 @@ final readonly class RestoreService
      */
     public const int DUMP_BYTES_PER_STEP = 8 * 1024 * 1024;
 
-    /** The session settings at the top of every dump (MysqlDumper::dump()). */
-    public const string SESSION_NAMES = 'SET NAMES utf8mb4';
-
-    public const string SESSION_FOREIGN_KEYS_OFF = 'SET FOREIGN_KEY_CHECKS = 0';
-
-    public const string SESSION_FOREIGN_KEYS_ON = 'SET FOREIGN_KEY_CHECKS = 1';
-
     /** Blob files per request, for the same reason. */
     public const int BLOBS_PER_STEP = 200;
 
@@ -151,7 +144,8 @@ final readonly class RestoreService
      * `$nachAnweisung` is called with the new boundary after every single
      * statement. The installer keeps it in the session right away, so a
      * request that breaks off mid-block resumes behind the last statement
-     * that ran instead of running the block again.
+     * that was confirmed instead of running the block again. Only the one
+     * statement in flight when the request ends can still run twice.
      *
      * @param (\Closure(int): void)|null $nachAnweisung
      *
@@ -167,8 +161,8 @@ final readonly class RestoreService
         // Without them a later step would create and fill the tables - in
         // alphabetical, not dependency order - with foreign key checks on.
         if ($offset > 0) {
-            $pdo->exec(self::SESSION_NAMES);
-            $pdo->exec(self::SESSION_FOREIGN_KEYS_OFF);
+            $pdo->exec(MysqlDumper::SESSION_NAMES);
+            $pdo->exec(MysqlDumper::SESSION_FOREIGN_KEYS_OFF);
         }
 
         $anweisungen = 0;
@@ -191,7 +185,7 @@ final readonly class RestoreService
         // migrations then run on this connection: with foreign key checks
         // back on, as the dump's last line leaves them.
         if ($offset > 0 && $stream->boundary() >= $stream->size()) {
-            $pdo->exec(self::SESSION_FOREIGN_KEYS_ON);
+            $pdo->exec(MysqlDumper::SESSION_FOREIGN_KEYS_ON);
         }
 
         return [
@@ -207,17 +201,18 @@ final readonly class RestoreService
      * - to carry on a restore whose session still counts statements, as the
      * versions before issue #120 did. Reads the dump once up to there and
      * runs nothing.
+     *
+     * @return array{offset: int, anweisungen: int} the offset and how many statements lie before it
      */
-    public function byteOffsetNachAnweisungen(string $dumpDatei, int $anweisungen): int
+    public function byteOffsetNachAnweisungen(string $dumpDatei, int $anweisungen): array
     {
         $stream = new SqlStatementStream($dumpDatei);
-        for ($i = 0; $i < $anweisungen; $i++) {
-            if ($stream->next() === null) {
-                break;
-            }
+        $gezaehlt = 0;
+        while ($gezaehlt < $anweisungen && $stream->next() !== null) {
+            $gezaehlt++;
         }
 
-        return $stream->boundary();
+        return ['offset' => $stream->boundary(), 'anweisungen' => $gezaehlt];
     }
 
     /**

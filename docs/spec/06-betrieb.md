@@ -237,8 +237,10 @@ Schritte, Wiederholung ab dem fehlgeschlagenen Schritt); `tests/js/install.test.
   bis `memory_limit` zu wachsen. Der Offset wird **nach jeder einzelnen
   Anweisung** in die Session geschrieben: bricht ein Request mitten im Block
   ab (Zeitlimit – PHP speichert die Session auch dann), setzt der nächste
-  hinter der letzten ausgeführten Anweisung an statt den Block zu
-  wiederholen. Fortschritt: `offset`/`gesamt` sind in der Dump-Phase Bytes,
+  hinter der letzten bestätigten Anweisung an statt den ganzen Block zu
+  wiederholen. Nur die eine Anweisung, die beim Abbruch gerade lief, kann
+  ein zweites Mal laufen (ein doppeltes INSERT endet mit SQLSTATE 23000 →
+  Restore von vorn). Fortschritt: `offset`/`gesamt` sind in der Dump-Phase Bytes,
   die Seite zeigt „Anweisung X eingespielt (P %)“. Eine Restore-Session
   einer älteren Version (Statement-Index in `offset`, kein `dump_offset`)
   wird einmalig umgerechnet: Datei bis zu dieser Anweisung lesen, nichts
@@ -341,11 +343,12 @@ Tresors ab). `POST /install/wiederherstellen` antwortet in dieser Phase 409.
 - Bricht ein Block mitten in der Ausführung ab (Absturz), ist die Zieldatenbank
   halb gefüllt. Abhilfe: Restore von vorn – jede Tabelle beginnt mit
   `DROP TABLE IF EXISTS`. Seit #120 setzt ein abgebrochener Schritt hinter
-  der letzten ausgeführten Anweisung wieder an; offen bleibt nur ein harter
-  Prozessabbruch (z. B. FastCGI-Timeout, OOM), bei dem PHP die Session nicht
-  mehr schreibt – dann wiederholt der nächste Schritt Anweisungen ab dem
-  zuletzt gespeicherten Offset, und ein doppeltes INSERT endet mit
-  SQLSTATE 23000; auch dann: Restore von vorn.
+  der letzten bestätigten Anweisung wieder an; offen bleiben die Anweisung,
+  die beim Abbruch gerade lief, und ein harter Prozessabbruch (z. B.
+  FastCGI-Timeout, OOM), bei dem PHP die Session nicht mehr schreibt – dann
+  wiederholt der nächste Schritt Anweisungen ab dem zuletzt gespeicherten
+  Offset, und ein doppeltes INSERT endet mit SQLSTATE 23000; auch dann:
+  Restore von vorn.
 
 **Pflicht-Tests:** `BackupRestoreRoundtripTest` (Backup → alle Tabellen
 löschen → einspielen → byte-gleich; Sonderzeichen, NULL, mehr Zeilen als ein

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Service\Backup;
 
 use App\Installer\ConfigWriter;
+use App\Service\Backup\MysqlDumper;
 use App\Service\Backup\RestoreService;
 use App\Service\Migration\SqlSplitter;
 use App\Service\Migration\SqlStatementStream;
@@ -258,9 +259,9 @@ final class RestoreServiceTest extends TestCase
     private static function ohneSitzung(array $log): array
     {
         $sitzung = [
-            RestoreService::SESSION_NAMES,
-            RestoreService::SESSION_FOREIGN_KEYS_OFF,
-            RestoreService::SESSION_FOREIGN_KEYS_ON,
+            MysqlDumper::SESSION_NAMES,
+            MysqlDumper::SESSION_FOREIGN_KEYS_OFF,
+            MysqlDumper::SESSION_FOREIGN_KEYS_ON,
         ];
 
         return array_values(array_filter($log, static fn(string $s): bool => !in_array($s, $sitzung, true)));
@@ -416,7 +417,9 @@ final class RestoreServiceTest extends TestCase
         $service = new RestoreService();
 
         foreach ([0, 1, 200, 400, count($alle) - 1, count($alle), count($alle) + 5] as $bisher) {
-            $offset = $service->byteOffsetNachAnweisungen($datei, $bisher);
+            $umgerechnet = $service->byteOffsetNachAnweisungen($datei, $bisher);
+            self::assertSame(min($bisher, count($alle)), $umgerechnet['anweisungen']);
+            $offset = $umgerechnet['offset'];
             $rest = [];
             $pdo = $this->pdo($rest);
             while ($offset < strlen($sql)) {

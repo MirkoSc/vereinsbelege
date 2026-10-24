@@ -433,13 +433,14 @@ ab dort (`SqlStatementStream`). Getroffen ohne Rückfrage:
   Die Seite zeigt deshalb „Anweisung X eingespielt (P %)“ statt
   „Anweisung X von Y“.
 - **Offset nach jeder Anweisung in der Session**, nicht erst am Blockende:
-  ein Abbruch durch das Zeitlimit wiederholt keine Anweisung.
+  ein Abbruch durch das Zeitlimit wiederholt höchstens die eine Anweisung,
+  die gerade lief, statt des ganzen Blocks.
 - **Alte Restore-Session wird umgerechnet** statt abgebrochen: der
   Statement-Index wird einmal durch Lesen bis dorthin in einen Byte-Offset
   übersetzt (gleiche Zerlegung, nichts wird ausgeführt).
 - **Sitzungseinstellungen des Dumps je Schritt wiederholen** (`SET NAMES`,
-  `FOREIGN_KEY_CHECKS = 0`, am Ende wieder `= 1`) – fest im
-  `RestoreService`, weil genau diese der `MysqlDumper` oben schreibt; ein
+  `FOREIGN_KEY_CHECKS = 0`, am Ende wieder `= 1`) – als Konstanten im
+  `MysqlDumper`, die er selbst schreibt und der `RestoreService` nachspielt; ein
   allgemeines Nachspielen aller `SET`-Anweisungen gibt es nicht. Behebt
   nebenbei, dass Restores über 200 Anweisungen schon vorher ab dem zweiten
   Schritt mit Fremdschlüssel-Prüfung liefen und scheiterten.
@@ -447,7 +448,8 @@ ab dort (`SqlStatementStream`). Getroffen ohne Rückfrage:
   Dumper erzeugt höchstens ~1 MiB, MariaDBs Standard-`max_allowed_packet`
   ist 16 MiB).
 
-Offen für Mirko: Bei einem harten Prozessabbruch (Session nicht mehr
-geschrieben) kann die letzte Anweisung doppelt laufen – dann hilft nur ein
+Offen für Mirko: Die beim Abbruch gerade laufende Anweisung bzw. bei einem
+harten Prozessabbruch (Session nicht mehr geschrieben) der Rest des Blocks
+kann doppelt laufen – dann hilft nur ein
 Restore von vorn. Ganz schließen ließe sich das nur mit einem
 Fortschrittsstand in der Datenbank selbst (Migration, eigenes Issue).

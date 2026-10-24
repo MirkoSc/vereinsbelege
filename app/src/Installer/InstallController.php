@@ -371,11 +371,9 @@ final readonly class InstallController
                 // older version counts statements under `offset` instead:
                 // it is converted once, by reading up to that statement.
                 if (!is_int($stand['dump_offset'] ?? null)) {
-                    $bisher = (int) ($stand['offset'] ?? 0);
-                    $_SESSION['install_restore']['dump_offset'] = $bisher > 0
-                        ? $restore->byteOffsetNachAnweisungen($dumpDatei, $bisher)
-                        : 0;
-                    $_SESSION['install_restore']['anweisungen'] = $bisher;
+                    $umgerechnet = $restore->byteOffsetNachAnweisungen($dumpDatei, (int) ($stand['offset'] ?? 0));
+                    $_SESSION['install_restore']['dump_offset'] = $umgerechnet['offset'];
+                    $_SESSION['install_restore']['anweisungen'] = $umgerechnet['anweisungen'];
                 }
                 $start = (int) $_SESSION['install_restore']['dump_offset'];
 

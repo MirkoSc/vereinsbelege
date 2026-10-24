@@ -14,7 +14,7 @@ namespace App\Service\Migration;
  * do not apply inside backticks; line comments -- and #; block comments),
  * so a file read through here gives the same statements as split() on the
  * whole text. The lexer state (open quote, comment) survives buffer
- * boundaries within one instance. Across requests only grenze() is kept:
+ * boundaries within one instance. Across requests only boundary() is kept:
  * it always points just behind a statement's semicolon, where the lexer
  * is outside any quote or comment, so a fresh instance can start there
  * with a clean state.
