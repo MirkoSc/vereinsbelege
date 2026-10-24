@@ -80,9 +80,17 @@ final class Camt053Parser
         return str_starts_with($inhalt, "PK\x03\x04") || str_starts_with($inhalt, "PK\x05\x06");
     }
 
-    /** Whether the content looks like XML at all (BOM and whitespace skipped). */
+    /**
+     * Whether the content looks like XML at all: UTF-8 (BOM and whitespace
+     * skipped) or UTF-16 with BOM or starting with "<".
+     */
     public static function istXml(string $inhalt): bool
     {
+        foreach (["\xFF\xFE", "\xFE\xFF", "<\0", "\0<"] as $utf16) {
+            if (str_starts_with($inhalt, $utf16)) {
+                return true;
+            }
+        }
         $text = ltrim(str_starts_with($inhalt, "\xEF\xBB\xBF") ? substr($inhalt, 3) : $inhalt);
 
         return str_starts_with($text, '<');
@@ -278,7 +286,7 @@ final class Camt053Parser
                 $vorgemerkt++;
                 continue;
             }
-            $umsaetze[] = $this->umsatz($ntry, sprintf('Auszug %d, Buchung %d', $nr, $i + 1));
+            $umsaetze[] = $this->umsatz($ntry, sprintf('Auszug %d, Buchung %d', $nr, $i + 1), $schlusssaldo->waehrung);
         }
 
         $nummer = self::text($stmt, 'LglSeqNb') ?? self::text($stmt, 'ElctrncSeqNb');
@@ -319,9 +327,14 @@ final class Camt053Parser
     /**
      * @throws Camt053Exception
      */
-    private function umsatz(\DOMElement $ntry, string $ort): Umsatz
+    private function umsatz(\DOMElement $ntry, string $ort, string $kontowaehrung): Umsatz
     {
-        [$cent, ] = $this->betrag($ntry, $ort);
+        [$cent, $waehrung] = $this->betrag($ntry, $ort);
+        // Ntry/Amt is in the account's currency by definition; anything else
+        // is no statement this import can add up.
+        if ($waehrung !== $kontowaehrung) {
+            throw new Camt053Exception($ort . ': Die Währung weicht von der Kontowährung ab – Buchungen in fremder Währung lassen sich nicht importieren.');
+        }
         $storno = in_array(strtolower(self::text($ntry, 'RvslInd') ?? ''), ['true', '1'], true);
 
         $buchungsdatum = $this->datum($ntry, 'BookgDt', $ort);

@@ -210,8 +210,11 @@ Festgelegte Regeln:
   Banken in beiden Formaten denselben Schlüssel (Zweck = `SVWZ+` bzw.
   `Ustrd`, Gegen-IBAN, Datum, Betrag) – der Test mit den Sparkasse-Fixtures
   belegt das; garantiert ist es nur, wenn die Bank denselben Zweck liefert.
-  Eine Sammelbuchung mit Einzelposten-Zwecken passt nicht zu ihrem
-  MT940-Gegenstück.
+  Für Sammelbuchungen (und Entgelte), deren Zweck sich zwischen den
+  Formaten unterscheidet, greift der **Ersatzabgleich** (§4).
+- **Fremdwährung:** Ein `Ntry`, dessen `Amt/@Ccy` von der Währung des
+  Schlusssaldos abweicht, macht die Datei unlesbar (Meldung mit Auszug und
+  Buchung). UTF-16-Dateien (mit BOM) werden erkannt und gelesen.
 
 **Pflicht-Tests (issue #91):** `Camt053ParserTest` (Versionen .02/.04/.08
 und beliebiger, fehlender oder präfixierter Namensraum; ZIP mit mehreren
@@ -353,6 +356,17 @@ Regeln:
   Leerraum spielen keine Rolle. Ein Wechsel zwischen MT940 und CSV für
   denselben Zeitraum wird nur erkannt, wenn die Bank in beiden Formaten
   denselben Zweck liefert – nicht garantiert.
+- **Ersatzabgleich** (issue #91, ohne Migration): Eine Buchung der Datei
+  **ohne Gegen-IBAN** (Sammelbuchung, Entgelt), deren Schlüssel neu ist,
+  gilt trotzdem als Duplikat, wenn das Konto eine **importierte** Buchung
+  ohne Gegenseite mit gleichem Buchungstag und Betrag hat, die nicht aus
+  dieser Datei stammt (ihr Schlüssel ist keiner der Datei). Eins zu eins in
+  Dateireihenfolge gezählt – zwei solche Buchungen eines Tages brauchen zwei
+  gespeicherte. So bleibt eine Sammelbuchung beim Wechsel MT940 ↔ CAMT.053
+  eine Buchung, obwohl MT940 und CAMT ihr verschiedene Zwecke geben. Jeder
+  Schritt der Kette rechnet das gleich (die selbst geschriebenen Zeilen
+  tragen Schlüssel der Datei); das Netz `UNIQUE(account_id, dedup_bi)`
+  bleibt unberührt. Manuelle Buchungen zählen nicht mit.
 - **Saldenprüfung** (`Saldenpruefung`, Ergebnis `ok`/`abweichung`/`n.v.` in
   `balance_check`, Differenzen nur in der Vorschau): MT940 je Auszug
   Anfang + Umsätze = Schluss und lückenlos von Auszug zu Auszug (ebenso

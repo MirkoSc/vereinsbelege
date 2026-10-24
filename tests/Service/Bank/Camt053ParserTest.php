@@ -442,6 +442,28 @@ final class Camt053ParserTest extends TestCase
         new Camt053Parser()->parse(self::zip(['gross.xml' => $gross]));
     }
 
+    public function testAnEntryInAForeignCurrencyIsRefusedWithItsPosition(): void
+    {
+        $xml = self::stmt(
+            self::bal('PRCD', '0', '2024-05-01') . self::bal('CLBD', '1.00', '2024-05-01'),
+            str_replace('Ccy="EUR"', 'Ccy="USD"', self::ntry('1.00', 'CRDT', '2024-05-01')),
+        );
+
+        $this->expectException(Camt053Exception::class);
+        $this->expectExceptionMessage('Auszug 1, Buchung 1: Die Währung weicht von der Kontowährung ab');
+        new Camt053Parser()->parse($xml);
+    }
+
+    public function testUtf16WithBomIsRecognisedAndRead(): void
+    {
+        $utf8 = self::inhalt('vrbank-053-001-08.xml');
+        $utf16 = "\xFF\xFE" . (string) mb_convert_encoding(str_replace('encoding="UTF-8"', 'encoding="UTF-16"', $utf8), 'UTF-16LE', 'UTF-8');
+
+        self::assertTrue(Camt053Parser::istXml($utf16));
+        self::assertTrue(Camt053Parser::istXml((string) mb_convert_encoding('<Document/>', 'UTF-16BE', 'UTF-8')));
+        self::assertEquals(self::lies('vrbank-053-001-08.xml'), new Camt053Parser()->parse($utf16));
+    }
+
     public function testFormatHints(): void
     {
         self::assertTrue(Camt053Parser::istZip(self::inhalt('tagesauszuege-053-001-04.zip')));

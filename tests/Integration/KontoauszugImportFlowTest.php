@@ -428,6 +428,51 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         self::assertCount(5, $this->buchungen($konto));
     }
 
+    /**
+     * A batch booking has another purpose in MT940 than in CAMT.053; without
+     * a counterparty it is still found by day and amount - in both
+     * directions, and only once per stored booking.
+     */
+    public function testABatchBookingIsFoundAcrossFormatsByDayAndAmount(): void
+    {
+        $konto = $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban(), '100,00', '2024-04-01');
+        $mt940 = ":20:STARTUMSE\r\n:25:12345678/0001234567\r\n:28C:00020/001\r\n:60F:C240401EUR100,00\r\n"
+            . ":61:2404020402DR30,00N191NONREF\r\n:86:191?00SAMMEL-UEBERWEISUNG?100599?20SAMMLER MIT 2 POSTEN?21REF 4711\r\n"
+            . ":62F:C240402EUR70,00\r\n-\r\n";
+        $sammel = '<Ntry><Amt Ccy="EUR">30.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts>BOOK</Sts><BookgDt><Dt>2024-04-02</Dt></BookgDt>'
+            . '<NtryDtls><Btch><NbOfTxs>2</NbOfTxs></Btch>'
+            . '<TxDtls><RltdPties><Cdtr><Nm>Turnverein Musterdorf</Nm></Cdtr><CdtrAcct><Id><IBAN>DE52120300001111111111</IBAN></Id></CdtrAcct></RltdPties><RmtInf><Ustrd>Startgeld A</Ustrd></RmtInf></TxDtls>'
+            . '<TxDtls><RltdPties><Cdtr><Nm>SV Beispielstadt</Nm></Cdtr><CdtrAcct><Id><IBAN>DE23120906400007654321</IBAN></Id></CdtrAcct></RltdPties><RmtInf><Ustrd>Startgeld B</Ustrd></RmtInf></TxDtls>'
+            . '</NtryDtls><AddtlNtryInf>SAMMEL-UEBERWEISUNG</AddtlNtryInf></Ntry>';
+        $camt = static fn(string $eintraege, string $schluss): string => '<?xml version="1.0" encoding="UTF-8"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt><Id>S20</Id>'
+            . '<Acct><Id><IBAN>' . self::sparkasseIban() . '</IBAN></Id></Acct>'
+            . '<Bal><Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">100.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-04-01</Dt></Dt></Bal>'
+            . '<Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">' . $schluss . '</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2024-04-02</Dt></Dt></Bal>'
+            . $eintraege . '</Stmt></BkToCstmrStmt></Document>';
+
+        $this->importiere($mt940);
+        $id = self::importId($this->hochladen($camt($sammel, '70.00'), 'auszug.xml'));
+        self::assertSame(['1', '0', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertCount(1, $this->buchungen($konto));
+
+        // A second batch of the same day and amount is new: one stored booking matches one.
+        $id = self::importId($this->hochladen($camt($sammel . $sammel, '40.00'), 'auszug.xml'));
+        self::assertSame(['2', '1', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+        $this->post('/app/konten/import/' . $id . '/uebernehmen');
+        $this->alleSchritte($id);
+        self::assertCount(2, $this->buchungen($konto));
+
+        // And back: the MT940 file finds its batch among the CAMT bookings.
+        $andersherum = $this->bankkonto('Zweitkonto', 'DE41500105170123456789', '100,00', '2024-04-01');
+        $camtZweit = str_replace(self::sparkasseIban(), 'DE41500105170123456789', $camt($sammel, '70.00'));
+        $this->importiere($camtZweit);
+        $id = self::importId($this->hochladen(str_replace(':25:12345678/0001234567', ':25:DE41500105170123456789', $mt940)));
+        self::assertSame($andersherum, $this->importe()->find($id)?->accountId);
+        self::assertSame(['1', '0', '1'], self::zahlen($this->get('/app/konten/import/' . $id)->body, ['Buchungen in der Datei', 'davon neu', 'davon schon vorhanden (Duplikat)']));
+    }
+
     public function testAZipOfDailyCamtStatementsIsOneImportAndConnectsToTheOpeningBalance(): void
     {
         $konto = $this->bankkonto('Girokonto ING', 'DE41500105170123456789', '-20,00', '2024-04-01');

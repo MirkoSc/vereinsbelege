@@ -217,7 +217,11 @@ Variante:
 - **Sammelbuchung bleibt eine Buchung.** Ein `Ntry` mit mehreren `TxDtls`
   wird nicht in Einzelposten aufgeteilt – so stimmen Saldo und Abgleich mit
   dem Kontoauszug überein und MT940 zeigt es genauso. Die Zwecke aller
-  Posten werden verbunden; eine Gegenseite gibt es dann nicht. Aufteilen
+  Posten werden verbunden; eine Gegenseite gibt es dann nicht. Damit sie
+  beim Formatwechsel nicht doppelt kommt, gilt eine Buchung ohne
+  Gegen-IBAN auch über Tag + Betrag als vorhanden (Ersatzabgleich, 04 §4) –
+  Restrisiko: zwei verschiedene Buchungen ohne Gegenseite mit gleichem Tag
+  und Betrag aus verschiedenen Formaten werden als eine erkannt. Aufteilen
   (z. B. für die Zuordnung einzelner Rechnungen) wäre ein eigenes Issue.
 - **Nur gebuchte Einträge.** `PDNG`/`INFO` werden übersprungen und als
   „vorgemerkt“ gezählt – wie vorgemerkte CSV-Zeilen.
