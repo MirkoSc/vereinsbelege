@@ -13,6 +13,7 @@ use App\Admin\NextcloudSettingsController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
+use App\Admin\WorkerController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
@@ -21,6 +22,7 @@ use App\Api\EinreichungUploadController;
 use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
+use App\Api\WorkerApiController;
 use App\App\AccountController;
 use App\App\CsvFormatController;
 use App\App\AuditController;
@@ -91,6 +93,8 @@ use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultGrantRepository;
 use App\Repository\VaultRepository;
+use App\Repository\WorkerNonceRepository;
+use App\Repository\WorkerRepository;
 use App\Service\Account\AccessAssignment;
 use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
@@ -127,6 +131,9 @@ use App\Service\Cron\TrustedDeviceCleanupTask;
 use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Cron\WorkerCleanupTask;
+use App\Service\Worker\WorkerAuth;
+use App\Service\Worker\WorkerKopplung;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\KiAuslesung;
 use App\Service\Document\LieferantenAufloesung;
@@ -387,6 +394,8 @@ $cron = static fn(): CronController => new CronController($config, static functi
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
             // M3-5: password reset links whose 30 minutes are over.
             new AuthTokenCleanupTask(new AuthTokenRepository($pdo)),
+            // M7b-1: worker nonces past their replay window, old pairing codes.
+            new WorkerCleanupTask(new WorkerNonceRepository($pdo), new WorkerRepository($pdo)),
         ],
         logger: $logger,
     );
@@ -1276,6 +1285,39 @@ $rasterungSeite = static function () use ($connections, $view, $paths, $jobHandl
     );
 };
 
+// The optional worker (issue #51/M7b-1, docs/spec/07-worker.md sections 4
+// and 5): the signature check in front of every worker route, the API
+// behind it and the pairing part of the admin page. Operating data under
+// the server key, no vault - built only for a matched worker route.
+$workerAuth = static function () use ($connections, $serverCrypto): WorkerAuth {
+    $pdo = $connections->pdo();
+
+    return new WorkerAuth(
+        new WorkerRepository($pdo),
+        new WorkerNonceRepository($pdo),
+        $serverCrypto,
+        new RateLimiter(new RateLimitRepository($pdo), WorkerAuth::FEHLER_FENSTER_SEKUNDEN),
+        new RateLimiter(new RateLimitRepository($pdo), WorkerAuth::ANFRAGEN_FENSTER_SEKUNDEN),
+    );
+};
+$workerKopplungFor = static fn(\PDO $pdo): WorkerKopplung => new WorkerKopplung(
+    new WorkerRepository($pdo),
+    new JobRepository($pdo),
+    $serverCrypto,
+    new RateLimiter(new RateLimitRepository($pdo), WorkerKopplung::FEHLER_FENSTER_SEKUNDEN),
+    $auditFor($pdo),
+);
+$workerApi = static function () use ($connections, $workerKopplungFor): WorkerApiController {
+    $pdo = $connections->pdo();
+
+    return new WorkerApiController($workerKopplungFor($pdo), new WorkerRepository($pdo), new JobRepository($pdo));
+};
+$workerAdmin = static function () use ($connections, $view, $workerKopplungFor): WorkerController {
+    $pdo = $connections->pdo();
+
+    return new WorkerController($view, new Session(), new WorkerRepository($pdo), $workerKopplungFor($pdo));
+};
+
 $guard = static fn(): LoginGuard => new LoginGuard(
     new Session(),
     $view,
@@ -1351,6 +1393,9 @@ $router = new Router();
     $export,
     $archivImport,
     $nextcloudAdmin,
+    $workerAuth,
+    $workerApi,
+    $workerAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

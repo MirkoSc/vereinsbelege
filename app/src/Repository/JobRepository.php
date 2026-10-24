@@ -236,7 +236,7 @@ final readonly class JobRepository
      *        Null keeps the previous, unconditional behaviour for callers
      *        without a claim of their own.
      */
-    public function fail(int $id, string $errorClass, ?\DateTimeImmutable $now = null, ?string $lockedBy = null): void
+    public function fail(int $id, string $errorClass, ?\DateTimeImmutable $now = null, ?string $lockedBy = null): bool
     {
         $sql = 'UPDATE job
                 SET status = ?, last_error = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
@@ -255,6 +255,80 @@ final readonly class JobRepository
 
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Finishes a job its holder completed (the worker's
+     * `POST /api/worker/jobs/{id}/complete`, issue #51/M7b-1). Only the
+     * holder of the lock may - after the lock ran out and another claim
+     * won, the old holder's "done" must not end the new run.
+     */
+    public function abschliessen(int $id, string $lockedBy, ?\DateTimeImmutable $now = null): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE job SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+             WHERE id = ? AND status = ? AND locked_by = ?',
+        );
+        $stmt->execute([
+            JobStatus::Fertig->value,
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $id,
+            JobStatus::Laeuft->value,
+            $lockedBy,
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Gives a claimed job back after a failed attempt that may be retried
+     * (the worker's `/fail` without `endgueltig`, issue #51/M7b-1): `offen`
+     * again, the error code kept for the admin. Only the holder may, like
+     * abschliessen(). `attempts` stays - the next claim counts on from it.
+     */
+    public function zurueckgebenMitFehler(int $id, string $lockedBy, string $errorClass, ?\DateTimeImmutable $now = null): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE job SET status = ?, last_error = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+             WHERE id = ? AND status = ? AND locked_by = ?',
+        );
+        $stmt->execute([
+            JobStatus::Offen->value,
+            mb_substr($errorClass, 0, 255),
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $id,
+            JobStatus::Laeuft->value,
+            $lockedBy,
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Gives back every job whose lock starts with this prefix - all claims
+     * of one worker when it is unpaired (issue #51/M7b-1,
+     * App\Domain\Worker::lockPraefix()). The prefix is the worker's own
+     * (`w<id>-`) and carries no LIKE wildcard.
+     */
+    public function freigebenFuerPraefix(string $praefix, ?\DateTimeImmutable $now = null): int
+    {
+        if (preg_match('/^[A-Za-z0-9-]+$/', $praefix) !== 1) {
+            throw new \InvalidArgumentException('Not a lock prefix.');
+        }
+        $stmt = $this->pdo->prepare(
+            'UPDATE job SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+             WHERE status = ? AND locked_by LIKE ?',
+        );
+        $stmt->execute([
+            JobStatus::Offen->value,
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            JobStatus::Laeuft->value,
+            $praefix . '%',
+        ]);
+
+        return $stmt->rowCount();
     }
 
     /**
