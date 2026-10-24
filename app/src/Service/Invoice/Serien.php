@@ -50,11 +50,15 @@ use App\Service\Processing\ProcessingException;
  *    its date - is linked to it (the closest amount wins); is it the newest,
  *    the series takes its amount and the next date moves on. Audit
  *    `serie.beleg_verknuepft` without a user.
- * 2. The supplier's checked receipts in no series (or in its pending
+ * 2. The supplier's checked receipts in no series (or in a pending
  *    suggestion) go through App\Service\Invoice\Serienerkennung. A series
- *    found becomes the supplier's suggestion - the pending one is updated
- *    (label and contract reference stay), else a new one is created. No
+ *    found updates the pending suggestion it shares the most receipts with
+ *    (label and contract reference stay); sharing none, it becomes a new
+ *    suggestion - a supplier may have two series (rent and insurance). No
  *    audit for a suggestion; nothing is decided yet.
+ *
+ * All series of the supplier and direction are read under row locks: a
+ * person confirming a suggestion at the same time waits, or is waited for.
  *
  * Amounts are vault data: the job is a session job, detection runs on the
  * decrypted amounts in memory, the series stores its own encrypted copy.
@@ -331,6 +335,14 @@ final readonly class Serien implements JobHandler
         ?SeriesPeriod $kiPeriode,
         \DateTimeImmutable $now,
     ): void {
+        // A receipt edited to another supplier or direction leaves the
+        // series it was in.
+        $bisher = $this->serien->serienVon([$ausloeser])[$ausloeser] ?? null;
+        $bisherSerie = $bisher === null ? null : $this->serien->find($bisher);
+        if ($bisherSerie !== null && ($bisherSerie->supplierId !== $lieferant || $bisherSerie->direction !== $richtung)) {
+            $this->serien->loese($ausloeser);
+        }
+
         $belege = [];
         $dokumente = [];
         foreach ($this->invoices->geprueftFuerLieferant($lieferant, $richtung) as $record) {
@@ -341,27 +353,27 @@ final readonly class Serien implements JobHandler
         if (!isset($belege[$ausloeser])) {
             return;
         }
-        $serien = $this->serien->fuerLieferant($lieferant, $richtung);
+        $serien = $this->serien->fuerLieferant($lieferant, $richtung, sperren: true);
         $zuordnung = $this->serien->serienVon(array_keys($belege));
         $erkennung = new Serienerkennung($this->toleranzProzent());
 
         if (!isset($zuordnung[$ausloeser])) {
             $ziel = $this->passendeSerie($vault, $erkennung, $serien, $belege, $zuordnung, $belege[$ausloeser]);
             if ($ziel !== null) {
-                $this->verknuepfe($vault, $ziel, $belege, $zuordnung, $belege[$ausloeser], $dokumente[$ausloeser], $now);
+                $this->verknuepfe($vault, $ziel, $belege[$ausloeser], $dokumente[$ausloeser], $now);
                 $zuordnung[$ausloeser] = $ziel->id;
             }
         }
 
-        $vorschlag = null;
+        $vorschlaege = [];
         foreach ($serien as $serie) {
             if ($serie->status === SeriesStatus::Vorgeschlagen) {
-                $vorschlag = $serie;
+                $vorschlaege[$serie->id] = $serie;
             }
         }
         $frei = array_values(array_filter(
             $belege,
-            static fn(SerienBeleg $b): bool => !isset($zuordnung[$b->invoiceId]) || $zuordnung[$b->invoiceId] === $vorschlag?->id,
+            static fn(SerienBeleg $b): bool => !isset($zuordnung[$b->invoiceId]) || isset($vorschlaege[$zuordnung[$b->invoiceId]]),
         ));
         if ($frei === []) {
             return;
@@ -373,6 +385,18 @@ final readonly class Serien implements JobHandler
         $kandidat = $erkennung->erkenne($frei, $hinweis, $hinweis ? $kiPeriode : null);
         if ($kandidat === null) {
             return;
+        }
+
+        // The suggestion sharing the most receipts with what was found is
+        // updated; one sharing none stays (another series of the supplier).
+        $vorschlag = null;
+        $gemeinsam = 0;
+        foreach ($vorschlaege as $id => $serie) {
+            $n = count(array_filter($kandidat->invoiceIds, static fn(int $i): bool => ($zuordnung[$i] ?? null) === $id));
+            if ($n > $gemeinsam) {
+                $vorschlag = $serie;
+                $gemeinsam = $n;
+            }
         }
 
         if ($vorschlag === null) {
@@ -444,18 +468,17 @@ final readonly class Serien implements JobHandler
      * Links $beleg to the confirmed $serie; the newest receipt sets the
      * expected amount and the next date.
      *
-     * @param array<int, SerienBeleg> $belege
-     * @param array<int, int> $zuordnung invoice id => series id
      */
-    private function verknuepfe(Vault $vault, RecurringSeriesRecord $serie, array $belege, array $zuordnung, SerienBeleg $beleg, int $documentId, \DateTimeImmutable $now): void
+    private function verknuepfe(Vault $vault, RecurringSeriesRecord $serie, SerienBeleg $beleg, int $documentId, \DateTimeImmutable $now): void
     {
-        $this->serien->verknuepfe($serie->id, $beleg->invoiceId);
+        // Every receipt of the series counts here, also one no longer checked.
         $neuester = true;
-        foreach ($zuordnung as $invoiceId => $serieId) {
-            if ($serieId === $serie->id && isset($belege[$invoiceId]) && $belege[$invoiceId]->datum > $beleg->datum) {
+        foreach ($this->invoices->nachIds($this->serien->mitglieder($serie->id)) as $mitglied) {
+            if ($mitglied->invoiceDate > $beleg->datum) {
                 $neuester = false;
             }
         }
+        $this->serien->verknuepfe($serie->id, $beleg->invoiceId);
         if ($neuester) {
             $vorher = $this->daten($vault, $serie);
             $daten = new SeriesData($vorher->label, $beleg->brutto, $vorher->currency, $vorher->contractRef);

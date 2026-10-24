@@ -331,7 +331,8 @@ Die Spec (03 §9) nennt nur die Eckwerte. Umgesetzt (Details 03 §9 „Stand M8-
   (Beträge sind von Menschen bestätigt), je Lieferant **und** Richtung.
 - **Betrag:** ±15 % jeweils zum nächstneueren Beleg (nicht zum Median) – eine
   Preissteigerung in Schritten bleibt eine Serie. **Rhythmus:** Median der
-  Abstände ± 5/12/20/30 Tage, kein Abstand unter halbem Rhythmus, eine Lücke
+  Abstände ± 5/12/20/30 Tage, von zu dicht liegenden Belegen bleibt der besser
+  passende (Einzelkauf mit ähnlichem Betrag), eine Lücke
   über 2,5 Rhythmen schneidet ab. Toleranz bis „überfällig“: 7/14/21/30 Tage.
   Die Betragstoleranz ist ein Setting ohne Admin-Seite (Folge-Issue).
 - **Bestätigte Serie verknüpft neue passende Belege automatisch** (mit Audit,

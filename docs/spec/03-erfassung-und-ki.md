@@ -1518,8 +1518,11 @@ Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
   den Session-Job `detect_recurring` ein (`Serien::einreihen()`). Gezählt
   werden nur geprüfte bzw. festgeschriebene Belege
   (`InvoiceRepository::geprueftFuerLieferant()`, auch über `merged_into`
-  aufgelöst), getrennt nach Lieferant **und** Richtung. Ein Schritt, eine
-  Transaktion unter Zeilensperre des Lieferanten.
+  aufgelöst; die 120 neuesten), getrennt nach Lieferant **und** Richtung.
+  Ein Schritt, eine Transaktion unter Zeilensperre des Lieferanten und
+  seiner Serien (ein gleichzeitiges Bestätigen überschreibt sich nicht).
+  Wurde der Beleg auf einen anderen Lieferanten oder eine andere Richtung
+  geändert, verlässt er zuerst seine bisherige Serie.
 - *Erkennung* (`App\Service\Invoice\Serienerkennung`, rein, ohne DB):
   ≥ 3 Belege (2, wenn die KI am auslösenden – neuesten – Beleg
   `recurring.likely` las; nennt sie einen Rhythmus, muss er passen),
@@ -1528,13 +1531,17 @@ Bestätigen/Ändern/Verwerfen. Übersicht mit Jahreshochrechnung/Trend/
   Preissteigerung bleibt in der Serie, ein Sprung beendet sie. Die Kette
   beginnt beim neuesten Beleg; passt der nicht (Einzelkauf), der nächste.
   Nicht passende Beträge werden übersprungen. Rhythmus: Median der Abstände
-  ≈ Monat/Quartal/Halbjahr/Jahr (30,4/91,3/182,6/365,25 Tage ± 5/12/20/30),
-  kein Abstand unter einem halben Rhythmus; eine Lücke über 2,5 Rhythmen
+  ≈ Monat/Quartal/Halbjahr/Jahr (30,4/91,3/182,6/365,25 Tage ± 5/12/20/30);
+  von zwei Belegen, die näher als ein halber Rhythmus liegen, bleibt nur der,
+  dessen Abstand zum neueren Nachbarn besser zum Rhythmus passt (Einzelkauf
+  mit ähnlichem Betrag, Duplikat); eine Lücke über 2,5 Rhythmen
   schneidet ab (nur der Teil danach zählt). Höchstens die 60 neuesten Belege.
 - *Vorschlag:* `next_expected` = neuester Beleg + Rhythmus (Tag aufs
   Monatsende gekappt), `tolerance_days` 7/14/21/30, erwarteter Betrag = der
-  neueste. Je Lieferant und Richtung höchstens ein offener Vorschlag: ein
-  neuer Lauf aktualisiert ihn (Bezeichnung/Vertrag bleiben). Kein Audit.
+  neueste. Ein neuer Lauf aktualisiert den offenen Vorschlag, mit dem er die
+  meisten Belege teilt (Bezeichnung/Vertrag bleiben); teilt er keine, wird
+  er ein weiterer Vorschlag (Miete und Versicherung desselben Partners).
+  Kein Audit.
 - *Bestätigte Serie:* Ein neuer geprüfter Beleg, der zu keiner Serie gehört,
   wird verknüpft, wenn Währung gleich, Betrag in der Toleranz des erwarteten
   und kein Beleg der Serie näher als ein halber Rhythmus liegt (bei mehreren

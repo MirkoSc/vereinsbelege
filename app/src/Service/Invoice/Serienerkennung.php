@@ -19,8 +19,9 @@ use App\Domain\SeriesPeriod;
  *   setting `serien_toleranz_prozent`) of the next newer one - a price
  *   increase step by step stays in the series, a jump ends it,
  * - whose median gap fits a month, quarter, half year or year
- *   (SeriesPeriod::medianToleranzTage()), with no gap under half the rhythm
- *   (two receipts in one month are not a monthly series). A gap of more
+ *   (SeriesPeriod::medianToleranzTage()). From the newest back, a receipt
+ *   closer than half the rhythm to the one kept before it is left out (a
+ *   one-off of a similar amount, a duplicate). A gap of more
  *   than 2.5 rhythms (more than one receipt missing) cuts the series: only
  *   the part after it counts.
  *
@@ -113,15 +114,12 @@ final readonly class Serienerkennung
             if ($kiHinweis && count($kette) < 3 && $kiPeriode !== null && $kiPeriode !== $periode) {
                 continue;
             }
-            $teil = self::nachLetzterLuecke($kette, $periode);
+            $teil = self::nachLetzterLuecke(self::ausduennen($kette, $periode), $periode);
             if (count($teil) < $mindestens) {
                 continue;
             }
             $abstaende = self::abstaende($teil);
             $laenge = (float) $periode->tage();
-            if (min($abstaende) < $laenge / 2) {
-                continue;
-            }
             if (abs(self::median($abstaende) - $laenge) > $periode->medianToleranzTage()) {
                 continue;
             }
@@ -143,6 +141,33 @@ final readonly class Serienerkennung
     }
 
     /**
+     * From the newest back, of two receipts closer than half the rhythm
+     * only one stays - the one whose gap to the newer neighbour is nearer
+     * the rhythm (a one-off of a similar amount between two monthly
+     * receipts, a duplicate).
+     *
+     * @param list<SerienBeleg> $kette oldest first
+     *
+     * @return list<SerienBeleg>
+     */
+    private static function ausduennen(array $kette, SeriesPeriod $periode): array
+    {
+        $laenge = (float) $periode->tage();
+        $abweichung = static fn(SerienBeleg $neuer, SerienBeleg $aelter): float => abs($aelter->datum->diff($neuer->datum)->days - $laenge);
+        $behalten = [];
+        foreach (array_reverse($kette) as $beleg) {
+            $n = count($behalten);
+            if ($n === 0 || $beleg->datum->diff($behalten[$n - 1]->datum)->days >= $laenge / 2) {
+                $behalten[] = $beleg;
+            } elseif ($n >= 2 && $abweichung($behalten[$n - 2], $beleg) < $abweichung($behalten[$n - 2], $behalten[$n - 1])) {
+                $behalten[$n - 1] = $beleg;
+            }
+        }
+
+        return array_reverse($behalten);
+    }
+
+    /**
      * The receipts after the last gap longer than LUECKE_MAX rhythms.
      *
      * @param list<SerienBeleg> $kette oldest first
@@ -151,6 +176,9 @@ final readonly class Serienerkennung
      */
     private static function nachLetzterLuecke(array $kette, SeriesPeriod $periode): array
     {
+        if (count($kette) < 2) {
+            return $kette;
+        }
         $grenze = (float) $periode->tage() * self::LUECKE_MAX;
         $start = 0;
         foreach (self::abstaende($kette) as $i => $abstand) {

@@ -46,13 +46,15 @@ final readonly class RecurringSeriesRepository
     }
 
     /**
-     * The series of a supplier and direction, oldest first.
+     * The series of a supplier and direction, oldest first - with
+     * $sperren under row locks until the transaction ends, so the detection
+     * job and a person confirming a suggestion do not overwrite each other.
      *
      * @return list<RecurringSeriesRecord>
      */
-    public function fuerLieferant(int $supplierId, InvoiceDirection $richtung): array
+    public function fuerLieferant(int $supplierId, InvoiceDirection $richtung, bool $sperren = false): array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM recurring_series WHERE supplier_id = ? AND direction = ? ORDER BY id');
+        $stmt = $this->pdo->prepare('SELECT * FROM recurring_series WHERE supplier_id = ? AND direction = ? ORDER BY id' . ($sperren ? ' FOR UPDATE' : ''));
         $stmt->execute([$supplierId, $richtung->value]);
 
         return array_map(RecurringSeriesRecord::fromRow(...), $stmt->fetchAll());
@@ -236,6 +238,13 @@ final readonly class RecurringSeriesRepository
         foreach (array_values(array_unique($invoiceIds)) as $invoiceId) {
             $this->verknuepfe($seriesId, $invoiceId);
         }
+    }
+
+    /** Takes an invoice out of whatever series it is in. */
+    public function loese(int $invoiceId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM recurring_series_invoice WHERE invoice_id = ?');
+        $stmt->execute([$invoiceId]);
     }
 
     public function verknuepfe(int $seriesId, int $invoiceId): void

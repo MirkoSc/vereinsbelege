@@ -178,6 +178,41 @@ final class SerienFlowTest extends DatabaseTestCase
         self::assertSame($vorher, $this->pdo()->query('SELECT * FROM invoice ORDER BY id')->fetchAll(), 'no invoice row was written');
     }
 
+    public function testASecondSeriesOfTheSameSupplierBecomesASecondSuggestion(): void
+    {
+        $miete = $this->monatlich(3);
+        $this->allesAbarbeiten();
+        $this->geprueft('2024-06-10', '120,00');
+        $this->geprueft('2025-06-10', '120,00');
+        $this->geprueft('2026-06-10', '120,00');
+        $this->allesAbarbeiten();
+
+        $serien = $this->serien();
+        self::assertCount(2, $serien, 'rent and insurance');
+        $perioden = array_map(static fn($s): string => $s->period->value, $serien);
+        sort($perioden);
+        self::assertSame(['jahr', 'monat'], $perioden);
+        $mieteSerie = $serien[0]->period->value === 'monat' ? $serien[0] : $serien[1];
+        self::assertSame(array_map($this->rechnungVon(...), $miete), $this->mitglieder($mieteSerie->id));
+    }
+
+    public function testAReceiptMovedToAnotherSupplierLeavesItsSeries(): void
+    {
+        [, , $dritter] = $this->monatlich(3);
+        $this->allesAbarbeiten();
+        $serie = $this->serien()[0];
+        $andere = $this->lieferant('Versicherung Beispiel AG');
+
+        // Back to review and saved with the other supplier.
+        $documents = new DocumentRepository($this->pdo());
+        $this->pdo()->prepare("UPDATE document SET status = 'in_pruefung' WHERE id = ?")->execute([$dritter]);
+        $felder = [...array_fill_keys(Pruefung::feldnamen(), ''), 'richtung' => 'ausgabe', 'belegart' => 'rechnung', 'datum' => '2026-03-02', 'brutto' => '450,00', 'waehrung' => 'EUR', 'lieferant' => (string) $andere];
+        $this->pruefung()->speichern($documents->find($dritter) ?? self::fail(), $this->tresor, $felder, true, false, $this->userId, '127.0.0.1', new \DateTimeImmutable());
+        $this->allesAbarbeiten();
+
+        self::assertNotContains($this->rechnungVon($dritter), $this->mitglieder($serie->id));
+    }
+
     public function testOtherSuppliersAndIncomeAreSeparate(): void
     {
         $andere = $this->lieferant('Versicherung Beispiel AG');

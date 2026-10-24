@@ -175,20 +175,23 @@ final readonly class InvoiceRepository
      * direction, also those still pointing at a supplier merged into it -
      * what series detection (issue #57/M8-1, App\Service\Invoice\Serien)
      * looks at. Not scoped: a series is about the supplier, and its pages
-     * are only open to accounts without a scope.
+     * are only open to accounts without a scope. Only the $anzahl newest
+     * (by receipt date), oldest first - each one is decrypted, and a
+     * supplier's history should not make a request long.
      *
      * @return list<InvoiceRecord>
      */
-    public function geprueftFuerLieferant(int $supplierId, InvoiceDirection $richtung): array
+    public function geprueftFuerLieferant(int $supplierId, InvoiceDirection $richtung, int $anzahl = 120): array
     {
-        $stmt = $this->pdo->prepare(
+        $stmt = $this->pdo->prepare(sprintf(
             'SELECT i.* FROM invoice i JOIN supplier s ON s.id = i.supplier_id JOIN document d ON d.id = i.document_id
              WHERE (i.supplier_id = ? OR s.merged_into = ?) AND i.direction = ? AND i.checked_at IS NOT NULL AND d.status IN (?, ?)
-             ORDER BY i.invoice_date, i.id',
-        );
+             ORDER BY i.invoice_date DESC, i.id DESC LIMIT %d',
+            max(1, $anzahl),
+        ));
         $stmt->execute([$supplierId, $supplierId, $richtung->value, DocumentStatus::Geprueft->value, DocumentStatus::Festgeschrieben->value]);
 
-        return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
+        return array_reverse(array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll()));
     }
 
     /**

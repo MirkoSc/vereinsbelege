@@ -60,7 +60,7 @@ final class SerienerkennungTest extends TestCase
 
     public function testIrregularReceiptsAreNoSeries(): void
     {
-        // Median gap 28.5 days - but 11 and 5 days apart is not monthly.
+        // Receipts 11 and 5 days after another are left out - what stays fits no rhythm.
         self::assertNull(new Serienerkennung()->erkenne(self::belege([
             ['2026-01-05', 5000], ['2026-02-20', 5000], ['2026-03-03', 5000], ['2026-05-28', 5000], ['2026-06-02', 5000],
         ])));
@@ -98,6 +98,17 @@ final class SerienerkennungTest extends TestCase
 
         self::assertSame([1, 2, 4], $kandidat?->invoiceIds);
         self::assertSame(SeriesPeriod::Monat, $kandidat->periode);
+    }
+
+    public function testAOneOffOfASimilarAmountBetweenTwoReceiptsIsLeftOut(): void
+    {
+        $kandidat = new Serienerkennung()->erkenne(self::belege([
+            ['2026-01-01', 5000], ['2026-02-01', 5000], ['2026-03-01', 5000], ['2026-04-01', 5000],
+            ['2026-04-15', 4800], ['2026-05-01', 5000], ['2026-06-01', 5000],
+        ]));
+
+        self::assertSame([1, 2, 3, 4, 6, 7], $kandidat?->invoiceIds);
+        self::assertSame('2026-07-01', $kandidat->naechsteFaelligkeit->format('Y-m-d'));
     }
 
     public function testTheNewestReceiptBeingAOneOffStillFindsTheSeries(): void
