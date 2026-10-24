@@ -95,6 +95,7 @@ use App\Repository\SubmissionRepository;
 use App\Repository\SubmissionUploadRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\TransferRepository;
 use App\Repository\TrustedDeviceRepository;
 use App\Repository\UserKeyRepository;
 use App\Repository\UserAccessRepository;
@@ -130,6 +131,7 @@ use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Erstattungen;
 use App\Service\Bank\Kassensturz;
+use App\Service\Bank\Umbuchungen;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
@@ -727,6 +729,7 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
         new Kassensturz($pdo, new CashCountRepository($pdo), $buchungen),
         $auditFor($pdo),
         new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), $transaktionen, $kategorien, $settings),
+        new Umbuchungen($pdo, new TransferRepository($pdo), $transaktionen, $konten, $auditFor($pdo), BelegStandard::fromSettings($settings)),
     );
 };
 
@@ -941,6 +944,7 @@ $kontoauszuege = static function () use ($connections, $view, $auditFor, $paths)
             new SettingRepository($pdo),
             $auditFor($pdo),
             new Buchungsregeln($pdo, new AssignmentRuleRepository($pdo), new BankTransactionRepository($pdo), new CategoryRepository($pdo), new SettingRepository($pdo)),
+            umbuchungen: new Umbuchungen($pdo, new TransferRepository($pdo), new BankTransactionRepository($pdo), $konten, $auditFor($pdo), BelegStandard::fromSettings(new SettingRepository($pdo))),
         ),
         $konten,
         $profile,

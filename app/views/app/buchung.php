@@ -34,6 +34,14 @@
  * @var \App\Service\Bank\BelegStandard $belegStandard
  * @var \App\Domain\CashCount|null $kassensturz the cash count a suggested difference comes from
  * @var \DateTimeImmutable $heute
+ * @var bool $umbuchungAn transfers between own accounts are wired in (M10-6)
+ * @var \App\Domain\Umbuchung|null $umbuchung the transfer this booking is part of
+ * @var \App\Domain\BankTransaction|null $umbuchungPartner its other booking, if within the reader's scope
+ * @var list<\App\Domain\BankTransaction> $umbuchungAuswahl what `bank.book` may pair it with by hand
+ *
+ * M10-6 (issue #70): a booking that is half of a transfer between own
+ * accounts names its partner and can be unpaired; any other booking
+ * without a receipt offers the fitting counter bookings for pairing.
  */
 
 use App\Domain\BankAccountKind;
@@ -70,6 +78,7 @@ $herkunft = static function (?BankTransactionSetBy $quelle) use ($buchung, $rege
             ? ' <span class="gedaempft">(durch eine Regel)</span>'
             : ' <span class="gedaempft">(durch Regel <a href="/app/buchungen/regeln/' . e((string) $regel->id) . '">„' . e($regel->label) . '“</a>)</span>',
         BankTransactionSetBy::Manuell => ' <span class="gedaempft">(von Hand gesetzt)</span>',
+        BankTransactionSetBy::Umbuchung => ' <span class="gedaempft">(Umbuchung zwischen eigenen Konten)</span>',
         BankTransactionSetBy::Standard => ' <span class="gedaempft">(Standard für ' . ($buchung->direction === BankTransactionDirection::Ausgabe ? 'Ausgaben' : 'Einnahmen') . ')</span>',
         null => '',
     };
@@ -253,6 +262,9 @@ if (!$neu) {
                 </select>
             </label>
 
+            <?php if ($umbuchung !== null): ?>
+                <p class="feld-hilfe">Beleg: keiner nötig – die Buchung ist eine Umbuchung zwischen eigenen Konten. Das ändert erst das Lösen der Umbuchung.</p>
+            <?php else: ?>
             <label for="einordnung-beleg">Beleg
                 <select id="einordnung-beleg" name="beleg"<?= $fehlerAn('beleg') ?>>
                     <option value=""<?= ($einordnung['beleg'] ?? '') === '' ? ' selected' : '' ?>><?= e($standardText) ?></option>
@@ -260,6 +272,7 @@ if (!$neu) {
                     <option value="<?= e(Buchungen::BELEG_NICHT_NOETIG) ?>"<?= ($einordnung['beleg'] ?? '') === Buchungen::BELEG_NICHT_NOETIG ? ' selected' : '' ?>>kein Beleg nötig</option>
                 </select>
             </label>
+            <?php endif; ?>
             <?php if ($buchung->docStatus->hatBeleg()): ?>
                 <p class="feld-hilfe">Ein Beleg ist zugeordnet – das bleibt so, egal was hier steht.</p>
             <?php endif; ?>
@@ -269,6 +282,54 @@ if (!$neu) {
                 <a class="knopf" href="/app/buchungen/regeln/neu?buchung=<?= e((string) $buchung->id) ?>">Regel daraus machen</a>
             </p>
         </form>
+    </section>
+<?php endif; ?>
+
+<?php if (!$neu && $umbuchungAn && ($umbuchung !== null || ($darfBuchen && !$buchung->docStatus->hatBeleg()))): ?>
+    <section class="schmal">
+        <h3>Umbuchung zwischen eigenen Konten</h3>
+        <?php if ($umbuchung !== null): ?>
+            <p>
+                Diese Buchung ist eine Umbuchung (<?= e($umbuchung->method->label()) ?>) und zählt weder als Einnahme noch als Ausgabe – es ist kein Beleg nötig.
+                <?php if ($umbuchungPartner !== null): ?>
+                    Gegenbuchung:
+                    <a href="/app/buchungen/<?= e((string) $umbuchungPartner->id) ?>"><?= e($umbuchungPartner->bookingDate->format('d.m.Y')) ?>,
+                        <?= isset($konten[$umbuchungPartner->accountId]) ? e($konten[$umbuchungPartner->accountId]->data->name) : 'anderes Konto' ?>,
+                        <?= $betrag($umbuchungPartner->amount) ?></a>.
+                <?php else: ?>
+                    Die Gegenbuchung liegt außerhalb Ihres Zugriffsbereichs.
+                <?php endif; ?>
+            </p>
+            <?php if ($darfBuchen): ?>
+                <form method="post" action="/app/buchungen/<?= e((string) $buchung->id) ?>/umbuchung/loesen" class="formular">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <p class="feld-hilfe">Lösen trennt beide Buchungen; sie bekommen wieder den Beleg-Standard ihrer Richtung.</p>
+                    <p class="knopfreihe">
+                        <button type="submit" class="knopf">Umbuchung lösen</button>
+                    </p>
+                </form>
+            <?php endif; ?>
+        <?php elseif ($umbuchungAuswahl === []): ?>
+            <p class="gedaempft">
+                Keine passende Gegenbuchung: Eine Umbuchung braucht auf einem anderen eigenen Konto (oder der Kasse) eine Buchung der Gegenrichtung
+                mit demselben Betrag innerhalb von 31 Tagen, die noch keinen Beleg und keine Umbuchung hat.
+            </p>
+        <?php else: ?>
+            <p class="gedaempft">Geld nur zwischen eigenen Konten verschoben? Dann mit der Gegenbuchung verknüpfen – beide zählen dann weder als Einnahme noch als Ausgabe und brauchen keinen Beleg.</p>
+            <form method="post" action="/app/buchungen/<?= e((string) $buchung->id) ?>/umbuchung" class="formular">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label for="umbuchung-gegenbuchung">Gegenbuchung
+                    <select id="umbuchung-gegenbuchung" name="gegenbuchung"<?= $fehlerAn('gegenbuchung') ?>>
+                        <?php foreach ($umbuchungAuswahl as $gegen): ?>
+                            <option value="<?= e((string) $gegen->id) ?>"><?= e($gegen->bookingDate->format('d.m.Y')) ?> · <?= isset($konten[$gegen->accountId]) ? e($konten[$gegen->accountId]->data->name) : 'anderes Konto' ?> · <?= $betrag($gegen->amount) ?><?= $gegen->purpose === '' ? '' : ' · ' . e(mb_strimwidth($gegen->purpose, 0, 40, '…')) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf knopf-primaer">Als Umbuchung verknüpfen</button>
+                </p>
+            </form>
+        <?php endif; ?>
     </section>
 <?php endif; ?>
 
@@ -289,6 +350,8 @@ if (!$neu) {
             <h3>Buchung löschen</h3>
             <?php if ($buchung->docStatus->hatBeleg()): ?>
                 <p class="gedaempft">Der Buchung ist ein Beleg zugeordnet – sie lässt sich deshalb nicht löschen.</p>
+            <?php elseif ($buchung->docSource === BankTransactionSetBy::Umbuchung): ?>
+                <p class="gedaempft">Die Buchung ist als Umbuchung verknüpft – sie lässt sich erst nach dem Lösen der Umbuchung löschen.</p>
             <?php else: ?>
                 <form method="post" action="/app/buchungen/<?= e((string) $buchung->id) ?>/loeschen" class="formular">
                     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">

@@ -9,6 +9,7 @@ use App\Domain\AllocationRecord;
 use App\Domain\AuditAction;
 use App\Domain\BankAccountKind;
 use App\Domain\BankTransactionRecord;
+use App\Domain\BankTransactionSetBy;
 use App\Domain\Belegstand;
 use App\Domain\Differenzgrund;
 use App\Domain\DocumentStatus;
@@ -114,6 +115,9 @@ final readonly class Zuordnung
                 ?? throw new BankRuleViolation('Diesen Beleg gibt es nicht.');
             $buchung = $this->buchungen->find($transactionId, sperren: true)
                 ?? throw new BankRuleViolation('Diese Buchung gibt es nicht.');
+            if ($buchung->docSource === BankTransactionSetBy::Umbuchung) {
+                throw new BankRuleViolation('Diese Buchung ist eine Umbuchung zwischen eigenen Konten und braucht keinen Beleg – zum Zuordnen erst die Umbuchung lösen.');
+            }
             if (!$beleg->paymentKind->erwartetBuchung()) {
                 throw new BankRuleViolation(sprintf(
                     'Für diesen Beleg wird keine Buchung erwartet (Zahlungsweg „%s“) – zuerst den Zahlungsweg in der Prüfansicht ändern.',

@@ -14,6 +14,7 @@ use App\Domain\Berechtigungen;
 use App\Domain\CashCount;
 use App\Domain\Category;
 use App\Domain\Permission;
+use App\Domain\UmbuchungMethode;
 use App\Domain\Zugriffsbereich;
 use App\Http\Cookie;
 use App\Http\Request;
@@ -29,6 +30,7 @@ use App\Service\Bank\BuchungFilter;
 use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
+use App\Service\Bank\Umbuchungen;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Processing\Betrag;
@@ -71,6 +73,7 @@ final readonly class BuchungController
         private Kassensturz $kassensturz,
         private AuditLog $audit,
         private Buchungsregeln $regeln,
+        private ?Umbuchungen $umbuchungen = null,
     ) {
     }
 
@@ -85,8 +88,15 @@ final readonly class BuchungController
 
         $einnahmen = 0;
         $ausgaben = 0;
+        // Transfers between own accounts (M10-6) are neither income nor
+        // expense; they only move the balance between accounts.
+        $umbuchungen = 0;
+        $umbuchungAnzahl = 0;
         foreach ($buchungen as $buchung) {
-            if ($buchung->amount >= 0) {
+            if ($buchung->docSource === BankTransactionSetBy::Umbuchung) {
+                $umbuchungen += $buchung->amount;
+                ++$umbuchungAnzahl;
+            } elseif ($buchung->amount >= 0) {
                 $einnahmen += $buchung->amount;
             } else {
                 $ausgaben += $buchung->amount;
@@ -104,6 +114,9 @@ final readonly class BuchungController
             'buchungen' => $buchungen,
             'einnahmen' => $einnahmen,
             'ausgaben' => $ausgaben,
+            'umbuchungen' => $umbuchungen,
+            'umbuchungAnzahl' => $umbuchungAnzahl,
+            'umbuchungenErkennbar' => $this->umbuchungen !== null,
             'darfBuchen' => $this->berechtigungen()->darf(Permission::BankBook),
             'belegStandard' => $this->buchungen->belegStandard(),
         ], Area::App));
@@ -298,6 +311,112 @@ final readonly class BuchungController
     }
 
     /**
+     * Pairs the booking with a counter booking on another own account as a
+     * transfer (M10-6) - by hand, from the choice on the booking's page.
+     *
+     * @param array<string, string> $params
+     */
+    public function umbuchungPaaren(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/app/buchungen/' . $id);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt(true);
+        }
+        $bereich = $this->bereich(Permission::BankBook);
+        $buchung = $this->umbuchungen === null ? null : $this->buchungen->finde($tresor, $id, $bereich);
+        if ($buchung === null || $this->umbuchungen === null) {
+            return $this->nichtGefunden();
+        }
+
+        // The counter booking must be within the same scope as the booking.
+        $gegenId = (int) self::text($request, 'gegenbuchung');
+        $gegen = $gegenId > 0 ? $this->buchungen->finde($tresor, $gegenId, $bereich) : null;
+        try {
+            if ($gegen === null) {
+                throw new BankRuleViolation('Bitte die Gegenbuchung auf dem anderen Konto wählen.', 'gegenbuchung');
+            }
+            $this->umbuchungen->paaren($tresor, $buchung->id, $gegen->id, UmbuchungMethode::Manuell, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        } catch (BankRuleViolation $e) {
+            return $this->formular($tresor, $buchung, self::felderAus($buchung), $e, 422);
+        }
+        $this->session->flash('Als Umbuchung zwischen eigenen Konten verknüpft – beide Buchungen zählen nicht als Einnahme oder Ausgabe.');
+
+        return Response::redirect('/app/buchungen/' . $id);
+    }
+
+    /**
+     * Unpairs the transfer the booking is part of (M10-6).
+     *
+     * @param array<string, string> $params
+     */
+    public function umbuchungLoesen(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/app/buchungen/' . $id);
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt(true);
+        }
+        $buchung = $this->umbuchungen === null ? null : $this->buchungen->finde($tresor, $id, $this->bereich(Permission::BankBook));
+        if ($buchung === null || $this->umbuchungen === null) {
+            return $this->nichtGefunden();
+        }
+
+        try {
+            // Unpairing rewrites the partner too: it must be within the same scope.
+            $paar = $this->umbuchungen->fuerBuchung($buchung->id);
+            if ($paar !== null && $this->buchungen->finde($tresor, $paar->partnerVon($buchung->id), $this->bereich(Permission::BankBook)) === null) {
+                throw new BankRuleViolation('Die Gegenbuchung liegt außerhalb Ihres Zugriffsbereichs – lösen kann die Umbuchung nur, wer beide Buchungen bearbeiten darf.');
+            }
+            $this->umbuchungen->loesen($buchung->id, $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        } catch (BankRuleViolation $e) {
+            $this->session->flash($e->getMessage(), FlashArt::Fehler);
+
+            return Response::redirect('/app/buchungen/' . $id);
+        }
+        $this->session->flash('Umbuchung gelöst. Beide Buchungen haben wieder den Beleg-Standard ihrer Richtung.');
+
+        return Response::redirect('/app/buchungen/' . $id);
+    }
+
+    /**
+     * Recognises transfers among the bookings within the person's scope
+     * (M10-6) - the same as after every import, for bookings entered or
+     * imported before.
+     */
+    public function umbuchungenErkennen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure('/app/buchungen');
+        }
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            return $this->gesperrt(true);
+        }
+        if ($this->umbuchungen === null) {
+            return $this->nichtGefunden();
+        }
+
+        $anzahl = $this->umbuchungen->erkennen($tresor, $this->bereich(Permission::BankBook), $this->session->userId(), $request->ip, new \DateTimeImmutable());
+        $this->session->flash(match ($anzahl) {
+            0 => 'Keine weiteren eindeutigen Umbuchungen gefunden. Uneindeutige lassen sich an der Buchung von Hand verknüpfen.',
+            1 => 'Eine Umbuchung zwischen eigenen Konten erkannt und verknüpft.',
+            default => sprintf('%d Umbuchungen zwischen eigenen Konten erkannt und verknüpft.', $anzahl),
+        });
+
+        return Response::redirect('/app/buchungen');
+    }
+
+    /**
      * The booking suggested for the difference of a cash count: on the day
      * of the count, the open difference as amount, shortfall an expense and
      * surplus income, purpose "Kassendifferenz", no receipt - the count is
@@ -391,8 +510,21 @@ final readonly class BuchungController
             },
         ];
 
+        // Transfer between own accounts (M10-6): the pair, the partner if the
+        // reader may see it, and for `bank.book` what it could be paired with.
+        $umbuchung = $buchung === null ? null : $this->umbuchungen?->fuerBuchung($buchung->id);
+        $leseBereich = $this->bereich(Permission::BankView);
+        $partner = $umbuchung === null || $buchung === null ? null : $this->buchungen->finde($tresor, $umbuchung->partnerVon($buchung->id), $leseBereich);
+        $auswahl = $buchung === null || $umbuchung !== null || !$darfBuchen || $this->umbuchungen === null
+            ? []
+            : $this->umbuchungen->auswahl($tresor, $buchung, $this->bereich(Permission::BankBook));
+
         return Response::html($this->view->render('app/buchung', [
             'title' => $buchung === null ? 'Neue Buchung' : 'Buchung',
+            'umbuchungAn' => $this->umbuchungen !== null,
+            'umbuchung' => $umbuchung,
+            'umbuchungPartner' => $partner,
+            'umbuchungAuswahl' => $auswahl,
             'buchung' => $buchung,
             'felder' => $felder,
             'fehler' => $fehler?->getMessage(),

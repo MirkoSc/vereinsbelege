@@ -678,6 +678,13 @@ return static function (
     $post('/app/buchungen/{id:\d+}', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->speichern($r, $params));
     $post('/app/buchungen/{id:\d+}/loeschen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->loeschen($r, $params));
     $post('/app/buchungen/{id:\d+}/einordnung', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->einordnen($r, $params));
+    // Transfers between own accounts (M10-6, issue #70, 04 section 5 "Stand
+    // M10-6"): pairing, unpairing and the recognition write structure of
+    // bookings - `bank.book`, like every other change to a booking; the
+    // partner is shown with `bank.view`. CSRF on every POST, vault needed.
+    $post('/app/buchungen/umbuchungen', $kontenPflege, static fn(Request $r) => $buchungen()->umbuchungenErkennen($r));
+    $post('/app/buchungen/{id:\d+}/umbuchung', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungPaaren($r, $params));
+    $post('/app/buchungen/{id:\d+}/umbuchung/loesen', $kontenPflege, static fn(Request $r, array $params) => $buchungen()->umbuchungLoesen($r, $params));
 
     // Reimbursements for one booking (M10-3, issue #67, docs/spec/
     // 04-bank-und-abgleich.md section 5): open reimbursements of the

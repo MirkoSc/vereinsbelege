@@ -659,6 +659,76 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
 - Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto)
   werden automatisch erkannt und paarweise verknüpft.
 
+### Stand M10-6: Umbuchungen eigene Konten (issue #70, Migration 039, E-38)
+
+- **Paar** (`transfer`, `App\Service\Bank\Umbuchungen`): Ausgabe auf dem
+  abgebenden ↔ Einnahme auf dem empfangenden eigenen Konto (Bank oder
+  Kasse) – Buchung ↔ Buchung, **keine** Allocation (E-27). Regeln beim
+  Paaren, unter Zeilensperre beider Buchungen (niedrigere ID zuerst):
+  verschiedene Konten, Gegenrichtung, **gleicher Betrag** (≠ 0), keine
+  der beiden schon gepaart, keiner ist ein Beleg zugeordnet (`teilweise`/
+  `zugeordnet`). Je Buchung höchstens ein Paar (`UNIQUE` je Spalte), beide
+  Fremdschlüssel `RESTRICT`. Kein Betrag in der Zeile.
+- **Status:** Beide Hälften `doc_source = umbuchung`, `doc_required = 0`,
+  `doc_status = nicht_noetig` – sie brauchen keinen Beleg und zählen in
+  „Buchungen ohne Beleg“ und im Scoring (M10-2) nicht als offen. Nur
+  `Umbuchungen` schreibt das; Regeln (nur `standard`) und „Einordnung“
+  (Beleg-Feld entfällt, Kategorie bleibt änderbar) lassen es in Ruhe;
+  `Zuordnung::zuordnen()` lehnt eine gepaarte Buchung ab. Eine gepaarte
+  Handbuchung lässt sich nicht löschen und nicht in Konto, Betrag,
+  Richtung oder Beleg-Bedarf ändern (Zweck, Datum, Kategorie schon).
+  **Lösen** löscht das Paar und setzt beide auf den Beleg-Standard ihrer
+  Richtung (`standard`, Setting `buchung_einnahme_beleg_noetig`); eine
+  Regel, die nur den Beleg-Bedarf gesetzt hatte, wird vergessen (`rule_id`
+  NULL) und darf wieder wirken. Lösen darf nur, wer **beide** Buchungen im
+  `bank.book`-Scope hat. Regeln und „Einordnung“ prüfen `doc_source =
+  umbuchung` zusätzlich im `UPDATE` (gleichzeitiges Paaren gewinnt).
+- **Automatisch erkannt** (`Umbuchungen::erkennen()`, Methode `auto`): Die
+  Gegenseiten-IBAN einer Buchung (Blind Index `counterparty_bi`) ist die
+  IBAN eines **anderen** eigenen Kontos, dort liegt **genau eine** offene
+  Gegenbuchung mit gleichem Betrag, Gegenrichtung, höchstens 5 Tage
+  Abstand und leerer oder zum ersten Konto passender Gegenseiten-IBAN – und
+  diese hat umgekehrt ebenfalls nur diesen einen Kandidaten. Alles
+  Uneindeutige bleibt liegen. Läuft im letzten Schritt jedes
+  Kontoauszug-Imports, **bevor** er als fertig gilt (scheitert sie, wiederholt
+  der nächste Aufruf des Schritts sie): Ausgangsbuchungen im Datumsbereich
+  der Datei ±5 Tage, Gegenbuchungen auf allen Konten (auch aus früheren
+  Importen), ohne Zeitraum-Scope – geschrieben wird nur Struktur. Außerdem
+  per Knopf **„Umbuchungen erkennen“** in der Buchungsliste (im
+  Zeitraum-Scope des Klickenden).
+- **Von Hand** (an der Buchung, `bank.book`): Auswahl „Gegenbuchung“ –
+  offene Buchungen anderer Konten mit Gegenrichtung und gleichem Betrag,
+  ±31 Tage, nächstes Datum zuerst, im Scope des Nutzers – → „Als
+  Umbuchung verknüpfen“ (Methode `manuell`); die Buchung einer gepaarten
+  zeigt die Gegenbuchung (verlinkt, wenn im Lese-Scope) und „Umbuchung
+  lösen“. Typisch: Bargeld von der Bank in die Kasse (die Bank meldet keine
+  IBAN).
+- **Nicht Einnahme/Ausgabe:** Die Summen der Buchungsliste zählen
+  Umbuchungen weder zu Einnahmen noch zu Ausgaben, sondern als eigene Zeile
+  „Umbuchungen eigene Konten“ (mit Vorzeichen; über beide Konten 0); der
+  Saldo enthält sie, weil er den Kontostand erklärt. Liste und Buchung
+  tragen die Marke „Umbuchung“. Auswertungen (05) lassen Buchungen mit
+  `doc_source = umbuchung` weg; der Soll-Bestand der Kasse (§1) zählt sie
+  selbstverständlich mit.
+- **Routen** (`bank.book`, CSRF, entsperrter Tresor):
+  `POST /app/buchungen/umbuchungen` (erkennen),
+  `POST /app/buchungen/{id}/umbuchung` (Feld `gegenbuchung`),
+  `POST /app/buchungen/{id}/umbuchung/loesen`. Lesen mit `bank.view` auf der
+  Buchungsseite.
+- **Audit** (Entität `transfer`): `umbuchung.verknuepft`,
+  `umbuchung.geloest` – je ausgabe_id, einnahme_id, method. Nie ein Betrag.
+
+**Pflicht-Tests M10-6:** `UmbuchungFlowTest` (erkannt und gepaart, beide
+`nicht_noetig`/`umbuchung`, Audit ohne Betrag, Summen ohne Umbuchungen und
+Saldo je Konto, zweiter Lauf findet nichts; Uneindeutiges, anderer Betrag,
+außerhalb des Fensters, fremde Gegenseite bleiben liegen; Bank ↔ Kasse von
+Hand paaren und lösen mit Standard je Richtung; Regeln beim Paaren mit
+markiertem Feld; gepaarte Buchung gegen Ändern/Löschen/Einordnung/Regel;
+Leserechte, CSRF, ohne Tresor, 404),
+`KontoauszugImportFlowTest::testTheImportRecognisesATransferToAnOwnAccount`,
+`ZuordnungFlowTest::testATransferTakesNoReceiptAndAnAllocatedBookingIsNoTransfer`,
+`RoutePermissionMatrixTest` (Schreiben `bank.book`).
+
 ### Stand M9-6: Regeln „kein Beleg nötig“ / Kategorie (issue #64)
 
 - **Regel** (`assignment_rule`, `/app/buchungen/regeln`): Name, Bedingung,
