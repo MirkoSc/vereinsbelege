@@ -42,6 +42,7 @@ use App\App\PasswordToolbox;
 use App\App\SecurityController;
 use App\App\PruefungController;
 use App\App\SerienController;
+use App\App\UebersichtController;
 use App\App\SucheController;
 use App\App\SupplierController;
 use App\Config\Config;
@@ -122,6 +123,7 @@ use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Import\KontoauszugImport;
+use App\Service\Bank\Uebersichten;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
@@ -617,6 +619,29 @@ $serienFor = static function (\PDO $pdo) use ($kiAuslesungFor, $auditFor): Serie
 // The series pages (issue #57/M8-1): only they open the connection.
 $serienSeite = static function () use ($connections, $view, $serienFor): SerienController {
     return new SerienController($view, new Session(), new SessionVault(), $serienFor($connections->pdo()));
+};
+
+// The work lists "Offen" (issue #69/M10-5): read-only, they reuse the
+// matching, booking and series services - only they open the connection.
+$offenSeite = static function () use ($connections, $view, $serienFor, $zuordnungFor): UebersichtController {
+    $pdo = $connections->pdo();
+    $lieferanten = new SupplierRepository($pdo);
+    $kategorien = new CategoryRepository($pdo);
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+
+    return new UebersichtController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Uebersichten(
+            new InvoiceRepository($pdo),
+            $lieferanten,
+            new SupplierService($pdo, $lieferanten, $kategorien),
+            $zuordnungFor($pdo),
+            new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
+        ),
+        $serienFor($pdo),
+    );
 };
 
 // The review page (M6-3, issue #37): captures a document as a receipt with
@@ -1476,6 +1501,7 @@ $router = new Router();
     $nextcloudAdmin,
     $backupsSeite,
     $serienSeite,
+    $offenSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

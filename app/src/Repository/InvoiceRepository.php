@@ -10,7 +10,9 @@ use App\Domain\ExportRunStatus;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
+use App\Domain\OffenerBelegRecord;
 use App\Domain\PaymentStatus;
+use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 use App\Service\Export\ExportBeleg;
 use App\Service\Export\ExportFilter;
@@ -33,6 +35,9 @@ use App\Service\Export\ExportFilter;
 final readonly class InvoiceRepository
 {
     private const string FORMAT = 'Y-m-d H:i:s';
+
+    /** The migration that introduced Zahlungsweg and payment status (037_allocation.sql). */
+    private const int MIGRATION_ABGLEICH = 37;
 
     public function __construct(private \PDO $pdo)
     {
@@ -273,6 +278,46 @@ final readonly class InvoiceRepository
         $stmt->execute(array_values($ids));
 
         return array_map(InvoiceRecord::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The receipts still waiting for money (M10-5, issue #69): Zahlungsweg
+     * $weg, a payment status out of $status, the document not rejected,
+     * within $bereich (receipt date and cost center). Due date first (none
+     * last), then receipt date. The submission is joined for the
+     * reimbursement list; `altbestand` says the receipt is older than
+     * Migration 037 - every receipt then became `konto`/`offen`, also cash
+     * receipts from the archive (E-27, E-37). No schema_version row for 37
+     * (cannot happen after migrate) counts as "not older".
+     *
+     * @param list<PaymentStatus> $status
+     *
+     * @return list<OffenerBelegRecord>
+     */
+    public function offen(Zahlungsweg $weg, array $status, Zugriffsbereich $bereich): array
+    {
+        if ($status === []) {
+            return [];
+        }
+        [$scope, $parameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT i.*, s.id AS submission_id, s.dek_sealed AS submission_dek_sealed, s.payload_enc AS submission_payload_enc,
+                    COALESCE(i.created_at < (SELECT sv.applied_at FROM schema_version sv WHERE sv.version = ?), 0) AS altbestand
+             FROM invoice i JOIN document d ON d.id = i.document_id
+             LEFT JOIN submission s ON s.id = d.submission_id
+             WHERE i.payment_kind = ? AND i.payment_status IN (' . implode(', ', array_fill(0, count($status), '?')) . ')
+               AND d.status <> ? AND ' . $scope . '
+             ORDER BY i.due_date IS NULL, i.due_date, i.invoice_date, i.id',
+        );
+        $stmt->execute([
+            self::MIGRATION_ABGLEICH,
+            $weg->value,
+            ...array_map(static fn(PaymentStatus $s): string => $s->value, $status),
+            DocumentStatus::Abgelehnt->value,
+            ...$parameter,
+        ]);
+
+        return array_map(OffenerBelegRecord::fromRow(...), $stmt->fetchAll());
     }
 
     /** Who marked the receipt as checked, and when ("Geprüft, nächster"). */

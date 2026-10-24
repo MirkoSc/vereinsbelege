@@ -412,6 +412,41 @@ Die Spec (03 §9) nennt nur die Spalten. Umgesetzt (Details 03 §9 „Übersicht
   kein Cron (der Cron kann nicht entschlüsseln). Eine Erinnerung per Mail
   wäre ein Folge-Issue.
 
+## E-37 ❓ Arbeitslisten „Offen“: Rechte, Altbestand, „Beleg anfordern“
+*M10-5 (issue #69) – (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)*
+
+Die Spec (04 §5 „Übersichten“) nennt nur die vier Listen. Umgesetzt (Details
+04 §5 „Stand M10-5“):
+- **Vier Seiten unter `/app/offen/...`** mit Reiterzeile statt einer
+  Sammelseite: Jede Liste hat ihr eigenes Recht, die Route prüft es. Belege
+  (unbezahlt, Erstattungen) `report.view` – es ist eine Auswertung, und so
+  sehen Vorstand, Kassenprüfer und Steuerberater sie lesend, ein
+  Vereinsverantwortlicher die seiner Kostenstelle. Buchungen `bank.view`
+  (eine Buchung hat keine Kostenstelle). Erwartete Belege `document.edit`
+  ohne Scope wie die Serienseiten (E-26). Verworfen: `matching.edit` – das
+  schlösse alle Lesenden aus.
+- **Altbestand getrennt:** Migration 037 hat alle Belege auf `konto`/`offen`
+  gesetzt (E-27), auch Archiv-Kassenbelege. Statt einer Fehlerflut zählt die
+  Liste Belege, die vor Migration 037 erfasst wurden, nur in einem Hinweis
+  und zeigt sie auf Klick gesondert. Kriterium ist `invoice.created_at`
+  gegen `schema_version.applied_at` – keine Migration, kein Backfill.
+  Verworfen: automatischer Backfill auf `bar` (die Spec sagt nicht, welche
+  Alt-Belege bar waren; der offene Punkt aus E-27 bleibt bei Mirko).
+- **„Fällig“** = Fälligkeit heute bis in 7 Tagen, **„überfällig“** = Fälligkeit
+  vorbei (fest, kein Setting); Belege ohne Fälligkeitsdatum zuletzt, ohne
+  Marke.
+- **„Beleg anfordern“** zeigt nur einen Text zum Kopieren in eine eigene Mail
+  (`<details>`, kein JS) – kein Versand über die Mail-Queue: Empfänger ist
+  meist kein Benutzer, und die Queue dürfte keine fachlichen Klartexte
+  tragen. Ebenso kein `mailto:`-Link (Klartext in einer URL).
+- **Erstattungen je Einreicher** gruppiert nach dem Namen aus der
+  Einreichung, nicht nach IBAN (die fehlt bei „Bar erhalten“). Belege ohne
+  Einreichung bilden eine eigene Gruppe. SEPA-Sammelüberweisung (pain.001)
+  bleibt Backlog; #67 (Erstattungs-Abgleich) und #86 (GiroCode) setzen auf
+  diese Listen auf.
+- **Nur Anzeige:** kein Zähler in Navigation/Startseite, keine Mail, kein
+  Cron (der Cron kann nicht entschlüsseln).
+
 ## E-03 ❓ Kantenerkennung: eigene Implementierung oder OpenCV.js
 *Nach M5-2 – Zwischenstand, noch nicht abschließend entschieden*
 Empfehlung weiterhin: eigene schlanke Implementierung zuerst; OpenCV.js

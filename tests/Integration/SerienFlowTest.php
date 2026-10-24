@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Integration;
 
 use App\App\SerienController;
+use App\App\UebersichtController;
 use App\Config\Paths;
 use App\Domain\AuditAction;
 use App\Domain\DocumentSource;
@@ -23,6 +24,7 @@ use App\Http\Session;
 use App\Http\StaticFileHandler;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
+use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
@@ -42,7 +44,11 @@ use App\Service\Account\SessionTimeouts;
 use App\Service\Account\SessionUser;
 use App\Service\Account\SessionVault;
 use App\Service\Audit\AuditLog;
+use App\Service\Bank\BankAccountService;
+use App\Service\Bank\BelegStandard;
+use App\Service\Bank\Buchungen;
 use App\Service\Bank\Buchungsregeln;
+use App\Service\Bank\Uebersichten;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
@@ -392,6 +398,35 @@ final class SerienFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('pro Jahr (Hochrechnung)', $unregelmaessig);
     }
 
+    public function testTheWorkListShowsOnlyConfirmedSeriesWhoseReceiptIsMissing(): void
+    {
+        $this->monatlich(3);
+        $this->allesAbarbeiten();
+        $serie = $this->serien()[0];
+
+        $vorschlag = $this->get('/app/offen/erwartet');
+        self::assertSame(200, $vorschlag->status);
+        self::assertStringContainsString('Kein erwarteter Beleg fehlt.', $vorschlag->body, 'a suggestion expects nothing yet');
+
+        $this->post('/app/serien/' . $serie->id, [...$this->felder(), 'belege' => array_map(strval(...), $this->mitglieder($serie->id))]);
+        $this->geprueft('2026-04-03', '470,00');
+        $this->allesAbarbeiten();
+
+        // Next expected 2026-05-03 plus tolerance is long past (E-33).
+        $body = $this->get('/app/offen/erwartet')->body;
+        self::assertStringContainsString('aria-current="page">Erwartete Belege</a>', $body);
+        self::assertStringContainsString('href="/app/serien/' . $serie->id . '"', $body);
+        self::assertStringContainsString('03.05.2026', $body);
+        self::assertStringContainsString('<span class="marke marke-fehler">überfällig</span>', $body);
+
+        // A series without a fixed rhythm expects no date.
+        $this->post('/app/serien/' . $serie->id, [
+            ...$this->felder(['periode' => 'unregelmaessig', 'naechste' => '', 'betrag' => '470,00']),
+            'belege' => array_map(strval(...), $this->mitglieder($serie->id)),
+        ]);
+        self::assertStringContainsString('Kein erwarteter Beleg fehlt.', $this->get('/app/offen/erwartet')->body);
+    }
+
     public function testADismissedSuggestionIsNotProposedAgain(): void
     {
         $this->monatlich(3);
@@ -721,6 +756,19 @@ final class SerienFlowTest extends DatabaseTestCase
             },
         );
         $serien = fn(): SerienController => new SerienController($view, new Session(), new SessionVault(), $this->serienService());
+        $offen = fn(): UebersichtController => new UebersichtController(
+            $view,
+            new Session(),
+            new SessionVault(),
+            new Uebersichten(
+                new InvoiceRepository($pdo),
+                new SupplierRepository($pdo),
+                $this->supplierService(),
+                ZuordnungFabrik::bauen($pdo, $this->audit),
+                new Buchungen($pdo, new BankTransactionRepository($pdo), new BankAccountService($pdo, new BankAccountRepository($pdo)), new CategoryRepository($pdo), BelegStandard::fromSettings(new SettingRepository($pdo))),
+            ),
+            $this->serienService(),
+        );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         $router = new Router();
@@ -734,6 +782,7 @@ final class SerienFlowTest extends DatabaseTestCase
             ...array_fill(0, 36, $unerreichbar),
             nextcloudAdmin: $unerreichbar,
             serien: $serien,
+            offen: $offen,
         );
 
         return new Kernel(
