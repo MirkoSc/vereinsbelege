@@ -55,12 +55,12 @@ final readonly class EinreichungsDaten
             return null;
         }
 
-        return self::oeffnen($item->document->submissionId, $item->submissionDekSealed, $item->payloadEnc, $vault);
+        return self::oeffnen($submissionId, $dekSealed, $payloadEnc, $vault);
     }
 
     /**
-     * The same from the raw `submission` columns - for readers that have no
-     * inbox item at hand (the reimbursement matching, M10-3, issue #67).
+     * ausChiffrat() for columns known to be filled - the reimbursement
+     * matching (M10-3, issue #67) reads only completed submissions.
      */
     public static function oeffnen(int $submissionId, string $dekSealed, string $payloadEnc, Vault $vault): ?self
     {
