@@ -1751,7 +1751,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAFreshInstallAnchorsTheVaultKeyWithItsServerKey(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $this->confirmKey($this->extractGroups($this->submit($this->validPost())->body)[6]);
 
         $schluessel = (string) (require $this->paths()->configFile())['server_key'];
