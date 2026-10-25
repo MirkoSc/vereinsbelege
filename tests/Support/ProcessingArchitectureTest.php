@@ -23,6 +23,10 @@ use PHPUnit\Framework\TestCase;
  *
  * App\Domain, App\Service\Crypto and App\Service\Ki (framework-free as
  * well) stay allowed.
+ *
+ * The worker program itself (worker/src/, App\Worker, issue #54) obeys the
+ * same rule: it runs without the web app's request, session and database
+ * and reaches the web host only through its signed API.
  */
 final class ProcessingArchitectureTest extends TestCase
 {
@@ -54,6 +58,24 @@ final class ProcessingArchitectureTest extends TestCase
                 yield substr($file->getPathname(), strlen($root) + 1) => [$file->getPathname()];
             }
         }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function workerDateien(): iterable
+    {
+        $root = dirname(__DIR__, 2);
+        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/worker/src', \FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $file) {
+            if ($file instanceof \SplFileInfo && $file->isFile() && $file->getExtension() === 'php') {
+                yield substr($file->getPathname(), strlen($root) + 1) => [$file->getPathname()];
+            }
+        }
+    }
+
+    #[DataProvider('workerDateien')]
+    public function testTheWorkerProgramDependsOnNoWebLayer(string $pfad): void
+    {
+        self::assertSame([], self::verstoesse((string) file_get_contents($pfad)), $pfad);
     }
 
     #[DataProvider('quelldateien')]

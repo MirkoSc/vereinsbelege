@@ -72,6 +72,42 @@ final readonly class TransferRepository
         return $row === false ? null : self::hydrate($row);
     }
 
+    /**
+     * The transfers of many bookings at once, with the account of both
+     * halves (the DATEV export, issue #93), by booking id - each transfer
+     * under both of its bookings that are in $transactionIds. In chunks, so
+     * the IN list stays short.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, array{umbuchung: Umbuchung, ausgabeKonto: int, einnahmeKonto: int}>
+     */
+    public function mitKontenFuer(array $transactionIds): array
+    {
+        $ergebnis = [];
+        foreach (array_chunk(array_values(array_unique($transactionIds)), self::IN_MAX) as $teil) {
+            $platz = implode(', ', array_fill(0, count($teil), '?'));
+            $stmt = $this->pdo->prepare(
+                "SELECT tr.*, o.account_id AS out_account_id, i.account_id AS in_account_id
+                   FROM transfer tr
+                   JOIN bank_transaction o ON o.id = tr.out_transaction_id
+                   JOIN bank_transaction i ON i.id = tr.in_transaction_id
+                  WHERE tr.out_transaction_id IN ($platz) OR tr.in_transaction_id IN ($platz)",
+            );
+            $stmt->execute([...$teil, ...$teil]);
+            foreach ($stmt->fetchAll() as $row) {
+                $eintrag = ['umbuchung' => self::hydrate($row), 'ausgabeKonto' => (int) $row['out_account_id'], 'einnahmeKonto' => (int) $row['in_account_id']];
+                foreach ([$eintrag['umbuchung']->ausgabeId, $eintrag['umbuchung']->einnahmeId] as $id) {
+                    if (in_array($id, $teil, true)) {
+                        $ergebnis[$id] = $eintrag;
+                    }
+                }
+            }
+        }
+
+        return $ergebnis;
+    }
+
     public function delete(int $id): bool
     {
         $stmt = $this->pdo->prepare('DELETE FROM transfer WHERE id = ?');

@@ -82,6 +82,7 @@ enum Area: string
                 new NavItem('Auswertungen', meilenstein: 'M11', recht: Permission::ReportView),
                 new NavItem('Kassenprüfung', '/app/auswertung/kassenpruefung', recht: Permission::ReportView),
                 new NavItem('Export', '/app/export', recht: Permission::ExportZip),
+                new NavItem('DATEV', '/app/datev', recht: Permission::ExportCsv),
                 new NavItem('Audit-Log', '/app/audit', recht: Permission::AuditView),
             ],
             self::Admin => [
@@ -99,6 +100,7 @@ enum Area: string
                 new NavItem('Einreichung', '/admin/einreichung', recht: Permission::AdminSettings),
                 new NavItem('Rechtstexte', '/admin/rechtstexte', recht: Permission::AdminSettings),
                 new NavItem('Export', '/admin/export', recht: Permission::AdminSettings),
+                new NavItem('DATEV', '/admin/datev', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),
