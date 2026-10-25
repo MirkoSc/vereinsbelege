@@ -1854,6 +1854,49 @@ Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
 richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
 dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
 zeigen soll.
+## E-64 ❓ Byte-Budget und Plattenschwelle für öffentliche Uploads (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #242 (Security-Review N-04, N-13), 01 §5, 03 §1/§4, 02 (`upload_budget`, `setting`)*
+
+Das Issue verlangt ein Byte-Budget je IP bzw. IPv6-/64 und Zeitfenster,
+ein globales Tagesbudget und eine Schwelle für freien Speicher, alles als
+Settings mit konservativen Vorgaben. Selbst gesetzt:
+
+- **Vorgaben:** 100 MB je IP und Stunde (zwei Einreichungen am
+  Einreichungs-Maximum von 50 MB), 500 MB insgesamt je Kalendertag
+  (Europe/Berlin), Pause unter 1024 MB freiem Speicher. Kein Budget liegt
+  unter der größten erlaubten Datei, der Tag nie unter der Stunde – sonst
+  würde jede Seite abgelehnt.
+- **Drei Zähler** (nach Koordinator-Review umgebaut): *offen* je Adresse
+  (Vorgabe 30 MB, angekündigte Größe, Rückgabe bei Abschluss/Abbruch/
+  Cron, sobald das Upload-Verzeichnis aufgeräumt ist – begrenzt `var/tmp`), je Adresse und *Stunde*
+  (angekündigte Größe, ohne Rückgabe) und *je Tag* für alle – dieser nur
+  mit **gespeicherten** Bytes. Ankündigen allein darf den Tag nicht
+  verbrauchen, sonst sperren ~50 Anfragen ohne gesendetes Byte
+  `/einreichen` bis Mitternacht. Den Tag zu füllen kostet jetzt echte
+  500 MB Upload.
+- **Eigene Tabelle `upload_budget`** statt `rate_limit`: unterschiedliche
+  Fensterlängen, und der Sweep von `rate_limit` würde einen Tageszähler
+  nach zwei Stunden löschen. Prüfen und Zählen in einem bedingten `UPDATE`
+  (kein Rennen wie bei N-09).
+- **/64 nur für das Byte-Budget.** Die bestehenden Zähl-Limits (Uploads,
+  Einreichungen) zählen weiter je volle Adresse – das wäre eine Änderung
+  außerhalb des Issues (Folge-Idee).
+- **Freier Speicher** wird an `shared/var` gemessen (Chunks, Blobs `fs`,
+  Backups, Log), nur wenn `disk_free_space()` verfügbar ist; sonst gilt
+  allein das Tagesbudget. Bei knappem Speicher werden auch Abschlüsse
+  bereits eröffneter Uploads abgelehnt (wie bei der Pause).
+- **Kein Log-Eintrag je Ablehnung** (ein Bot könnte sonst das Log füllen);
+  sichtbar wird ein erreichtes Tagesbudget im Systemcheck (Warnung) und auf
+  `/admin/einreichung`.
+- **TOCTOU (N-13):** auch der interne Upload und der Worker-Mail-Eingang
+  prüfen jetzt auf denselben geöffneten Handles, weil sie dieselbe
+  `UploadService`-Schnittstelle nutzen.
+
+Offen für Mirko: ob ein Anteil je Präfix am Tagesbudget (z. B. 20 % je
+IPv6-/48) zusätzlich nötig ist; ob die Vorgaben zum Vereinsalltag passen (z. B. nach
+einem Turnier viele Belege an einem Abend aus dem Vereinsheim-WLAN – eine
+IP); ob das Budget auch für den Worker-Mail-Eingang gelten soll (N-17).
+
 ## E-66 ❓ Backup/Restore abrunden: generierte Spalten, Cron-URL, große Backups per FTP (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 
 Issue #244, Details in `docs/spec/06-betrieb.md` §2 und §5.

@@ -158,16 +158,23 @@ final readonly class WorkerMailController
                 if (!$status->vollstaendig()) {
                     return Response::json(['fehler' => 'unvollstaendig', 'meldung' => 'Es fehlen Teile.', 'fehlend' => $status->fehlend], 409);
                 }
-                $typ = MagicBytes::detect($this->uploads->head($id));
-                if ($typ === null || !in_array($typ, self::TYPEN, true)) {
-                    $this->uploads->discard($id);
+                // Opened once: checked and stored are the same bytes (N-13).
+                $offen = $this->uploads->oeffnen($id);
+                try {
+                    $typ = MagicBytes::detect($offen->kopf());
+                    // Stored and bound to its mail in one step (submission_upload),
+                    // so the cron finds it again if the mail never becomes a receipt.
+                    $blob = $typ === null || !in_array($typ, self::TYPEN, true)
+                        ? null
+                        : $this->store->store($offen->chunks(), new BlobMeta($typ, self::dateiname($daten['name'] ?? '')), MailEinreichung::formHash($schluessel), new \DateTimeImmutable());
+                } finally {
+                    $offen->schliessen();
+                }
+                $this->uploads->discard($id);
 
+                if ($blob === null) {
                     return self::fehler(415, 'typ_nicht_erlaubt', 'Dieser Dateityp wird nicht angenommen.');
                 }
-                // Stored and bound to its mail in one step (submission_upload),
-                // so the cron finds it again if the mail never becomes a receipt.
-                $blob = $this->store->store($this->uploads->chunks($id), new BlobMeta($typ, self::dateiname($daten['name'] ?? '')), MailEinreichung::formHash($schluessel), new \DateTimeImmutable());
-                $this->uploads->discard($id);
 
                 return Response::json(['blob_id' => $blob->id, 'groesse' => $blob->size, 'typ' => $typ], 201);
             });

@@ -9,7 +9,8 @@ use App\Service\RateLimiter;
 /**
  * The public submission's spam defence without a visible hurdle
  * (docs/spec/01-sicherheit.md section 5, E-14, issue #25/M4-3): rate limit
- * per IP and globally, proof of work, honeypot, minimum fill time, and
+ * per IP and globally, proof of work, honeypot, minimum fill time, the
+ * byte budget (App\Service\Submission\UploadBudget, issue #242), and
  * whether the form is paused. Framework-free like
  * App\Service\Submission\SubmissionService - the caller
  * (App\PublicPages\EinreichungController, App\Api\EinreichungUploadController)
@@ -44,6 +45,7 @@ final readonly class Spamschutz
         private RateLimiter $limits,
         private ProofOfWork $proofOfWork,
         private EinreichungsEinstellungen $einstellungen,
+        private UploadBudget $budget,
     ) {
     }
 
@@ -58,6 +60,7 @@ final readonly class Spamschutz
         FormTokenData $token,
         ?string $powLoesung,
         int $groesse,
+        string $uploadId,
         ?\DateTimeImmutable $now = null,
     ): ?EinreichungAbgelehnt {
         $now ??= new \DateTimeImmutable();
@@ -87,6 +90,17 @@ final readonly class Spamschutz
             $this->limits->erstatten(self::PURPOSE_UPLOAD_IP, $ip, $now);
 
             return EinreichungAbgelehnt::ZuVieleGesamt;
+        }
+
+        // Last, so a request the checks above turn away costs no bytes
+        // (issue #242); refused here, it costs no upload count either - the
+        // two counts versuch() took above are handed back.
+        $budget = $this->budget->reservieren($ip, $uploadId, $groesse, $now);
+        if ($budget !== null) {
+            $this->limits->erstatten(self::PURPOSE_UPLOAD_IP, $ip, $now);
+            $this->limits->erstatten(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $now);
+
+            return $budget;
         }
 
         return null;
@@ -156,11 +170,32 @@ final readonly class Spamschutz
      * the step that turns an upload opened before the pause into a stored
      * blob (security review, issue #78: "Absenden und Upload antworten mit
      * 503", 01 section 5). The proof of work is not repeated there; create()
-     * checked it for this upload id.
+     * checked it for this upload id. Low free space pauses the same way
+     * (issue #242): the blob would land on the disk that is running out.
      */
     public function pruefePause(): ?EinreichungAbgelehnt
     {
-        return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : null;
+        return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : $this->budget->pruefeSpeicher();
+    }
+
+    /**
+     * The upload's open reservation goes back (issue #242): it was
+     * finished, aborted or thrown away.
+     */
+    public function uploadBeendet(string $uploadId): void
+    {
+        $this->budget->freigeben($uploadId);
+    }
+
+    /** Charges a page about to be stored to today's byte budget. */
+    public function uploadVerbuchen(int $bytes): ?EinreichungAbgelehnt
+    {
+        return $this->budget->verbuchen($bytes);
+    }
+
+    public function uploadZurueckbuchen(int $bytes): void
+    {
+        $this->budget->zurueckbuchen($bytes);
     }
 
     /** What every entry point checks first: pause, then proof of work. */

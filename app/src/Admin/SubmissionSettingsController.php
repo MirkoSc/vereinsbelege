@@ -12,13 +12,15 @@ use App\Http\Session;
 use App\Repository\SettingRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Submission\EinreichungsEinstellungen;
+use App\Service\Submission\UploadBudgetStand;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
 
 /**
  * Admin page for the public submission's spam defence (issue #25/M4-3,
- * docs/spec/01-sicherheit.md section 5): the rate/size/page limits
+ * docs/spec/01-sicherheit.md section 5): the rate/size/page limits, the
+ * byte budget with today's usage and the free-space threshold (issue #242)
  * (App\Service\Submission\EinreichungsEinstellungen) and the pause switch -
  * "Admin kann die Einreichung vorübergehend pausieren".
  *
@@ -28,11 +30,28 @@ use App\View\View;
  */
 final readonly class SubmissionSettingsController
 {
+    private const array FELDER = [
+        'limit_ip_stunde',
+        'limit_gesamt_stunde',
+        'max_seiten',
+        'max_datei_mb',
+        'max_einreichung_mb',
+        'budget_ip_mb_stunde',
+        'budget_gesamt_mb_tag',
+        'min_frei_mb',
+        'offen_mb_ip',
+    ];
+
+    /**
+     * @param (\Closure(): UploadBudgetStand)|null $uploadBudget today's
+     *        usage, shown above the form
+     */
     public function __construct(
         private View $view,
         private Session $session,
         private SettingRepository $settings,
         private AuditLog $audit,
+        private ?\Closure $uploadBudget = null,
     ) {
     }
 
@@ -58,6 +77,10 @@ final readonly class SubmissionSettingsController
             maxSeiten: self::zahl($request, 'max_seiten'),
             maxDateiMb: self::zahl($request, 'max_datei_mb'),
             maxEinreichungMb: self::zahl($request, 'max_einreichung_mb'),
+            budgetIpMbStunde: self::zahl($request, 'budget_ip_mb_stunde'),
+            budgetGesamtMbTag: self::zahl($request, 'budget_gesamt_mb_tag'),
+            minFreiMb: self::zahl($request, 'min_frei_mb'),
+            offenMbIp: self::zahl($request, 'offen_mb_ip'),
         );
 
         if (self::hatUngueltigenWert($request)) {
@@ -73,6 +96,10 @@ final readonly class SubmissionSettingsController
             'max_seiten' => $gespeichert->maxSeiten,
             'max_datei_mb' => $gespeichert->maxDateiMb,
             'max_einreichung_mb' => $gespeichert->maxEinreichungMb,
+            'budget_ip_mb_stunde' => $gespeichert->budgetIpMbStunde,
+            'budget_gesamt_mb_tag' => $gespeichert->budgetGesamtMbTag,
+            'min_frei_mb' => $gespeichert->minFreiMb,
+            'offen_mb_ip' => $gespeichert->offenMbIp,
         ]);
         $this->session->flash('Einstellungen gespeichert.');
 
@@ -110,8 +137,19 @@ final readonly class SubmissionSettingsController
             'csrf' => $this->session->csrfToken(),
             'flash' => $this->session->pullFlash(),
             'einstellungen' => $einstellungen,
+            'budget' => $this->budgetStand(),
             'fehler' => $fehler,
         ], Area::Admin), $status);
+    }
+
+    /** Today's usage, or nothing when it cannot be read - the form must stay usable. */
+    private function budgetStand(): ?UploadBudgetStand
+    {
+        try {
+            return $this->uploadBudget !== null ? ($this->uploadBudget)() : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private static function zahl(Request $request, string $feld): int
@@ -123,7 +161,7 @@ final readonly class SubmissionSettingsController
 
     private static function hatUngueltigenWert(Request $request): bool
     {
-        foreach (['limit_ip_stunde', 'limit_gesamt_stunde', 'max_seiten', 'max_datei_mb', 'max_einreichung_mb'] as $feld) {
+        foreach (self::FELDER as $feld) {
             if (self::zahl($request, $feld) < 1) {
                 return true;
             }

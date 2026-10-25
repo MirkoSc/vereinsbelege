@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\SystemCheck;
 
+use App\Service\Submission\UploadBudgetStand;
 use App\Service\Update\DenyHtaccess;
 
 /**
@@ -57,6 +58,8 @@ final readonly class SystemCheck
         'curl' => 'Ausgehende Aufrufe: KI-Anbieter, Update-Suche, Mail.',
     ];
 
+    private const string UPLOAD_BUDGET_LABEL = 'Öffentliche Uploads (Tagesbudget, freier Speicher)';
+
     /** Where shared/config.php would be if a domain pointed one level above web/. */
     public const string CONFIG_PROBE_PATH = '/shared/config.php';
 
@@ -72,6 +75,9 @@ final readonly class SystemCheck
      *        state of the vault generations in use, version => valid
      *        (VaultRepository::ankerStand(), issue #240); without it the
      *        check is left out
+     * @param (\Closure(): UploadBudgetStand)|null $uploadBudget today's byte
+     *        budget of the public upload (issue #242); without it that
+     *        check is left out
      */
     public function __construct(
         private ?\PDO $pdo = null,
@@ -79,6 +85,7 @@ final readonly class SystemCheck
         private ?\Closure $statusProbe = null,
         private ?string $sharedDir = null,
         private ?\Closure $tresorAnker = null,
+        private ?\Closure $uploadBudget = null,
     ) {
     }
 
@@ -120,6 +127,23 @@ final readonly class SystemCheck
 
         if ($this->tresorAnker !== null) {
             $results[] = $this->tresorAnker(($this->tresorAnker)());
+        }
+
+        if ($this->uploadBudget !== null) {
+            try {
+                $results[] = $this->uploadBudget(($this->uploadBudget)());
+            } catch (\Throwable) {
+                // E.g. migration 048 not run yet: the page that diagnoses
+                // such a state must not fail on it.
+                $results[] = new CheckResult(
+                    key: 'upload_budget',
+                    label: self::UPLOAD_BUDGET_LABEL,
+                    expected: 'lesbar',
+                    actual: 'nicht lesbar',
+                    status: CheckStatus::Warn,
+                    detail: 'Der Stand des Upload-Budgets ließ sich nicht lesen – Datenbank und Migrationen prüfen.',
+                );
+            }
         }
 
         return $results;
@@ -347,6 +371,45 @@ final readonly class SystemCheck
             detail: $written
                 ? 'Blobs, Backups, Log und temporäre Dateien lassen sich ablegen.'
                 : 'Ohne Schreibrechte scheitern Uploads, Backups und das Log.',
+        );
+    }
+
+    /**
+     * Issue #242: whether the public upload is still open - the daily byte
+     * budget for everybody together, and the free space below which it
+     * pauses. Either one closed is a warning: the signed-in functions keep
+     * working, only /einreichen turns uploads away until the next day or
+     * until space is freed. Sizes only, nothing about who uploaded.
+     */
+    public function uploadBudget(UploadBudgetStand $stand): CheckResult
+    {
+        $mb = self::formatBytes(...);
+        $frei = $stand->freiBytes === null ? 'freier Speicher nicht ermittelbar' : $mb($stand->freiBytes) . ' frei';
+
+        [$status, $detail] = match (true) {
+            $stand->speicherKnapp() => [
+                CheckStatus::Warn,
+                'Freier Speicher unter ' . $mb($stand->minFreiBytes) . ': öffentliche Uploads sind pausiert, bis wieder Platz ist (alte Backups löschen, Speicher beim Hoster prüfen).',
+            ],
+            $stand->budgetErreicht() => [
+                CheckStatus::Warn,
+                'Das Tagesbudget für öffentliche Uploads ist erreicht: /einreichen nimmt bis Mitternacht keine (großen) Dateien mehr an. Grenze unter Admin › Einreichung.',
+            ],
+            default => [
+                CheckStatus::Ok,
+                $stand->freiBytes === null
+                    ? 'Der Hoster nennt keinen freien Speicher – es gilt allein das Tagesbudget.'
+                    : 'Öffentliche Uploads sind offen.',
+            ],
+        };
+
+        return new CheckResult(
+            key: 'upload_budget',
+            label: self::UPLOAD_BUDGET_LABEL,
+            expected: 'unter ' . $mb($stand->budgetHeute) . ' am Tag, mindestens ' . $mb($stand->minFreiBytes) . ' frei',
+            actual: $mb($stand->verbrauchtHeute) . ' heute, ' . $frei,
+            status: $status,
+            detail: $detail,
         );
     }
 
