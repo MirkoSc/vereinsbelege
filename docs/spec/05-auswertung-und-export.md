@@ -164,6 +164,37 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `category` muss deshalb nicht in `AuswertungsStandRepository::TABELLEN`.
 - Keine neue Tabelle, keine Migration (Spalten seit 017/019 vorhanden).
 
+### Stand M13-5: Performance-Test (issue #82, E-56)
+
+- **Ziele:** jede Auswertungsseite < 3 s, Posteingang < 1 s je Request –
+  mit dem Datenbestand mehrerer Jahre (3 000 Belege, 5 000 Buchungen).
+- **Testdatensatz:** `tests/Support/Testdatensatz.php` erzeugt ihn
+  generiert und anonym (nummerierte Platzhalternamen, keine IBANs, fester
+  Zufalls-Seed) über die echten Verschlüsselungspfade: DEK je Zeile an den
+  Tresor versiegelt, AEAD-Spalten, Blind Indexes (Rechnungsnummer,
+  Dedup-Schlüssel der Bankbuchung, Lieferant), Einreichungen über
+  `Referenzvergabe`, Zuordnungen über die echte `Zuordnung`;
+  Bankbuchungen wie der Kontoauszug-Import, Kassenbuchungen manuell.
+  Verteilung: 4 Kalenderjahre (die vier vor dem laufenden), 8
+  Kostenstellen gewichtet, 150 Lieferanten und die Kategorien
+  Zipf-verteilt, Beträge log-normal; Girokonto und Kasse; ~85 % der
+  Bankbelege zugeordnet, der Rest der Buchungen ohne Beleg (Beiträge,
+  Gebühren, Kasse); 100 Einreichungen im Posteingang.
+- **Messung:** `tests/Performance/LeistungsTest.php` lädt je Request
+  `app/src/bootstrap.php` neu (wie PHP auf dem Host) und schickt ihn durch
+  den Kernel – Router, Login-Guard, Tresor aus dem Cookie, SQL,
+  Entschlüsselung, View. Je Seite kalt (leerer `AuswertungsCache`) und
+  warm, je 3 Läufe, Median zählt; dazu der Speicher-Spitzenwert je Request.
+  Gemessen: Dashboard, Geldfluss (Buchungen, Belege, 3 Jahre frei,
+  Drilldown), Kassenprüfung (Seite, CSV), Posteingang (offen, alle).
+- **Aufruf:** PHPUnit-Gruppe `performance`, in `phpunit.xml`
+  standardmäßig ausgeschlossen (`vendor/bin/phpunit --group performance`);
+  in der CI ein eigener, paralleler Job `performance`, der die Messwerte in
+  die Job-Zusammenfassung schreibt (`PERF_REPORT_FILE`) und bei
+  verfehltem Ziel rot wird.
+- Auf dem Webspace selbst misst niemand automatisch (kein SSH/CLI): dort
+  per Browser-Entwicklerwerkzeuge (siehe PR #82 bzw. E-56).
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
@@ -640,6 +671,9 @@ eigene Sphäre vor Kategorie-Vorgabe, „ohne Sphäre“; keine veraltete Zahl
 nach Änderung der Vorgabe, des Belegs oder des Schalters; gesperrter
 Tresor), Sphären-Fälle in `CategoryAdminFlowTest` und `PruefungFlowTest`
 (ausgeschaltet kein Feld und keine Änderung gespeicherter Werte).
+Umgesetzt (M13-5): `tests/Performance/LeistungsTest.php` (Gruppe
+`performance`, eigener CI-Job) mit `tests/Support/Testdatensatz.php` –
+Auswertungen < 3 s, Posteingang < 1 s bei 3 000 Belegen/5 000 Buchungen.
 Umgesetzt (M12-2/M12-4): `tests/Integration/ExportZipFlowTest.php` –
 gültiges ZIP mit genau den gefilterten Belegen, kein Klartext in `var/tmp`.
 Für „nur noch nicht exportierte“ prüft er:
