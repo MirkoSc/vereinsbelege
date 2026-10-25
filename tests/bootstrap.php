@@ -12,3 +12,5 @@ error_reporting(E_ALL);
 date_default_timezone_set('Europe/Berlin');
 
 require dirname(__DIR__) . '/vendor/autoload.php';
+// The worker program (issue #54) is not in composer.json - see worker/autoload.php.
+require dirname(__DIR__) . '/worker/autoload.php';

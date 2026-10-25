@@ -155,6 +155,7 @@ abstract class WorkerTestCase extends DatabaseTestCase
             new CostCenterRepository($this->pdo()),
             $this->routing,
             $this->fallback,
+            $this->documents,
         );
     }
 

@@ -10,16 +10,28 @@ use PHPUnit\Framework\TestCase;
 /**
  * CLAUDE.md section 1: no process calls from PHP. The host does not block them
  * (disable_functions is empty there), so this test guards the self-restriction.
+ *
+ * The one exception is the optional worker (docs/spec/07-worker.md section 8,
+ * E-50): it runs in its own container, never on the web host, and needs
+ * Poppler and OCRmyPDF. Its code lives in worker/src/ - outside the release
+ * ZIP - and only worker/src/Prozess.php may call proc_open() (argument list,
+ * no shell); every other process function stays forbidden there as well.
+ * tests/Support/WorkerProzessGrenzeTest.php guards the rest of the boundary.
  */
 final class NoShellExecutionTest extends TestCase
 {
     private const FORBIDDEN = ['exec', 'shell_exec', 'proc_open', 'passthru', 'system', 'popen', 'pcntl_exec'];
 
+    /** The single file allowed to start a program, and what it may call. */
+    public const string PROZESS_DATEI = 'worker/src/Prozess.php';
+
+    private const array PROZESS_ERLAUBT = ['proc_open'];
+
     /** @return iterable<string, array{string}> */
     public static function sourceFiles(): iterable
     {
         $root = dirname(__DIR__, 2);
-        foreach (['app/src', 'app/views', 'bin', 'migrations'] as $dir) {
+        foreach (['app/src', 'app/views', 'bin', 'migrations', 'worker'] as $dir) {
             if (!is_dir($root . '/' . $dir)) {
                 continue;
             }
@@ -39,7 +51,15 @@ final class NoShellExecutionTest extends TestCase
         if (!is_file($path)) {
             self::markTestSkipped('File not present.');
         }
-        self::assertSame([], self::violations((string) file_get_contents($path)), $path);
+        $root = dirname(__DIR__, 2) . '/';
+        $erlaubt = $path === $root . self::PROZESS_DATEI ? self::PROZESS_ERLAUBT : [];
+        self::assertSame([], array_values(array_diff(self::violations((string) file_get_contents($path)), $erlaubt)), $path);
+    }
+
+    public function testOnlyTheWorkersProcessClassStartsPrograms(): void
+    {
+        $root = dirname(__DIR__, 2) . '/';
+        self::assertSame(['proc_open'], self::violations((string) file_get_contents($root . self::PROZESS_DATEI)));
     }
 
     public function testDetectorFindsCallsButNotMethods(): void

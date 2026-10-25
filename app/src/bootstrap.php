@@ -1806,6 +1806,7 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
         new CostCenterRepository($pdo),
         $workerRoutingFor($pdo),
         $workerFallbackFor($pdo),
+        new DocumentRepository($pdo),
     );
 };
 $workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor): WorkerController {
