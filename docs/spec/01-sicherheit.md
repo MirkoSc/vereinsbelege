@@ -647,7 +647,7 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `/api/upload*` = `document.submit_internal`; `/admin/designsystem` =
   `admin.*`; `/admin/speicher*`, `/admin/mail*`, `/admin/kostenstellen*`
   (M4-1) = `admin.settings`; `/admin/update*`, `/admin/wartung/aufheben`,
-  `/admin/systemcheck` (M3-10) = `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
+  `/admin/systemcheck` (M3-10), `/admin/integritaet*` (M13-2) = `admin.system`; `/admin/rollen*`, `/admin/benutzer*` = `admin.users`;
   `/admin/tresor*` = `admin.vault_grant` (M3-7); `/anmelden/einladung` =
   öffentlich (M3-7); `/app/audit*` = `audit.view` (M3-8);
   `/app/posteingang`, `/app/posteingang/{id}`,
@@ -780,7 +780,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   Details nur Feldnamen), Beleg festgeschrieben / Festschreibung aufgehoben
   (M6-4, Details nur der Grund der Aufhebung),
   Mail-/Speicher-/Update-Kanal-Einstellungen,
-  Update eingespielt/zurückgerollt, Wartung aufgehoben. Belege, Lieferanten,
+  Update eingespielt/zurückgerollt, Wartung aufgehoben, Code-Integrität
+  geprüft (M13-2, unverändert bzw. mit Abweichungen). Belege, Lieferanten,
   Buchungen, Abgleich, Festschreibung, Export und Import ergänzen ihre
   Aktionen, wenn es sie gibt (ab M4).
 - **Prüfung:** `public/js/audit.js` ruft `/app/audit/pruefen` je 2000
@@ -858,6 +859,55 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   zeigt Abweichungen. Kein Schutz gegen einen versierten Angreifer, aber
   erkennt plumpe Manipulationen.
 
+### Umsetzung (M13-2, issue #79)
+
+- **Prüfsummen je Datei:** `.github/workflows/release.yml` schreibt in die
+  `checksums.txt` des Releases zuerst wie bisher die Assets (ZIP,
+  `setup.php`), danach je Datei des **entpackten** Release-ZIPs eine Zeile
+  `<sha256>  release/<pfad>` (sha256sum-Format, Pfad relativ zum
+  Release-Wurzelverzeichnis). `setup.php` und der Updater (Schritt
+  `download`) legen die Datei unverändert als `shared/release_checksums.txt`
+  ab; der ZIP-Abgleich (`ReleaseDownloader::verifyChecksum()`) liest nur die
+  Asset-Zeile und bleibt unberührt. Releases vor M13-2 haben keine
+  `release/`-Zeilen – die Prüfung ist dann erst nach dem nächsten Update
+  möglich. Gelesen wird die Liste von `App\Service\Integritaet\Pruefsummenliste`;
+  Pfade mit `..`, `.`, leeren Segmenten, Backslash oder absolutem Pfad werden
+  verworfen (die Liste liegt in `shared/`, eine manipulierte darf die Prüfung
+  nicht aus `current/` herausführen).
+- **Prüfung:** `/admin/integritaet` (Recht `admin.system`, wie Update;
+  `App\Admin\CodeIntegritaetController`, `App\Service\Integritaet\CodeIntegritaet`)
+  als Schrittkette aus kurzen Requests (`public/js/integritaet.js`): je
+  Schritt höchstens 500 Dateien bzw. 3 s hashen, ein letzter Schritt sucht
+  Dateien in `current/`, die nicht zum Release gehören (auch versteckte
+  Dateien; ein Symlink zählt selbst, ihm wird nie gefolgt). Befunde:
+  **geändert** (Hash weicht ab, Datei nicht lesbar, ein Symlink an Stelle
+  einer Release-Datei oder ein nicht auflistbares Verzeichnis, dann mit `/`
+  am Ende), **fehlend**, **zusätzlich** (Namen, die kein UTF-8 sind, mit
+  U+FFFD). Stand in `shared/var/integritaet.json` (nur Pfade und
+  Zahlen, je Art höchstens 200 Pfade, die Zahlen vollständig), per `flock`
+  gegen parallele Schritte gesichert; die Seite zeigt das Ergebnis der
+  letzten Prüfung. Ändern sich die Liste oder `current/VERSION` während der
+  Prüfung (Update oder Rollback dazwischen), bricht der nächste Schritt mit
+  Hinweis ab.
+- **Keine Prüfung möglich**, mit Erklärung auf der Seite: ohne
+  `shared/release_checksums.txt` (Entwicklungsumgebung) oder ohne
+  `release/`-Zeilen (älteres Release).
+- **Andere Version:** Nennt die Liste eine andere Version als
+  `current/VERSION`, warnt die Seite, prüft aber trotzdem. Der Updater
+  speichert die Liste schon beim Download – nach einem Rollback oder einem
+  vor dem Umschalten abgebrochenen Update passt sie bis zum nächsten
+  vollständigen Update nicht. Bewusst keine Sperre: eine manipulierte
+  `VERSION`-Datei darf die Prüfung nicht abschalten, sie ist ein geänderter
+  Befund wie jede andere Datei.
+- **Audit-Log:** jede abgeschlossene Prüfung genau einmal – geschrieben
+  unter der Sperre, bevor der Endstand gespeichert wird; scheitert das
+  Schreiben, bleibt die Prüfung offen und der nächste Schritt versucht es
+  erneut. Das Ergebnis steckt in der Aktion selbst –
+  `code.integritaet_unveraendert` bzw. `code.integritaet_abweichung` –, damit
+  die Liste eine Abweichung auch ohne entsperrten Tresor zeigt. Details nur
+  Version und Anzahlen (Dateien, geändert, fehlend, zusätzlich), keine Pfade.
+- Kein Tresor nötig: ein Release enthält keine fachlichen Daten.
+
 ## Pflicht-Tests
 
 Krypto-Roundtrips (Feld, Blob, Sealed-DEK), AAD-Vertauschung schlägt fehl,
@@ -890,3 +940,12 @@ Posteingang und Repositories unveränderlich; Aufheben nur mit Grund, danach
 `in_pruefung` mit geleerten `locked_*`/`checked_*`, Grund nur im
 Audit-Chiffrat, erneutes Prüfen und Festschreiben möglich; Status und
 `locked_at` stimmen überein; Statusmatrix (`festgeschrieben → in_pruefung`).
+Code-Integritätscheck (issue #79/M13-2): Prüfsummenliste liest Datei- und
+Versionszeilen, verwirft Pfade außerhalb des Release; unverändertes Release
+ohne Befund; geänderte, fehlende, zusätzliche Dateien (auch versteckte,
+Symlinks und Namen ohne UTF-8) erkannt; Prüfung in Portionen, von einem neuen
+Request fortsetzbar, genau ein Abschluss-Schritt, gescheiterter Abschluss
+wird wiederholt; ohne Liste oder ohne Dateizeilen keine Prüfung; fremde
+Version warnt nur, manipulierte `VERSION` ist ein Befund; geänderte Liste
+oder Version bricht ab; Seite, CSRF, Recht `admin.system`, Audit-Eintrag
+mit Anzahlen ohne Pfade.

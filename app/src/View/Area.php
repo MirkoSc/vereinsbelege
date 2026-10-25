@@ -86,6 +86,7 @@ enum Area: string
             self::Admin => [
                 new NavItem('Update', '/admin/update', recht: Permission::AdminSystem),
                 new NavItem('Systemcheck', '/admin/systemcheck', recht: Permission::AdminSystem),
+                new NavItem('Code-Integrität', '/admin/integritaet', recht: Permission::AdminSystem),
                 new NavItem('Designsystem', '/admin/designsystem'),
                 new NavItem('Benutzer', '/admin/benutzer', recht: Permission::AdminUsers),
                 new NavItem('Rollen', '/admin/rollen', recht: Permission::AdminUsers),

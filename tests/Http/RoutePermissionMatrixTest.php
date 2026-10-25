@@ -257,6 +257,14 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', false],
             [SystemRole::Finanzen, HttpMethod::Post, '/admin/backups', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/backups/backup_20260101_120000.zip', false],
+            // Code integrity check (issue #79/M13-2): admin.system, like Update.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/integritaet', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/integritaet', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/integritaet/schritt', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/integritaet', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/integritaet', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/integritaet/schritt', false],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/admin/integritaet', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -827,6 +835,8 @@ final class RoutePermissionMatrixTest extends TestCase
             erstattungen: $stellvertreter,
             // The SEPA payment runs (issue #85), optional.
             zahllaeufe: $stellvertreter,
+            // The code integrity check (issue #79/M13-2), optional.
+            integritaet: $stellvertreter,
             // Impressum/Datenschutz and their admin page (issue #80/M13-3), optional.
             rechtstexte: $stellvertreter,
             rechtstexteAdmin: $stellvertreter,
