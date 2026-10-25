@@ -50,6 +50,7 @@ use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\RecoveryKeyException;
 use App\Service\Crypto\RecoveryKeyProblem;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\TresorAnkerException;
 use App\Service\Crypto\UserKey;
 use App\Service\Crypto\UserKeyPair;
 use App\Service\Crypto\Vault;
@@ -108,7 +109,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $erstellt = new FirstAdminSetup($this->pdo())->create(self::ADMIN, 'Anna Admin', self::PASSWORT, $config['server_key']);
         $this->adminId = $erstellt['userId'];
         $this->alterSchluessel = $erstellt['recoveryKey'];
-        $aktuell = new VaultRepository($this->pdo())->current();
+        $aktuell = new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->current();
         self::assertNotNull($aktuell);
         $this->alt = $this->alterSchluessel->openVault($aktuell->publicKey(), $aktuell->version);
         $this->pdo()->prepare('UPDATE vault SET recovery_confirmed_at = created_at')->execute();
@@ -150,8 +151,8 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
         self::assertSame(2, $ring->version);
         self::assertSame([1], $ring->previousVersions());
-        self::assertTrue(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertSame(1, new VaultRepository($this->pdo())->current()?->version, 'Vor der Bestätigung wird nichts an Generation 2 versiegelt.');
+        self::assertTrue(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rotationInProgress());
+        self::assertSame(1, new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->current()?->version, 'Vor der Bestätigung wird nichts an Generation 2 versiegelt.');
         try {
             $rotation->umschluesseln($ring, [], new \DateTimeImmutable());
             self::fail('Umschlüsseln vor der Bestätigung des neuen Papierschlüssels.');
@@ -166,7 +167,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $neuerSchluessel = $rotation->neuerWiederherstellungsschluessel($ring);
         self::assertFalse(hash_equals($this->alterSchluessel->formatted(), $neuerSchluessel->formatted()));
         self::assertTrue($rotation->bestaetigen($ring, strtolower($neuerSchluessel->lastGroup()), $this->adminId, self::IP, new \DateTimeImmutable()));
-        self::assertSame(2, new VaultRepository($this->pdo())->current()?->version, 'Ab der Bestätigung wird an Generation 2 versiegelt.');
+        self::assertSame(2, new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->current()?->version, 'Ab der Bestätigung wird an Generation 2 versiegelt.');
         $this->assertAbschlussVerweigert($rotation, $ring);
         self::assertNotNull($this->zeile('bank_import', $d['import'])['source_bi'], 'Erst der Abschluss leert source_bi.');
 
@@ -190,8 +191,8 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
         // Generation 1 is gone for good: no grants, retired, every session ended.
         self::assertSame([], new VaultGrantRepository($this->pdo())->holdersOf(1));
-        self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertNotNull(new VaultRepository($this->pdo())->generationOf(1)?->retiredAt);
+        self::assertFalse(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rotationInProgress());
+        self::assertNotNull(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->generationOf(1)?->retiredAt);
         self::assertSame(1, new UserRepository($this->pdo())->findById($this->kassiererId)?->sessionEpoch);
 
         $aktionen = array_map(
@@ -308,14 +309,14 @@ final class SchluesselrotationTest extends DatabaseTestCase
         $rotation = $this->rotation();
         $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
         // The public submission keeps sealing - to the old, confirmed key.
-        self::assertSame(1, Vault::sealedVersion(new VaultRepository($this->pdo())->current()?->sealDataKey(DataKey::generate()) ?? ''));
+        self::assertSame(1, Vault::sealedVersion(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->current()?->sealDataKey(DataKey::generate()) ?? ''));
 
-        self::assertNotNull(new VaultRepository($this->pdo())->rollbackHindernis(), 'Kein Rollback auf ein Release vor 040, solange eine Rotation läuft.');
+        self::assertNotNull(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rollbackHindernis(), 'Kein Rollback auf ein Release vor 040, solange eine Rotation läuft.');
         self::assertSame(1, $rotation->abbrechen($this->adminId, self::IP, new \DateTimeImmutable()));
 
-        self::assertFalse(new VaultRepository($this->pdo())->rotationInProgress());
-        self::assertNull(new VaultRepository($this->pdo())->generationOf(2), 'Die nie benutzte Generation ist weg - ein älteres Release nach einem Rollback sähe sie sonst als neuesten Schlüssel.');
-        self::assertNull(new VaultRepository($this->pdo())->rollbackHindernis());
+        self::assertFalse(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rotationInProgress());
+        self::assertNull(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->generationOf(2), 'Die nie benutzte Generation ist weg - ein älteres Release nach einem Rollback sähe sie sonst als neuesten Schlüssel.');
+        self::assertNull(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rollbackHindernis());
         self::assertSame([], new VaultGrantRepository($this->pdo())->holdersOf(2));
         self::assertSame(1, new UserRepository($this->pdo())->findById($this->kassiererId)?->sessionEpoch, 'Alle Sitzungen enden.');
         self::assertSame('Sportbedarf Müller GmbH', $this->supplierService()->finde($this->alt, $d['lieferant'])?->data->name);
@@ -350,7 +351,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
         self::assertNull($this->anmelden(self::ADMIN), 'Ohne Freigabe kein Tresor.');
 
         $recovery = new VaultRecovery(
-            new VaultRepository($this->pdo()),
+            new VaultRepository($this->pdo(), $this->crypto->tresorAnker()),
             new VaultGrantRepository($this->pdo()),
             new UserAdministration($this->pdo(), $this->crypto),
             new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::LOGIN_WINDOW_SECONDS),
@@ -438,6 +439,29 @@ final class SchluesselrotationTest extends DatabaseTestCase
         self::assertNull($this->zeile('bank_account', $d['konto'])['iban_bi'], 'Eine Unique-Kollision hält die Kette ebenso wenig auf.');
     }
 
+    /**
+     * Issue #240: the new generation is anchored the moment it is created -
+     * its key pair comes from this very request - and the check follows the
+     * switch to it: a key swapped into its row afterwards is refused.
+     */
+    public function testDieNeueGenerationIstVonAnfangAnBeglaubigt(): void
+    {
+        $vaults = new VaultRepository($this->pdo(), $this->crypto->tresorAnker());
+        $rotation = $this->rotation();
+        $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
+        self::assertSame([1 => true, 2 => true], $vaults->ankerStand());
+
+        $this->bestaetigen($rotation, $ring);
+        self::assertSame(2, $vaults->current()?->version);
+
+        $stmt = $this->pdo()->prepare('UPDATE vault SET public_key = ? WHERE version = 2');
+        $stmt->bindValue(1, Vault::create(2)->publicKey(), \PDO::PARAM_LOB);
+        $stmt->execute();
+        self::assertSame([1 => true, 2 => false], $vaults->ankerStand());
+        $this->expectException(TresorAnkerException::class);
+        $vaults->current();
+    }
+
     public function testEinZweiterStartUndEinVeralteterSitzungstresorWerdenAbgelehnt(): void
     {
         $rotation = $this->rotation();
@@ -460,7 +484,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
     {
         $rotation = $this->rotation();
         $ring = $rotation->starten($this->alt, $this->adminId, self::IP, new \DateTimeImmutable());
-        $vaults = new VaultRepository($this->pdo());
+        $vaults = new VaultRepository($this->pdo(), $this->crypto->tresorAnker());
         $eingabe = $this->alterSchluessel->formatted();
         try {
             RecoveryKey::parse($eingabe)->openVault($ring->publicKey(), $ring->version);
@@ -500,7 +524,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
     {
         $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at');
 
-        $vaults = new VaultRepository($this->pdo());
+        $vaults = new VaultRepository($this->pdo(), $this->crypto->tresorAnker());
         self::assertFalse($vaults->rotationInProgress());
         self::assertCount(1, $vaults->active());
         self::assertSame(1, $this->anmelden(self::ADMIN)?->version);
@@ -728,7 +752,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
             $rotation->abschliessen($ring, $this->adminId, self::IP, new \DateTimeImmutable());
             self::fail('Abschluss hätte verweigert werden müssen.');
         } catch (RotationException) {
-            self::assertTrue(new VaultRepository($this->pdo())->rotationInProgress());
+            self::assertTrue(new VaultRepository($this->pdo(), $this->crypto->tresorAnker())->rotationInProgress());
             self::assertNotSame([], new VaultGrantRepository($this->pdo())->holdersOf(1));
         }
     }
@@ -760,7 +784,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
             new UserRepository($this->pdo()),
             new UserKeyRepository($this->pdo()),
             new VaultGrantRepository($this->pdo()),
-            new VaultRepository($this->pdo()),
+            new VaultRepository($this->pdo(), $this->crypto->tresorAnker()),
             $this->crypto,
             new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::LOGIN_WINDOW_SECONDS),
             new PasswordHasher(),
@@ -777,7 +801,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
     {
         return new Schluesselrotation(
             $this->pdo(),
-            new VaultRepository($this->pdo()),
+            new VaultRepository($this->pdo(), $this->crypto->tresorAnker()),
             new VaultGrantRepository($this->pdo()),
             new UserRepository($this->pdo()),
             new VaultRotationRepository($this->pdo()),
@@ -788,7 +812,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
 
     private function audit(): AuditLog
     {
-        return new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $this->crypto);
+        return new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo(), $this->crypto->tresorAnker()), $this->crypto);
     }
 
     private function supplierService(): SupplierService

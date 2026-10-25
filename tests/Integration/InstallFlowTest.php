@@ -26,10 +26,13 @@ use App\Service\Backup\BackupService;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Crypto\TresorAnkerException;
 use App\Service\Crypto\Vault;
+use App\Service\Migration\Migration;
 use App\Service\Migration\Migrator;
 use App\Service\Migration\SqlSplitter;
 use App\Service\Update\DenyHtaccess;
+use App\Service\Tresor\Erstbeglaubigung;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -635,12 +638,14 @@ final class InstallFlowTest extends DatabaseTestCase
      * A backup ZIP of the current test database, as the update chain or
      * bin/backup.php would make it.
      */
-    private function makeBackup(bool $mitConfig): string
+    private function makeBackup(bool $mitConfig, ?string $configDatei = null): string
     {
-        $quelle = $this->base . '/quelle_config.php';
-        /** @var array{host: string, port: int, name: string, user: string, password: string} $db */
-        $db = self::configData()['db'];
-        ConfigWriter::write($quelle, $db);
+        $quelle = $configDatei ?? $this->base . '/quelle_config.php';
+        if ($configDatei === null) {
+            /** @var array{host: string, port: int, name: string, user: string, password: string} $db */
+            $db = self::configData()['db'];
+            ConfigWriter::write($quelle, $db);
+        }
 
         // The blob directory of the installation the backup came from - not
         // the one of the installation being restored into.
@@ -821,9 +826,12 @@ final class InstallFlowTest extends DatabaseTestCase
      * paper: the recovery key's groups, plus the old server key for the
      * tests that play "I kept a copy of config.php".
      *
+     * @param (\Closure(): void)|null $vorDemBackup changes the database
+     *        just before the backup is made (issue #240)
+     *
      * @return array{zip: string, gruppen: list<string>, alterSchluessel: string, userId: int}
      */
-    private function installationOhneSchluesselGesichert(): array
+    private function installationOhneSchluesselGesichert(?\Closure $vorDemBackup = null, bool $mitConfig = false): array
     {
         mkdir($this->paths()->sharedDir(), 0775, true);
         $response = $this->submit($this->validPost());
@@ -842,7 +850,10 @@ final class InstallFlowTest extends DatabaseTestCase
         // ... and a mail still waiting in the queue, ciphertext under the same key.
         new MailQueueRepository($this->pdo(), $alt)->enqueue('jemand@verein.example', 'Betreff', 'Text');
 
-        $zip = $this->makeBackup(mitConfig: false);
+        if ($vorDemBackup !== null) {
+            $vorDemBackup();
+        }
+        $zip = $this->makeBackup($mitConfig, $mitConfig ? $this->paths()->configFile() : null);
         $this->wipeDatabase();
         unlink($this->paths()->configFile());
         // The fresh install removed setup.php; the new server has one again.
@@ -875,11 +886,13 @@ final class InstallFlowTest extends DatabaseTestCase
      * Restores the key-less backup up to the access step and checks the
      * state there: data in, config.php NOT written, installer still open.
      *
+     * @param (\Closure(): void)|null $vorDemBackup see installationOhneSchluesselGesichert()
+     *
      * @return array{zip: string, gruppen: list<string>, alterSchluessel: string, userId: int}
      */
-    private function bisZumZugangsschritt(): array
+    private function bisZumZugangsschritt(?\Closure $vorDemBackup = null): array
     {
-        $sicherung = $this->installationOhneSchluesselGesichert();
+        $sicherung = $this->installationOhneSchluesselGesichert($vorDemBackup);
 
         $response = $this->submitRestore($sicherung['zip']);
         self::assertSame(200, $response->status);
@@ -1233,6 +1246,156 @@ final class InstallFlowTest extends DatabaseTestCase
             self::assertSame(409, $nichtAktiv->status);
         }
         self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    // ------------------------------------------- vault anchor (issue #240)
+
+    private function tresorUnter(string $serverKeyBase64): VaultRepository
+    {
+        return new VaultRepository($this->pdo(), new ServerCrypto((string) base64_decode($serverKeyBase64, true))->tresorAnker());
+    }
+
+    /** What an installation from before migration 046 would have backed up. */
+    private function schemaVorDemAnker(): void
+    {
+        $version = null;
+        foreach (Migration::discover($this->paths()->migrationsDir()) as $migration) {
+            if (Erstbeglaubigung::betrifft($migration)) {
+                $version = $migration->version;
+            }
+        }
+        self::assertNotNull($version);
+        $this->pdo()->exec('ALTER TABLE vault DROP COLUMN public_key_mac');
+        $this->pdo()->prepare('DELETE FROM schema_version WHERE version >= ?')->execute([$version]);
+        // Migrations after 046 (other issues) are in the dump already; the
+        // restore must apply 046 alone, as from a release that ended there.
+        foreach (Migration::discover($this->paths()->migrationsDir()) as $migration) {
+            if ($migration->version > $version) {
+                unlink($migration->path);
+            }
+        }
+    }
+
+    public function testAFreshInstallAnchorsTheVaultKeyWithItsServerKey(): void
+    {
+        mkdir($this->paths()->sharedDir(), 0775, true);
+        $this->confirmKey($this->extractGroups($this->submit($this->validPost())->body)[6]);
+
+        $schluessel = (string) (require $this->paths()->configFile())['server_key'];
+        self::assertNotNull($this->tresorUnter($schluessel)->current());
+
+        $this->expectException(TresorAnkerException::class);
+        $this->tresorUnter(ConfigWriter::generateServerKey())->current();
+    }
+
+    /**
+     * Restore without the old server key, alternative 2: the MAC in the dump
+     * was made with the old key - the recovery key proves the public key and
+     * it is anchored again, under the NEW key.
+     */
+    public function testRelinkingAnchorsTheVaultKeyUnderTheNewServerKey(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => $this->validPost()['admin_email'],
+            'admin_name' => $this->validPost()['admin_name'],
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+        self::assertSame(200, $response->status, $response->body);
+
+        $neu = (string) (require $this->paths()->configFile())['server_key'];
+        self::assertNotNull($this->tresorUnter($neu)->current(), 'anchored under the new key');
+        self::assertSame([1 => true], $this->tresorUnter($neu)->ankerStand());
+        self::assertSame([1 => false], $this->tresorUnter($sicherung['alterSchluessel'])->ankerStand(), 'the old MAC is gone');
+        $aktionen = $this->pdo()->query('SELECT action FROM audit_log ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertContains(AuditAction::TresorAnkerGesetzt->value, $aktionen);
+    }
+
+    /** Alternative 1, the old server key: the MAC from the dump fits as it is. */
+    public function testTheOldServerKeyKeepsTheAnchorOfTheBackup(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt();
+
+        self::assertSame(200, $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']])->status);
+
+        self::assertNotNull($this->tresorUnter($sicherung['alterSchluessel'])->current());
+        $aktionen = $this->pdo()->query('SELECT action FROM audit_log')->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertNotContains(AuditAction::TresorAnkerGesetzt->value, $aktionen, 'nothing to anchor anew');
+    }
+
+    /**
+     * Finding H-05: a backup whose `vault.public_key` was swapped for
+     * somebody else's. The recovery key does not fit it, and restored with
+     * the genuine server key the swapped key fails its anchor - nothing is
+     * sealed to it.
+     */
+    public function testADoctoredVaultKeyInABackupIsNeverUsedAfterTheRestore(): void
+    {
+        $fremd = Vault::create();
+        $sicherung = $this->bisZumZugangsschritt(function () use ($fremd): void {
+            $stmt = $this->pdo()->prepare('UPDATE vault SET public_key = ?');
+            $stmt->bindValue(1, $fremd->publicKey(), \PDO::PARAM_LOB);
+            $stmt->execute();
+        });
+
+        $zugang = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => $this->validPost()['admin_email'],
+            'admin_name' => $this->validPost()['admin_name'],
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+        self::assertSame(422, $zugang->status, 'the recovery key does not fit the swapped key');
+
+        self::assertSame(200, $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']])->status);
+        self::assertSame([1 => false], $this->tresorUnter($sicherung['alterSchluessel'])->ankerStand());
+
+        $this->expectException(TresorAnkerException::class);
+        $this->tresorUnter($sicherung['alterSchluessel'])->current();
+    }
+
+    /**
+     * A backup from before migration 046 has no MAC at all: the restore that
+     * applies the migration takes the key over (first use) - with the server
+     * key handed in at the access step.
+     */
+    public function testABackupFromBeforeTheAnchorIsAnchoredWithTheOldServerKey(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt($this->schemaVorDemAnker(...));
+        self::assertSame(true, $_SESSION['install_restore']['erstbeglaubigung'] ?? null);
+
+        self::assertSame(200, $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']])->status);
+
+        self::assertNotNull($this->tresorUnter($sicherung['alterSchluessel'])->current());
+    }
+
+    /** The same with the server key inside the backup: anchored before config.php is written. */
+    public function testABackupWithConfigFromBeforeTheAnchorIsAnchoredWithItsKey(): void
+    {
+        $sicherung = $this->installationOhneSchluesselGesichert($this->schemaVorDemAnker(...), mitConfig: true);
+
+        self::assertSame(200, $this->submitRestore($sicherung['zip'])->status);
+        self::assertTrue($this->runRestoreSteps()['fertig']);
+
+        self::assertSame($sicherung['alterSchluessel'], (require $this->paths()->configFile())['server_key']);
+        self::assertNotNull($this->tresorUnter($sicherung['alterSchluessel'])->current());
+    }
+
+    /** A current backup restored the same way keeps its MAC - nothing is taken over on trust. */
+    public function testACurrentBackupIsNotAnchoredAgainOnRestore(): void
+    {
+        $fremd = Vault::create();
+        $sicherung = $this->installationOhneSchluesselGesichert(function () use ($fremd): void {
+            $stmt = $this->pdo()->prepare('UPDATE vault SET public_key = ?');
+            $stmt->bindValue(1, $fremd->publicKey(), \PDO::PARAM_LOB);
+            $stmt->execute();
+        }, mitConfig: true);
+
+        self::assertSame(200, $this->submitRestore($sicherung['zip'])->status);
+        self::assertTrue($this->runRestoreSteps()['fertig']);
+
+        self::assertSame([1 => false], $this->tresorUnter($sicherung['alterSchluessel'])->ankerStand());
     }
 
     public function testAZipWithoutDumpIsRejectedAndNothingIsWritten(): void

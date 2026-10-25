@@ -58,6 +58,15 @@ enum AuditAction: string
     case TresorRotationSchluesselBestaetigt = 'tresor.rotation_schluessel_bestaetigt';
     case TresorRotationAbgeschlossen = 'tresor.rotation_abgeschlossen';
     case TresorRotationAbgebrochen = 'tresor.rotation_abgebrochen';
+    /**
+     * The anchor of the vault public key (issue #240, docs/spec/
+     * 01-sicherheit.md section 2): entity is the vault generation.
+     * `Abweichung` - the key does not verify, nothing was sealed (at most
+     * one per generation and hour); `Gesetzt` - a MAC was written for a key
+     * that was proved by the recovery key or taken over on first use.
+     */
+    case TresorAnkerAbweichung = 'tresor.anker_abweichung';
+    case TresorAnkerGesetzt = 'tresor.anker_gesetzt';
 
     case RolleAngelegt = 'rolle.angelegt';
     case RolleGeaendert = 'rolle.geaendert';
@@ -240,6 +249,8 @@ enum AuditAction: string
             self::TresorRotationSchluesselBestaetigt => 'Neuer Wiederherstellungsschlüssel bestätigt',
             self::TresorRotationAbgeschlossen => 'Tresor-Schlüsselrotation abgeschlossen',
             self::TresorRotationAbgebrochen => 'Tresor-Schlüsselrotation abgebrochen',
+            self::TresorAnkerAbweichung => 'Tresor-Schlüssel nicht beglaubigt – nichts versiegelt',
+            self::TresorAnkerGesetzt => 'Tresor-Schlüssel beglaubigt',
             self::RolleAngelegt => 'Rolle angelegt',
             self::RolleGeaendert => 'Rolle geändert',
             self::RolleGeloescht => 'Rolle gelöscht',
@@ -357,7 +368,8 @@ enum AuditAction: string
             self::TresorWiederhergestellt, self::TresorWiederherstellungFehlgeschlagen,
             self::ZugangNeuVerknuepft => 'user',
             self::TresorRotationGestartet, self::TresorRotationSchluesselBestaetigt,
-            self::TresorRotationAbgeschlossen, self::TresorRotationAbgebrochen => 'vault',
+            self::TresorRotationAbgeschlossen, self::TresorRotationAbgebrochen,
+            self::TresorAnkerAbweichung, self::TresorAnkerGesetzt => 'vault',
             self::GeraetWiderrufen => 'trusted_device',
             self::RolleAngelegt, self::RolleGeaendert, self::RolleGeloescht => 'role',
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',

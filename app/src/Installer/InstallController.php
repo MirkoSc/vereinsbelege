@@ -14,6 +14,7 @@ use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\RecoveryKey;
 use App\Service\Migration\Migrator;
+use App\Service\Tresor\Erstbeglaubigung;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\View\View;
@@ -467,15 +468,26 @@ final readonly class InstallController
                 'migrationen' => count($migriert->applied),
             ];
 
+            // A backup from before the vault anchor (issue #240): its rows
+            // get their first MAC with the key config.php will hold - known
+            // now when the backup carried one, at the access step otherwise.
+            $erstbeglaubigen = Erstbeglaubigung::darunter($migriert->applied);
             $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
             if ($serverSchluessel === null) {
                 // No key in the backup: config.php waits for the access step
                 // (serverKey()/access()), the page moves on to its form.
-                $_SESSION['install_restore'] = ['values' => $values, 'phase' => self::PHASE_ZUGANG];
+                $_SESSION['install_restore'] = [
+                    'values' => $values,
+                    'phase' => self::PHASE_ZUGANG,
+                    'erstbeglaubigung' => $erstbeglaubigen,
+                ];
 
                 return Response::json([...$antwort, 'weiter' => '/install']);
             }
 
+            if ($erstbeglaubigen) {
+                new RestoreAccess($pdo)->erstbeglaubigen($serverSchluessel);
+            }
             $this->finishRestore($values, $serverSchluessel);
 
             return Response::json($antwort);
@@ -546,6 +558,9 @@ final readonly class InstallController
             return $this->renderAccess(['server_key' => 'Dieser Schlüssel passt nicht zu den eingespielten Daten: kein Benutzerkonto lässt sich damit lesen. Bitte die config.php der Installation verwenden, von der das Backup stammt.'], 422);
         }
 
+        if ($this->erstbeglaubigungAusstehend()) {
+            new RestoreAccess($this->connect($values))->erstbeglaubigen($schluessel);
+        }
         $this->finishRestore($values, $schluessel);
 
         return $this->render(['fertig' => true, 'restore' => true, 'errors' => [], 'values' => []]);
@@ -589,6 +604,7 @@ final readonly class InstallController
                 // written rolls the re-link back instead of leaving the one
                 // readable account under a key that exists nowhere.
                 fn() => ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel),
+                erstbeglaubigen: $this->erstbeglaubigungAusstehend(),
             );
             $unlesbar = $zugang->unreadableAccounts($neuerSchluessel, $ergebnis->userId);
         } catch (RestoreAccessException $e) {
@@ -649,6 +665,12 @@ final readonly class InstallController
         $values = $stand['values'];
 
         return $values;
+    }
+
+    /** Whether the restore waiting for its access step applied the vault anchor migration (issue #240). */
+    private function erstbeglaubigungAusstehend(): bool
+    {
+        return ($_SESSION['install_restore']['erstbeglaubigung'] ?? false) === true;
     }
 
     /**

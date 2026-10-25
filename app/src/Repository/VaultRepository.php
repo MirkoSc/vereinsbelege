@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Repository;
 
 use App\Domain\VaultGeneration;
+use App\Service\Crypto\TresorAnker;
+use App\Service\Crypto\TresorAnkerException;
 use App\Service\Crypto\Vault;
 
 /**
@@ -16,6 +18,14 @@ use App\Service\Crypto\Vault;
  * upload, the public submission - gets what it needs here, while reading
  * still requires a session that unwrapped VK_priv.
  *
+ * And because sealing needs nothing but this row, the row is anchored
+ * outside the database (issue #240, finding N-01): with a TresorAnker -
+ * derived from the server key in shared/config.php - current() hands out a
+ * key only when its `public_key_mac` verifies. Every instance the
+ * application builds gets one (tests/Support/TresorAnkerPflichtTest checks
+ * app/src); without one, as in unit tests that only seed rows, nothing is
+ * checked and insert() writes no MAC.
+ *
  * Writing the row is the installer's job from M3-2 on; insert() exists for it
  * and for the tests.
  */
@@ -23,8 +33,16 @@ final readonly class VaultRepository
 {
     private const string FORMAT = 'Y-m-d H:i:s';
 
-    public function __construct(private \PDO $pdo)
-    {
+    /**
+     * @param (\Closure(int): void)|null $beiAbweichung told the generation
+     *        whose anchor failed, before current() refuses (audit entry,
+     *        App\Service\Tresor\TresorAnkerAlarm); must not throw
+     */
+    public function __construct(
+        private \PDO $pdo,
+        private ?TresorAnker $anker = null,
+        private ?\Closure $beiAbweichung = null,
+    ) {
     }
 
     /**
@@ -35,23 +53,123 @@ final readonly class VaultRepository
      * recovery key is confirmed (issue #90): before that, nothing may depend
      * on a key that exists only in the grants - a password reset of the only
      * holder would take it, and everything sealed to it, with it.
+     *
+     * @throws TresorAnkerException when the key does not carry a valid
+     *         anchor (issue #240) - nothing may be sealed to it
      */
     public function current(): ?Vault
     {
-        try {
-            $stmt = $this->pdo->query(
-                'SELECT version, public_key FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
-            );
-        } catch (\PDOException) {
-            // Before migration 040 (update between 'switch' and 'migrate').
-            $stmt = $this->pdo->query('SELECT version, public_key FROM vault ORDER BY version DESC LIMIT 1');
-        }
-        $row = $stmt === false ? false : $stmt->fetch(\PDO::FETCH_ASSOC);
-        if (!is_array($row)) {
+        $generation = $this->neuesteBestaetigte();
+        if ($generation === null) {
             return null;
         }
+        if (!$this->pruefe($generation)) {
+            throw TresorAnkerException::abweichung($generation->version);
+        }
 
-        return Vault::locked((string) $row['public_key'], (int) $row['version']);
+        return Vault::locked($generation->publicKey, $generation->version);
+    }
+
+    /**
+     * current() without the anchor check - only for callers that prove the
+     * key themselves with the paper recovery key (it contains VK_priv, and
+     * VK_pub follows from it): /admin/wiederherstellen and the installer's
+     * access step. They re-anchor a key they proved (beglaubige()), which is
+     * how an installation gets out of a failed check.
+     */
+    public function currentUngeprueft(): ?Vault
+    {
+        $generation = $this->neuesteBestaetigte();
+
+        return $generation === null ? null : Vault::locked($generation->publicKey, $generation->version);
+    }
+
+    /**
+     * Whether the generation's public key carries a valid anchor. True when
+     * this instance has no anchor to check against (see the class comment).
+     */
+    public function beglaubigt(VaultGeneration $generation): bool
+    {
+        return $this->anker === null || $this->anker->passt($generation->version, $generation->publicKey, $generation->publicKeyMac);
+    }
+
+    /**
+     * beglaubigt(), and a failure is reported (audit entry) - for the
+     * places that are about to use the key: current() and the login.
+     */
+    public function pruefe(VaultGeneration $generation): bool
+    {
+        if ($this->beglaubigt($generation)) {
+            return true;
+        }
+        if ($this->beiAbweichung !== null) {
+            ($this->beiAbweichung)($generation->version);
+        }
+
+        return false;
+    }
+
+    /**
+     * Anchors a key the caller has PROVED: generated it in this request
+     * (installer, rotation - insert() does that by itself) or derived it from
+     * the paper recovery key. Never for a key that was merely read from the
+     * database - that is exactly what an attacker would have written.
+     * Matches version AND key, so a row that changed in between keeps its
+     * old MAC.
+     */
+    public function beglaubige(int $version, string $publicKey): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE vault SET public_key_mac = ? WHERE version = ? AND public_key = ?');
+        $stmt->bindValue(1, $this->ankerOderFehler()->fuer($version, $publicKey), \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $version, \PDO::PARAM_INT);
+        $stmt->bindValue(3, $publicKey, \PDO::PARAM_LOB);
+        $stmt->execute();
+    }
+
+    /**
+     * Trust on first use, for installations from before the anchor existed
+     * (issue #240): every generation WITHOUT a MAC gets one, as it stands.
+     * Only App\Service\Tresor\Erstbeglaubigung calls this, and only in the
+     * request that applied migration 046 - a MAC that goes missing later is
+     * not filled in again, it stays a failed check until a recovery key
+     * proves the key. A row whose MAC is set but wrong is never touched.
+     *
+     * @return list<int> the generations anchored
+     */
+    public function erstbeglaubigen(): array
+    {
+        $anker = $this->ankerOderFehler();
+        $stmt = $this->pdo->query('SELECT version, public_key FROM vault WHERE public_key_mac IS NULL ORDER BY version');
+        $versionen = [];
+        $update = $this->pdo->prepare('UPDATE vault SET public_key_mac = ? WHERE version = ? AND public_key = ? AND public_key_mac IS NULL');
+        foreach ($stmt === false ? [] : $stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+            $version = (int) $row['version'];
+            $publicKey = (string) $row['public_key'];
+            $update->bindValue(1, $anker->fuer($version, $publicKey), \PDO::PARAM_LOB);
+            $update->bindValue(2, $version, \PDO::PARAM_INT);
+            $update->bindValue(3, $publicKey, \PDO::PARAM_LOB);
+            $update->execute();
+            $versionen[] = $version;
+        }
+
+        return $versionen;
+    }
+
+    /**
+     * The anchor state of every generation still in use, for the system
+     * check: version => valid. Retired generations are left out - nothing is
+     * sealed to them any more.
+     *
+     * @return array<int, bool>
+     */
+    public function ankerStand(): array
+    {
+        $stand = [];
+        foreach ($this->active() as $generation) {
+            $stand[$generation->version] = $this->beglaubigt($generation);
+        }
+
+        return $stand;
     }
 
     /**
@@ -68,6 +186,21 @@ final readonly class VaultRepository
         bool $schluesselBestaetigt = true,
     ): void {
         $zeit = ($now ?? new \DateTimeImmutable())->format(self::FORMAT);
+        if ($this->anker !== null) {
+            // The key was generated by the caller in this request - the one
+            // moment its MAC can be written without trusting the database.
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO vault (version, public_key, public_key_mac, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?, ?)',
+            );
+            $stmt->bindValue(1, $version, \PDO::PARAM_INT);
+            $stmt->bindValue(2, $publicKey, \PDO::PARAM_LOB);
+            $stmt->bindValue(3, $this->anker->fuer($version, $publicKey), \PDO::PARAM_LOB);
+            $stmt->bindValue(4, $zeit);
+            $stmt->bindValue(5, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
+            $stmt->execute();
+
+            return;
+        }
         try {
             $stmt = $this->pdo->prepare('INSERT INTO vault (version, public_key, created_at, recovery_confirmed_at) VALUES (?, ?, ?, ?)');
             $stmt->bindValue(4, $schluesselBestaetigt ? $zeit : null, $schluesselBestaetigt ? \PDO::PARAM_STR : \PDO::PARAM_NULL);
@@ -92,19 +225,28 @@ final readonly class VaultRepository
      */
     public function all(): array
     {
-        try {
-            $stmt = $this->pdo->query(
-                'SELECT version, public_key, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
-            );
-        } catch (\PDOException) {
-            // Between the updater's 'switch' and 'migrate' steps migration 040
-            // has not run yet: no rotation can exist, every generation is
-            // active - logins and the update chain must keep working.
-            $stmt = $this->pdo->query(
-                'SELECT version, public_key, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
-            );
+        $abfragen = [
+            'SELECT version, public_key, public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
+            // Before migration 046 (update between 'switch' and 'migrate'):
+            // no MAC - with an anchor configured nothing verifies then, so
+            // nothing is sealed for those few seconds.
+            'SELECT version, public_key, NULL AS public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
+            // Before migration 040: no rotation can exist, every generation
+            // is active - logins and the update chain must keep working.
+            'SELECT version, public_key, public_key_mac, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
+            'SELECT version, public_key, NULL AS public_key_mac, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
+        ];
+        foreach ($abfragen as $i => $sql) {
+            try {
+                $stmt = $this->pdo->query($sql);
+                break;
+            } catch (\PDOException $e) {
+                if ($i === count($abfragen) - 1) {
+                    throw $e;
+                }
+            }
         }
-        if ($stmt === false) {
+        if (!isset($stmt) || $stmt === false) {
             return [];
         }
 
@@ -230,6 +372,7 @@ final readonly class VaultRepository
             new \DateTimeImmutable((string) $row['created_at']),
             $datum($row['recovery_confirmed_at'] ?? null),
             $datum($row['retired_at'] ?? null),
+            isset($row['public_key_mac']) ? (string) $row['public_key_mac'] : null,
         );
     }
 
@@ -246,5 +389,23 @@ final readonly class VaultRepository
     {
         $stmt = $this->pdo->prepare('DELETE FROM vault WHERE version = ?');
         $stmt->execute([$version]);
+    }
+
+    /** The newest generation with a confirmed recovery key - what current() is about. */
+    private function neuesteBestaetigte(): ?VaultGeneration
+    {
+        $neueste = null;
+        foreach ($this->all() as $generation) {
+            if ($generation->schluesselBestaetigt()) {
+                $neueste = $generation;
+            }
+        }
+
+        return $neueste;
+    }
+
+    private function ankerOderFehler(): TresorAnker
+    {
+        return $this->anker ?? throw new \LogicException('This VaultRepository has no vault anchor (server key) to write one with.');
     }
 }

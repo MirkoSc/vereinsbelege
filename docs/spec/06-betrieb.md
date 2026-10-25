@@ -120,6 +120,10 @@ verändert. Er läuft noch mit dem Code des alten Releases – das Update von
 einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
+Wendet `migrate` die Migration 046 an, beglaubigt derselbe Request die
+bestehenden Tresor-Generationen (Erstbeglaubigung, 01 §2 „Anker des
+Tresor-Schlüssels“, issue #240); zwischen `switch` und `migrate` wird
+nichts versiegelt.
 Der Updater speichert die `checksums.txt` des Releases als
 `shared/release_checksums.txt` für den Code-Integritätscheck (01 §8); seit
 M13-2 enthält sie neben den Assets je Datei des Releases eine Zeile
@@ -454,6 +458,17 @@ Rekonstruktion der Adressen aus Tresor-Daten gibt es nicht – sie liegen
 nirgends unter dem Tresor (Folge-Idee: eine an `VK_pub` versiegelte Kopie je
 Konto, dann könnte der Admin nach Weg 2 alle Adressen automatisch neu
 berechnen).
+
+**Anker des Tresor-Schlüssels** (issue #240, 01 §2): Weg 1 und ein
+Backup mit `config.php` übernehmen die MACs aus dem Dump unverändert – ein
+im Backup ausgetauschter `vault.public_key` fällt unter dem echten
+Server-Schlüssel durch, es wird nichts an ihn versiegelt (Systemcheck,
+Audit). Weg 2 beglaubigt die aktuelle Generation im selben Zug per
+Wiederherstellungsschlüssel unter dem neuen Server-Schlüssel neu (Audit
+`tresor.anker_gesetzt`). Ein Backup von vor Migration 046 hat keine MACs:
+der Restore, der 046 anwendet, merkt das in der Sitzung
+(`install_restore.erstbeglaubigung`) und beglaubigt die Zeilen ohne MAC
+mit dem Schlüssel, den `config.php` bekommt – bevor sie geschrieben wird.
 
 „Neu beginnen“ (`POST /install/neu`) verwirft in der Phase `zugang` nur den
 Sitzungsstand; die eingespielten Tabellen bleiben, bis das nächste Backup sie

@@ -5,8 +5,13 @@ declare(strict_types=1);
 use App\Config\Config;
 use App\Config\Paths;
 use App\Database\ConnectionFactory;
+use App\Repository\AuditLogRepository;
+use App\Repository\VaultRepository;
+use App\Service\Audit\AuditLog;
+use App\Service\Crypto\ServerCrypto;
 use App\Service\Migration\Migration;
 use App\Service\Migration\Migrator;
+use App\Service\Tresor\Erstbeglaubigung;
 
 // Dev/CLI entry point only - the installer and self-updater use the
 // Migrator class directly.
@@ -32,7 +37,16 @@ $paths = new Paths($releaseRoot);
 
 try {
     $config = Config::fromFile(getenv('APP_CONFIG_FILE') ?: $paths->configFile());
-    $migrator = new Migrator(ConnectionFactory::create($config), $paths->migrationsDir());
+    $pdo = ConnectionFactory::create($config);
+    // Right after migration 046: the first MAC of every existing vault
+    // generation (issue #240) - like the updater's migrate step.
+    $crypto = new ServerCrypto($config->serverKey);
+    $vaults = new VaultRepository($pdo, $crypto->tresorAnker());
+    $migrator = new Migrator(
+        $pdo,
+        $paths->migrationsDir(),
+        Closure::fromCallable(new Erstbeglaubigung($vaults, new AuditLog(new AuditLogRepository($pdo), $vaults, $crypto))),
+    );
 
     $pending = $migrator->pending();
     if ($pending === []) {

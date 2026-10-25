@@ -134,7 +134,9 @@ zu erfinden.
      Einreicher-Daten). Schreiben geht ohne Geheimnis (Sealed Box an den
      Tresor-Public-Key) – deshalb kann die öffentliche Einreichung
      verschlüsseln. **Lesen geht nur in einer angemeldeten Session**, in der
-     der Tresor-Private-Key entsperrt ist.
+     der Tresor-Private-Key entsperrt ist. Versiegelt wird nur an einen
+     Public-Key, dessen MAC unter dem Server-Schlüssel stimmt
+     (`vault.public_key_mac`, 01 §2 „Anker“, E-62).
 - Der Tresor-Private-Key liegt **nie** im Klartext auf Platte oder in der
   DB: gewrappt je Benutzer (Argon2id aus dem Passwort) und als
   Wiederherstellungsschlüssel beim Verein (Papier). In der PHP-Session nur

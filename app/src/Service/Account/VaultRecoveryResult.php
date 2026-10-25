@@ -23,12 +23,18 @@ final readonly class VaultRecoveryResult
         public bool $freigabeErteilt,
         public ?string $fehler,
         public ?string $grund,
+        public bool $ankerErneuert = false,
     ) {
     }
 
-    public static function erfolg(Vault $vault, bool $freigabeErteilt): self
+    /**
+     * @param bool $ankerErneuert the generation's anchor was missing or
+     *        wrong and is now set - the paper key proved the public key
+     *        (issue #240)
+     */
+    public static function erfolg(Vault $vault, bool $freigabeErteilt, bool $ankerErneuert = false): self
     {
-        return new self($vault, $freigabeErteilt, null, null);
+        return new self($vault, $freigabeErteilt, null, null, $ankerErneuert);
     }
 
     public static function fehler(string $fehler, ?string $grund = null): self

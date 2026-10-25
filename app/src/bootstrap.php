@@ -241,8 +241,10 @@ use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
 use App\Service\Submission\InterneErfassung;
+use App\Service\Tresor\Erstbeglaubigung;
 use App\Service\Tresor\Indexpflegen;
 use App\Service\Tresor\Schluesselrotation;
+use App\Service\Tresor\TresorAnkerAlarm;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Suche\ERechnungQuelle;
@@ -351,6 +353,16 @@ $maintenance = new MaintenanceMode($paths->maintenanceFlagFile());
 // data - from M3-1 on that includes the mail queue and its settings.
 $serverCrypto = new ServerCrypto($config->serverKey);
 
+// The vault public key, anchored to the server key (issue #240, finding
+// N-01): every VaultRepository of the application checks it before anything
+// is sealed (tests/Support/TresorAnkerPflichtTest), and a failed check is
+// written to the audit log at most once per generation and hour.
+$vaultsFor = static fn(\PDO $pdo): VaultRepository => new VaultRepository(
+    $pdo,
+    $serverCrypto->tresorAnker(),
+    \Closure::fromCallable(new TresorAnkerAlarm($pdo, $serverCrypto)),
+);
+
 // The public submission's stateless credential (issue #24/M4-2): derived
 // from the server key like $serverCrypto, needs no database either.
 $formToken = new FormToken($config->serverKey);
@@ -392,7 +404,7 @@ $mailerFor = static function (\PDO $pdo) use ($mailQueueFor, $mailSettingsFor, $
 // its public key.
 $auditFor = static fn(\PDO $pdo): AuditLog => new AuditLog(
     new AuditLogRepository($pdo),
-    new VaultRepository($pdo),
+    $vaultsFor($pdo),
     $serverCrypto,
 );
 
@@ -429,7 +441,13 @@ $updates = static fn(): UpdateController => new UpdateController(
         settings: new SettingRepository($connections->pdo()),
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
-        migrator: new Migrator($connections->pdo(), $paths->migrationsDir()),
+        // Right after migration 046, in the same request: the first MAC of
+        // every existing vault generation (issue #240, trust on first use).
+        migrator: new Migrator(
+            $connections->pdo(),
+            $paths->migrationsDir(),
+            \Closure::fromCallable(new Erstbeglaubigung($vaultsFor($connections->pdo()), $auditFor($connections->pdo()))),
+        ),
         backups: new BackupErstellung(
             new BackupService(
                 $connections->pdo(),
@@ -442,7 +460,7 @@ $updates = static fn(): UpdateController => new UpdateController(
             $paths->backupDir(),
             $paths->configFile(),
         ),
-        rollbackHindernis: static fn(): ?string => new VaultRepository($connections->pdo())->rollbackHindernis(),
+        rollbackHindernis: static fn(): ?string => $vaultsFor($connections->pdo())->rollbackHindernis(),
     ),
     $maintenance,
     $auditFor($connections->pdo()),
@@ -451,7 +469,7 @@ $updates = static fn(): UpdateController => new UpdateController(
 // Issue #52/M7b-2: worker grants and the worker's artifact upload. The
 // waiting ciphertext of an upload lies next to the browser uploads in
 // shared/var/tmp (ciphertext only), in its own folder with its own limit.
-$workerArtefakteFor = static function (\PDO $pdo) use ($paths): WorkerArtefakte {
+$workerArtefakteFor = static function (\PDO $pdo) use ($vaultsFor, $paths): WorkerArtefakte {
     $blobs = new BlobRepository($pdo);
 
     return new WorkerArtefakte(
@@ -459,13 +477,13 @@ $workerArtefakteFor = static function (\PDO $pdo) use ($paths): WorkerArtefakte 
         new WorkerUploadRepository($pdo),
         new UploadService($paths->uploadDir() . '/worker', UploadService::CHUNK_BYTES, WorkerArtefakte::BLOB_MAX_BYTES),
         new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-        new VaultRepository($pdo),
+        $vaultsFor($pdo),
         new JobRepository($pdo),
         new SettingRepository($pdo),
     );
 };
-$workerFreigabenFor = static function (\PDO $pdo) use ($workerArtefakteFor): WorkerFreigaben {
-    $vaults = new VaultRepository($pdo);
+$workerFreigabenFor = static function (\PDO $pdo) use ($vaultsFor, $workerArtefakteFor): WorkerFreigaben {
+    $vaults = $vaultsFor($pdo);
 
     return new WorkerFreigaben(
         new WorkerRepository($pdo),
@@ -570,13 +588,13 @@ $cron = static fn(): CronController => new CronController($config, static functi
 $uploads = static fn(): UploadController => new UploadController(
     new Session(),
     new UploadService($paths->uploadDir()),
-    static function () use ($connections, $paths): UploadStore {
+    static function () use ($vaultsFor, $connections, $paths): UploadStore {
         $pdo = $connections->pdo();
         $blobs = new BlobRepository($pdo);
 
         return new UploadStore(
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-            new VaultRepository($pdo),
+            $vaultsFor($pdo),
             new SettingRepository($pdo),
         );
     },
@@ -594,14 +612,14 @@ $einreichenUploads = static fn(): EinreichungUploadController => new Einreichung
     $formToken,
     new UploadService($paths->uploadDir()),
     static fn(): Spamschutz => $spamschutzFor($connections->pdo()),
-    static function () use ($connections, $paths): SubmissionUploadStore {
+    static function () use ($vaultsFor, $connections, $paths): SubmissionUploadStore {
         $pdo = $connections->pdo();
         $blobs = new BlobRepository($pdo);
 
         return new SubmissionUploadStore(
             new UploadStore(
                 new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-                new VaultRepository($pdo),
+                $vaultsFor($pdo),
                 new SettingRepository($pdo),
             ),
             new SubmissionUploadRepository($pdo),
@@ -1213,6 +1231,7 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
         $paths->varDir(),
         \Closure::fromCallable(new CurlStatusProbe()),
         $paths->sharedDir(),
+        static fn(): array => $vaultsFor($connections->pdo())->ankerStand(),
     ),
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
@@ -1282,6 +1301,7 @@ $kontoauszuege = static function () use ($connections, $view, $auditFor, $paths)
 $rechtstexteFor = static fn(\PDO $pdo): Rechtstexte => new Rechtstexte(new SettingRepository($pdo), $paths->dataDir());
 
 $einreichen = static function () use (
+    $vaultsFor,
     $rechtstexteFor,
     $connections,
     $view,
@@ -1302,7 +1322,7 @@ $einreichen = static function () use (
         $view,
         $formToken,
         $proofOfWork,
-        new VaultRepository($pdo),
+        $vaultsFor($pdo),
         $kostenstellen,
         new SubmissionService(
             $pdo,
@@ -1466,7 +1486,7 @@ $benutzer = static function () use ($connections, $view, $serverCrypto, $paths, 
     );
 };
 
-$tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultGrantController {
+$tresor = static function () use ($vaultsFor, $connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultGrantController {
     $pdo = $connections->pdo();
 
     return new VaultGrantController(
@@ -1474,7 +1494,7 @@ $tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor
         new Session(),
         new SessionVault(),
         new UserRepository($pdo),
-        new VaultRepository($pdo),
+        $vaultsFor($pdo),
         new VaultGrantRepository($pdo),
         $verwaltungFor($pdo),
         $mailerFor($pdo),
@@ -1486,7 +1506,7 @@ $tresor = static function () use ($connections, $view, $serverCrypto, $mailerFor
 // Vault recovery with the paper recovery key (M3-9, issue #22): the same
 // collaborators as $tresor, plus the rate limiter every account-scoped limit
 // in this file uses (RateLimiter::LOGIN_WINDOW_SECONDS).
-$wiederherstellung = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRecoveryController {
+$wiederherstellung = static function () use ($vaultsFor, $connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRecoveryController {
     $pdo = $connections->pdo();
 
     return new VaultRecoveryController(
@@ -1494,7 +1514,7 @@ $wiederherstellung = static function () use ($connections, $view, $serverCrypto,
         new Session(),
         new SessionVault(),
         new VaultRecovery(
-            new VaultRepository($pdo),
+            $vaultsFor($pdo),
             new VaultGrantRepository($pdo),
             $verwaltungFor($pdo),
             new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
@@ -1508,7 +1528,7 @@ $wiederherstellung = static function () use ($connections, $view, $serverCrypto,
 
 // Vault key rotation (issue #90): the same collaborators as $tresor plus
 // the rotation service with every blind index handler.
-$tresorRotation = static function () use ($connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRotationController {
+$tresorRotation = static function () use ($vaultsFor, $connections, $view, $serverCrypto, $mailerFor, $verwaltungFor, $auditFor): VaultRotationController {
     $pdo = $connections->pdo();
     $users = new UserRepository($pdo);
 
@@ -1518,7 +1538,7 @@ $tresorRotation = static function () use ($connections, $view, $serverCrypto, $m
         new SessionVault(),
         new Schluesselrotation(
             $pdo,
-            new VaultRepository($pdo),
+            $vaultsFor($pdo),
             new VaultGrantRepository($pdo),
             $users,
             new VaultRotationRepository($pdo),
@@ -1578,14 +1598,14 @@ $auth = static fn(): AuthController => new AuthController(
     new SessionVault(),
     new PendingLogin(),
     new LoginCompleter(new Session(), new SessionVault()),
-    static function () use ($connections, $serverCrypto): LoginService {
+    static function () use ($vaultsFor, $connections, $serverCrypto): LoginService {
         $pdo = $connections->pdo();
 
         return new LoginService(
             new UserRepository($pdo),
             new UserKeyRepository($pdo),
             new VaultGrantRepository($pdo),
-            new VaultRepository($pdo),
+            $vaultsFor($pdo),
             $serverCrypto,
             new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
             new PasswordHasher(),
@@ -1736,7 +1756,7 @@ $sucheSeite = static function () use ($connections, $view, $paths, $kiAuslesungF
 
 // Internal capture (M4-6, issue #28): several receipts in one pass, straight
 // into the inbox. Built lazily like the other pages.
-$erfassungSeite = static function () use ($connections, $view, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto): ErfassungController {
+$erfassungSeite = static function () use ($vaultsFor, $connections, $view, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto): ErfassungController {
     $pdo = $connections->pdo();
     $kostenstellen = new CostCenterRepository($pdo);
     $users = new UserRepository($pdo);
@@ -1744,7 +1764,7 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
     return new ErfassungController(
         $view,
         new Session(),
-        new VaultRepository($pdo),
+        $vaultsFor($pdo),
         $kostenstellen,
         $users,
         $serverCrypto,
@@ -1884,7 +1904,7 @@ $workerKopplungFor = static fn(\PDO $pdo): WorkerKopplung => new WorkerKopplung(
     $auditFor($pdo),
     $workerFreigabenFor($pdo),
 );
-$workerApi = static function () use ($connections, $workerKopplungFor, $workerFreigabenFor, $workerArtefakteFor, $workerRoutingFor, $workerFallbackFor, $serverCrypto, $paths): WorkerApiController {
+$workerApi = static function () use ($vaultsFor, $connections, $workerKopplungFor, $workerFreigabenFor, $workerArtefakteFor, $workerRoutingFor, $workerFallbackFor, $serverCrypto, $paths): WorkerApiController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -1904,7 +1924,7 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
             new SettingRepository($pdo),
         ),
         new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-        new VaultRepository($pdo),
+        $vaultsFor($pdo),
         new CategoryRepository($pdo),
         new CostCenterRepository($pdo),
         $workerRoutingFor($pdo),
@@ -1916,7 +1936,7 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
 // The mail intake's worker routes (issue #87, E-54, 07 section 9): the
 // attachments are encrypted to VK_pub on arrival like a public upload,
 // then become a receipt in the inbox. No vault, no session.
-$workerMail = static function () use ($connections, $workerRoutingFor, $einreichungEinstellungenFor, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto, $paths, $logger): WorkerMailController {
+$workerMail = static function () use ($vaultsFor, $connections, $workerRoutingFor, $einreichungEinstellungenFor, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto, $paths, $logger): WorkerMailController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $einstellungen = $einreichungEinstellungenFor($pdo);
@@ -1929,7 +1949,7 @@ $workerMail = static function () use ($connections, $workerRoutingFor, $einreich
             new DocumentRepository($pdo),
             new SubmissionUploadRepository($pdo),
             $blobs,
-            new VaultRepository($pdo),
+            $vaultsFor($pdo),
             $einstellungen,
             new JobRepository($pdo),
             $auditFor($pdo),
@@ -1946,7 +1966,7 @@ $workerMail = static function () use ($connections, $workerRoutingFor, $einreich
         new SubmissionUploadStore(
             new UploadStore(
                 new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-                new VaultRepository($pdo),
+                $vaultsFor($pdo),
                 new SettingRepository($pdo),
             ),
             new SubmissionUploadRepository($pdo),
@@ -1998,8 +2018,10 @@ $guard = static fn(): LoginGuard => new LoginGuard(
     },
     // The banner "N Freigaben ausstehend" (M3-7, issue #20): one COUNT,
     // asked only for an account that may grant.
-    static function () use ($connections): int {
-        $vault = new VaultRepository($connections->pdo())->current();
+    static function () use ($vaultsFor, $connections): int {
+        // Only the version number, nothing is sealed: unchecked, so every
+        // page keeps rendering while the vault anchor fails (issue #240).
+        $vault = $vaultsFor($connections->pdo())->currentUngeprueft();
 
         return $vault === null ? 0 : new VaultGrantRepository($connections->pdo())->countPending($vault->version, new \DateTimeImmutable());
     },
@@ -2014,7 +2036,7 @@ $guard = static fn(): LoginGuard => new LoginGuard(
     },
     // A vault key rotation closes /app and /admin (issue #90): one COUNT
     // per request behind the login.
-    static fn(): bool => new VaultRepository($connections->pdo())->rotationInProgress(),
+    static fn(): bool => $vaultsFor($connections->pdo())->rotationInProgress(),
 );
 
 $router = new Router();

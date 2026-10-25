@@ -156,7 +156,7 @@ eine in diesem PR behobene Zeile.
 | F-07 | Argon2id MODERATE, Parameter je Benutzer, Hash und KEK-Salt getrennt | ✓ | `Crypto/KdfParameters`, `UserKey` |
 | F-08 | `random_bytes` für alles Sicherheitsrelevante, `hash_equals` für Vergleiche | ✓ | Volltext-Suche; `mt_rand` nur für Backoff-Jitter im Worker |
 | F-09 | Wiederherstellungsschlüssel mit Prüfsumme, Abgleich gegen `vault.public_key` | ✓ | `Crypto/RecoveryKey` |
-| F-10 | Echtheit von `vault.public_key` gegen etwas außerhalb der DB geprüft | ✗ mittel | `VaultRepository::current()` → N-01 |
+| F-10 | Echtheit von `vault.public_key` gegen etwas außerhalb der DB geprüft | ✓ (#240) | `Crypto/TresorAnker` (MAC unter dem Server-Schlüssel, `vault.public_key_mac`), geprüft in `VaultRepository::current()` und `LoginService`; Alarm `Tresor/TresorAnkerAlarm`, Systemcheck `vault_anchor`; 01 §2 „Anker des Tresor-Schlüssels“, E-62 |
 | F-11 | Rotation: Recht, CSRF, idempotent, Abbruch nur vor Bestätigung, Abschluss unter Sperre | ✓ | `Tresor/Schluesselrotation`, `VaultRotationController` |
 | F-12 | Alte DEKs/Backups nach Rotation mit altem Schlüssel lesbar | ⚠ | 01 §2 „Rest-Exposure", E-32 |
 
@@ -185,7 +185,7 @@ eine in diesem PR behobene Zeile.
 | H-02 | Backup-Dateien und ihre Arbeitsdateien nur für den Besitzer lesbar (0600) | ✓ (#78) | `BackupService::nurFuerBesitzer()`, `BackupErstellung::oeffnen()` |
 | H-03 | Download: `admin.system`, Namensmuster; mit `config.php` nur POST + CSRF + Passwort | ✓ | `Admin/BackupController` |
 | H-04 | Restore nur im Installer, kein Zip-Slip, `config.php` nie per `include` | ✓ | `Installer/RestoreService` |
-| H-05 | Backup-Echtheit (MAC/Signatur) | ✗ | Weg zu N-01 |
+| H-05 | Backup-Echtheit (MAC/Signatur) | ⚠ teilweise (#240) | Der Tresor-Schlüssel eines Backups ohne `config.php` ist beglaubigt: ausgetauscht fällt er unter dem echten Server-Schlüssel durch (`InstallFlowTest`). Offen: übrige Backup-Inhalte ohne MAC; ein Backup mit `config.php` beglaubigt sich selbst (01 §2 „Grenzen“) |
 | H-06 | Update: feste Quelle, HTTPS, Prüfsumme, kein Downgrade, Zip-Slip | ✓ | `Update/ReleaseDownloader`, `UpdateService` |
 | H-07 | Update: Echtheit (Signatur) statt nur Integrität | ✗ mittel | → N-02 |
 | H-08 | Download-URLs/Redirect-Protokolle auf github.com/https beschränkt | ✗ Härtung | → N-18 |
@@ -229,7 +229,7 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 
 | Nr. | Schwere | Kurz |
 |---|---|---|
-| N-01 | mittel | `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
+| N-01 | mittel | ✓ behoben in #240 (→ F-10): `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
 | N-02 | mittel | Updater prüft nur Integrität, keine Signatur der Releases |
 | N-03 | mittel | Integritätscheck übersieht `web/` und `config.php` |
 | N-04 | mittel | Platte/DB über öffentliche Uploads füllbar |

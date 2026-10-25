@@ -431,6 +431,91 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   Geschützt ist alles, was danach entsteht, und die laufende Datenbank gegen
   jemanden, der nur den alten Schlüssel (nicht die alten Daten) hat.
 
+### Anker des Tresor-Schlüssels (issue #240, E-62)
+
+Versiegeln braucht nur `vault.public_key` – deshalb kann die öffentliche
+Einreichung ohne Geheimnis verschlüsseln, und deshalb könnte jeder, der in
+die Datenbank schreiben kann (oder ein manipuliertes Backup einspielen
+lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
+(Befund N-01, H-05). Gegenmittel: ein Anker außerhalb der Datenbank.
+
+- **MAC je Generation:** `vault.public_key_mac` (Migration 046) =
+  `HMAC-SHA256(K_A, "vault-anchor-v1" | 0x00 | version (4 Byte) | public_key)`,
+  `K_A = BLAKE2b(Server-Schlüssel, "vault-anchor-v1")` – abgeleitet wie der
+  Login-Index, nie der Server-Schlüssel selbst (`App\Service\Crypto\
+  TresorAnker`, `ServerCrypto::tresorAnker()`). Weder die Datenbank noch
+  ein Backup ohne `config.php` enthält den Schlüssel; eine aus einer
+  anderen Installation kopierte Zeile (Schlüssel + MAC) passt nicht.
+- **Geprüft wird vor jedem Versiegeln:** `VaultRepository::current()` gibt
+  den Schlüssel nur heraus, wenn sein MAC stimmt, sonst
+  `TresorAnkerException` – die öffentliche Einreichung, der Upload, der
+  Worker und alles, was an `current()` versiegelt, brechen mit Fehler ab.
+  Die **Anmeldung** prüft die neueste aktive Generation genauso, bevor sie
+  den Tresor in die Sitzung legt (Sitzungen versiegeln mit ihrem eigenen
+  Schlüssel): passt der MAC nicht, gelingt der Login, der Tresor bleibt
+  aber gesperrt (`VaultAccess::Unbeglaubigt`). Eine Freigabe beweist
+  nichts – `box_seal` braucht nur `U_pub`, ein Angreifer kann zum
+  ausgetauschten Schlüssel eine passende Freigabe versiegeln. Ältere
+  Generationen einer laufenden Rotation werden nur gelesen, nie
+  versiegelt; sie prüft niemand.
+- **Bei Abweichung:** Audit-Eintrag `tresor.anker_abweichung` (Entität =
+  Generation, ohne Details, höchstens einer je Generation und Stunde –
+  `App\Service\Tresor\TresorAnkerAlarm`, Zähler in `rate_limit`) und im
+  Systemcheck die Zeile „Beglaubigung des Tresor-Schlüssels“ als Fehler
+  (nur Versionsnummern). Das Audit-Log schreibt weiter, die Details seiner
+  Einträge entfallen solange (sie würden an `current()` versiegelt).
+  Seiten, die nur zählen oder Konten auflisten (Freigabe-Banner,
+  Benutzerverwaltung), nutzen `currentUngeprueft()` und bleiben erreichbar.
+- **Wer den Anker setzt** – nur, wer den Schlüssel *beweisen* kann:
+  1. der Installer beim Anlegen (Schlüsselpaar im selben Request erzeugt),
+  2. der Start einer Rotation (ebenso; die neue Generation ist von Anfang
+     an beglaubigt, die Bestätigung ändert daran nichts),
+  3. der **Wiederherstellungsschlüssel** (enthält `VK_priv`, daraus folgt
+     `VK_pub`): `/admin/wiederherstellen` und der Zugangsschritt des
+     Installers (Restore ohne `config.php`, E-25) beglaubigen eine
+     passende Generation neu, wenn ihr MAC fehlt oder nicht stimmt
+     (`VaultRepository::beglaubige()`, Audit `tresor.anker_gesetzt`). Das
+     ist der Ausweg aus einem fehlgeschlagenen Check. Wurde der Schlüssel
+     wirklich ausgetauscht, passt der Papierschlüssel nicht („gehört nicht
+     zu dieser Installation“) – dann Audit-Log prüfen und ein Backup von
+     vor der Änderung einspielen.
+  4. **Erstbeglaubigung** (trust on first use) für Generationen ohne MAC –
+     nur in dem Request, der Migration 046 anwendet
+     (`App\Service\Tresor\Erstbeglaubigung` als Nach-Haken des
+     `Migrator`: Update-Schritt `migrate`, `bin/migrate.php`; beim Restore
+     eines Backups von vor 046 mit dem Schlüssel, den `config.php`
+     bekommt). Ein MAC, der später fehlt, wird nie wieder still ergänzt;
+     ein falscher MAC wird nie überschrieben.
+- **Annahme (dokumentiert, nicht prüfbar):** zum Zeitpunkt des Updates auf
+  dieses Release – bzw. beim Einspielen eines Backups von davor – ist
+  `vault.public_key` unverfälscht. Ein vorher ausgetauschter Schlüssel
+  würde beglaubigt; das ist der Stand ohne Anker, nicht schlechter. Ein
+  Angreifer kann den Moment nicht selbst herbeiführen: die Datenbank
+  allein erzeugt ihn nicht – nur das Anwenden der Migration durch den
+  Admin (wer `schema_version` und die Spalte zurückdreht, braucht danach
+  noch ein Update durch den Admin).
+- **Restore:** mit `config.php` im Backup oder dem alten Server-Schlüssel
+  (Zugangsschritt Weg 1) passen die MACs aus dem Dump unverändert – ein
+  manipulierter Schlüssel im Backup fällt durch. Weg 2 (neuer
+  Server-Schlüssel) beglaubigt die aktuelle Generation per
+  Wiederherstellungsschlüssel neu; eine *vorgemerkte* Generation einer
+  Rotation (Backup mitten in der Rotation) hat danach keinen gültigen MAC
+  – die Rotation lässt sich dann nur abbrechen und neu starten.
+- **Grenzen:** Ein Backup **mit** `config.php` beglaubigt sich selbst – wer
+  es fälschen kann, setzt Server-Schlüssel und MAC gleich mit. Der MAC
+  bindet Version und Schlüssel, nicht den Lebenszyklus: wer schreiben
+  kann, könnte die neueste Generation zurück auf „unbestätigt“ setzen und
+  so an die *vorige, echte* Generation versiegeln lassen – relevant nur
+  für jemanden, der deren alten `VK_priv` besitzt (Rest-Exposure der
+  Rotation). Das übrige Backup (Belege, Konten) bleibt ohne MAC (H-05
+  teilweise).
+- Zwischen den Update-Schritten `switch` und `migrate` fehlt die Spalte:
+  dann gilt jeder Schlüssel als unbeglaubigt, für diese Sekunden wird
+  nichts versiegelt.
+- Jede `new VaultRepository(...)` in `app/src` und `bin/` bekommt den Anker
+  (`tests/Support/TresorAnkerPflichtTest`); ohne Anker prüft das
+  Repository nichts – das ist Unit-Tests vorbehalten.
+
 ## 3. Anmeldung
 
 - Login mit **E-Mail + Passwort**. `password_hash()` mit `PASSWORD_ARGON2ID`
@@ -958,6 +1043,16 @@ Entschlüsseln"; Wiederherstellungsschlüssel-Flow; Session ohne Cookie
 `__Host-vk` kann nicht entschlüsseln; TOTP (RFC-6238-Testvektoren),
 E-Mail-Code (Ablauf, Versuchslimit, genau ein Versand beim Login nur bei
 E-Mail-Methode), Reset-Token (einmalig, Ablauf);
+Anker des Tresor-Schlüssels (issue #240): ein in der Datenbank
+ausgetauschter `vault.public_key` (auch mit dem MAC einer anderen
+Installation oder Generation) wird von `current()` abgelehnt und einmal je
+Stunde auditiert, die Anmeldung lässt den Tresor trotz passender
+Freigabe gesperrt, ein gelöschter MAC wird nicht wieder ergänzt (auch nicht
+von einem erneuten Migrationslauf), die Migration beglaubigt bestehende
+Generationen genau einmal, der Wiederherstellungsschlüssel beglaubigt einen
+echten Schlüssel neu und einen ausgetauschten nicht, Rotation und Restore
+(mit/ohne `config.php`, Backup von vor 046) setzen den Anker, Systemcheck,
+jede `VaultRepository` der Anwendung hat den Anker;
 Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);
 Kostenstellen-Scope; Zeitraum-Scope und Ablauf externer Konten

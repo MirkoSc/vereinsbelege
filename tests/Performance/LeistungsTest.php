@@ -70,7 +70,7 @@ final class LeistungsTest extends DatabaseTestCase
 
         $crypto = new ServerCrypto((string) base64_decode(self::configData()['server_key'], true));
         $this->tresor = Vault::create();
-        new VaultRepository($this->pdo())->insert($this->tresor->publicKey());
+        new VaultRepository($this->pdo(), $crypto->tresorAnker())->insert($this->tresor->publicKey());
         $this->audit = new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $crypto);
         $this->userId = new UserRepository($this->pdo())->insert($crypto->encrypt('kasse@example.invalid'), random_bytes(32), $crypto->encrypt('Kassenwart'), 'hash', mfaRequired: false);
         $rollen = new RoleRepository($this->pdo());
