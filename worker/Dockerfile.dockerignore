@@ -1,0 +1,12 @@
+# Build context of worker/Dockerfile is the repository root; only what the
+# Dockerfile copies is sent along.
+*
+!composer.json
+!composer.lock
+!VERSION
+!app/src
+!app/prompts
+!worker/autoload.php
+!worker/src
+!worker/php.ini
+!bin/worker.php

@@ -1,0 +1,51 @@
+# Overlay on worker/docker-compose.yml for the worker end-to-end test
+# (docs/spec/07-worker.md "Pflicht-Tests", issue #55) - run.sh combines both,
+# so the worker runs with the template's settings (tmpfs, read-only root,
+# stop_grace_period, dropped capabilities). Never for production.
+#
+# The web host is the dev image (docker/php) plus TLS: the worker accepts
+# https:// only. run.sh creates a throwaway CA for this one run; the worker
+# trusts exactly that CA (curl.cainfo), certificate checks stay on.
+
+services:
+  worker:
+    image: ${WORKER_IMAGE:-vereinsbelege-worker:e2e}
+    environment:
+      WORKER_NAME: "E2E"
+    volumes:
+      - ./.lauf/tls/ca.pem:/e2e/ca.pem:ro
+      - ./ca.ini:/usr/local/etc/php/conf.d/zz-e2e-ca.ini:ro
+    depends_on:
+      webhoster:
+        condition: service_healthy
+
+  webhoster:
+    build: ../../../docker/php
+    working_dir: /var/www/html/current
+    command: ["sh", "-c", "a2enmod ssl > /dev/null && exec apache2-foreground"]
+    volumes:
+      - ../../..:/var/www/html/current:ro
+      - ../../../docker/web:/var/www/html/web:ro
+      - ./.lauf/shared:/var/www/html/shared
+      - ./.lauf/tls:/etc/e2e-tls:ro
+      - ./apache-tls.conf:/etc/apache2/sites-enabled/zz-e2e-tls.conf:ro
+    healthcheck:
+      # Any HTTP answer over verified TLS will do.
+      test: ["CMD", "curl", "-sS", "-o", "/dev/null", "--cacert", "/etc/e2e-tls/ca.pem", "--resolve", "webhoster:443:127.0.0.1", "https://webhoster/"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_DATABASE: vereinsbelege_e2e
+      MARIADB_ROOT_PASSWORD: e2e-root
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
