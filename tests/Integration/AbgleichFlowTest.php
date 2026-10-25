@@ -337,11 +337,13 @@ final class AbgleichFlowTest extends DatabaseTestCase
         $rate = $this->buchung(-6000, 'Rate 1', 'Getränke Müller', self::IBAN_LIEFERANT);
         $rest = $this->buchung(-3700, 'Rate 2', 'Getränke Müller', self::IBAN_LIEFERANT);
         $einnahme = $this->buchung(3700, 'Beitrag', 'Mitglied', '');
+        $vorFenster = $this->buchung(-6000, 'Rate 0', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $this->pdo()->prepare('UPDATE bank_transaction SET booking_date = ? WHERE id = ?')->execute(['2026-03-08', $vorFenster]);   // receipt 03-14, window from 03-09
         $alle = Zugriffsbereich::unbeschraenkt();
 
         $detail = $this->abgleich()->detail($this->tresor, $alle, $beleg, new AbgleichFilter()) ?? self::fail();
         self::assertTrue($detail->nimmtZuordnungAn);
-        self::assertSame([$rate, $rest], array_map(static fn($k): int => $k->buchung->buchung->id, $detail->kandidaten), 'outgoing only, best first');
+        self::assertSame([$rate, $rest], array_map(static fn($k): int => $k->buchung->buchung->id, $detail->kandidaten), 'outgoing only, from the window on, best first');
         self::assertNotContains($einnahme, array_map(static fn($k): int => $k->buchung->buchung->id, $detail->kandidaten));
         self::assertSame([6000, 3700], array_map(static fn($k): int => $k->betrag, $detail->kandidaten), 'min(open receipt, open booking)');
 

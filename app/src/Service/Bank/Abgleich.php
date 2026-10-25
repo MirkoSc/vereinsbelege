@@ -270,7 +270,14 @@ final readonly class Abgleich
             $parameter = $this->parameter();
             $verworfen = $this->verworfen->paare([$invoiceId]);
             $records = array_values(array_filter(
-                $this->buchungen->abgleichKandidaten($bereich, null, null, [$eingabe->buchungsrichtung]),
+                // Not before the receipt's window, like planen() - otherwise every
+                // year of membership fees would be decrypted for an income receipt.
+                $this->buchungen->abgleichKandidaten(
+                    $bereich,
+                    $record->invoiceDate->modify(sprintf('-%d days', $parameter->fensterVorTage)),
+                    null,
+                    [$eingabe->buchungsrichtung],
+                ),
                 static fn(BankTransactionRecord $r): bool => ($f->kontoId === null || $r->accountId === $f->kontoId)
                     && $f->imZeitraum($r->bookingDate),
             ));

@@ -453,7 +453,10 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   Beleg“ = `fehlt`/`teilweise` (Einnahmen ohne Belegbedarf fluten die
   Liste sonst mit Beiträgen) – ein Einnahme-Beleg findet seine Buchung
   trotzdem, weil die Kandidaten des gewählten Belegs alle offenen
-  Buchungen seiner Richtung umfassen (bewertet, beste 20).
+  Buchungen seiner Richtung ab Fensterbeginn umfassen (bewertet, beste
+  20; ältere Buchungen nicht – Vorauszahlungen weit vor dem
+  Rechnungsdatum findet man so nicht, dafür wächst die Arbeit nicht mit
+  jedem Jahr).
 - **Von Hand** = Methode `manuell`, aber mit Punkten und `rule_trace` der
   Bewertung, sofern bewertbar (nachvollziehbar, warum das Paar passte).
 - **Integration statt Verdopplung:** „kein Beleg nötig“, Regeln,

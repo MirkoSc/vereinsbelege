@@ -690,7 +690,9 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   nur wenn ein Teil zugeordnet ist und ein Rest fehlt) bzw. „Differenz
   wieder öffnen“; solange er eine Buchung annimmt, die **passenden
   Buchungen**: alle offenen Buchungen seiner Richtung und Währung im
-  Zugriffsbereich, nach Punkten (M10-2) sortiert,
+  Zugriffsbereich ab Fensterbeginn (Rechnungsdatum − `fenster_vor_tage`,
+  wie M10-2 – frühere Buchungen, etwa Beiträge vergangener Jahre, werden
+  nicht entschlüsselt), nach Punkten (M10-2) sortiert,
   verworfene Paare zuletzt und markiert, die besten 20 (mehr über die
   Filter). Je Buchung ein Betragsfeld, vorbelegt mit `min(offen Beleg,
   offen Buchung)` – kleiner eingetragen ist es eine **Teilzuordnung**
