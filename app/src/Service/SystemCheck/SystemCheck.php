@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\SystemCheck;
 
+use App\Service\Submission\UploadBudgetStand;
 use App\Service\Update\DenyHtaccess;
 
 /**
@@ -68,12 +69,16 @@ final readonly class SystemCheck
      *        an origin for all(), the config exposure check is left out
      * @param ?string $sharedDir absolute path of shared/; its parent holds
      *        the directories whose deny-all .htaccess is checked
+     * @param (\Closure(): UploadBudgetStand)|null $uploadBudget today's byte
+     *        budget of the public upload (issue #242); without it that
+     *        check is left out
      */
     public function __construct(
         private ?\PDO $pdo = null,
         private ?string $varDir = null,
         private ?\Closure $statusProbe = null,
         private ?string $sharedDir = null,
+        private ?\Closure $uploadBudget = null,
     ) {
     }
 
@@ -111,6 +116,10 @@ final readonly class SystemCheck
 
         if ($origin !== null && $this->statusProbe !== null) {
             $results[] = $this->configExposure($origin);
+        }
+
+        if ($this->uploadBudget !== null) {
+            $results[] = $this->uploadBudget(($this->uploadBudget)());
         }
 
         return $results;
@@ -338,6 +347,45 @@ final readonly class SystemCheck
             detail: $written
                 ? 'Blobs, Backups, Log und temporäre Dateien lassen sich ablegen.'
                 : 'Ohne Schreibrechte scheitern Uploads, Backups und das Log.',
+        );
+    }
+
+    /**
+     * Issue #242: whether the public upload is still open - the daily byte
+     * budget for everybody together, and the free space below which it
+     * pauses. Either one closed is a warning: the signed-in functions keep
+     * working, only /einreichen turns uploads away until the next day or
+     * until space is freed. Sizes only, nothing about who uploaded.
+     */
+    public function uploadBudget(UploadBudgetStand $stand): CheckResult
+    {
+        $mb = static fn(int $bytes): string => number_format($bytes / self::MIB, 0, ',', '.') . ' MB';
+        $frei = $stand->freiBytes === null ? 'freier Speicher nicht ermittelbar' : $mb($stand->freiBytes) . ' frei';
+
+        [$status, $detail] = match (true) {
+            $stand->speicherKnapp() => [
+                CheckStatus::Warn,
+                'Freier Speicher unter ' . $mb($stand->minFreiBytes) . ': öffentliche Uploads sind pausiert, bis wieder Platz ist (alte Backups löschen, Speicher beim Hoster prüfen).',
+            ],
+            $stand->budgetErreicht() => [
+                CheckStatus::Warn,
+                'Das Tagesbudget für öffentliche Uploads ist erreicht: /einreichen nimmt bis Mitternacht keine (großen) Dateien mehr an. Grenze unter Admin › Einreichung.',
+            ],
+            default => [
+                CheckStatus::Ok,
+                $stand->freiBytes === null
+                    ? 'Der Hoster nennt keinen freien Speicher – es gilt allein das Tagesbudget.'
+                    : 'Öffentliche Uploads sind offen.',
+            ],
+        };
+
+        return new CheckResult(
+            key: 'upload_budget',
+            label: 'Öffentliche Uploads (Tagesbudget, freier Speicher)',
+            expected: 'unter ' . $mb($stand->budgetHeute) . ' am Tag, mindestens ' . $mb($stand->minFreiBytes) . ' frei',
+            actual: $mb($stand->verbrauchtHeute) . ' heute, ' . $frei,
+            status: $status,
+            detail: $detail,
         );
     }
 

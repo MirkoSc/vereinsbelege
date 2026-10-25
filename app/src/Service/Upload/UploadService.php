@@ -206,71 +206,49 @@ final readonly class UploadService
     }
 
     /**
-     * The first bytes of the file, for the magic byte check - never more than
-     * asked for, so a 30 MB scan is not read to learn what it is.
-     *
-     * It reads across chunk boundaries on purpose: with the real chunk size a
-     * signature always fits into the first chunk, but the boundary must not
-     * be what decides whether a file is recognised. Returns what is there,
-     * which is an empty string when nothing has arrived yet - the caller
-     * checks completeness first anyway.
-     *
-     * @throws UploadException when the upload is unknown
-     */
-    public function head(string $id, int $bytes = MagicBytes::HEAD_BYTES): string
-    {
-        $dir = $this->directory($id);
-        $meta = $this->meta($id);
-
-        $head = '';
-        for ($i = 0; $i < $meta['chunks'] && strlen($head) < $bytes; $i++) {
-            $pfad = sprintf('%s/%d.part', $dir, $i);
-            $teil = is_file($pfad) ? file_get_contents($pfad, false, null, 0, $bytes - strlen($head)) : false;
-            if ($teil === false || $teil === '') {
-                break;
-            }
-
-            $head .= $teil;
-        }
-
-        return $head;
-    }
-
-    /**
-     * The file, in order, in pieces - to be handed straight to
-     * BlobService::store(). Nothing is assembled into a second file: the
+     * Opens every chunk of a complete upload for the magic byte check and
+     * the blob in one go (App\Service\Upload\OffenesUpload, issue #242):
+     * the bytes that are checked are the bytes that are stored. The
      * plaintext never exists as a whole anywhere, not on disk and not in
-     * memory.
+     * memory - the blob layer gets it in pieces.
      *
-     * @return \Generator<int, string>
-     * @throws UploadException when a chunk is gone (a cleanup that ran in
-     *                         between, a manual delete)
+     * The caller closes it (OffenesUpload::schliessen()) before discard().
+     *
+     * @throws UploadException when a chunk is missing or not as long as it
+     *                         has to be (a cleanup that ran in between, a
+     *                         manual delete, a resend that is still running)
      */
-    public function chunks(string $id): \Generator
+    public function oeffnen(string $id): OffenesUpload
     {
         $dir = $this->directory($id);
         $meta = $this->meta($id);
 
-        for ($i = 0; $i < $meta['chunks']; $i++) {
-            $pfad = sprintf('%s/%d.part', $dir, $i);
-            $in = is_file($pfad) ? fopen($pfad, 'rb') : false;
-            if ($in === false) {
-                throw new UploadException(UploadError::Incomplete);
-            }
-
-            try {
-                while (!feof($in)) {
-                    $stueck = fread($in, self::READ_BYTES);
-                    if ($stueck === false || $stueck === '') {
-                        break;
-                    }
-
-                    yield $stueck;
+        $teile = [];
+        try {
+            for ($i = 0; $i < $meta['chunks']; $i++) {
+                $pfad = sprintf('%s/%d.part', $dir, $i);
+                $in = is_file($pfad) ? @fopen($pfad, 'rb') : false;
+                if ($in === false) {
+                    throw new UploadException(UploadError::Incomplete);
                 }
-            } finally {
-                fclose($in);
+
+                $teile[] = $in;
+                // The size of what was opened, not of the name: a chunk
+                // renamed into place afterwards does not change it.
+                $stat = fstat($in);
+                if ($stat === false || $stat['size'] !== $this->chunkSize($i, $meta)) {
+                    throw new UploadException(UploadError::Incomplete);
+                }
             }
+        } catch (\Throwable $e) {
+            foreach ($teile as $teil) {
+                fclose($teil);
+            }
+
+            throw $e;
         }
+
+        return new OffenesUpload($teile, $meta['groesse']);
     }
 
     /**

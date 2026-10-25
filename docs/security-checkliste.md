@@ -115,12 +115,12 @@ eine in diesem PR behobene Zeile.
 | D-04 | Honeypot + Mindest-Ausfülldauer, Treffer zählt gegen IP-Limit | ✓ | `Spamschutz::pruefeAbsenden()` |
 | D-05 | IP nur aus `REMOTE_ADDR`, kein `X-Forwarded-For` | ✓ | `Http/Request` |
 | D-06 | Rate-Limit je IP und global, Submit und Upload getrennt | ✓ | `Spamschutz` |
-| D-07 | Schutz vor Platten-/DB-Erschöpfung (Byte-Budget, IPv6 /64) | ✗ mittel | → N-04 |
+| D-07 | Schutz vor Platten-/DB-Erschöpfung (Byte-Budget, IPv6 /64) | ✓ (#242) | `Submission/UploadBudget`: je IP bzw. /64 und Stunde, global je Tag, Schwelle für freien Speicher; vorher → N-04 |
 | D-08 | Pause gilt für alle Endpunkte | ✓ (#78) | `EinreichungUploadController::finish()` prüft `Spamschutz::pruefePause()` |
 | D-09 | Größe je Chunk und gesamt serverseitig, Chunk-Index begrenzt | ✓ | `Upload/UploadService` |
 | D-10 | Upload-ID 128 Bit, Regex vor Pfadnutzung, kein Path Traversal | ✓ | `UploadService` |
 | D-11 | Dateiname nie auf Platte, nur verschlüsselt in BlobMeta | ✓ | `EinreichungUploadController::dateiname()` |
-| D-12 | Typ allein per Magic Bytes, Auslieferung mit Allowlist-MIME + `nosniff` | ✓ / ⚠ | `Upload/MagicBytes`; TOCTOU zwischen Prüfung und Speichern → N-13 |
+| D-12 | Typ allein per Magic Bytes, Auslieferung mit Allowlist-MIME + `nosniff` | ✓ (#242) | `Upload/MagicBytes`; geprüft auf genau den gespeicherten Bytes (`UploadService::oeffnen()`/`OffenesUpload`), vorher TOCTOU → N-13 |
 | D-13 | E-Rechnung-XML: kein DOCTYPE in **jeder** Kodierung, `LIBXML_NONET`, kein `NOENT` | ✓ (#78) | `ERechnungLeser::doctypeVorWurzel()` – vorher UTF-16/UTF-7 an der Bytesuche vorbei (Weg: XML-Anhang einer öffentlichen PDF) |
 | D-14 | GD: Pixel-Obergrenze vor dem Dekodieren | ✓ | `PngZuJpeg`, `SchwarzweissFallback`, `PdfRasterung` |
 | D-15 | Klartext nur als Upload-Chunks in `var/tmp`, nach `finish` bzw. 24 h gelöscht | ✓ | `UploadStore`, `Cron/UploadCleanupTask` |
@@ -232,7 +232,7 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-01 | mittel | `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
 | N-02 | mittel | Updater prüft nur Integrität, keine Signatur der Releases |
 | N-03 | mittel | Integritätscheck übersieht `web/` und `config.php` |
-| N-04 | mittel | Platte/DB über öffentliche Uploads füllbar |
+| N-04 | mittel | ✓ behoben (#242) – Platte/DB über öffentliche Uploads füllbar |
 | N-05 | niedrig | `/install` ohne Token, solange `config.php` fehlt |
 | N-06 | niedrig | Audit-Log ohne Zeitraum-Scope |
 | N-07 | niedrig | Budget schreiben/löschen ohne Scope |
@@ -241,7 +241,7 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-10 | niedrig | 2FA-Einrichtungspflicht nicht für JSON-Routen |
 | N-11 | niedrig | keine HTTP→HTTPS-Umleitung |
 | N-12 | niedrig | DATEV-Belegfeld mit führendem `+`/`-` |
-| N-13 | niedrig | TOCTOU Magic Bytes ↔ Speichern beim Upload |
+| N-13 | niedrig | ✓ behoben (#242) – TOCTOU Magic Bytes ↔ Speichern beim Upload |
 | N-14 | Härtung | Session-Cookie `PHPSESSID` statt `__Host-` |
 | N-15 | Härtung | kein zentraler CSRF-Test über alle POST-Routen |
 | N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails |

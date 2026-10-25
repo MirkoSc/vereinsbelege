@@ -20,6 +20,7 @@ use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\RoleRepository;
 use App\Repository\SettingRepository;
+use App\Repository\UploadBudgetRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
@@ -30,6 +31,9 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Migration\Migrator;
 use App\Service\Submission\EinreichungsEinstellungen;
+use App\Service\Submission\FreierSpeicher;
+use App\Service\Submission\UploadBudget;
+use App\Service\Submission\UploadBudgetStand;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
 
@@ -71,6 +75,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
         self::assertSame(200, $seite->status);
         self::assertStringContainsString('value="10"', $seite->body, 'limit per IP');
         self::assertStringContainsString('Aktiv', $seite->body);
+        self::assertStringContainsString('Heute hochgeladen: 0 MB von 500 MB', $seite->body, 'issue #242');
     }
 
     public function testSavingTheLimitsPersistsAndAudits(): void
@@ -81,6 +86,9 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
             'max_seiten' => '8',
             'max_datei_mb' => '4',
             'max_einreichung_mb' => '20',
+            'budget_ip_mb_stunde' => '40',
+            'budget_gesamt_mb_tag' => '300',
+            'min_frei_mb' => '2048',
         ]);
         self::assertSame(302, $antwort->status);
         self::assertSame('/admin/einreichung', $antwort->headers['Location'] ?? null);
@@ -91,6 +99,9 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
         self::assertSame(8, $gespeichert->maxSeiten);
         self::assertSame(4, $gespeichert->maxDateiMb);
         self::assertSame(20, $gespeichert->maxEinreichungMb);
+        self::assertSame(40, $gespeichert->budgetIpMbStunde);
+        self::assertSame(300, $gespeichert->budgetGesamtMbTag);
+        self::assertSame(2048, $gespeichert->minFreiMb);
 
         $eintrag = new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 1)[0];
         self::assertSame(AuditAction::EinstellungEinreichung->value, $eintrag->action);
@@ -105,6 +116,9 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
             'max_seiten' => '8',
             'max_datei_mb' => '4',
             'max_einreichung_mb' => '20',
+            'budget_ip_mb_stunde' => '40',
+            'budget_gesamt_mb_tag' => '300',
+            'min_frei_mb' => '2048',
         ]);
 
         self::assertSame(422, $antwort->status);
@@ -195,6 +209,11 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
             new Session(),
             new SettingRepository($pdo),
             new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), new ServerCrypto(random_bytes(32))),
+            static fn(): UploadBudgetStand => new UploadBudget(
+                new UploadBudgetRepository($pdo),
+                EinreichungsEinstellungen::fromSettings(new SettingRepository($pdo)),
+                new FreierSpeicher(sys_get_temp_dir(), static fn(): false => false),
+            )->stand(),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

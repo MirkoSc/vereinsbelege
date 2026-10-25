@@ -61,6 +61,15 @@ Feld-Fehlern je Angabe.
 (`App\Service\Submission\Spamschutz`) laufen jetzt vor
 `SubmissionService::einreichen()` bzw. vor jedem Seiten-Upload.
 
+**Stand #242** (Security-Review N-04, 01 §5, E-64): Ein Byte-Budget
+begrenzt, was `/einreichen` auf den Server bringen kann – je IP (IPv6: /64)
+und Stunde, insgesamt je Kalendertag, dazu eine Schwelle für freien Speicher
+in `shared/var`, unter der öffentliche Uploads pausieren
+(`App\Service\Submission\UploadBudget`, einstellbar unter
+`/admin/einreichung`). Gezählt wird die angekündigte Größe beim Eröffnen,
+auch für nie abgesendete Uploads; angemeldete Erfassung und Worker-Mail-Eingang
+laufen nicht über das Budget.
+
 **Stand M4-5** (issue #27): Posteingang unter `/app/posteingang`
 (`App\App\InboxController`, Fachlogik `App\Service\Inbox\Posteingang`).
 Ansehen mit `inbox.view` im Zugriffsbereich des Kontos (Kostenstelle über
@@ -745,10 +754,14 @@ in einem Lauf ab, nicht eines je Datei.
 - *Limits:* `UploadService::CHUNK_BYTES` = 2 MiB, `MAX_FILE_BYTES` = 32 MiB
   (Konstanten, keine Settings). Die angekündigte Größe wird geprüft, **bevor**
   ein Byte fließt.
-- *Abschluss:* vollständig? → Magic Bytes des ersten Chunks (nur JPEG, PNG,
+- *Abschluss:* vollständig? → alle Chunks **einmal** öffnen
+  (`UploadService::oeffnen()` → `OffenesUpload`, seit #242/N-13: Länge je
+  Chunk am offenen Handle geprüft) → Magic Bytes der ersten Bytes (nur JPEG, PNG,
   PDF und seit M7-4 E-Rechnungs-XML mit CII-/UBL-Wurzel, Abschnitt 3; der
   Client-MIME wird nie verwendet) → `BlobService::store()` bekommt
-  die Chunks als Generator, der Klartext wird also nie zu einer zweiten Datei
+  die Chunks als Generator **über dieselben Handles**, beginnend mit den
+  schon geprüften Bytes – ein parallel neu gesendeter Chunk ändert weder
+  Prüfung noch Gespeichertes, und der Klartext wird nie zu einer zweiten Datei
   → Temp-Verzeichnis gelöscht. Versiegelt wird an `vault.public_key`
   (Tabelle `vault`, Migration 004); solange keine Zeile existiert, antwortet
   der Abschluss 503 statt zu raten – der Installer legt sie mit M3-2 an.
@@ -785,7 +798,8 @@ XML mit DOCTYPE/ZUGFeRD 1.0 abgelehnt); `UploadServiceTest` (leere Datei und Dat
 ohne Rest, letzter Chunk kürzer, verkehrte Reihenfolge ergibt die richtige
 Datei, Wiederholung überschreibt, Index außerhalb, fehlender und zu kurzer
 Chunk stehen in `fehlend`, ID ohne Pfad-Traversal, `discard` wiederholbar,
-Metadaten ohne Fachdaten, Aufräumen nur bei altem Verzeichnis);
+Metadaten ohne Fachdaten, Aufräumen nur bei altem Verzeichnis; seit #242:
+ein nach dem Öffnen neu gesendeter Chunk ändert weder Kopf noch Inhalt);
 `UploadCleanupTaskTest` (24-h-Grenze, Wiederholbarkeit);
 `ChunkUploadTest` (voller Weg gegen beide Speicher-Backends, entschlüsselter
 Blob identisch, Originalname verschlüsselt und ohne Pfad, `var/tmp` leer,

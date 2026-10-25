@@ -34,7 +34,8 @@ use App\Support\FileLogger;
  * create() is also where App\Service\Submission\Spamschutz is checked
  * (issue #25/M4-3, docs/spec/01-sicherheit.md section 5): proof of work
  * (`X-Pow-Loesung`, the same header on every request the page sends,
- * public/js/upload.js), the per-file size limit and the rate limit. Every
+ * public/js/upload.js), the per-file size limit, the rate limit and the
+ * byte budget (App\Service\Submission\UploadBudget, issue #242). Every
  * accepted call counts against the budget immediately - chunk(), finish()
  * and abort() only continue an upload create() already let through, so they
  * check nothing but the token - except that finish() also honours the pause
@@ -127,7 +128,8 @@ final readonly class EinreichungUploadController
 
             // Paused in the meantime: an upload opened before the pause must
             // not become a stored blob after it (issue #78). Chunks before
-            // this only reach var/tmp, which the cleanup empties anyway.
+            // this only reach var/tmp, which the cleanup empties anyway. The
+            // same holds while free space is low (issue #242).
             $pausiert = ($this->spamschutz)()->pruefePause();
             if ($pausiert !== null) {
                 $this->uploads->discard($id);
@@ -143,24 +145,29 @@ final readonly class EinreichungUploadController
                 ], UploadError::Incomplete->status());
             }
 
-            $typ = MagicBytes::detect($this->uploads->head($id));
-            if ($typ === null) {
-                $this->uploads->discard($id);
-
-                throw new UploadException(UploadError::UnsupportedType);
-            }
-
             $name = self::dateiname($request->post['name'] ?? '');
             $tokenData = $this->formToken->pruefen($request->header('x-csrf-token') ?? '');
             \assert($tokenData !== null); // guarded() already refused an invalid token.
 
-            $blob = ($this->store)()->store(
-                $this->uploads->chunks($id),
-                new BlobMeta($typ, $name),
-                $tokenData->hash(),
-                new \DateTimeImmutable(),
-            );
+            // Opened once: the magic bytes are checked on exactly the bytes
+            // that are sealed (security review N-13, issue #242).
+            $offen = $this->uploads->oeffnen($id);
+            try {
+                $typ = MagicBytes::detect($offen->kopf());
+                $blob = $typ === null ? null : ($this->store)()->store(
+                    $offen->chunks(),
+                    new BlobMeta($typ, $name),
+                    $tokenData->hash(),
+                    new \DateTimeImmutable(),
+                );
+            } finally {
+                $offen->schliessen();
+            }
             $this->uploads->discard($id);
+
+            if ($blob === null) {
+                throw new UploadException(UploadError::UnsupportedType);
+            }
 
             return Response::json([
                 'blob_id' => $blob->id,

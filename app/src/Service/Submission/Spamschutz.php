@@ -9,7 +9,8 @@ use App\Service\RateLimiter;
 /**
  * The public submission's spam defence without a visible hurdle
  * (docs/spec/01-sicherheit.md section 5, E-14, issue #25/M4-3): rate limit
- * per IP and globally, proof of work, honeypot, minimum fill time, and
+ * per IP and globally, proof of work, honeypot, minimum fill time, the
+ * byte budget (App\Service\Submission\UploadBudget, issue #242), and
  * whether the form is paused. Framework-free like
  * App\Service\Submission\SubmissionService - the caller
  * (App\PublicPages\EinreichungController, App\Api\EinreichungUploadController)
@@ -44,6 +45,7 @@ final readonly class Spamschutz
         private RateLimiter $limits,
         private ProofOfWork $proofOfWork,
         private EinreichungsEinstellungen $einstellungen,
+        private UploadBudget $budget,
     ) {
     }
 
@@ -82,6 +84,13 @@ final readonly class Spamschutz
         }
         if ($this->limits->isBlocked(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $limitGesamt, $now)) {
             return EinreichungAbgelehnt::ZuVieleGesamt;
+        }
+
+        // Last, so a request the checks above turn away costs no bytes
+        // (issue #242); refused here, it costs no upload count either.
+        $budget = $this->budget->reservieren($ip, $groesse, $now);
+        if ($budget !== null) {
+            return $budget;
         }
 
         $this->limits->register(self::PURPOSE_UPLOAD_IP, $ip, $now);
@@ -148,11 +157,12 @@ final readonly class Spamschutz
      * the step that turns an upload opened before the pause into a stored
      * blob (security review, issue #78: "Absenden und Upload antworten mit
      * 503", 01 section 5). The proof of work is not repeated there; create()
-     * checked it for this upload id.
+     * checked it for this upload id. Low free space pauses the same way
+     * (issue #242): the blob would land on the disk that is running out.
      */
     public function pruefePause(): ?EinreichungAbgelehnt
     {
-        return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : null;
+        return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : $this->budget->pruefeSpeicher();
     }
 
     /** What every entry point checks first: pause, then proof of work. */

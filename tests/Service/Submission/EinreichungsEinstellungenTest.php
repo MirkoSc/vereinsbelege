@@ -38,6 +38,27 @@ final class EinreichungsEinstellungenTest extends DatabaseTestCase
         self::assertSame(20, $einstellungen->maxSeiten);
         self::assertSame(10, $einstellungen->maxDateiMb);
         self::assertSame(50, $einstellungen->maxEinreichungMb);
+        self::assertSame(100, $einstellungen->budgetIpMbStunde);
+        self::assertSame(500, $einstellungen->budgetGesamtMbTag);
+        self::assertSame(1024, $einstellungen->minFreiMb);
+    }
+
+    /**
+     * Issue #242: a byte budget below one file would refuse every page, so
+     * it never lies below the largest allowed file - and the day never below
+     * one address's hour.
+     */
+    public function testTheByteBudgetsNeverFallBelowOneFile(): void
+    {
+        $this->settings->set(EinreichungsEinstellungen::SETTING_MAX_DATEI_MB, '8');
+        $this->settings->set(EinreichungsEinstellungen::SETTING_BUDGET_IP_MB_STUNDE, '3');
+        $this->settings->set(EinreichungsEinstellungen::SETTING_BUDGET_GESAMT_MB_TAG, '2');
+
+        $einstellungen = EinreichungsEinstellungen::fromSettings($this->settings);
+
+        self::assertSame(8, $einstellungen->budgetIpMbStunde);
+        self::assertSame(8, $einstellungen->budgetGesamtMbTag);
+        self::assertSame(8 * 1024 * 1024, new EinreichungsEinstellungen(maxDateiMb: 8, budgetIpMbStunde: 3, budgetGesamtMbTag: 2)->budgetGesamtBytes());
     }
 
     public function testStoredValuesWin(): void
@@ -103,6 +124,9 @@ final class EinreichungsEinstellungenTest extends DatabaseTestCase
             maxSeiten: 5,
             maxDateiMb: 2,
             maxEinreichungMb: 12,
+            budgetIpMbStunde: 30,
+            budgetGesamtMbTag: 200,
+            minFreiMb: 512,
         );
         $eingabe->speichern($this->settings);
 
@@ -112,6 +136,9 @@ final class EinreichungsEinstellungenTest extends DatabaseTestCase
         self::assertSame(5, $gespeichert->maxSeiten);
         self::assertSame(2, $gespeichert->maxDateiMb);
         self::assertSame(12, $gespeichert->maxEinreichungMb);
+        self::assertSame(30, $gespeichert->budgetIpMbStunde);
+        self::assertSame(200, $gespeichert->budgetGesamtMbTag);
+        self::assertSame(512, $gespeichert->minFreiMb);
     }
 
     public function testMaxDateiBytesAndMaxEinreichungBytesConvertFromMb(): void

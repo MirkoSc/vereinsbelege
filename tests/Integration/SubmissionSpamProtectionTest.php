@@ -28,11 +28,15 @@ use App\Service\Mail\MailTemplates;
 use App\Service\Mail\Mailer;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
+use App\Service\Submission\EinreichungAbgelehnt;
 use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
 use App\Service\Submission\FormTokenData;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
+use App\Service\Submission\FreierSpeicher;
+use App\Service\Submission\UploadBudget;
+use App\Repository\UploadBudgetRepository;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\UploadService;
@@ -66,6 +70,9 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
 
     /** @var array<string, string> */
     private array $powLoesungen = [];
+
+    /** What disk_free_space() reports in this test; false = the host does not tell. */
+    private float|false $freierSpeicher = 1e12;
 
     protected function setUp(): void
     {
@@ -281,6 +288,102 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
         self::assertArrayHasKey('seiten', $daten['fehler']);
     }
 
+    // ------------------------------------------- Byte-Budget (issue #242, N-04)
+
+    public function testTheByteBudgetPerIpRefusesOnceUsedUpButNotOtherAddresses(): void
+    {
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MAX_DATEI_MB, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_IP_MB_STUNDE, '1');
+
+        $token = $this->issuedToken();
+        self::assertSame(201, $this->uploadCreate($token, 600_000, self::IP_A)->status);
+
+        $abgelehnt = $this->uploadCreate($token, 600_000, self::IP_A);
+        self::assertSame(429, $abgelehnt->status);
+        self::assertSame(EinreichungAbgelehnt::BudgetIp->message(), $this->fehler($abgelehnt));
+        self::assertSame(201, $this->uploadCreate($token, 400_000, self::IP_A)->status, 'what is left still fits');
+
+        self::assertSame(201, $this->uploadCreate($token, 600_000, self::IP_B)->status);
+    }
+
+    public function testAnIpv6Slash64SharesOneBudget(): void
+    {
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MAX_DATEI_MB, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_IP_MB_STUNDE, '1');
+
+        $token = $this->issuedToken();
+        self::assertSame(201, $this->uploadCreate($token, 600_000, '2001:db8:1:2::1')->status);
+        self::assertSame(429, $this->uploadCreate($token, 600_000, '2001:db8:1:2:ffff:ffff:ffff:fffe')->status, 'same /64');
+        self::assertSame(201, $this->uploadCreate($token, 600_000, '2001:db8:1:3::1')->status, 'neighbouring /64');
+    }
+
+    public function testTheGlobalDailyBudgetRefusesAcrossAddresses(): void
+    {
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MAX_DATEI_MB, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_IP_MB_STUNDE, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_GESAMT_MB_TAG, '1');
+
+        $token = $this->issuedToken();
+        self::assertSame(201, $this->uploadCreate($token, 700_000, self::IP_A)->status);
+
+        $abgelehnt = $this->uploadCreate($token, 700_000, self::IP_B);
+        self::assertSame(429, $abgelehnt->status);
+        self::assertSame(EinreichungAbgelehnt::BudgetGesamt->message(), $this->fehler($abgelehnt));
+
+        // The refused address got its reservation back: only the day was full.
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_GESAMT_MB_TAG, '2');
+        self::assertSame(201, $this->uploadCreate($token, 1_000_000, self::IP_B)->status);
+    }
+
+    public function testARefusalByTheByteBudgetDoesNotCostAnUploadCount(): void
+    {
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_LIMIT_IP_STUNDE, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MAX_SEITEN, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MAX_DATEI_MB, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_IP_MB_STUNDE, '1');
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_GESAMT_MB_TAG, '1');
+
+        $token = $this->issuedToken();
+        self::assertSame(201, $this->uploadCreate($token, 1_000_000, self::IP_A)->status);
+        self::assertSame(429, $this->uploadCreate($token, 1_000_000, self::IP_B)->status);
+
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_BUDGET_GESAMT_MB_TAG, '5');
+        self::assertSame(201, $this->uploadCreate($token, 8, self::IP_B)->status, 'the one upload of IP B was not used up');
+    }
+
+    public function testLowFreeSpacePausesPublicUploads(): void
+    {
+        $this->settings()->set(EinreichungsEinstellungen::SETTING_MIN_FREI_MB, '100');
+        $token = $this->issuedToken();
+        $controller = $this->uploadController();
+        $offen = $this->json($controller->create($this->uploadRequest($token, ['groesse' => 8], self::IP_A)));
+        self::assertSame(200, $controller->chunk($this->chunkRequest($token, self::IP_A, '%PDF-1.4'), ['id' => $offen['id'], 'n' => '0'])->status);
+
+        $this->freierSpeicher = 99.0 * 1024 * 1024;
+
+        self::assertSame(503, $this->uploadCreate($token, 8, self::IP_A)->status);
+        $antwort = $this->uploadController()->finish($this->uploadRequest($token, ['name' => 'seite.pdf'], self::IP_A), ['id' => $offen['id']]);
+        self::assertSame(503, $antwort->status, 'an upload opened before does not become a blob either');
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission_upload')->fetchColumn());
+
+        $this->freierSpeicher = false;
+        self::assertSame(201, $this->uploadCreate($token, 8, self::IP_A)->status, 'a host that does not tell leaves only the budget');
+    }
+
+    public function testTheByteBudgetKeepsNoAddressInTheClear(): void
+    {
+        $token = $this->issuedToken();
+        self::assertSame(201, $this->uploadCreate($token, 8, self::IP_A)->status);
+
+        $zeilen = $this->pdo()->query('SELECT key_hash, bytes FROM upload_budget')->fetchAll();
+        self::assertCount(2, $zeilen, 'one row for the address, one for the day');
+        foreach ($zeilen as $zeile) {
+            self::assertSame(32, strlen((string) $zeile['key_hash']));
+            self::assertStringNotContainsString(self::IP_A, (string) $zeile['key_hash']);
+            self::assertSame(8, (int) $zeile['bytes']);
+        }
+    }
+
     // ------------------------------------------------------------------ Hilfe
 
     private function settings(): SettingRepository
@@ -309,6 +412,11 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
             new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::SUBMISSION_WINDOW_SECONDS),
             $this->proofOfWork(),
             $this->einstellungen(),
+            new UploadBudget(
+                new UploadBudgetRepository($this->pdo()),
+                $this->einstellungen(),
+                new FreierSpeicher($this->uploadDir, fn(): float|false => $this->freierSpeicher),
+            ),
         );
     }
 
@@ -464,6 +572,14 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
     /**
      * @return array<string, mixed>
      */
+    private function fehler(\App\Http\Response $response): string
+    {
+        $daten = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($daten);
+
+        return (string) ($daten['fehler'] ?? '');
+    }
+
     private function json(\App\Http\Response $response): array
     {
         $daten = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);

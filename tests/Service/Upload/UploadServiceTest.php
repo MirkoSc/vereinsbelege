@@ -113,7 +113,7 @@ final class UploadServiceTest extends TestCase
         self::assertTrue($status->vollstaendig());
         self::assertSame([], $status->fehlend);
         self::assertSame(strlen($inhalt), $status->empfangen);
-        self::assertSame($inhalt, self::collect($dienst->chunks($ticket->id)));
+        self::assertSame($inhalt, self::lesen($dienst, $ticket->id));
     }
 
     public function testResendingAChunkOverwritesIt(): void
@@ -125,7 +125,7 @@ final class UploadServiceTest extends TestCase
         $dienst->writeChunk($ticket->id, 1, self::stream('5678'));
         $dienst->writeChunk($ticket->id, 0, self::stream('1234'));
 
-        self::assertSame('12345678', self::collect($dienst->chunks($ticket->id)));
+        self::assertSame('12345678', self::lesen($dienst, $ticket->id));
     }
 
     public function testAnIndexOutsideTheFileIsRefused(): void
@@ -181,7 +181,7 @@ final class UploadServiceTest extends TestCase
         $dienst->writeChunk($ticket->id, 0, self::stream('1234'));
 
         $this->expectUploadError(UploadError::Incomplete);
-        self::collect($dienst->chunks($ticket->id));
+        self::lesen($dienst, $ticket->id);
     }
 
     // ------------------------------------------------------------------ Rest
@@ -190,12 +190,61 @@ final class UploadServiceTest extends TestCase
     {
         $dienst = $this->service();
         $ticket = $dienst->create(8);
-
-        self::assertSame('', $dienst->head($ticket->id), 'nothing has arrived yet');
-
         $dienst->writeChunk($ticket->id, 0, self::stream('%PDF'));
-        self::assertSame('%PDF', $dienst->head($ticket->id));
-        self::assertSame('%P', $dienst->head($ticket->id, 2));
+        $dienst->writeChunk($ticket->id, 1, self::stream('-1.7'));
+
+        $offen = $dienst->oeffnen($ticket->id);
+        self::assertSame('%P', $offen->kopf(2));
+        self::assertSame('%PDF-1', $offen->kopf(6), 'across the chunk boundary');
+        self::assertSame('%PDF-1.7', self::collect($offen->chunks()), 'the head is handed out once, not twice');
+        $offen->schliessen();
+    }
+
+    // ------------------------------------------------ TOCTOU (issue #242, N-13)
+
+    /**
+     * A chunk sent again after the file was opened - between the magic byte
+     * check and the blob - must not change what is stored: the bytes that
+     * were checked are the bytes that come out.
+     */
+    public function testAChunkResentAfterOpeningChangesNeitherTheCheckNorTheStoredBytes(): void
+    {
+        $dienst = $this->service();
+        $ticket = $dienst->create(8);
+        $dienst->writeChunk($ticket->id, 0, self::stream('%PDF'));
+        $dienst->writeChunk($ticket->id, 1, self::stream('-1.7'));
+
+        $offen = $dienst->oeffnen($ticket->id);
+        self::assertSame('%PDF', $offen->kopf(4));
+
+        $dienst->writeChunk($ticket->id, 0, self::stream('<svg'));
+        $dienst->writeChunk($ticket->id, 1, self::stream(' on>'));
+
+        self::assertSame('%PDF-1.7', self::collect($offen->chunks()));
+        $offen->schliessen();
+    }
+
+    public function testAChunkOfTheWrongLengthCannotBeOpened(): void
+    {
+        $dienst = $this->service();
+        $ticket = $dienst->create(8);
+        $dienst->writeChunk($ticket->id, 0, self::stream('1234'));
+        $dienst->writeChunk($ticket->id, 1, self::stream('56'));
+
+        $this->expectUploadError(UploadError::Incomplete);
+        $dienst->oeffnen($ticket->id);
+    }
+
+    public function testAnOpenedUploadIsReadOnce(): void
+    {
+        $dienst = $this->service();
+        $ticket = $dienst->create(4);
+        $dienst->writeChunk($ticket->id, 0, self::stream('1234'));
+        $offen = $dienst->oeffnen($ticket->id);
+        self::collect($offen->chunks());
+
+        $this->expectException(\LogicException::class);
+        self::collect($offen->chunks());
     }
 
     public function testAnUnknownUploadIsNotADirectoryTraversal(): void
@@ -389,6 +438,16 @@ final class UploadServiceTest extends TestCase
     /**
      * @param iterable<string> $stuecke
      */
+    private static function lesen(UploadService $dienst, string $id): string
+    {
+        $offen = $dienst->oeffnen($id);
+        try {
+            return self::collect($offen->chunks());
+        } finally {
+            $offen->schliessen();
+        }
+    }
+
     private static function collect(iterable $stuecke): string
     {
         $inhalt = '';
