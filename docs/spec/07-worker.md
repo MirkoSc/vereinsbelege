@@ -31,8 +31,10 @@ Session-Verarbeitung wie in 03 und 06 beschrieben). Der Worker ist ein
 | `ai_extract` | Session-Schritt | Worker, **ohne Zeitlimit, rund um die Uhr**, mit OCR-Text + Bildern |
 | `resolve_supplier`, `classify`, `detect_*`, `match_transactions` | Session | **bleibt Session** (braucht Tresor) |
 
-Später erweiterbar (Backlog): Beleg-Eingang per E-Mail (IMAP-Abruf durch den
-Worker), Nachverarbeitung des Bestandsarchivs mit OCR.
+Zusätzlich (kein Job, eigene Fähigkeit `mail`): **Beleg-Eingang per E-Mail**
+– der Worker ruft ein IMAP-Postfach des Vereins ab und reicht Anhänge wie die
+öffentliche Einreichung in den Posteingang ein (§9, issue #87, E-54).
+Später erweiterbar (Backlog): Nachverarbeitung des Bestandsarchivs mit OCR.
 
 ## 3. Verschlüsselung – Minimalrechte
 
@@ -439,6 +441,89 @@ Repository oder Datenbank (`ProcessingArchitectureTest`).
 - **Log:** JSON-Zeilen auf stderr, nur Ereignis, IDs, Zähler, Dauer,
   HTTP-Status und Fehlercodes; alles andere verwirft `App\Worker\Log`.
 
+## 9. E-Mail-Eingang (IMAP)
+
+**Stand issue #87 (E-54, vorläufig).** Rechnungen, die per Mail kommen,
+landen ohne Umweg im Posteingang. Der Worker liest dafür ein **eigenes
+Postfach des Vereins** (z. B. `belege@verein.de`), der Webhoster bleibt
+Datenquelle und -senke; ohne Worker gibt es keinen Mail-Eingang.
+
+**Abnahmekriterien** (beim Einplanen ergänzt, autonom formuliert):
+1. Admin (`admin.settings`) richtet unter `/admin/worker` → „E-Mail-Eingang“
+   Server, Port, Verschlüsselung (**nur** SSL/TLS oder STARTTLS), Benutzer,
+   Passwort, Ordner, optional Zielordner, optional Absender-Allowlist und das
+   Abrufintervall ein. Passwort und Allowlist liegen nur unter dem
+   Server-Schlüssel, das Passwort wird nie wieder angezeigt; Audit
+   `einstellung.mail_eingang` nur mit Feldnamen.
+2. Der Zugang geht nur **an `W_pub` versiegelt** an den Worker (Feld
+   `mail_eingang` der Worker-Konfiguration) – und nur mit Modul an,
+   E-Mail-Eingang an, vollständigem Zugang und gemeldeter Fähigkeit `mail`.
+   Sonst ersetzt eine Konfiguration ohne Zugang die alte; der Worker verwirft ihn.
+3. Der Worker verbindet sich nur per TLS (IMAPS oder erzwungenes STARTTLS,
+   TLS ≥ 1.2), prüft Zertifikat und Hostnamen und sendet Zugangsdaten nie
+   unverschlüsselt.
+4. Jede neue Mail mit mindestens einem brauchbaren Anhang (PDF, JPEG, PNG,
+   E-Rechnungs-XML nach Magic Bytes) wird **ein** Beleg im Posteingang –
+   `submission` + `document` (`source = einreichung`) wie die öffentliche
+   Einreichung, verschlüsselt an `VK_pub`, dieselben Session-Jobs, dieselbe
+   Benachrichtigung an den Posteingang, **keine** Bestätigungsmail an den
+   Absender. Absender und Betreff stehen nur im versiegelten Payload.
+5. Grenzen der öffentlichen Einreichung (Seiten, Dateigröße, Gesamtgröße);
+   zu große Mails, Spam-Markierung des Mailservers, Absender außerhalb der
+   Allowlist (auch serverseitig geprüft), keine/zu viele/zu große Anhänge →
+   nicht eingereicht, als abgelehnt markiert. Höchstens 20 Mails je Abruf und
+   200 je Tag.
+6. Idempotent: eine Mail wird nach Neustart, verlorener Markierung oder
+   doppeltem Eingang nie zweimal eingereicht.
+7. Verarbeitete Mails werden markiert und optional verschoben, **nie
+   gelöscht** (kein `\Deleted`, kein `EXPUNGE`).
+8. Keine Mailinhalte (Absender, Betreff, Dateinamen) in Logs; der Admin sieht
+   Zeit, Fehlercode und Zähler des letzten Abrufs.
+
+**Webhoster.** Einstellungen `App\Service\Worker\MailEingangEinstellungen`/
+`MailEingangSpeicher` (Settings siehe 02 „Betrieb“). Fähigkeit
+`WorkerFaehigkeit::Mail` (beansprucht keinen Job-Typ),
+`WorkerRouting::mailZugangErlaubt()`. Die Worker-Konfiguration (Format
+`worker-config-v1`, um den Schlüssel `mail_eingang` erweitert; ältere
+Worker ignorieren ihn) trägt `{host, port, sicherheit, benutzer, passwort,
+ordner, ziel_ordner, absender[], abruf_minuten, max_seiten,
+max_datei_bytes, max_einreichung_bytes}` oder `null`. Heartbeat nimmt
+optional `mail_status {zeit, fehler, eingereicht, abgelehnt}` an.
+
+API (`App\Api\WorkerMailController`, signiert wie alle Worker-Routen;
+ohne Freigabe 409 `mail_eingang_aus`):
+
+| Endpunkt | Zweck |
+|---|---|
+| `POST /api/worker/mail/pruefen` `{schluessel}` | `{vorhanden, referenz}` – schon eingereicht? |
+| `POST /api/worker/mail/uploads` `{schluessel, groesse}` | Upload-Ticket wie 03 §4 (Grenze `einreichung_max_datei_mb`) |
+| `POST /api/worker/mail/uploads/{u}/chunks/{n}` | Rohkörper = Klartext-Teil (TLS), Ablage wie die öffentliche Einreichung |
+| `POST /api/worker/mail/uploads/{u}/finish` `{schluessel, name}` | Magic Bytes (PDF/JPEG/PNG/XML, kein HEIC → 415), Blob an `VK_pub` (`UploadStore`), Bindung an die Mail in `submission_upload` |
+| `POST /api/worker/mail/einreichen` `{schluessel, blobs[], absender{name, adresse}, betreff}` | 201 `eingereicht` / 200 `vorhanden` mit Referenz, 422 `{fehler}` |
+
+`App\Service\Submission\MailEinreichung`: `form_hash` =
+SHA-256(`mail|` + Schlüssel), Schlüssel = hex SHA-256 über die Message-ID
+(ohne Message-ID über die ganze Mail). Payload `{name, freitext, email,
+kanal: "mail"}` (Name = Anzeigename, sonst Adresse; Freitext = Betreff, leer
+„(E-Mail ohne Betreff)“; keine Erstattung, keine Kostenstelle). Prüft erneut
+Allowlist, Seitenzahl, Gesamtgröße und dass jeder Blob unter dieser Mail
+hochgeladen wurde. Audit `einreichung.eingegangen` mit `{kanal: mail}`.
+Nicht übernommene Uploads räumt `SubmissionUploadCleanupTask` nach 24 h ab.
+
+**Worker** (`worker/src/Mail/`): eigener minimaler IMAP-Client
+`ImapClient` über `SocketStrom` (keine Bibliothek, keine Prozesse; E-54),
+`MimeNachricht` (RFC 2045–2047/2231, `message/rfc822` wird geöffnet),
+`MailEingang` (Abruf je `abruf_minuten` aus der Schleife, Fehler bleiben
+dort). Auswahl der Anhänge: Typ nach Magic Bytes, Bilder nur ab 8 KiB und
+nicht inline (Signatur-Logos), Duplikate innerhalb der Mail einmal. Mails
+größer als `max_einreichung_bytes · 4/3 + 1 MiB` werden nicht geladen.
+Markierung: Keywords `$Vereinsbelege` (+ `\Seen`) bzw.
+`$VereinsbelegeAbgelehnt`; erlaubt der Server keine eigenen Keywords,
+`\Seen` bzw. `\Seen \Flagged` und nur ungelesene Mails gelten als neu.
+Verschieben nur mit `MOVE` (RFC 6851), sonst bleibt die Mail markiert
+liegen. Eine Mail, an der der Worker dreimal scheitert, wird als abgelehnt
+markiert. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
+
 ## Pflicht-Tests
 
 Routing (Modul aus → nie Worker-Jobs; aktiv + online → Worker; offline →
@@ -461,6 +546,11 @@ abgelehnt (localhost nur mit Testoption), leere Profilliste verwirft die
 Schlüssel, Backoff, Arbeitsverzeichnis nur auf tmpfs und nach jedem Job
 leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
 `ai_extract` gegen den echten Controller und die echte Übernahme,
-Prozess-Aufrufe nur in `worker/src/Prozess.php`; Worker-Ablauf
+Prozess-Aufrufe nur in `worker/src/Prozess.php`; E-Mail-Eingang (#87):
+STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
+(selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
+Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
+Ablehnungen markiert statt gelöscht, Grenzen, keine Mailinhalte im Log;
+Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).
