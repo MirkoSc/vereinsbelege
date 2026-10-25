@@ -1650,6 +1650,69 @@ Getroffen ohne Rückfrage:
   in PRs nur, wenn Worker, Composer-Dateien oder der Workflow geändert
   sind.
 
+## E-54 ❓ E-Mail-Eingang über den Worker (IMAP) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #87 (Backlog), 07 §2 und §9, 02 „Betrieb“; keine Migration*
+
+Das Issue hatte keine Abnahmekriterien; sie stehen jetzt in 07 §9 und sind
+mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
+
+- **Nur über den Worker.** Der Webhoster ruft kein Postfach ab (lange
+  Verbindungen, Cron ohne Tresor); ohne Worker gibt es keinen Mail-Eingang.
+  Neue Fähigkeit `mail` (kein Job-Typ).
+- **Zugang wie die KI-Schlüssel:** im Admin eingegeben, Passwort und
+  Absender-Allowlist unter dem Server-Schlüssel gespeichert, an den Worker
+  nur an `W_pub` versiegelt in der bestehenden Worker-Konfiguration
+  (Format `worker-config-v1` um `mail_eingang` erweitert statt neuer
+  Version – ältere Worker ignorieren das Feld). Einschalten braucht **keinen**
+  entsperrten Tresor: der Worker schreibt nur in den Posteingang wie das
+  öffentliche Formular.
+- **Nur TLS:** IMAPS oder erzwungenes STARTTLS, TLS ≥ 1.2, Zertifikat und
+  Hostname immer geprüft, keine Ausnahme für selbstsignierte Zertifikate.
+- **Eigener minimaler IMAP-Client** statt Bibliothek: `ext/imap` gibt es ab
+  PHP 8.4 nicht mehr; die verbreitete reine PHP-Bibliothek (webklex/php-imap)
+  zieht Laravel-/Symfony-/Carbon-Pakete nach, die über `composer.json` ins
+  Release-ZIP kämen, obwohl nur der Worker sie braucht. Der Client kann nur,
+  was ein Belegpostfach braucht (rund 300 Zeilen, getestet).
+- **Anhänge gehen im Klartext über TLS an den Webhoster**, der sie beim
+  Eingang an `VK_pub` verschlüsselt – genau wie bei `/einreichen`. So prüft
+  der Webhoster Dateityp (Magic Bytes) und Grenzen selbst; der Worker kann
+  danach nichts mehr lesen.
+- **Eine Mail = ein Beleg** mit allen brauchbaren Anhängen als Seiten (wie
+  eine öffentliche Einreichung mit mehreren Seiten), nicht ein Beleg je
+  Anhang. Bilder unter 8 KiB und Inline-Bilder (Signatur-Logos) zählen nicht;
+  HEIC wird nicht angenommen (ohne Browser wandelt es niemand um, E-10).
+- **`document.source = einreichung`** mit `kanal: "mail"` im versiegelten
+  Payload statt eines neuen Quellwerts – ein Rücksprung auf das vorige
+  Release kann damit weiterhin alle Belege lesen. Name = Anzeigename des
+  Absenders, E-Mail = Absenderadresse, Beschreibung = Betreff; keine
+  Erstattung, keine Kostenstelle.
+- **Keine automatische Antwort** an den Absender (Backscatter an gefälschte
+  Absender, Spam-Verstärker). Der Posteingang wird wie bei jeder Einreichung
+  benachrichtigt.
+- **Grenzen:** die der öffentlichen Einreichung (Seiten, Datei-, Gesamtgröße),
+  dazu 20 Mails je Abruf, 200 je Tag, Abruf alle 1–60 min (Vorgabe 5).
+  Spam-Markierung des Mailservers (`X-Spam-Flag: YES`, `X-Spam-Status: Yes`)
+  führt zur Ablehnung. Die Allowlist (Adressen oder `@domain`) ist optional;
+  sie prüft nur den `From`-Kopf, der sich fälschen lässt (offen: SPF/DKIM
+  über `Authentication-Results` auswerten).
+- **Idempotenz** über SHA-256 der Message-ID (ohne Message-ID: der ganzen
+  Mail) als `submission.form_hash`; der Worker fragt vor dem Hochladen.
+- **Markieren statt löschen:** Keywords `$Vereinsbelege`/
+  `$VereinsbelegeAbgelehnt`, sonst `\Seen` (+ `\Flagged`); optional
+  Verschieben per `MOVE` in einen Zielordner, den es schon geben muss. Ohne
+  `MOVE` bleibt die Mail markiert liegen (kein Kopieren und Löschen).
+  Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
+  ist empfohlen.
+- **Absturzschutz im Postfach:** Der Worker speichert nichts dauerhaft, also
+  liegt die Versuchs-Marke als Keyword (`$VereinsbelegeVersuch`, sonst
+  `\Flagged`) an der Mail selbst. Eine Mail, an der der Worker gestorben ist,
+  wird beim nächsten Abruf als „unlesbar“ markiert statt erneut geholt –
+  auch dann, wenn der Abbruch nur ein Verbindungsabriss mitten in der Mail
+  war (dann bleibt sie markiert im Postfach für einen Menschen).
+- **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
+  Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
+  nutzt den Archiv-Import oder lädt sie einzeln hoch.
+
 ## E-57 ❓ Steuerliche Sphären: Schalter, Zuordnung, Auswertung (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #84, 02 „Sphären“, 05 §1 „Stand issue #84“; ergänzt E-15*
 

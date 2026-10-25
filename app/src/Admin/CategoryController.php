@@ -150,15 +150,19 @@ final readonly class CategoryController
         }
 
         $felder = self::felder($request);
+        // Only a form that showed the field sends it (E-15): switched off, or
+        // opened before the switch was turned on, the stored default stays.
+        $sphaereSetzen = $this->sphaerenAktiv() && array_key_exists('sphaere', $request->post);
+        if (!$sphaereSetzen) {
+            $felder['sphaere'] = $kategorie->defaultSphere?->value ?? '';
+        }
 
         try {
-            $sphaerenAktiv = $this->sphaerenAktiv();
-            if ($sphaerenAktiv) {
+            if ($sphaereSetzen) {
                 CategoryService::sphaere($felder['sphaere']);
             }
             $this->service->aendern($id, $felder['name'], $felder['richtung'], $felder['farbe'], $felder['ki_hinweis'], $felder['active']);
-            // Switched off, the stored default stays as it is (E-15).
-            if ($sphaerenAktiv) {
+            if ($sphaereSetzen) {
                 $this->service->sphaereSetzen($id, $felder['sphaere']);
             }
         } catch (CategoryRuleViolation $e) {

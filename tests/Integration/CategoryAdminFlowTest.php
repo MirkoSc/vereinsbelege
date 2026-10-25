@@ -415,6 +415,12 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
         self::assertSame(302, $neu->status);
         self::assertSame(Sphere::Wirtschaftlich, $this->eigene('Kiosk')->defaultSphere);
 
+        // A form opened before the switch was turned on has no field - the stored default stays.
+        $this->kategorien->setDefaultSphere($beitrag->id, Sphere::Ideell);
+        self::assertSame(302, $this->post('/admin/kategorien/' . $beitrag->id, [...$felder, 'ki_hinweis' => 'ohne Feld'])->status);
+        self::assertSame(Sphere::Ideell, $this->kategorien->find($beitrag->id)?->defaultSphere);
+        self::assertSame('ohne Feld', $this->kategorien->find($beitrag->id)?->aiHint);
+
         // Switching off keeps what is stored.
         $this->kategorien->setDefaultSphere($beitrag->id, Sphere::Ideell);
         self::assertSame(302, $this->post('/admin/kategorien/sphaeren', ['aktiv' => '0'])->status);

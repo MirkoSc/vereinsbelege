@@ -17,12 +17,13 @@ final class ProgrammTest extends TestCase
     public function testCapabilitiesFollowTheToolsAndTheOperatorsLimit(): void
     {
         $werkzeuge = new FakeWerkzeuge();
-        self::assertSame(['ocr', 'render', 'ai'], Programm::faehigkeiten($werkzeuge, null));
+        self::assertSame(['ocr', 'render', 'ai', 'mail'], Programm::faehigkeiten($werkzeuge, null));
         self::assertSame(['render', 'ai'], Programm::faehigkeiten($werkzeuge, ' render , AI '));
 
         $werkzeuge->ocrDa = false;
         $werkzeuge->rendern = false;
-        self::assertSame(['ai'], Programm::faehigkeiten($werkzeuge, ''));
+        self::assertSame(['ai', 'mail'], Programm::faehigkeiten($werkzeuge, ''));
+        self::assertSame(['ai'], Programm::faehigkeiten($werkzeuge, 'ai'), 'the mail intake can be left out (issue #87)');
         self::assertSame([], Programm::faehigkeiten($werkzeuge, 'ocr'), 'nothing is reported that the tools cannot do');
     }
 
