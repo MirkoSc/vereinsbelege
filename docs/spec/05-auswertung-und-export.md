@@ -82,6 +82,27 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `bank_transaction`, `bank_account`, `vault`. Neue Tabellen, aus denen
   Berichtszeilen entstehen, gehören in diese Liste.
 
+### Stand M11-3: „Wohin fließt das Geld“ (issue #73, E-51)
+
+- Seiten (`report.view`, Scope wie der Loader): `/app/auswertung` →
+  `/app/auswertung/geldfluss` (Kategorie- und Kostenstellen-Tabelle mit
+  Balken, Ausgaben oder Einnahmen, Grundlage wählbar) und
+  `/app/auswertung/geldfluss/posten` (Drilldown bis zum Beleg). Controller
+  `App\App\AuswertungController`, Berechnung `App\Service\Report\
+  Geldfluss` über die `Auswertungsquelle` (Session-Cache) und den
+  `ReportService` (`gruppiert`, `drilldown`); Namen von Kategorien und
+  Kostenstellen sind Klartext, Lieferant/Rechnungsnummer/Gegenseite werden
+  nur für die Drilldown-Zeilen entschlüsselt.
+- **Zeitraumfilter** für alle Auswertungsseiten: `App\Service\Report\
+  Zeitraumwahl` (GET `zeitraum`=jahr|quartal|monat|frei, `jahr`, `quartal`,
+  `monat`, `von`, `bis`) + `app/views/partials/zeitraumfilter.php`;
+  Reiterzeile `app/views/partials/auswertung-reiter.php`.
+- URLs tragen nur Struktur (Zeitraum, Grundlage, Seite, Dimension, ID oder
+  `ohne`). Der Beleg-Link geht auf die normale Belegseite (Prüfansicht bzw.
+  Posteingang), die Recht und Scope selbst prüft; Buchungs-Link und
+  Gegenseite/Zweck einer Buchung nur mit `bank.view`.
+- Keine neue Tabelle, keine Migration.
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
@@ -491,6 +512,10 @@ wiederholtem Schritt. Umgesetzt (M12-3): `tests/Service/Archiv/`
 `ArchivVorgabeTest`), `tests/Integration/ArchivImportFlowTest.php`
 (ganzer Ablauf, Idempotenz, kein Klartext in `var/tmp` nach dem Import),
 Prüfseite in `PruefungFlowTest`, `tests/js/archivimport.test.js`.
+Umgesetzt (M11-3): `tests/Integration/GeldflussFlowTest.php` (Summen je
+Kategorie/Kostenstelle auf beiden Grundlagen, Einnahmen, Zeitraumfilter,
+Drilldown bis Beleg/Buchung, Kostenstellen- und Zeitraum-Scope, gesperrter
+Tresor, nur Struktur in Links), `tests/Service/Report/ZeitraumwahlTest.php`.
 Umgesetzt (M12-2/M12-4): `tests/Integration/ExportZipFlowTest.php` –
 gültiges ZIP mit genau den gefilterten Belegen, kein Klartext in `var/tmp`.
 Für „nur noch nicht exportierte“ prüft er:

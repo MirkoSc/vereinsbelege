@@ -1316,3 +1316,40 @@ ob „Belege in Prüfung“ nur Status `in_pruefung` (statt der ganzen
 Prüf-Warteschlange) meinen soll; ob unbezahlte Rechnungen aus der Zeit
 vor dem Abgleich mitgezählt werden sollen; ob inaktive Konten in den
 Kontoständen erscheinen sollen (derzeit ja, markiert).
+
+## E-51 ❓ „Wohin fließt das Geld“: Seiten, Zeitraumfilter, Drilldown (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M11-3 (issue #73), 05 §1 „Stand M11-3“; Zeitraumfilter und Reiter sind für M11-4 (#74) vorgesehen*
+
+- **Ort:** `/app/auswertung` leitet auf die erste Ansicht
+  `/app/auswertung/geldfluss` weiter; der Drilldown ist
+  `/app/auswertung/geldfluss/posten`. Navigation „Auswertungen“ zeigt auf
+  `/app/auswertung`, eine Reiterzeile (`partials/auswertung-reiter.php`)
+  nimmt weitere Ansichten auf. Recht `report.view` mit seinem Scope.
+- **Umfang:** Verteilung nach **Kategorie und Kostenstelle** auf einer
+  Seite (Balken + Tabelle, Betrag, Anteil, Anzahl Posten), wahlweise
+  **Ausgaben** (Standard) oder **Einnahmen**, Grundlage Buchungen (Standard)
+  oder Belege. Lieferant Top 20, Sphäre, Monatsverlauf,
+  Vorjahresvergleich und CSV sind nicht Teil des Issues (Folge-Issues).
+- **Zeitraum:** Kalenderjahr/Quartal/Monat/frei per GET
+  (`zeitraum`, `jahr`, `quartal`, `monat`, `von`, `bis`), Standard wie das
+  Dashboard (laufendes Jahr bzw. Ende des Zeitraum-Scopes). Ungültige Wahl
+  → Standardjahr mit Hinweis, nie geraten. Jahre 2000 … laufendes Jahr.
+- **Drilldown:** Gruppe → Einzelposten (Datum, Lieferant bzw. Gegenseite,
+  Rechnungsnummer/Zweck, andere Dimension, Betrag). URL nur Struktur:
+  Filter + `nach` (kategorie|kostenstelle) + `schluessel` (ID oder `ohne`);
+  alles andere 404. Der Beleg-Link führt auf die normale Belegseite
+  (Prüfansicht mit `document.edit`, sonst Posteingang mit `inbox.view`),
+  die Recht und Scope selbst prüft; der Buchungs-Link nur mit `bank.view`.
+  Gegenseite und Zweck einer Buchung ohne Beleg nur mit `bank.view`, sonst
+  „Buchung ohne Beleg“.
+- **Gutschriften** mindern ihre Gruppe; ein negativer Gruppenbetrag hat
+  keinen Anteil („–“) und keinen Balken. Balken relativ zur größten Gruppe,
+  Anteil relativ zur Summe (gerundet auf 0,1 %).
+- **Balken:** SVG-`<rect>` mit `width`-Attribut (CSP erlaubt keine
+  Inline-Styles), Wert immer als Text; unter 30rem entfällt die
+  Balkenspalte.
+
+Offen für Mirko: ob Ausgaben und Einnahmen gleichzeitig (statt
+umschaltbar) gezeigt werden sollen; ob der Drilldown eine zweite Ebene
+(Kostenstelle → Kategorie → Beleg) braucht; ob Buchungen ohne Beleg im
+Drilldown auch ohne `bank.view` Gegenseite/Zweck zeigen sollen.

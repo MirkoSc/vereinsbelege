@@ -364,6 +364,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/offen/buchungen', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/buchungen', false],
             [SystemRole::Finanzen, HttpMethod::Get, '/app/offen/erwartet', true],
+            // Reports (issue #73/M11-3): `report.view`, every shipped role;
+            // the scopes are checked in GeldflussFlowTest.
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/auswertung', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/geldfluss', true],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/auswertung/geldfluss', false],
             [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/erwartet', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erwartet', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
@@ -842,6 +849,8 @@ final class RoutePermissionMatrixTest extends TestCase
             rechtstexteAdmin: $stellvertreter,
             // The dashboard on /app (issue #72/M11-2), optional.
             dashboard: $stellvertreter,
+            // "Wohin fließt das Geld" (issue #73/M11-3), optional.
+            geldfluss: $stellvertreter,
         );
 
         return $router;
