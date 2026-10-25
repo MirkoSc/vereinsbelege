@@ -116,7 +116,84 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         self::assertFalse($this->jobs->offenFuer([KiAuslesung::JOB_TYP], 'document', $doc), 'No session run on top.');
         $document = $this->documents->find($doc);
         self::assertNotNull($document);
-        self::assertSame('Ausgelesen.', $this->kiAuslesung->auszug($document, $this->vault)?->meldung);
+        $auszug = $this->kiAuslesung->auszug($document, $this->vault);
+        self::assertNotNull($auszug);
+        self::assertNotSame('Vom Worker behauptet.', $auszug->meldung, 'The message is the server\'s own.');
+        self::assertSame('RE-2026-0815', $auszug->extraktion['invoice_number'] ?? null);
+    }
+
+    public function testTheExtractionIsRebuiltWithTheServersChecksNotTakenFromTheWorker(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(KiAuslesung::JOB_TYP, $doc);
+        // The worker claims an extraction with a field the attempt never had
+        // and a category the club does not offer.
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(true, extraktion: ['invoice_number' => 'GEFAELSCHT', 'category_id' => 7]));
+        $this->abschliessen($id, $schluessel, $job);
+
+        $this->uebernehmen();
+        $document = $this->documents->find($doc);
+        self::assertNotNull($document);
+        $auszug = $this->kiAuslesung->auszug($document, $this->vault);
+        self::assertNotNull($auszug);
+        self::assertSame('RE-2026-0815', $auszug->extraktion['invoice_number'] ?? null);
+        self::assertIsArray($auszug->extraktion);
+        self::assertArrayHasKey('category_id', $auszug->extraktion);
+        self::assertNull($auszug->extraktion['category_id'], 'auswerten() drops a category the club does not offer');
+    }
+
+    public function testAValidClaimThatBreaksTheSchemaFallsBackToTheSession(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(KiAuslesung::JOB_TYP, $doc);
+        $kaputt = $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(true, daten: ['total_gross' => 12.5]));
+        $this->abschliessen($id, $schluessel, $job);
+
+        $this->uebernehmen();
+        self::assertSame(DocumentArtifactRepository::DEFEKT . 'extraction', $this->artifacts->rohzeile($kaputt)['kind'] ?? null);
+        self::assertSame(DocumentStatus::BereitZurAuswertung, $this->documents->find($doc)?->status);
+        self::assertTrue($this->jobs->offenFuer([KiAuslesung::JOB_TYP], 'document', $doc));
+    }
+
+    public function testAnIncompleteOcrRunIsMarkedAndChangesNothing(): void
+    {
+        foreach ([
+            'leere Seiten' => fn(int $doc, int $jobId) => $this->datenArtefakt($doc, ArtifactKind::Text, $jobId, 0, '{"brauchbar":true,"seiten":[]}'),
+            'falsche seq' => fn(int $doc, int $jobId) => $this->datenArtefakt($doc, ArtifactKind::Text, $jobId, 3, '{"brauchbar":true,"seiten":["Text"]}'),
+        ] as $fall => $liefern) {
+            $doc = $this->dokument();
+            [$id, $schluessel, $job] = $this->workerJob(WorkerUebergabe::OCR, $doc);
+            $zeile = $liefern($doc, $job['id']);
+            $this->abschliessen($id, $schluessel, $job);
+            $this->uebernehmen();
+            self::assertSame(OcrStatus::Uebersprungen, $this->documents->find($doc)?->ocrStatus, $fall);
+            self::assertSame(DocumentArtifactRepository::DEFEKT . 'text', $this->artifacts->rohzeile($zeile)['kind'] ?? null, $fall);
+            $this->kopplung->entkoppeln($id, null, '', new \DateTimeImmutable());
+        }
+    }
+
+    public function testOneTextForThreeOriginalsIsIncomplete(): void
+    {
+        $doc = $this->dokument(originale: 3);
+        [$id, $schluessel, $job] = $this->workerJob(WorkerUebergabe::OCR, $doc);
+        $zeile = $this->datenArtefakt($doc, ArtifactKind::Text, $job['id'], 0, '{"brauchbar":true,"seiten":["Nur Seite eins"]}');
+        $this->abschliessen($id, $schluessel, $job);
+
+        $this->uebernehmen();
+        self::assertSame(OcrStatus::Uebersprungen, $this->documents->find($doc)?->ocrStatus);
+        self::assertSame(DocumentArtifactRepository::DEFEKT . 'text', $this->artifacts->rohzeile($zeile)['kind'] ?? null);
+    }
+
+    public function testACompleteButUnusableTextStaysForTheSearchOnly(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(WorkerUebergabe::OCR, $doc);
+        $zeile = $this->datenArtefakt($doc, ArtifactKind::Text, $job['id'], 0, '{"brauchbar":false,"seiten":["kaum lesbar"]}');
+        $this->abschliessen($id, $schluessel, $job);
+
+        $this->uebernehmen();
+        self::assertSame(OcrStatus::Uebersprungen, $this->documents->find($doc)?->ocrStatus);
+        self::assertSame('text', $this->artifacts->rohzeile($zeile)['kind'] ?? null);
     }
 
     public function testABrokenWorkerExtractionFallsBackToTheSession(): void
@@ -157,14 +234,17 @@ final class WorkerUebernahmeTest extends WorkerTestCase
 
     // ------------------------------------------------------------- helpers
 
-    private function dokument(): int
+    private function dokument(int $originale = 1): int
     {
-        $blob = $this->blobService->storeString('Bild', new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $blobs = [];
+        for ($i = 0; $i < $originale; ++$i) {
+            $blobs[] = $this->blobService->storeString('Bild ' . $i, new BlobMeta(MagicBytes::JPEG), $this->vault)->id;
+        }
 
         return $this->documents->insert(
             DocumentSource::Intern,
             null,
-            [$blob->id],
+            $blobs,
             $this->vault->sealDataKey(DataKey::generate()),
             new \DateTimeImmutable(),
             DocumentStatus::BereitZurAuswertung,
@@ -230,13 +310,23 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         $this->jobs->schrittErledigt($job->id, 'sitzung', $ergebnis);
     }
 
-    private function extraktion(bool $gueltig): string
+    /**
+     * A worker extraction artifact: a valid attempt with the `extract-v1`
+     * answer of the recorded fixture (or $daten), and whatever the worker
+     * claims as its extraction.
+     *
+     * @param array<string, mixed>|null $daten
+     * @param array<string, mixed>|null $extraktion
+     */
+    private function extraktion(bool $gueltig, ?array $daten = null, ?array $extraktion = null): string
     {
+        $antwort = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/llm/extract-v1/gueltig.json'), true, flags: JSON_THROW_ON_ERROR);
+        $daten ??= json_decode($antwort['choices'][0]['message']['content'], true, flags: JSON_THROW_ON_ERROR);
         $aufruf = [
             'anbieter_id' => 1,
             'anbieter_name' => 'Test',
             'modell' => 'test',
-            'prompt_version' => 'v1',
+            'prompt_version' => 'extract-v1',
             'reparatur' => false,
             'status' => $gueltig ? 'gueltig' : 'kein_json',
             'fallback' => false,
@@ -245,15 +335,15 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         return json_encode([
             'versuch' => [
                 'status' => $aufruf['status'],
-                'daten' => $gueltig ? ['total_gross_cents' => 1234] : null,
+                'daten' => $gueltig ? $daten : null,
                 'fehler' => [],
                 'inhalt' => '{}',
                 'reparatur' => false,
                 'aufruf' => $aufruf,
             ],
-            'meldung' => 'Ausgelesen.',
-            'extraktion' => $gueltig ? ['total_gross_cents' => 1234] : null,
+            'meldung' => 'Vom Worker behauptet.',
+            'extraktion' => $gueltig ? ($extraktion ?? $daten) : null,
             'hinweise' => [],
-        ], JSON_THROW_ON_ERROR);
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
 }

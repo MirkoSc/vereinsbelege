@@ -123,8 +123,13 @@ final readonly class WorkerUebernahme implements JobHandler
         $this->pruefeBlobs($document, ArtifactKind::Pdfa, $workerJobId, $vault);
         // With one text broken the rest does not cover every original: the
         // document stays on its page images and keeps its own text layer.
-        if (!$defekt) {
-            $this->texterkennung->workerOcrUebernehmen($document, $workerJobId, $vault);
+        // The same for a run that is incomplete (one text per original, none
+        // empty) - it is marked as a whole, so neither the AI nor the search
+        // relies on half of it.
+        if ($defekt || $this->texterkennung->workerOcrUebernehmen($document, $workerJobId, $vault) === null) {
+            foreach ($this->lauf($document, ArtifactKind::Text, $workerJobId) as $artefakt) {
+                $this->artifacts->alsDefektMarkieren($artefakt->id);
+            }
         }
     }
 

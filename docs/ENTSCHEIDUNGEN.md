@@ -1136,8 +1136,10 @@ Getroffen ohne Rückfrage:
   wird entschlüsselt und auf die Form der Session-Artefakte geprüft;
   unbrauchbare bekommen das Kind-Präfix `!`
   (`DocumentArtifactRepository::DEFEKT`, für Leser unsichtbar, im Admin
-  gezählt). Danach: `ocr` – alle Texte brauchbar und keiner defekt →
-  `ocr_status = fertig`, ältere Textläufe weg; `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
+  gezählt). Danach: `ocr` – genau ein Text je Original (`seq` 0 … n−1),
+  keiner leer, alle brauchbar → `ocr_status = fertig`, ältere Textläufe
+  weg; unvollständig → ganzer Lauf markiert; vollständig, aber unbrauchbar
+  → bleibt nur für die Suche (Review #222); `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
   die Session-Kette (`ausgewertet`/`ki_fehler`, dann Lieferanten-Auflösung),
   keiner → Session-`ai_extract`; `render_pages` – ein Lauf mit nur einer
   defekten Seite wird ganz verworfen und der Browser rendert. Blob-Artefakte

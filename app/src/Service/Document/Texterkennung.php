@@ -199,25 +199,40 @@ final readonly class Texterkennung implements JobHandler
     }
 
     /**
-     * Takes over the worker's OCR text of run $jobId (issue #53): when every
-     * text of the run is usable, the text layer reaches for the AI
-     * (`ocr_status` `fertig`) and the older runs go. Returns whether it did.
-     * The caller does not call it for a run with a defective text - the
-     * remaining ones would not cover every original.
+     * Takes over the worker's OCR text of run $jobId (issue #53, review of
+     * #222). Exactly one text per original is expected (07 section 5): seq
+     * 0 .. n-1, n = number of originals, each with at least one page that
+     * is not empty.
+     *   - true: complete and every text usable - the text layer reaches for
+     *     the AI (`ocr_status` `fertig`) and the older runs go;
+     *   - false: complete, but a text is not usable - nothing changes, the
+     *     text still serves the full-text search;
+     *   - null: incomplete or malformed (count, seq, empty pages) - the
+     *     caller marks the run defective, `ocr_status` stays.
+     * The caller does not call it for a run with a text that did not open.
      */
-    public function workerOcrUebernehmen(Document $document, int $jobId, Vault $vault): bool
+    public function workerOcrUebernehmen(Document $document, int $jobId, Vault $vault): ?bool
     {
-        $texte = array_filter(
+        $texte = array_values(array_filter(
             $this->artifacts->fuerDokument($document->id, ArtifactKind::Text),
             static fn(DocumentArtifact $a): bool => $a->jobId === $jobId && $a->producer === JobExecutor::Worker,
-        );
-        if ($texte === []) {
-            return false;
+        ));
+        $anzahl = count($document->originalBlobIds);
+        $seqs = array_map(static fn(DocumentArtifact $a): int => $a->seq, $texte);
+        sort($seqs);
+        if ($anzahl === 0 || $seqs !== range(0, $anzahl - 1)) {
+            return null;
         }
+        $brauchbar = true;
         foreach ($texte as $artefakt) {
-            if (($this->inhalt($artefakt, $vault)['brauchbar'] ?? false) !== true) {
-                return false;
+            $inhalt = $this->inhalt($artefakt, $vault);
+            if ($inhalt === null || array_filter($inhalt['seiten'], static fn(string $s): bool => trim($s) !== '') === []) {
+                return null;
             }
+            $brauchbar = $brauchbar && $inhalt['brauchbar'];
+        }
+        if (!$brauchbar) {
+            return false;
         }
         $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Text, $jobId);
         $this->documents->setzeOcrStatus($document->id, OcrStatus::Fertig);

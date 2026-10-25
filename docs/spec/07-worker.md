@@ -250,12 +250,16 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     jedes Artefakt des Laufs mit dem Tresor; was nicht entschlüsselt oder
     nicht die Form der Session-Artefakte hat, bekommt das Kind-Präfix `!`
     (unsichtbar, im Admin gezählt). Formen: `text` = `{brauchbar, seiten[]}`
-    (wie `extract_text`), `extraction` = `{versuch, meldung, extraktion,
-    hinweise}` (wie `ai_extract`; `extraktion` genau dann ein Objekt, wenn
-    der Versuch gültig ist), `page_image`/`pdfa` = vollständiger Blob mit
-    öffnendem DEK. Folgen: `ocr` mit durchweg brauchbarem und keinem
-    defekten Text →
-    `ocr_status = fertig`; `ai_extract` → Status `ausgewertet`/`ki_fehler`
+    (wie `extract_text`; genau ein Text je Original, `seq` 0 … n−1, jeder
+    mit mindestens einer nicht-leeren Seite – sonst wird der ganze Lauf
+    markiert), `extraction` = `{versuch, meldung, extraktion, hinweise}`
+    (wie `ai_extract`; ein als gültig gemeldeter Versuch muss mit seinen
+    `daten` serverseitig das Schema `extract-v1` erfüllen; `meldung`,
+    `extraktion` und `hinweise` des Workers werden verworfen und mit
+    `Auslesung::auswerten()` neu gebildet), `page_image`/`pdfa` =
+    vollständiger Blob mit öffnendem DEK. Folgen: `ocr` vollständig und
+    durchweg brauchbar → `ocr_status = fertig` (vollständig, aber
+    unbrauchbar → bleibt nur für die Suche); `ai_extract` → Status `ausgewertet`/`ki_fehler`
     wie die Session-Kette, ohne brauchbaren Versuch Session-`ai_extract`;
     `render_pages` mit einer defekten Seite → ganzer Lauf verworfen,
     Browser rendert.
