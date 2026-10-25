@@ -5,3 +5,6 @@ tests/fixtures/mt940/*.sta -text -whitespace
 
 # CSV export fixtures keep the banks' bytes too: encoding, BOM and CRLF (issue #61).
 tests/fixtures/bank/*.csv -text -whitespace
+
+# The ISO 20022 schema stays byte for byte as published (checksum in its README, issue #85).
+tests/fixtures/sepa/*.xsd -text -whitespace

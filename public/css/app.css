@@ -1236,6 +1236,46 @@ body.bereich-app:has(.pruefansicht) {
     }
 }
 
+/* --- Abgleich Beleg ↔ Buchung (M10-4, issue #68) --- */
+
+/* Offene Belege | Buchungen ohne Beleg: untereinander bis 64rem, dann
+   nebeneinander. minmax(0, 1fr), damit lange Verwendungszwecke eine Spalte
+   nicht breiter machen als die Hälfte (kein horizontales Scrollen bei 360 px). */
+.abgleich-spalten {
+    display: grid;
+    gap: var(--abstand-6);
+    margin-top: var(--abstand-6);
+}
+
+.abgleich-spalten .karte {
+    overflow-wrap: anywhere;
+}
+
+.abgleich-gewaehlt {
+    border-color: var(--farbe-akzent);
+    box-shadow: inset 4px 0 0 var(--farbe-akzent);
+}
+
+.abgleich-zeilen {
+    padding-left: var(--abstand-4);
+}
+
+.abgleich-zeilen > li + li {
+    margin-top: var(--abstand-2);
+}
+
+#beleg {
+    margin-top: var(--abstand-6);
+    overflow-wrap: anywhere;
+}
+
+@media (min-width: 64rem) {
+    .abgleich-spalten {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: start;
+    }
+}
+
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */
 
 /* Sieben Gruppen zu acht Zeichen (docs/spec/01-sicherheit.md Abschnitt 2).

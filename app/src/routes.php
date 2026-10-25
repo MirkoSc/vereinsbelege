@@ -32,6 +32,7 @@ use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
 use App\App\ErstattungController;
+use App\App\ZahllaufController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\ErfassungController;
@@ -202,6 +203,9 @@ use App\View\View;
  * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
  *        same reason as $mail: only the reimbursement page needs the
  *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
+ * @param (\Closure(): ZahllaufController)|null $zahllaeufe built lazily,
+ *        same reason as $mail: only the payment runs need the database
+ *        (issue #85). Optional and last like $nextcloudAdmin.
  * @param (\Closure(): RechtstextController)|null $rechtstexte built lazily,
  *        same reason as $mail: /impressum and /datenschutz read their text
  *        from the settings (issue #80/M13-3). Optional like $nextcloudAdmin.
@@ -259,6 +263,7 @@ return static function (
     ?\Closure $offen = null,
     ?\Closure $tresorRotation = null,
     ?\Closure $erstattungen = null,
+    ?\Closure $zahllaeufe = null,
     ?\Closure $rechtstexte = null,
     ?\Closure $rechtstexteAdmin = null,
 ): void {
@@ -274,6 +279,7 @@ return static function (
     $offen ??= static fn(): never => throw new \LogicException('The work lists are not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
     $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
+    $zahllaeufe ??= static fn(): never => throw new \LogicException('The payment runs are not wired into this route table.');
     $rechtstexte ??= static fn(): never => throw new \LogicException('The legal pages are not wired into this route table.');
     $rechtstexteAdmin ??= static fn(): never => throw new \LogicException('The legal texts admin page is not wired into this route table.');
 
@@ -648,6 +654,13 @@ return static function (
     $post('/app/abgleich/ausfuehren', $abgleichRecht, static fn(Request $r) => $abgleich()->ausfuehren($r));
     $post('/app/abgleich/uebernehmen', $abgleichRecht, static fn(Request $r) => $abgleich()->uebernehmen($r));
     $post('/app/abgleich/einstellungen', $abgleichRecht, static fn(Request $r) => $abgleich()->einstellungen($r));
+    // The matching page (M10-4, issue #68, E-41): amount/search filter by
+    // POST, manual allocation, release, difference, discarding a suggestion.
+    $post('/app/abgleich/filter', $abgleichRecht, static fn(Request $r) => $abgleich()->filtern($r));
+    $post('/app/abgleich/zuordnen', $abgleichRecht, static fn(Request $r) => $abgleich()->zuordnen($r));
+    $post('/app/abgleich/loesen', $abgleichRecht, static fn(Request $r) => $abgleich()->loesen($r));
+    $post('/app/abgleich/differenz', $abgleichRecht, static fn(Request $r) => $abgleich()->differenz($r));
+    $post('/app/abgleich/verwerfen', $abgleichRecht, static fn(Request $r) => $abgleich()->verwerfen($r));
     // Work lists "Offen" (M10-5, issue #69, docs/spec/04-bank-und-abgleich.md
     // section 5 "Übersichten", E-37), read-only: unpaid receipts and open
     // reimbursements `report.view` (its scope filters in SQL), bookings
@@ -741,6 +754,19 @@ return static function (
     // (App\App\ErstattungController).
     $get('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->ansicht($r, $params));
     $post('/app/buchungen/{id:\d+}/erstattung', $abgleichRecht, static fn(Request $r, array $params) => $erstattungen()->zuordnen($r, $params));
+
+    // SEPA payment runs for reimbursements (issue #85, docs/spec/
+    // 04-bank-und-abgleich.md section 5 "Stand SEPA-Zahllauf", E-42): the
+    // other half of the reimbursement matching - `matching.edit` for all of
+    // it, its scope limits receipts and runs. CSRF on every POST; without
+    // the unlocked vault nothing is read or written. The file is built in
+    // memory and sent as attachment (App\App\ZahllaufController).
+    $get('/app/zahllaeufe', $abgleichRecht, static fn(Request $r) => $zahllaeufe()->liste($r));
+    $get('/app/zahllaeufe/neu', $abgleichRecht, static fn(Request $r) => $zahllaeufe()->neu($r));
+    $post('/app/zahllaeufe', $abgleichRecht, static fn(Request $r) => $zahllaeufe()->anlegen($r));
+    $get('/app/zahllaeufe/{id:\d+}', $abgleichRecht, static fn(Request $r, array $params) => $zahllaeufe()->ansicht($r, $params));
+    $get('/app/zahllaeufe/{id:\d+}/datei', $abgleichRecht, static fn(Request $r, array $params) => $zahllaeufe()->datei($r, $params));
+    $post('/app/zahllaeufe/{id:\d+}/verwerfen', $abgleichRecht, static fn(Request $r, array $params) => $zahllaeufe()->verwerfen($r, $params));
 
     // Rules "kein Beleg nötig" / category (M9-6, issue #64, docs/spec/
     // 04-bank-und-abgleich.md section 5). Permission: reading `bank.view` -

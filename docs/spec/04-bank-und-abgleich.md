@@ -615,7 +615,8 @@ schreibt nichts, Zugriffsbereich, Seite),
   der Session neu berechnet; „Übernehmen“ bewertet neu (abgelehnt unter
   `vorschlag_ab` oder bei geändertem Betrag) und ordnet als
   `vorschlag_bestaetigt` zu. Jede Zuordnung bleibt über `Zuordnung::loesen`
-  lösbar.
+  lösbar. Ein **verworfenes** Paar (M10-4, E-41) wird nicht
+  bewertet – weder Vorschlag noch automatisch.
 - **Kandidaten:** Belege mit Dokument `geprueft`/`festgeschrieben`,
   Zahlungsweg `konto`/`erstattung`, Status offen/teilbezahlt/
   erstattung_offen; Buchungen mit Status ≠ `zugeordnet`, ohne Ausgaben mit
@@ -658,6 +659,88 @@ Vorschläge, Kandidaten und Zugriffsbereich, Gutschrift, Settings, Audit),
   machen" (Gegenseite/Stichwort → immer „kein Beleg nötig" + Kategorie).
 - Umbuchungen zwischen eigenen Konten (IBAN der Gegenseite = eigenes Konto)
   werden automatisch erkannt und paarweise verknüpft.
+
+#### Stand M10-4: Abgleich-Oberfläche (issue #68, Migration 042, E-41)
+
+- **Seite** `/app/abgleich` (`matching.edit`, CSRF auf allen POST, ohne
+  entsperrten Tresor nichts): oben wie bisher „Abgleich berechnen“ mit
+  „N eindeutige Zuordnungen anlegen“ und den Vorschlägen, je Vorschlag
+  „Übernehmen“ **und „Verwerfen“**. Darunter Filter und zwei Listen
+  nebeneinander (ab 64rem, darunter untereinander): **offene Belege**
+  (Kandidaten wie M10-2: geprüft/festgeschrieben, Zahlungsweg `konto`/
+  `erstattung`, nicht ausgeglichen) | **Buchungen ohne Beleg** (`fehlt`/
+  `teilweise`, mit dem Teil, den noch kein Beleg erklärt), beide älteste
+  zuerst, je 25 je Seite (`App\Service\Bank\AbgleichFilter`). Der Aufruf
+  bewertet nichts; entschlüsselt wird nur die gezeigte Seite.
+- **Filter:** Konto (nur Buchungen), Zeitraum (Beleg- bzw. Buchungsdatum),
+  Betrag (Brutto/Betrag oder offener Rest, ohne Vorzeichen), Suche
+  (Lieferant, Rechnungsnummer, Zweck bzw. Gegenseite, IBAN, Zweck). Konto,
+  Zeitraum, gewählter Beleg und Seiten stehen in der URL; **Betrag und
+  Suche sind Vereinsdaten** und kommen nur per `POST /app/abgleich/filter`
+  (die Seite wird direkt gezeigt, Blättern sendet sie per Formular erneut,
+  nach einer Aktion entfallen sie; ohne Betrag/Suche leitet der Filter auf
+  die URL mit Konto/Zeitraum um). Eine Seite hinter der letzten zeigt die
+  letzte (Listen schrumpfen nach dem Zuordnen). Mit Betrag/Suche wird die ganze
+  Kandidatenmenge einer Seite entschlüsselt, sonst nur die Seite.
+- **Gewählter Beleg** (`?beleg=ID`, im Zugriffsbereich – Belegdatum und
+  Kostenstelle): Brutto, zugeordnet, offen, Zahlungsstatus; die
+  **Zuordnungen** mit „Lösen“ (nur wenn auch die Buchung im
+  Zugriffsbereich liegt – sonst „außerhalb Ihres Bereichs“ ohne Details);
+  **Differenz abschließen** (Grund `skonto`/`gutschrift`/`sonstiges`,
+  nur wenn ein Teil zugeordnet ist und ein Rest fehlt) bzw. „Differenz
+  wieder öffnen“; solange er eine Buchung annimmt, die **passenden
+  Buchungen**: alle offenen Buchungen seiner Richtung und Währung im
+  Zugriffsbereich ab Fensterbeginn (Rechnungsdatum − `fenster_vor_tage`,
+  wie M10-2 – frühere Buchungen, etwa Beiträge vergangener Jahre, werden
+  nicht entschlüsselt), nach Punkten (M10-2) sortiert,
+  verworfene Paare zuletzt und markiert, die besten 20 (mehr über die
+  Filter). Je Buchung ein Betragsfeld, vorbelegt mit `min(offen Beleg,
+  offen Buchung)` – kleiner eingetragen ist es eine **Teilzuordnung**
+  (Rate, Sammelzahlung) – und „Zuordnen“; ab `vorschlag_ab` Punkten
+  „Als Vorschlag verwerfen“, ein verworfenes „Wieder vorschlagen“.
+- **Von Hand zuordnen** (`POST /app/abgleich/zuordnen`, Felder beleg,
+  buchung, betrag in Euro): beide Seiten müssen Kandidaten im
+  Zugriffsbereich sein, gleiche Währung; geschrieben über `Zuordnung::zuordnen()` mit
+  Methode `manuell`, `score`/`rule_trace` der Bewertung (falls bewertbar)
+  zur Nachvollziehbarkeit. Alle Grenzen (≤ offen auf beiden Seiten,
+  Richtung, Zahlungsweg, Umbuchung) prüft `Zuordnung` unter den Sperren.
+- **Lösen** (`POST /app/abgleich/loesen`, Felder beleg, zuordnung): die
+  Zuordnung muss zum Beleg gehören, Beleg und Buchung im Zugriffsbereich.
+  **Differenz** (`POST /app/abgleich/differenz`, Feld grund oder
+  `oeffnen`): Beleg im Zugriffsbereich.
+- **Verwerfen** (`POST /app/abgleich/verwerfen`, Felder beleg, buchung,
+  optional `zuruecknehmen=1`): speichert das Paar in `match_rejection`
+  (nur IDs, wer, wann). `Punktebewertung::planen()` bewertet ein
+  verworfenes Paar nicht – es zählt wie ein nicht bewertetes Paar nur mit
+  der Obergrenze –, „Übernehmen“ lehnt es ab, von Hand zuordnen bleibt
+  möglich. Verwerfen nur, solange beide Seiten Kandidaten im
+  Zugriffsbereich sind; Zurücknehmen mit beiden Seiten im Zugriffsbereich.
+- **Weitere Wege bleiben an der Buchung** (verlinkt aus der Liste, eigene
+  Rechte): „kein Beleg nötig“, Regeln und Umbuchung paaren (M9-6/M10-6,
+  `bank.book`) auf `/app/buchungen/{id}`; bei einer Ausgabe mit
+  Gegen-IBAN zusätzlich „Erstattung?“ auf `/app/buchungen/{id}/erstattung`
+  (M10-3).
+- **Umbuchungen** (`doc_source = umbuchung`, M10-6) sind für den ganzen
+  Abgleich keine Kandidaten mehr – auch die eingehende Hälfte, die als
+  Einnahme mit „kein Beleg nötig“ bisher bewertet und erst von `Zuordnung`
+  abgelehnt wurde (`BankTransactionRepository::abgleichKandidaten()`).
+- **Mobil** (360 px): alles Karten und umbrechende Formulare, kein
+  Tabellen-Scrollen; zwei Spalten erst ab 64rem.
+- **Audit:** Zuordnen/Lösen/Differenz wie M10-1 (`zuordnung.angelegt` mit
+  Methode `manuell`, `zuordnung.geloest`, `beleg.differenz_*`);
+  `abgleich.vorschlag_verworfen` / `abgleich.vorschlag_zurueckgenommen`
+  (invoice_id, transaction_id) – nie ein Betrag, Name oder Suchbegriff.
+
+**Pflicht-Tests M10-4:** `AbgleichFlowTest` (verworfenes Paar weder
+Vorschlag noch Übernehmen, Rest wird eindeutig, Zurücknehmen; verworfenes
+eindeutiges Paar nicht automatisch; Verwerfen nur offen und im
+Zugriffsbereich; von Hand mit Teilbeträgen, Grenze, Differenz abschließen
+und öffnen, Lösen; Lösen/Differenz/Zuordnen außerhalb des Bereichs
+abgelehnt; Listen blättern und filtern, nur fehlende Belege, Kostenstellen-
+Scope; Seite ohne Betrag/Suche in Links), `PunktebewertungTest`
+(verworfenes Paar nur mit Obergrenze), `AbgleichFilterTest` (GET nur
+Struktur, POST Betrag/Suche nie in der URL), `RoutePermissionMatrixTest`
+(`matching.edit` für alle neuen Routen).
 
 ### Stand M10-6: Umbuchungen eigene Konten (issue #70, Migration 039, E-38)
 
@@ -805,8 +888,8 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
 
 ### Übersichten
 - **Unbezahlte Rechnungen** (offen, teilbezahlt, fällig/überfällig)
-- **Offene Erstattungen** je Einreicher (mit Summe; Backlog: SEPA-
-  Sammelüberweisung pain.001 erzeugen)
+- **Offene Erstattungen** je Einreicher (mit Summe; daraus eine SEPA-
+  Sammelüberweisung pain.001 – „Stand SEPA-Zahllauf“ unten)
 - **Buchungen ohne Beleg** (doc_required, nicht zugeordnet) – mit Aktion
   „Beleg anfordern" (Mail-Vorlage) oder „Beleg hochladen"
 - **Erwartete, aber fehlende Belege** aus wiederkehrenden Serien
@@ -868,6 +951,75 @@ Regel/„nicht nötig“/Einnahme/zugeordnet ausgeschlossen, Sammelüberweisung
 mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
 `SerienFlowTest::testTheWorkListShowsOnlyConfirmedSeriesWhoseReceiptIsMissing`,
 `RoutePermissionMatrixTest`.
+
+#### Stand SEPA-Zahllauf: Sammelüberweisung pain.001 für Erstattungen (issue #85, E-42)
+
+- **Seiten** `/app/zahllaeufe` (Liste), `/app/zahllaeufe/neu`, `/app/zahllaeufe/{id}`,
+  `/app/zahllaeufe/{id}/datei` (Download), `POST …/verwerfen` – alle
+  `matching.edit`, verlinkt von „Offene Erstattungen“. Ohne entsperrten
+  Tresor zeigen und schreiben sie nichts. `App\App\ZahllaufController`,
+  Logik `App\Service\Bank\Zahllaeufe`, Datei `App\Service\Bank\Sepa\Pain001`.
+- **Kandidaten** = die Gruppen aus „Offene Erstattungen“ (Name **und** IBAN
+  aus der Einreichung, `Uebersichten::erstattungen()`) im Zugriffsbereich von
+  `matching.edit`. **Nie angeboten:** Gruppen, deren Name auch mit anderer
+  oder ohne IBAN vorkommt (Warnung aus M10-5 – von Hand prüfen und
+  überweisen), ohne Namen, ohne/mit ungültiger IBAN, mit der IBAN eines
+  Vereinskontos; je Beleg: nicht „per Überweisung“, nicht EUR, Dokument
+  nicht `geprueft`/`festgeschrieben`, schon in einem angewiesenen Lauf,
+  nichts offen; ebenso eine Gruppe, deren Einreichungen verschiedene
+  Kontoinhaber nennen. Die Seite nennt den Grund. Empfängername in der
+  Datei ist der **Kontoinhaber** laut Einreichung (sonst der Name) – die
+  Bank kann ihn mit der IBAN abgleichen. „Offene Erstattungen“ markiert
+  Belege, die ein angewiesener Lauf enthält, damit niemand sie zusätzlich
+  von Hand überweist; ein Konto mit Zahllauf lässt sich nicht löschen
+  (nur deaktivieren).
+- **Anlegen:** Auswahl per Beleg (vorbelegt: alle wählbaren), Auftraggeber-
+  konto (aktives Bankkonto mit gültiger IBAN, BIC falls hinterlegt),
+  Kontoinhaber (vorbelegt mit dem Vereinsnamen der Mail-Einstellungen),
+  Ausführungsdatum (heute bis + 1 Jahr). Eine Transaktion: Dokumente →
+  Belege sperren, Kandidaten neu lesen, je Gruppe **eine** Überweisung über
+  die Summe der offenen Beträge der gewählten Belege (Integer-Cent),
+  Verwendungszweck „Auslagenerstattung Beleg(e) <Nummer bzw. vom Datum>, …“
+  (≤ 140, sonst „u. a.“), End-to-End-ID `VB-Z<lauf>-<n>`, MsgId
+  `VB-Z<lauf>-<Zeitstempel>`. Jeder Beleg wird über
+  `payment_run_item.active_invoice_id` (`UNIQUE`) reserviert – doppelte
+  Anweisung ist auch bei gleichzeitigen Anfragen ausgeschlossen. Die Datei
+  wird vor dem Speichern einmal erzeugt; was sie verletzen würde, wird nicht
+  gespeichert.
+- **Datei** pain.001.001.09 (DK, Anlage 3 DFÜ-Abkommen): Service-Level
+  `SEPA`, `ChrgBr` `SLEV`, nur EUR, `BtchBookg` **false** (jede Überweisung
+  einzeln auf dem Auszug, damit der Erstattungs-Abgleich M10-3 sie über die
+  IBAN findet), Auftraggeberbank per BIC oder `NOTPROVIDED`, Empfängerbank
+  weggelassen (IBAN-only). Texte im SEPA-Zeichensatz (Umlaute
+  ausgeschrieben, sonstige Zeichen → Leerzeichen, `App\Service\Bank\Sepa\SepaText`),
+  Namen ≤ 70, Referenzen ≤ 35 ohne `/` am Rand und ohne `//`. Erzeugt bei
+  jedem Download im Speicher aus `payment_run.data_enc` – nie auf Platte,
+  Antwort `Content-Disposition: attachment`, `Cache-Control: no-store`.
+- **Status:** `angewiesen`, bis der Abgleich jede Überweisung gefunden hat –
+  dann zeigt der Lauf **ausgeglichen** (abgeleitet aus den
+  `payment_status` seiner Belege, nicht gespeichert); je Überweisung
+  „zugeordnet“/„offen“ (ausgeglichen = `bezahlt`/`erstattet`). **Verwerfen**
+  (serverseitig nur `angewiesen` und solange **kein** Beleg des Laufs seit
+  dessen Anlage eine Zuordnung bekommen hat – sonst hat die Bank ihn
+  zumindest teilweise ausgeführt) gibt die Belege frei – gedacht für eine abgelehnte oder
+  nie eingereichte Datei.
+- **Zugriffsbereich:** Ein Lauf ist nur sichtbar (und herunterladbar,
+  verwerfbar), wenn **alle** seine Belege im Bereich liegen – die Datei
+  nennt alle Empfänger und Beträge.
+- **Audit:** `zahllauf.angelegt` (bank_account_id, Zahl der Überweisungen
+  und Belege), `zahllauf.heruntergeladen`, `zahllauf.verworfen` (Zahl der
+  Belege) – Entität `payment_run`. Nie Name, IBAN oder Betrag.
+
+**Pflicht-Tests SEPA-Zahllauf:** `Pain001Test` (gültig gegen das
+ISO-20022-Schema `tests/fixtures/sepa/pain.001.001.09.xsd`, mit und ohne
+BIC, Summen/Anzahl/DK-Regeln, Cent → Dezimal, Transliteration,
+Referenzregeln, Ablehnung ungültiger Aufträge ohne Werte in der Meldung),
+`ZahllaufFlowTest` (eine Überweisung je Empfänger mit offener Summe, Datei
+gültig, nichts im Klartext in DB und Audit; nie doppelt angewiesen, nach
+Verwerfen wieder frei; mehrdeutiger Name, Vereins-IBAN, bar, ungeprüft
+nicht angeboten; Auftragsprüfung; Abgleich gleicht den Lauf aus;
+Zugriffsbereich; Seiten, Download-Header, CSRF),
+`RoutePermissionMatrixTest` (`matching.edit`).
 
 #### Stand Backlog: GiroCode zum Bezahlen (issue #86, E-40)
 

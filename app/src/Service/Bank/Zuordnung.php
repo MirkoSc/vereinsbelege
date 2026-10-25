@@ -24,6 +24,7 @@ use App\Repository\BankTransactionRepository;
 use App\Repository\InvoiceRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
+use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
@@ -373,6 +374,29 @@ final readonly class Zuordnung
     public function fuerBuchung(Vault $vault, int $transactionId): array
     {
         return array_map(fn(AllocationRecord $r): Allocation => $this->entschluesseln($vault, $r), $this->zuordnungen->forTransaction($transactionId));
+    }
+
+    /**
+     * The allocations of many bookings at once, decrypted, by transaction
+     * id (the reports, issue #71). Bookings without any are left out; a
+     * booking with an allocation that cannot be decrypted maps to null.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, list<Allocation>|null>
+     */
+    public function fuerBuchungen(Vault $vault, array $transactionIds): array
+    {
+        $ergebnis = [];
+        foreach ($this->zuordnungen->forTransactions($transactionIds) as $id => $liste) {
+            try {
+                $ergebnis[$id] = array_map(fn(AllocationRecord $r): Allocation => $this->entschluesseln($vault, $r), $liste);
+            } catch (CryptoException) {
+                $ergebnis[$id] = null;
+            }
+        }
+
+        return $ergebnis;
     }
 
     /**
