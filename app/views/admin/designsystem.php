@@ -169,6 +169,25 @@
         </li>
     </ul>
 
+    <h3>Balken</h3>
+    <p class="gedaempft">Anteile in einer Tabelle (Auswertungen): SVG mit <code>&lt;rect class="balken-wert" width="0…1000"&gt;</code> – kein Inline-Style (CSP); der Wert steht immer als Text daneben.</p>
+    <div class="tabelle-rahmen">
+        <table class="tabelle tabelle-karten geldfluss">
+            <tbody>
+                <tr>
+                    <th scope="row">Platzpflege</th>
+                    <td class="geldfluss-balken-spalte"><svg class="balken" viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect class="balken-wert" width="1000" height="10"/></svg></td>
+                    <td class="zahl" data-label="Betrag">300,00 €</td>
+                </tr>
+                <tr>
+                    <th scope="row">Reisekosten</th>
+                    <td class="geldfluss-balken-spalte"><svg class="balken" viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect class="balken-wert" width="467" height="10"/></svg></td>
+                    <td class="zahl" data-label="Betrag">140,00 €</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
     <h3>Leerzustand</h3>
     <div class="leer">Keine Einträge vorhanden.</div>
 

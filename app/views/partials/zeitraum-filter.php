@@ -11,11 +11,14 @@
  * @var string $aktion the page's path
  * @var int $erstesJahr
  * @var int $letztesJahr
+ * @var array<string, string>|null $weitereParameter other filters of the
+ *        page (structure only), kept as hidden fields when the period changes
  */
 
 use App\Service\Report\ZeitraumAuswahl;
 
 $gewaehlt = static fn(bool $ja): string => $ja ? ' selected' : '';
+$weitereParameter ??= [];
 $z = $auswahl->zeitraum;
 $jahr = (int) $z->von->format('Y');
 $quartal = intdiv((int) $z->von->format('n') + 2, 3);
@@ -23,6 +26,9 @@ $monat = (int) $z->von->format('n');
 $monate = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 ?>
 <form method="get" action="<?= e($aktion) ?>" class="formular nicht-drucken" aria-label="Zeitraum wählen">
+    <?php foreach ($weitereParameter as $name => $wert): ?>
+        <input type="hidden" name="<?= e($name) ?>" value="<?= e($wert) ?>">
+    <?php endforeach; ?>
     <label for="zeitraum-art" class="feld-kurz">Zeitraum
         <select id="zeitraum-art" name="art">
             <?php foreach (ZeitraumAuswahl::ARTEN as $wert => $label): ?>

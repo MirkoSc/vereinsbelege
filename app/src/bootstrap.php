@@ -31,6 +31,7 @@ use App\Api\WorkerMailController;
 use App\Http\Request;
 use App\App\AccountController;
 use App\App\CsvFormatController;
+use App\App\AuswertungController;
 use App\App\DashboardController;
 use App\App\KassenpruefungController;
 use App\App\AuditController;
@@ -223,6 +224,7 @@ use App\Service\Report\AuswertungsCache;
 use App\Service\Report\Auswertungsdaten;
 use App\Service\Report\Auswertungsquelle;
 use App\Service\Report\Dashboard;
+use App\Service\Report\Geldfluss;
 use App\Service\Report\Kassenpruefung;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -915,6 +917,27 @@ $kassenpruefungSeite = static fn(): KassenpruefungController => new Kassenpruefu
             new BankTransactionRepository($pdo),
             $zuordnungFor($pdo),
             new InvoiceRepository($pdo),
+            new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
+        );
+    },
+);
+
+// "Wohin fließt das Geld" (issue #73/M11-3): like the dashboard, the
+// figures behind it open the connection only when rendered.
+$geldflussSeite = static fn(): AuswertungController => new AuswertungController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $auswertungsquelleFor): Geldfluss {
+        $pdo = $connections->pdo();
+
+        return new Geldfluss(
+            // Behind the login guard: the session holds the account.
+            $auswertungsquelleFor($pdo, new Session()->userId() ?? 0),
+            new CategoryRepository($pdo),
+            new CostCenterRepository($pdo),
+            new InvoiceRepository($pdo),
+            new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
     },
@@ -2007,7 +2030,8 @@ $router = new Router();
     $datev,
     $datevAdmin,
     $kassenpruefungSeite,
-    $workerMail,
+    geldfluss: $geldflussSeite,
+    workerMail: $workerMail,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

@@ -38,6 +38,7 @@ use App\App\ZahllaufController;
 use App\App\DatevController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
+use App\App\AuswertungController;
 use App\App\DashboardController;
 use App\App\ErfassungController;
 use App\App\ExportController;
@@ -231,6 +232,9 @@ use App\View\View;
  *        $nextcloudAdmin.
  * @param (\Closure(): KassenpruefungController)|null $kassenpruefung built
  *        lazily, same reason (issue #74/M11-4). Optional like $nextcloudAdmin.
+ * @param (\Closure(): AuswertungController)|null $geldfluss built lazily,
+ *        same reason as $mail: only the report pages need the database
+ *        (issue #73/M11-3). Optional like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -291,6 +295,7 @@ return static function (
     ?\Closure $datev = null,
     ?\Closure $datevAdmin = null,
     ?\Closure $kassenpruefung = null,
+    ?\Closure $geldfluss = null,
     ?\Closure $workerMail = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -313,6 +318,7 @@ return static function (
     $datev ??= static fn(): never => throw new \LogicException('The DATEV export is not wired into this route table.');
     $datevAdmin ??= static fn(): never => throw new \LogicException('The DATEV settings are not wired into this route table.');
     $kassenpruefung ??= static fn(): never => throw new \LogicException('The Kassenprüfung is not wired into this route table.');
+    $geldfluss ??= static fn(): never => throw new \LogicException('The report pages are not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -726,6 +732,18 @@ return static function (
     // query string (App\Service\Report\ZeitraumAuswahl).
     $get('/app/auswertung/kassenpruefung', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $kassenpruefung()->seite($r));
     $get('/app/auswertung/kassenpruefung/{teil:[a-z-]+}.csv', Zugriff::recht(Permission::ExportCsv), static fn(Request $r, array $params) => $kassenpruefung()->csv($r, $params));
+    // Reports (issue #73/M11-3, docs/spec/05-auswertung-und-export.md
+    // section 1, E-51): "Wohin fließt das Geld" by category and cost center
+    // with the drilldown to the single receipt. Permission: `report.view`;
+    // its cost-center and period scope narrow every figure (the loader in
+    // SQL, the ReportService once more). Read-only, no CSRF needed. The
+    // query string carries structure only (period, basis, side, dimension,
+    // an id or `ohne`); a receipt link goes to the receipt page, which
+    // checks its own right and scope.
+    $berichte = Zugriff::recht(Permission::ReportView);
+    $get('/app/auswertung', $berichte, static fn() => $geldfluss()->start());
+    $get('/app/auswertung/geldfluss', $berichte, static fn(Request $r) => $geldfluss()->geldfluss($r));
+    $get('/app/auswertung/geldfluss/posten', $berichte, static fn(Request $r) => $geldfluss()->posten($r));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
