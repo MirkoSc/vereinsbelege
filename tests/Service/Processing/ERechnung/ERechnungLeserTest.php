@@ -249,6 +249,37 @@ final class ERechnungLeserTest extends TestCase
         }
     }
 
+    /**
+     * Security review (issue #78): in UTF-16 the bytes of "<!DOCTYPE" are
+     * interleaved with NULs, so the byte search alone missed it and libxml
+     * expanded the entities. The XML attachment of a public PDF reaches
+     * lesen() without MagicBytes, so this has to hold here.
+     */
+    public function testADoctypeInUtf16IsRefusedToo(): void
+    {
+        $lol = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE lolz [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]><lolz>&b;</lolz>';
+
+        foreach (['UTF-16LE' => "\xFF\xFE", 'UTF-16BE' => "\xFE\xFF"] as $kodierung => $bom) {
+            $xml = $bom . mb_convert_encoding($lol, $kodierung, 'UTF-8');
+            self::assertStringNotContainsStringIgnoringCase('<!DOCTYPE', $xml, 'the byte search alone does not see it');
+            self::assertSame(ERechnungBefund::Defekt, ERechnungLeser::lesen($xml)->befund, $kodierung);
+            self::assertNull(ERechnungLeser::wurzel($xml), $kodierung);
+        }
+        self::assertSame([], libxml_get_errors(), 'no libxml error left behind');
+    }
+
+    /** The extra pass must not cost a valid invoice in another encoding. */
+    public function testAValidInvoiceInUtf16IsStillRead(): void
+    {
+        $xml = (string) preg_replace('/^<\?xml[^>]*>/', '<?xml version="1.0" encoding="UTF-16"?>', self::fixture('xrechnung-cii.xml'));
+        $utf16 = "\xFF\xFE" . mb_convert_encoding($xml, 'UTF-16LE', 'UTF-8');
+
+        self::assertSame(
+            ERechnungLeser::lesen(self::fixture('xrechnung-cii.xml'))->befund,
+            ERechnungLeser::lesen($utf16)->befund,
+        );
+    }
+
     public function testTooLarge(): void
     {
         self::assertSame(ERechnungBefund::ZuGross, ERechnungLeser::lesen(str_repeat(' ', ERechnungLeser::MAX_BYTES + 1))->befund);

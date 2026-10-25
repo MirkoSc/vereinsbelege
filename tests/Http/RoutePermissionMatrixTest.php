@@ -143,6 +143,74 @@ final class RoutePermissionMatrixTest extends TestCase
         }
     }
 
+    /**
+     * Security review (issue #78): the matrix above proves that the guard
+     * enforces each declaration, and the spot checks below pin a sample of
+     * the declarations against the spec. This pins ALL of them: every route
+     * and its declaration is listed in routen-zugriff.txt, reviewed against
+     * docs/spec/01-sicherheit.md section 4. A new route, a removed one or a
+     * changed declaration fails here until that file changes in the same PR.
+     */
+    public function testEveryRouteDeclarationIsReviewed(): void
+    {
+        $erwartet = [];
+        foreach (file(__DIR__ . '/routen-zugriff.txt', FILE_IGNORE_NEW_LINES) ?: [] as $zeile) {
+            if (trim($zeile) !== '' && !str_starts_with($zeile, '#')) {
+                $erwartet[] = $zeile;
+            }
+        }
+
+        $tatsaechlich = [];
+        foreach ($this->router()->routes() as $route) {
+            $tatsaechlich[] = $route->method->value . ' ' . $route->pattern . ' -> ' . $route->zugriff->beschreibung();
+        }
+
+        $neu = array_values(array_diff($tatsaechlich, $erwartet));
+        $weg = array_values(array_diff($erwartet, $tatsaechlich));
+        self::assertSame(
+            [[], []],
+            [$neu, $weg],
+            "Route declarations differ from tests/Http/routen-zugriff.txt.\n"
+            . "Not yet reviewed (add after checking against 01-sicherheit.md section 4):\n  " . implode("\n  ", $neu) . "\n"
+            . "Listed but no longer served:\n  " . implode("\n  ", $weg),
+        );
+        self::assertCount(count(array_unique($tatsaechlich)), $tatsaechlich, 'a route is registered twice');
+    }
+
+    /**
+     * Security review (issue #78): the job poller (public/js/jobs.js) runs
+     * for as long as a tab is open. Its requests must not push the idle
+     * timeout out, or a forgotten session would live until the absolute
+     * limit; a request the user made still does.
+     */
+    public function testABackgroundPollDoesNotExtendTheSession(): void
+    {
+        $router = $this->router();
+        $treffer = $router->match(HttpMethod::Post, '/api/jobs/step');
+        assert($treffer->handler !== null);
+        $this->anmelden(self::berechtigungen(SystemRole::Finanzen));
+        $vorher = (int) $_SESSION['last_seen_at'] - 600;
+
+        $_SESSION['last_seen_at'] = $vorher;
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step', headers: [LoginGuard::HINTERGRUND_HEADER => '1']), $treffer->params);
+        self::assertTrue($this->erreicht($antwort));
+        self::assertSame($vorher, $_SESSION['last_seen_at'], 'a background poll is no activity');
+
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step'), $treffer->params);
+        self::assertTrue($this->erreicht($antwort));
+        self::assertGreaterThan($vorher, $_SESSION['last_seen_at'], 'a request of the user is');
+    }
+
+    /** Both loops that poll for as long as a page is open. */
+    public function testThePollersMarkThemselvesAsBackground(): void
+    {
+        foreach (['jobs.js', 'rasterung.js'] as $datei) {
+            $js = (string) file_get_contents(dirname(__DIR__, 2) . '/public/js/' . $datei);
+
+            self::assertStringContainsString("'X-Hintergrund': '1'", $js, $datei);
+        }
+    }
+
     public function testOnlyTheAllowlistIsPublic(): void
     {
         foreach ($this->router()->routes() as $route) {

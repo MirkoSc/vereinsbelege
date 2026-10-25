@@ -23,14 +23,22 @@ namespace App\Service\Account;
 final class PasswordHasher
 {
     /**
-     * A valid hash of a value nobody knows, computed once per process.
-     * verifyDummy() runs against it when no account was found, so that an
-     * unknown address costs the same time as a wrong password and the login
-     * does not answer the question "does this account exist?" through its
-     * own latency (docs/spec/01-sicherheit.md section 3, no user
-     * enumeration).
+     * Valid hashes of values nobody knows, made with PHP's default cost for
+     * each algorithm. verifyDummy() runs against one when no account was
+     * found, so that an unknown address costs the same time as a wrong
+     * password and the login does not answer the question "does this
+     * account exist?" through its own latency (docs/spec/01-sicherheit.md
+     * section 3, no user enumeration).
+     *
+     * Constants, not computed: under PHP-FPM no object outlives a request,
+     * so a lazily computed dummy cost a password_hash() PLUS a
+     * password_verify() on every unknown address - twice the work of a
+     * wrong password, and measurable (security review, issue #78).
+     * PasswordHasherTest fails once a PHP release raises a default cost, so
+     * the constants cannot quietly fall behind real hashes.
      */
-    private ?string $dummyHash = null;
+    public const string DUMMY_ARGON2ID = '$argon2id$v=19$m=65536,t=4,p=1$TzNaRVlBOW5pMUNzdUhUaA$8qTg+4bP8tqDmb0HXdi2pQJVGiSefp2srUJE96uBmBk';
+    public const string DUMMY_BCRYPT = '$2y$12$uwn.vkgvfbhAcckoPpV/3OqDqMg3grqePCRDxbvZX55AANhHJTE4C';
 
     public function hash(#[\SensitiveParameter] string $password): string
     {
@@ -53,9 +61,7 @@ final class PasswordHasher
      */
     public function verifyDummy(#[\SensitiveParameter] string $password): bool
     {
-        $this->dummyHash ??= $this->hash(bin2hex(random_bytes(16)));
-
-        return password_verify($password, $this->dummyHash);
+        return password_verify($password, self::dummyHash());
     }
 
     /**
@@ -67,6 +73,12 @@ final class PasswordHasher
     public function needsRehash(string $hash): bool
     {
         return password_needs_rehash($hash, self::algorithm());
+    }
+
+    /** The dummy of the algorithm hash() uses right now. */
+    public static function dummyHash(): string
+    {
+        return self::algorithm() === \PASSWORD_BCRYPT ? self::DUMMY_BCRYPT : self::DUMMY_ARGON2ID;
     }
 
     private static function algorithm(): string

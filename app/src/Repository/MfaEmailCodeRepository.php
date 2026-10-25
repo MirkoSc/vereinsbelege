@@ -57,10 +57,18 @@ final readonly class MfaEmailCodeRepository
         $stmt->execute([$userId]);
     }
 
-    /** A verified code, or one replaced by a fresh request, is removed outright. */
-    public function delete(int $userId): void
+    /**
+     * Removes a verified code - exactly this one, and true only for the one
+     * request that did, so a code cannot unlock two parallel logins (issue
+     * #78). Bound to the hash, so a code requested in the meantime survives.
+     */
+    public function consume(int $userId, string $codeHash): bool
     {
-        $stmt = $this->pdo->prepare('DELETE FROM mfa_email_code WHERE user_id = ?');
-        $stmt->execute([$userId]);
+        $stmt = $this->pdo->prepare('DELETE FROM mfa_email_code WHERE user_id = ? AND code_hash = ?');
+        $stmt->bindValue(1, $userId, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $codeHash, \PDO::PARAM_LOB);
+        $stmt->execute();
+
+        return $stmt->rowCount() === 1;
     }
 }

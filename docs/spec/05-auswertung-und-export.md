@@ -410,7 +410,9 @@ leer → Ebene entfällt).
       rücksetzbar wäre.
   - **Reichweite:** Die Markierung gilt **für den ganzen Verein**, nicht je
     Benutzer. Wer nur zum Ansehen exportiert (Kassenprüfer, Steuerberater),
-    bestätigt nicht.
+    bestätigt nicht – seit dem Security-Review (#78) erzwungen: externe
+    Zugänge bekommen auf `bestaetigen`/`zuruecksetzen` 403, die Laufseite
+    zeigt ihnen keine Knöpfe dafür.
   - **Ablauf:**
     - „Export erstellen“ (`POST /app/export/lauf`) prüft wie bisher
       Tresor, Leere und Größe. Dann legt es den Lauf (`offen`) mit den

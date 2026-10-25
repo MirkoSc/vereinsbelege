@@ -92,19 +92,39 @@ final class Totp
         int $period = self::DEFAULT_PERIOD,
         string $algorithm = self::DEFAULT_ALGORITHM,
     ): bool {
+        return self::matchingStep($secret, $code, $now, $window, $digits, $period, $algorithm) !== null;
+    }
+
+    /**
+     * Like verify(), but names the time step the code belongs to - what a
+     * caller needs to accept every step only once (replay protection,
+     * App\Service\Account\MfaService::verifyTotp(), issue #78). Every
+     * step of the window is compared, so the time taken does not depend on
+     * which one matched.
+     */
+    public static function matchingStep(
+        #[\SensitiveParameter] string $secret,
+        string $code,
+        ?\DateTimeImmutable $now = null,
+        int $window = 1,
+        int $digits = self::DEFAULT_DIGITS,
+        int $period = self::DEFAULT_PERIOD,
+        string $algorithm = self::DEFAULT_ALGORITHM,
+    ): ?int {
         $code = trim($code);
         if (!preg_match('/^\d{' . $digits . '}$/', $code)) {
-            return false;
+            return null;
         }
 
         $counter = self::counter($now ?? new \DateTimeImmutable(), $period);
+        $treffer = null;
         for ($offset = -$window; $offset <= $window; $offset++) {
             if (hash_equals(self::hotp($secret, $counter + $offset, $digits, $algorithm), $code)) {
-                return true;
+                $treffer ??= $counter + $offset;
             }
         }
 
-        return false;
+        return $treffer;
     }
 
     public static function base32Encode(string $bytes): string

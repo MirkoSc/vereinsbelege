@@ -76,6 +76,7 @@ final readonly class BackupService
 
         try {
             $stream = fopen($dumpFile, 'wb');
+            self::nurFuerBesitzer($dumpFile);
             if ($stream === false) {
                 throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
             }
@@ -110,6 +111,7 @@ final readonly class BackupService
             if (!$zip->close()) {
                 throw new \RuntimeException('Backup-ZIP konnte nicht geschrieben werden: ' . $zipPath);
             }
+            self::nurFuerBesitzer($zipPath);
         } catch (\Throwable $e) {
             // The reserved name must not survive as an empty or half-written
             // ZIP that list() would then offer as a backup.
@@ -126,6 +128,18 @@ final readonly class BackupService
         $this->rotate();
 
         return $name;
+    }
+
+    /**
+     * 0600 like shared/config.php itself (Installer\ConfigWriter): a backup
+     * may carry config.php and with it the server key, and even without it
+     * there is no reason for anyone but the owner to read one (security
+     * review, issue #78). Best effort, as with config.php - a host that does
+     * not allow chmod keeps its default and loses nothing else.
+     */
+    public static function nurFuerBesitzer(string $pfad): void
+    {
+        @chmod($pfad, 0600);
     }
 
     /**
@@ -146,6 +160,7 @@ final readonly class BackupService
             $handle = @fopen($zipPath, 'x');
             if ($handle !== false) {
                 fclose($handle);
+                self::nurFuerBesitzer($zipPath);
 
                 return [$name, $zipPath];
             }

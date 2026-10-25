@@ -66,11 +66,15 @@ final readonly class MfaEnrollment
             return null;
         }
 
-        if (!Totp::verify($this->crypto->decrypt($stored->secretEnc), $code, $now)) {
+        $step = Totp::matchingStep($this->crypto->decrypt($stored->secretEnc), $code, $now);
+        if ($step === null) {
             return null;
         }
 
         $this->totp->confirm($userId, $now);
+        // The confirming code is spent too: seen over a shoulder during
+        // setup, it must not open a login within its ~90 s (issue #78).
+        $this->totp->claimStep($userId, $step);
         $this->users->updateMfaMethod($userId, MfaMethod::Totp);
 
         return $this->regenerateBackupCodes($userId, $now);

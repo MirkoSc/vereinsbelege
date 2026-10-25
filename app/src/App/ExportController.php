@@ -162,6 +162,7 @@ final readonly class ExportController
             'filter' => $filter,
             'dateiname' => ExportEinstellungen::wurzelordner($filter->von, $filter->bis) . '.zip',
             'csrf' => $this->session->csrfToken(),
+            'darfMarkieren' => $this->darfMarkieren(),
             'nextcloud' => $this->darfNextcloud() ? [
                 'eingerichtet' => $this->nextcloud->eingerichtet(),
                 'stand' => $this->nextcloud->stand($lauf->id),
@@ -358,6 +359,9 @@ final readonly class ExportController
         if ($lauf === null) {
             return $this->nichtGefunden();
         }
+        if (!$this->darfMarkieren()) {
+            return $this->nurLesend();
+        }
         $zurueck = self::pfad($lauf->id);
         if (!$this->session->checkCsrf($request)) {
             return $this->zurueck($zurueck, 'Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
@@ -398,6 +402,27 @@ final readonly class ExportController
     private static function pfad(int $id): string
     {
         return '/app/export/lauf/' . $id;
+    }
+
+    /**
+     * The marking counts for the whole club (05 section 2: "Wer nur zum
+     * Ansehen exportiert (Kassenprüfer, Steuerberater), bestätigt nicht"),
+     * and external roles are read only (01 section 4). `export.zip` alone
+     * would let them confirm or reset anyone's run - security review,
+     * issue #78.
+     */
+    private function darfMarkieren(): bool
+    {
+        return !$this->berechtigungen()->istExtern();
+    }
+
+    private function nurLesend(): ResponseInterface
+    {
+        return Response::html($this->view->render('error', [
+            'title' => 'Keine Berechtigung',
+            'message' => 'Externe Zugänge können Exporte erstellen und herunterladen, aber nicht als exportiert markieren.',
+            'startseite' => '/app/export',
+        ], Area::App), 403);
     }
 
     private function nichtGefunden(): ResponseInterface

@@ -152,7 +152,10 @@ async function naechsteAufgabe(umgebung) {
     try {
         antwort = await umgebung.fetch('/api/rasterung/naechste', {
             method: 'POST',
-            headers: { 'X-CSRF-Token': umgebung.csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+            // X-Hintergrund: this poll runs as long as the page is open and
+            // is no user activity - it must not keep an abandoned session
+            // alive (App\Http\LoginGuard, issue #78).
+            headers: { 'X-CSRF-Token': umgebung.csrf, 'X-Hintergrund': '1', 'Content-Type': 'application/x-www-form-urlencoded' },
             body: '',
         });
     } catch {

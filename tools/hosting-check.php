@@ -31,8 +31,12 @@ declare(strict_types=1);
  * no secret is echoed back.
  */
 
-/** Shared secret required for every web request. Empty = script refuses to run. */
-const HC_TOKEN = '42b6d104566931cd47f8bb4d2fd8cabb';
+/**
+ * Shared secret required for every web request. Empty = script refuses to run.
+ * Set it only in the copy that is uploaded, never in the repository: a token
+ * committed here is public (security review, issue #78).
+ */
+const HC_TOKEN = '';
 
 const HC_VERSION = '1.0.0';
 

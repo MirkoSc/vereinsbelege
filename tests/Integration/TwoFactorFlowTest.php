@@ -323,6 +323,90 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertStringContainsString('ungültig oder bereits verbraucht', $zweiterVersuch->body);
     }
 
+    /**
+     * Security review (issue #78): two parallel logins with the same code
+     * both found it unused and both passed. Only the request that actually
+     * marks (or deletes) the code wins now.
+     */
+    public function testEinCodeGewinntNurEinmalAuchBeiGleichzeitigenAnfragen(): void
+    {
+        $this->totpEinrichtenMitCodes();
+        $backup = new MfaBackupCodeRepository($this->pdo());
+        $id = (int) $this->pdo()->query('SELECT id FROM mfa_backup_code WHERE used_at IS NULL LIMIT 1')->fetchColumn();
+        self::assertTrue($backup->markUsed($id));
+        self::assertFalse($backup->markUsed($id), 'the second request finds it already used');
+
+        $email = new MfaEmailCodeRepository($this->pdo());
+        $email->put($this->userId, str_repeat("\x01", 32), new \DateTimeImmutable('+10 minutes'));
+        self::assertFalse($email->consume($this->userId, str_repeat("\x02", 32)), 'another code is not this one');
+        self::assertTrue($email->consume($this->userId, str_repeat("\x01", 32)));
+        self::assertFalse($email->consume($this->userId, str_repeat("\x01", 32)));
+    }
+
+    /**
+     * Security review (issue #78, ASVS 2.8.4): a TOTP code is valid for
+     * about 90 s, but it opens one login only - a second login with the same
+     * code (seen over a shoulder, or replayed in parallel) is refused.
+     */
+    public function testEinTotpCodeOeffnetNurEineAnmeldung(): void
+    {
+        $secret = $this->totpEinrichten();
+        $code = $this->totpCode($secret);
+
+        $pending = (string) self::cookieValue($this->passwortAnmelden(), self::pendingCookieName());
+        self::assertSame('/app', $this->bestaetigen($code, [self::pendingCookieName() => $pending])->headers['Location'] ?? null);
+
+        new Session()->destroy();
+        new SessionVault()->clear();
+        $_SESSION = [];
+        $pending = (string) self::cookieValue($this->passwortAnmelden(), self::pendingCookieName());
+        $zweiter = $this->bestaetigen($code, [self::pendingCookieName() => $pending]);
+
+        self::assertNotSame('/app', $zweiter->headers['Location'] ?? null);
+        self::assertNull(new Session()->userId(), 'the same code does not log in twice');
+    }
+
+    /** The code that confirmed the setup does not open a login afterwards (#78). */
+    public function testDerEinrichtungscodeOeffnetKeineAnmeldung(): void
+    {
+        $jetzt = new \DateTimeImmutable();
+        $enrollment = $this->mfaEnrollment();
+        $secret = $enrollment->startTotp($this->userId, $jetzt);
+        $code = Totp::code($secret, $jetzt);
+        self::assertNotNull($enrollment->confirmTotp($this->userId, $code, $jetzt));
+
+        $mfa = new MfaService(
+            new MfaTotpRepository($this->pdo()),
+            new MfaEmailCodeRepository($this->pdo()),
+            new MfaBackupCodeRepository($this->pdo()),
+            new TrustedDeviceRepository($this->pdo()),
+            $this->crypto,
+            new RateLimiter(new RateLimitRepository($this->pdo()), MfaService::WINDOW_SECONDS),
+        );
+        self::assertFalse($mfa->verifyTotp($this->userId, $code, $jetzt), 'the setup spent this code');
+        self::assertTrue($mfa->verifyTotp($this->userId, Totp::code($secret, $jetzt->modify('+30 seconds')), $jetzt), 'the next one works');
+    }
+
+    public function testEinNeuesTotpGeheimnisBeginntOhneVerbrauchtenSchritt(): void
+    {
+        $this->totpEinrichten();
+        $repo = new MfaTotpRepository($this->pdo());
+        // The setup already spent the step of its own code.
+        $eingerichtet = (int) $this->pdo()->query('SELECT last_step FROM mfa_totp WHERE user_id = ' . $this->userId)->fetchColumn();
+        self::assertGreaterThan(0, $eingerichtet);
+
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet), 'the setup code is spent');
+        self::assertTrue($repo->claimStep($this->userId, $eingerichtet + 1));
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet + 1), 'the same step once only');
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet), 'nor an older one');
+        self::assertTrue($repo->claimStep($this->userId, $eingerichtet + 2));
+
+        $repo->put($this->userId, str_repeat("\x00", 61));
+        self::assertFalse($repo->claimStep($this->userId, 5), 'an unconfirmed secret accepts nothing');
+        $repo->confirm($this->userId);
+        self::assertTrue($repo->claimStep($this->userId, 5), 'a new secret starts afresh');
+    }
+
     // --------------------------------------------------------- Gerät merken
 
     public function testEinGemerktesGeraetUeberspringtDieAbfrage(): void
@@ -479,7 +563,10 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         $enrollment = $this->mfaEnrollment();
         $secret = $enrollment->startTotp($this->userId, $now);
         $now ??= new \DateTimeImmutable();
-        $codes = $enrollment->confirmTotp($this->userId, Totp::code($secret, $now), $now);
+        // The code of the step BEFORE now (inside the ±1 window): the setup
+        // spends its step (issue #78), and the tests log in with the
+        // current code right after.
+        $codes = $enrollment->confirmTotp($this->userId, self::vorigerCode($secret, $now), $now);
         self::assertNotNull($codes, 'Testvorbereitung: TOTP-Einrichtung muss gelingen.');
 
         return $secret;
@@ -492,10 +579,15 @@ final class TwoFactorFlowTest extends DatabaseTestCase
     {
         $enrollment = $this->mfaEnrollment();
         $secret = $enrollment->startTotp($this->userId);
-        $codes = $enrollment->confirmTotp($this->userId, Totp::code($secret, new \DateTimeImmutable()));
+        $codes = $enrollment->confirmTotp($this->userId, self::vorigerCode($secret, new \DateTimeImmutable()));
         self::assertNotNull($codes);
 
         return $codes;
+    }
+
+    private static function vorigerCode(string $secret, \DateTimeImmutable $now): string
+    {
+        return Totp::code($secret, $now->modify('-' . Totp::DEFAULT_PERIOD . ' seconds'));
     }
 
     private function emailMethodeEinrichten(): void

@@ -36,6 +36,18 @@ final class HostingCheckTest extends TestCase
         require_once dirname(__DIR__) . '/tools/hosting-check.php';
     }
 
+    /**
+     * Security review (issue #78): the repository is public, so a token
+     * committed here is no secret - an uploaded copy carrying it would open
+     * the long-running, SSRF-capable probes to anyone.
+     */
+    public function testTheRepositoryShipsNoToken(): void
+    {
+        self::loadHostingCheck();
+
+        self::assertSame('', \HC_TOKEN);
+    }
+
     #[DataProvider('faelle')]
     public function testHostingCheck(\Closure $fall): void
     {

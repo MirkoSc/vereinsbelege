@@ -3,7 +3,11 @@ DirectoryIndex index.php
 
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # setifempty (Apache >= 2.4.7): pages that carry a token in their URL
+    # send their own "no-referrer" from PHP, and under FastCGI a plain "set"
+    # in the always table would overwrite it (security review, issue #78).
+    # The views add a <meta name="referrer"> as well, which holds either way.
+    Header always setifempty Referrer-Policy "strict-origin-when-cross-origin"
     # script-src 'self' without 'unsafe-inline' is the point of this header
     # (CLAUDE.md section 4): no inline <script>, no on* attributes, htmx
     # without hx-on. Every JS library is vendored under public/js/vendor/,
@@ -17,6 +21,16 @@ DirectoryIndex index.php
     Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     # HTTPS is an installation requirement, so committing to it is safe.
     Header always set Strict-Transport-Security "max-age=15768000"
+    # Security review (issue #78). frame-ancestors above already forbids
+    # framing; X-Frame-Options repeats it for browsers without CSP level 2.
+    Header always set X-Frame-Options "DENY"
+    # Only the scanner needs a device feature: the camera, on our own origin
+    # (public/js/scanner/kamera.js). Everything else stays off, so an
+    # injected script could not reach microphone, location or the like.
+    Header always set Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), midi=(), interest-cohort=()"
+    # A page opened from here via window.open/target=_blank gets no handle
+    # back to a tab that shows decrypted receipts.
+    Header always set Cross-Origin-Opener-Policy "same-origin"
 </IfModule>
 
 RewriteEngine On

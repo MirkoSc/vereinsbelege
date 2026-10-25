@@ -66,10 +66,17 @@ final readonly class MfaBackupCodeRepository
         return is_array($row) ? self::hydrate($row) : null;
     }
 
-    public function markUsed(int $id, ?\DateTimeImmutable $now = null): void
+    /**
+     * Marks the code used - true only for the one request that actually
+     * did, so two parallel logins with the same code cannot both pass
+     * (security review, issue #78).
+     */
+    public function markUsed(int $id, ?\DateTimeImmutable $now = null): bool
     {
-        $stmt = $this->pdo->prepare('UPDATE mfa_backup_code SET used_at = ? WHERE id = ?');
+        $stmt = $this->pdo->prepare('UPDATE mfa_backup_code SET used_at = ? WHERE id = ? AND used_at IS NULL');
         $stmt->execute([($now ?? new \DateTimeImmutable())->format(self::FORMAT), $id]);
+
+        return $stmt->rowCount() === 1;
     }
 
     /** For the security page: "9 von 10 Codes noch gültig". */

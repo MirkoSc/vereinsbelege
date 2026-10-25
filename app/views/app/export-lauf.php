@@ -18,6 +18,7 @@
  * @var \App\Service\Export\ExportFilter $filter
  * @var string $dateiname the ZIP's name - the period only
  * @var string $csrf
+ * @var bool $darfMarkieren false for external roles (read only, issue #78)
  * @var array{eingerichtet: bool, stand: ?\App\Domain\ExportRunUpload, darfEinrichten: bool}|null $nextcloud
  *      null when this user may not file into the Nextcloud (issue #95)
  */
@@ -129,7 +130,11 @@ $statusMarke = match ($lauf->status) {
     <?php endif; ?>
 
     <h3>2. Als exportiert markieren</h3>
-    <?php if ($lauf->status === ExportRunStatus::Offen): ?>
+    <?php $darfMarkieren ??= true; ?>
+    <?php if (!$darfMarkieren && $lauf->status !== ExportRunStatus::Zurueckgesetzt): ?>
+        <p class="gedaempft">Als exportiert markiert der Verein selbst – Ihr Zugang ist nur lesend.</p>
+    <?php endif; ?>
+    <?php if ($lauf->status === ExportRunStatus::Offen && $darfMarkieren): ?>
         <p>
             Öffnen Sie die ZIP-Datei<?= $nextcloud !== null && $nextcloud['stand'] !== null ? ' bzw. den Ordner in der Nextcloud' : '' ?> und prüfen Sie, ob alles vollständig ist. Erst nach Ihrer Bestätigung gelten
             die <?= e((string) $lauf->belege) ?> Belege als exportiert – für alle im Verein. Die Option
@@ -142,8 +147,11 @@ $statusMarke = match ($lauf->status) {
             </p>
         </form>
         <p class="gedaempft">Solange Sie nicht bestätigen, gilt kein Beleg dieses Exports als exportiert.</p>
+    <?php elseif ($lauf->status === ExportRunStatus::Offen): ?>
+        <p class="gedaempft">Kein Beleg dieses Exports gilt bisher als exportiert.</p>
     <?php elseif ($lauf->status === ExportRunStatus::Bestaetigt): ?>
         <p class="hinweis hinweis-ok">Die <?= e((string) $lauf->belege) ?> Belege dieses Exports gelten als exportiert.</p>
+        <?php if ($darfMarkieren): ?>
         <form method="post" action="<?= e($pfad) ?>/zuruecksetzen" class="formular">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
             <p class="feld-hilfe">
@@ -154,6 +162,7 @@ $statusMarke = match ($lauf->status) {
                 <button type="submit" class="knopf">Als nicht exportiert zurücksetzen</button>
             </p>
         </form>
+        <?php endif; ?>
     <?php else: ?>
         <p class="hinweis hinweis-info">
             Die Markierung dieses Exports ist zurückgesetzt; seine Belege gelten durch ihn nicht als exportiert.

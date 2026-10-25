@@ -75,6 +75,20 @@ final class TotpTest extends TestCase
         self::assertTrue(Totp::verify($secret, $code, $jetzt));
     }
 
+    /** Issue #78: the step a code belongs to, for single use. */
+    public function testMatchingStepNenntDenZeitschrittDesCodes(): void
+    {
+        $secret = Totp::generateSecret();
+        $jetzt = new \DateTimeImmutable('@1700000000');
+        $schritt = intdiv(1700000000, Totp::DEFAULT_PERIOD);
+
+        self::assertSame($schritt, Totp::matchingStep($secret, Totp::code($secret, $jetzt), $jetzt));
+        self::assertSame($schritt + 1, Totp::matchingStep($secret, Totp::code($secret, $jetzt->modify('+30 seconds')), $jetzt));
+        self::assertSame($schritt - 1, Totp::matchingStep($secret, Totp::code($secret, $jetzt->modify('-30 seconds')), $jetzt));
+        self::assertNull(Totp::matchingStep($secret, Totp::code($secret, $jetzt->modify('+90 seconds')), $jetzt));
+        self::assertNull(Totp::matchingStep($secret, 'abcdef', $jetzt));
+    }
+
     public function testEinFalscherCodeWirdAbgelehnt(): void
     {
         $secret = Totp::generateSecret();

@@ -1,0 +1,14 @@
+-- TOTP replay protection (security review, issue #78; docs/spec/01-sicherheit.md
+-- section 3, ASVS 2.8.4).
+--
+-- A TOTP code is valid for its own 30-second step and, against clock drift,
+-- one step to either side - about 90 seconds in which the same six digits
+-- used to work any number of times. `last_step` is the time step of the last
+-- code accepted at login; App\Service\Account\MfaService::verifyTotp() takes
+-- a code only if its step is newer, in one conditional UPDATE, so two
+-- parallel logins with the same code cannot both pass either.
+--
+-- NULL = no code accepted yet (new secret, or a row from before this
+-- migration). Additive and nullable: the previous release neither reads nor
+-- writes it.
+ALTER TABLE mfa_totp ADD COLUMN last_step BIGINT NULL AFTER confirmed_at;
