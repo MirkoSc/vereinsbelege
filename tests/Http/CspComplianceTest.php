@@ -216,9 +216,36 @@ final class CspComplianceTest extends TestCase
             'Referrer-Policy',
             'Content-Security-Policy',
             'Strict-Transport-Security',
+            // Security review (issue #78).
+            'X-Frame-Options',
+            'Permissions-Policy',
+            'Cross-Origin-Opener-Policy',
         ] as $header) {
             self::assertStringContainsString($header, $htaccess);
         }
+    }
+
+    /**
+     * Security review (issue #78): the camera is the one device feature the
+     * application uses (scanner, same origin); the policy must keep it
+     * available there and nowhere else, and must switch off the rest.
+     */
+    public function testPermissionsPolicyAllowsOnlyTheOwnCamera(): void
+    {
+        preg_match('/Permissions-Policy "([^"]+)"/', self::htaccess(), $m);
+        self::assertNotEmpty($m, 'no Permissions-Policy header');
+
+        $policy = $m[1];
+        self::assertStringContainsString('camera=(self)', $policy);
+        foreach (['microphone', 'geolocation', 'payment', 'usb'] as $feature) {
+            self::assertStringContainsString($feature . '=()', $policy, $feature);
+        }
+        self::assertDoesNotMatchRegularExpression('/=\*|https?:/', $policy, 'no wildcard or foreign origin');
+    }
+
+    public function testFramingIsForbiddenForOlderBrowsersToo(): void
+    {
+        self::assertMatchesRegularExpression('/Header always set X-Frame-Options "DENY"/', self::htaccess());
     }
 
     /**

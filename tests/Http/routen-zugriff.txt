@@ -1,0 +1,299 @@
+# Every route of app/src/routes.php with its access declaration
+# (App\Http\Zugriff::beschreibung()), reviewed against the rights table in
+# docs/spec/01-sicherheit.md section 4 in the security review (issue #78).
+#
+# RoutePermissionMatrixTest::testEveryRouteDeclarationIsReviewed() compares
+# this file with the router. A new route, a removed route or a changed
+# declaration fails the test until the line here is changed in the same PR -
+# that is the point: the change becomes visible in review instead of passing
+# silently because declaration and guard agree with each other.
+#
+# Format: METHOD pattern -> declaration
+GET / -> öffentlich
+GET /impressum -> öffentlich
+GET /datenschutz -> öffentlich
+GET /anmelden -> öffentlich
+POST /anmelden -> öffentlich
+POST /abmelden -> öffentlich
+GET /anmelden/bestaetigen -> öffentlich
+POST /anmelden/bestaetigen -> öffentlich
+POST /anmelden/code-senden -> öffentlich
+POST /anmelden/backup-code -> öffentlich
+GET /anmelden/passwort-vergessen -> öffentlich
+POST /anmelden/passwort-vergessen -> öffentlich
+GET /anmelden/passwort-neu -> öffentlich
+POST /anmelden/passwort-neu -> öffentlich
+GET /anmelden/einladung -> öffentlich
+POST /anmelden/einladung -> öffentlich
+GET /app -> angemeldet
+POST /api/jobs/step -> angemeldet (api)
+POST /api/rasterung/naechste -> document.edit (api)
+GET /api/rasterung/{job:\d+}/{lock}/quelle/{quelle:\d+} -> document.edit (api)
+POST /api/rasterung/{job:\d+}/{lock}/seite/{quelle:\d+}/{seite:\d+}/{seiten:\d+} -> document.edit (api)
+POST /api/rasterung/{job:\d+}/{lock}/abbruch -> document.edit (api)
+GET /cron -> cron-token
+POST /api/worker/pair -> öffentlich (api)
+POST /api/worker/heartbeat -> worker-signatur (api)
+POST /api/worker/jobs/claim -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/extend -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/complete -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/fail -> worker-signatur (api)
+GET /api/worker/blobs/{id:\d+} -> worker-signatur (api)
+GET /api/worker/jobs/{id:\d+}/context -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/artifacts -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/chunks/{index:\d+} -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/commit -> worker-signatur (api)
+POST /api/worker/mail/pruefen -> worker-signatur (api)
+POST /api/worker/mail/uploads -> worker-signatur (api)
+POST /api/worker/mail/uploads/{upload:[0-9a-f]{32}}/chunks/{n:\d+} -> worker-signatur (api)
+POST /api/worker/mail/uploads/{upload:[0-9a-f]{32}}/finish -> worker-signatur (api)
+POST /api/worker/mail/einreichen -> worker-signatur (api)
+POST /api/upload -> document.submit_internal (api)
+POST /api/upload/{id:[0-9a-f]+}/chunk/{n:\d+} -> document.submit_internal (api)
+POST /api/upload/{id:[0-9a-f]+}/finish -> document.submit_internal (api)
+POST /api/upload/{id:[0-9a-f]+}/abort -> document.submit_internal (api)
+GET /einreichen -> öffentlich
+POST /einreichen -> öffentlich (api)
+POST /einreichen/upload -> öffentlich (api)
+POST /einreichen/upload/{id:[0-9a-f]+}/chunk/{n:\d+} -> öffentlich (api)
+POST /einreichen/upload/{id:[0-9a-f]+}/finish -> öffentlich (api)
+POST /einreichen/upload/{id:[0-9a-f]+}/abort -> öffentlich (api)
+GET /app/sicherheit -> angemeldet
+GET /app/sicherheit/einrichten -> angemeldet
+POST /app/sicherheit/einrichten/totp/starten -> angemeldet
+POST /app/sicherheit/einrichten/totp/bestaetigen -> angemeldet
+POST /app/sicherheit/einrichten/email/starten -> angemeldet
+POST /app/sicherheit/einrichten/email/bestaetigen -> angemeldet
+POST /app/sicherheit/backup-codes/neu -> angemeldet
+POST /app/sicherheit/geraete/{id:\d+}/widerrufen -> angemeldet
+GET /app/sicherheit/passwort -> angemeldet
+POST /app/sicherheit/passwort -> angemeldet
+GET /app/audit -> audit.view
+POST /app/audit/pruefen -> audit.view (api)
+GET /app/posteingang -> inbox.view
+GET /app/posteingang/{id:\d+} -> inbox.view
+GET /app/posteingang/{id:\d+}/datei/{blob:\d+} -> inbox.view
+POST /app/posteingang/{id:\d+}/annehmen -> document.edit
+POST /app/posteingang/{id:\d+}/ablehnen -> document.edit
+POST /app/posteingang/{id:\d+}/wiedervorlage -> document.edit
+POST /app/posteingang/{id:\d+}/kostenstelle -> document.edit
+POST /app/posteingang/{id:\d+}/duplikat-verwerfen -> document.edit
+POST /app/posteingang/{id:\d+}/duplikat-behalten -> document.edit
+GET /app/suche -> inbox.view
+POST /app/suche -> inbox.view
+POST /app/suche/index -> inbox.view (api)
+POST /app/suche/neu -> inbox.view
+GET /app/belege/neu -> document.submit_internal
+POST /app/belege/neu -> document.submit_internal (api)
+GET /app/lieferanten -> supplier.manage
+GET /app/lieferanten/neu -> supplier.manage
+POST /app/lieferanten -> supplier.manage
+GET /app/lieferanten/{id:\d+} -> supplier.manage
+POST /app/lieferanten/{id:\d+} -> supplier.manage
+POST /app/lieferanten/{id:\d+}/loeschen -> supplier.manage
+POST /app/lieferanten/{id:\d+}/geprueft -> supplier.manage
+GET /app/lieferanten/{id:\d+}/zusammenfuehren -> supplier.manage
+POST /app/lieferanten/{id:\d+}/zusammenfuehren -> supplier.manage
+GET /app/belege/pruefen -> document.edit
+GET /app/belege/pruefen/{id:\d+} -> document.edit
+POST /app/belege/pruefen/{id:\d+} -> document.edit
+GET /app/belege/pruefen/{id:\d+}/datei/{blob:\d+} -> document.edit
+POST /app/belege/pruefen/{id:\d+}/festschreiben -> document.edit
+POST /app/belege/pruefen/{id:\d+}/festschreibung-aufheben -> document.edit
+POST /app/belege/pruefen/{id:\d+}/ki-erneut -> document.edit
+POST /app/belege/pruefen/{id:\d+}/duplikat-verwerfen -> document.edit
+POST /app/belege/pruefen/{id:\d+}/duplikat-behalten -> document.edit
+GET /app/serien -> document.edit
+GET /app/serien/{id:\d+} -> document.edit
+POST /app/serien/{id:\d+} -> document.edit
+POST /app/serien/{id:\d+}/verwerfen -> document.edit
+GET /app/abgleich -> matching.edit
+POST /app/abgleich/ausfuehren -> matching.edit
+POST /app/abgleich/uebernehmen -> matching.edit
+POST /app/abgleich/einstellungen -> matching.edit
+POST /app/abgleich/filter -> matching.edit
+POST /app/abgleich/zuordnen -> matching.edit
+POST /app/abgleich/loesen -> matching.edit
+POST /app/abgleich/differenz -> matching.edit
+POST /app/abgleich/verwerfen -> matching.edit
+GET /app/offen -> angemeldet
+GET /app/offen/rechnungen -> report.view
+GET /app/offen/rechnungen/{id:\d+}/girocode -> report.view
+GET /app/offen/erstattungen -> report.view
+GET /app/offen/buchungen -> bank.view
+GET /app/offen/erwartet -> document.edit
+GET /app/auswertung/kassenpruefung -> report.view
+GET /app/auswertung/kassenpruefung/{teil:[a-z-]+}.csv -> export.csv
+GET /app/auswertung -> report.view
+GET /app/auswertung/geldfluss -> report.view
+GET /app/auswertung/geldfluss/posten -> report.view
+GET /app/auswertung/sphaeren -> report.view
+GET /app/konten -> bank.view
+GET /app/konten/neu -> bank.book
+POST /app/konten -> bank.book
+GET /app/konten/{id:\d+} -> bank.view
+POST /app/konten/{id:\d+} -> bank.book
+POST /app/konten/{id:\d+}/loeschen -> bank.book
+GET /app/konten/{id:\d+}/kassensturz -> bank.book
+POST /app/konten/{id:\d+}/kassensturz -> bank.book
+GET /app/konten/csv-formate -> bank.import
+GET /app/konten/csv-formate/neu -> bank.import
+POST /app/konten/csv-formate -> bank.import
+POST /app/konten/csv-formate/vorschau -> bank.import
+GET /app/konten/csv-formate/{id:\d+} -> bank.import
+GET /app/konten/csv-formate/{id:\d+}/bearbeiten -> bank.import
+POST /app/konten/csv-formate/{id:\d+} -> bank.import
+POST /app/konten/csv-formate/{id:\d+}/loeschen -> bank.import
+GET /app/konten/import -> bank.import
+POST /app/konten/import -> bank.import
+GET /app/konten/import/{id:\d+} -> bank.import
+POST /app/konten/import/{id:\d+}/konto -> bank.import
+POST /app/konten/import/{id:\d+}/uebernehmen -> bank.import
+POST /app/konten/import/{id:\d+}/schritt -> bank.import (api)
+POST /app/konten/import/{id:\d+}/verwerfen -> bank.import
+GET /app/buchungen -> bank.view
+GET /app/buchungen/neu -> bank.book
+POST /app/buchungen -> bank.book
+GET /app/buchungen/{id:\d+} -> bank.view
+POST /app/buchungen/{id:\d+} -> bank.book
+POST /app/buchungen/{id:\d+}/loeschen -> bank.book
+POST /app/buchungen/{id:\d+}/einordnung -> bank.book
+POST /app/buchungen/umbuchungen -> bank.book
+POST /app/buchungen/{id:\d+}/umbuchung -> bank.book
+POST /app/buchungen/{id:\d+}/umbuchung/loesen -> bank.book
+GET /app/buchungen/{id:\d+}/erstattung -> matching.edit
+POST /app/buchungen/{id:\d+}/erstattung -> matching.edit
+GET /app/zahllaeufe -> matching.edit
+GET /app/zahllaeufe/neu -> matching.edit
+POST /app/zahllaeufe -> matching.edit
+GET /app/zahllaeufe/{id:\d+} -> matching.edit
+GET /app/zahllaeufe/{id:\d+}/datei -> matching.edit
+POST /app/zahllaeufe/{id:\d+}/verwerfen -> matching.edit
+GET /app/buchungen/regeln -> bank.view
+GET /app/buchungen/regeln/neu -> bank.book
+POST /app/buchungen/regeln -> bank.book
+POST /app/buchungen/regeln/standard -> bank.book
+GET /app/buchungen/regeln/{id:\d+} -> bank.view
+POST /app/buchungen/regeln/{id:\d+} -> bank.book
+POST /app/buchungen/regeln/{id:\d+}/anwenden -> bank.book
+POST /app/buchungen/regeln/{id:\d+}/aktiv -> bank.book
+POST /app/buchungen/regeln/{id:\d+}/loeschen -> bank.book
+GET /app/export -> export.zip
+POST /app/export/lauf -> export.zip
+GET /app/export/lauf/{id:\d+} -> export.zip
+POST /app/export/lauf/{id:\d+}/zip -> export.zip
+POST /app/export/lauf/{id:\d+}/bestaetigen -> export.zip
+POST /app/export/lauf/{id:\d+}/zuruecksetzen -> export.zip
+GET /app/datev -> export.csv
+POST /app/datev/datei -> export.csv
+POST /app/export/lauf/{id:\d+}/nextcloud -> export.zip
+POST /app/export/lauf/{id:\d+}/nextcloud/schritt -> export.zip (api)
+GET /app/archiv-import -> archive.import
+POST /app/archiv-import/upload -> archive.import (api)
+POST /app/archiv-import/upload/{id:[0-9a-f]+}/chunk/{n:\d+} -> archive.import (api)
+POST /app/archiv-import/upload/{id:[0-9a-f]+}/finish -> archive.import (api)
+POST /app/archiv-import/upload/{id:[0-9a-f]+}/abort -> archive.import (api)
+GET /app/archiv-import/{id:\d+} -> archive.import
+POST /app/archiv-import/{id:\d+}/starten -> archive.import
+POST /app/archiv-import/{id:\d+}/schritt -> archive.import (api)
+POST /app/archiv-import/{id:\d+}/verwerfen -> archive.import
+GET /admin -> admin.*
+GET /admin/designsystem -> admin.*
+GET /admin/rollen -> admin.users
+GET /admin/rollen/neu -> admin.users
+POST /admin/rollen -> admin.users
+GET /admin/rollen/{id:\d+} -> admin.users
+POST /admin/rollen/{id:\d+} -> admin.users
+POST /admin/rollen/{id:\d+}/loeschen -> admin.users
+GET /admin/benutzer -> admin.users
+GET /admin/benutzer/neu -> admin.users
+POST /admin/benutzer -> admin.users
+GET /admin/benutzer/{id:\d+} -> admin.users
+POST /admin/benutzer/{id:\d+} -> admin.users
+POST /admin/benutzer/{id:\d+}/sperren -> admin.users
+POST /admin/benutzer/{id:\d+}/entsperren -> admin.users
+POST /admin/benutzer/{id:\d+}/einladung-erneut -> admin.users
+GET /admin/tresor -> admin.vault_grant
+POST /admin/tresor/{id:\d+}/freigeben -> admin.vault_grant
+POST /admin/tresor/{id:\d+}/entziehen -> admin.vault_grant
+GET /admin/tresor/rotation -> admin.vault_grant
+POST /admin/tresor/rotation/starten -> admin.vault_grant
+POST /admin/tresor/rotation/bestaetigen -> admin.vault_grant
+POST /admin/tresor/rotation/schritt -> admin.vault_grant (api)
+POST /admin/tresor/rotation/abschliessen -> admin.vault_grant
+POST /admin/tresor/rotation/abbrechen -> admin.vault_grant
+GET /admin/wiederherstellen -> admin.vault_grant
+POST /admin/wiederherstellen -> admin.vault_grant
+GET /admin/speicher -> admin.settings
+POST /admin/speicher/ziel -> admin.settings
+POST /admin/speicher/schritt/{schritt:[a-z]+} -> admin.settings
+GET /admin/mail -> admin.settings
+POST /admin/mail/einstellungen -> admin.settings
+POST /admin/mail/testmail -> admin.settings
+GET /admin/kostenstellen -> admin.settings
+GET /admin/kostenstellen/neu -> admin.settings
+POST /admin/kostenstellen -> admin.settings
+GET /admin/kostenstellen/{id:\d+} -> admin.settings
+POST /admin/kostenstellen/{id:\d+} -> admin.settings
+POST /admin/kostenstellen/{id:\d+}/loeschen -> admin.settings
+POST /admin/kostenstellen/{id:\d+}/nach-oben -> admin.settings
+POST /admin/kostenstellen/{id:\d+}/nach-unten -> admin.settings
+GET /admin/kategorien -> admin.settings
+GET /admin/kategorien/neu -> admin.settings
+POST /admin/kategorien -> admin.settings
+GET /admin/kategorien/{id:\d+} -> admin.settings
+POST /admin/kategorien/{id:\d+} -> admin.settings
+POST /admin/kategorien/{id:\d+}/loeschen -> admin.settings
+POST /admin/kategorien/{id:\d+}/nach-oben -> admin.settings
+POST /admin/kategorien/{id:\d+}/nach-unten -> admin.settings
+POST /admin/kategorien/sphaeren -> admin.settings
+GET /admin/worker -> admin.settings
+POST /admin/worker/koppeln -> admin.settings
+POST /admin/worker/einstellungen -> admin.settings
+POST /admin/worker/ocr-nachholen -> admin.settings
+POST /admin/worker/bestand-ocr -> admin.settings
+POST /admin/worker/bestand-ocr/abbrechen -> admin.settings
+POST /admin/worker/mail-eingang -> admin.settings
+POST /admin/worker/{id:\d+}/bestaetigen -> admin.settings
+POST /admin/worker/{id:\d+}/entkoppeln -> admin.settings
+GET /admin/ki-anbieter -> admin.settings
+GET /admin/ki-protokoll -> admin.settings
+GET /admin/ki-anbieter/neu -> admin.settings
+POST /admin/ki-anbieter -> admin.settings
+GET /admin/ki-anbieter/{id:\d+} -> admin.settings
+POST /admin/ki-anbieter/{id:\d+} -> admin.settings
+POST /admin/ki-anbieter/{id:\d+}/loeschen -> admin.settings
+POST /admin/ki-anbieter/{id:\d+}/standard -> admin.settings
+POST /admin/ki-anbieter/{id:\d+}/fallback -> admin.settings
+POST /admin/ki-anbieter/fallback-entfernen -> admin.settings
+POST /admin/ki-anbieter/{id:\d+}/testen -> admin.settings
+GET /admin/einreichung -> admin.settings
+POST /admin/einreichung -> admin.settings
+POST /admin/einreichung/pausieren -> admin.settings
+POST /admin/einreichung/fortsetzen -> admin.settings
+GET /admin/rechtstexte -> admin.settings
+POST /admin/rechtstexte -> admin.settings
+GET /admin/export -> admin.settings
+POST /admin/export -> admin.settings
+POST /admin/export/vorschau -> admin.settings
+GET /admin/datev -> admin.settings
+POST /admin/datev -> admin.settings
+GET /admin/export/nextcloud -> admin.settings
+POST /admin/export/nextcloud -> admin.settings
+POST /admin/export/nextcloud/testen -> admin.settings
+POST /admin/export/nextcloud/entfernen -> admin.settings
+GET /admin/update -> admin.system
+POST /admin/update/kanal -> admin.system
+POST /admin/update/reset -> admin.system
+POST /admin/update/schritt/{schritt:[a-z]+} -> admin.system
+POST /admin/wartung/aufheben -> admin.system
+GET /admin/backups -> admin.system
+POST /admin/backups -> admin.system
+POST /admin/backups/schritt -> admin.system
+POST /admin/backups/abbrechen -> admin.system
+GET /admin/backups/{name:backup_[0-9_]+\.zip} -> admin.system
+POST /admin/backups/{name:backup_[0-9_]+\.zip} -> admin.system
+GET /admin/systemcheck -> admin.system
+GET /admin/integritaet -> admin.system
+POST /admin/integritaet -> admin.system (api)
+POST /admin/integritaet/schritt -> admin.system (api)

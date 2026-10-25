@@ -143,6 +143,40 @@ final class RoutePermissionMatrixTest extends TestCase
         }
     }
 
+    /**
+     * Security review (issue #78): the matrix above proves that the guard
+     * enforces each declaration, and the spot checks below pin a sample of
+     * the declarations against the spec. This pins ALL of them: every route
+     * and its declaration is listed in routen-zugriff.txt, reviewed against
+     * docs/spec/01-sicherheit.md section 4. A new route, a removed one or a
+     * changed declaration fails here until that file changes in the same PR.
+     */
+    public function testEveryRouteDeclarationIsReviewed(): void
+    {
+        $erwartet = [];
+        foreach (file(__DIR__ . '/routen-zugriff.txt', FILE_IGNORE_NEW_LINES) ?: [] as $zeile) {
+            if (trim($zeile) !== '' && !str_starts_with($zeile, '#')) {
+                $erwartet[] = $zeile;
+            }
+        }
+
+        $tatsaechlich = [];
+        foreach ($this->router()->routes() as $route) {
+            $tatsaechlich[] = $route->method->value . ' ' . $route->pattern . ' -> ' . $route->zugriff->beschreibung();
+        }
+
+        $neu = array_values(array_diff($tatsaechlich, $erwartet));
+        $weg = array_values(array_diff($erwartet, $tatsaechlich));
+        self::assertSame(
+            [[], []],
+            [$neu, $weg],
+            "Route declarations differ from tests/Http/routen-zugriff.txt.\n"
+            . "Not yet reviewed (add after checking against 01-sicherheit.md section 4):\n  " . implode("\n  ", $neu) . "\n"
+            . "Listed but no longer served:\n  " . implode("\n  ", $weg),
+        );
+        self::assertCount(count(array_unique($tatsaechlich)), $tatsaechlich, 'a route is registered twice');
+    }
+
     public function testOnlyTheAllowlistIsPublic(): void
     {
         foreach ($this->router()->routes() as $route) {

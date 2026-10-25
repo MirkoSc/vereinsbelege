@@ -28,6 +28,26 @@ use App\View\FlashArt;
  */
 final class Session
 {
+    /**
+     * Runtime options for session_start(), set here instead of trusting the
+     * host's php.ini (security review, issue #78):
+     * - use_strict_mode: an id the server never issued is replaced instead
+     *   of adopted. The id is regenerated at login anyway; this closes the
+     *   window before it (planted ids, ASVS V3.2).
+     * - cache_limiter "nocache": every page with a session (all of /app and
+     *   /admin, i.e. every page showing decrypted data) carries
+     *   `Cache-Control: no-store, no-cache, must-revalidate`, so a shared
+     *   computer's browser cache does not keep decrypted receipts. That is
+     *   PHP's default, but only a default - pinned here so a host setting
+     *   cannot turn it off.
+     * use_only_cookies and use_trans_sid are not repeated: their safe values
+     * are the defaults, and moving away from them is deprecated since PHP 8.4.
+     */
+    public const array OPTIONEN = [
+        'use_strict_mode' => '1',
+        'cache_limiter' => 'nocache',
+    ];
+
     public function start(): void
     {
         if (session_status() === PHP_SESSION_NONE) {
@@ -45,7 +65,7 @@ final class Session
                 'samesite' => 'Lax',
                 'path' => '/',
             ]);
-            session_start();
+            session_start(self::OPTIONEN);
         }
     }
 
