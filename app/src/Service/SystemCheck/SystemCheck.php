@@ -239,9 +239,14 @@ final readonly class SystemCheck
         );
     }
 
-    public function memoryLimit(): CheckResult
+    /**
+     * @param string|null $wert a memory_limit value to rate instead of the
+     *        effective setting (tests: a running suite cannot lower its own
+     *        limit below what it already uses)
+     */
+    public function memoryLimit(?string $wert = null): CheckResult
     {
-        $bytes = self::parseBytes((string) ini_get('memory_limit'));
+        $bytes = self::parseBytes($wert ?? (string) ini_get('memory_limit'));
 
         return new CheckResult(
             key: 'memory_limit',
