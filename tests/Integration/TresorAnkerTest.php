@@ -324,6 +324,17 @@ final class TresorAnkerTest extends DatabaseTestCase
         self::assertSame([], new UserAdministration($this->pdo(), $this->crypto)->ausstehend());
     }
 
+    /** Upload, submission and worker answer "kein Tresor" instead of a bare 500 - and seal nothing. */
+    public function testTheSealingCallersGetNoKeyInsteadOfAnError(): void
+    {
+        self::assertSame(1, $this->vaults()->zumVersiegeln()?->version);
+
+        $this->schluesselAustauschen();
+
+        self::assertNull($this->vaults()->zumVersiegeln());
+        self::assertContains(AuditAction::TresorAnkerAbweichung->value, $this->aktionen(), 'reported all the same');
+    }
+
     public function testWritingAMacNeedsTheAnchor(): void
     {
         $this->expectException(\LogicException::class);

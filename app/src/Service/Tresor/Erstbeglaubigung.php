@@ -56,8 +56,15 @@ final readonly class Erstbeglaubigung
     public function ausfuehren(): array
     {
         $versionen = $this->vaults->erstbeglaubigen();
-        foreach ($versionen as $version) {
-            $this->audit?->record(AuditAction::TresorAnkerGesetzt, null, '', $version, ['weg' => 'erstbeglaubigung']);
+        // The MACs are what counts: a failing audit entry must not fail the
+        // migration step - its retry finds nothing pending and could not
+        // anchor again (the way out then is the recovery key).
+        try {
+            foreach ($versionen as $version) {
+                $this->audit?->record(AuditAction::TresorAnkerGesetzt, null, '', $version, ['weg' => 'erstbeglaubigung']);
+            }
+        } catch (\Throwable) {
+            // Audit is best effort here; the anchors are written.
         }
 
         return $versionen;

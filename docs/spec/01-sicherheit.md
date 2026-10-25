@@ -448,8 +448,10 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
   anderen Installation kopierte Zeile (Schlüssel + MAC) passt nicht.
 - **Geprüft wird vor jedem Versiegeln:** `VaultRepository::current()` gibt
   den Schlüssel nur heraus, wenn sein MAC stimmt, sonst
-  `TresorAnkerException` – die öffentliche Einreichung, der Upload, der
-  Worker und alles, was an `current()` versiegelt, brechen mit Fehler ab.
+  `TresorAnkerException`. Öffentliche Einreichung, interne Erfassung,
+  Upload, Mail-Eingang und Worker fragen über `zumVersiegeln()` und
+  antworten wie ohne Tresor (503/409 „kein Tresor“, Formular gesperrt) –
+  nichts wird versiegelt.
   Die **Anmeldung** prüft die neueste aktive Generation genauso, bevor sie
   den Tresor in die Sitzung legt (Sitzungen versiegeln mit ihrem eigenen
   Schlüssel): passt der MAC nicht, gelingt der Login, der Tresor bleibt
@@ -465,7 +467,14 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
   (nur Versionsnummern). Das Audit-Log schreibt weiter, die Details seiner
   Einträge entfallen solange (sie würden an `current()` versiegelt).
   Seiten, die nur zählen oder Konten auflisten (Freigabe-Banner,
-  Benutzerverwaltung), nutzen `currentUngeprueft()` und bleiben erreichbar.
+  Benutzerverwaltung, Tresor-Freigaben, Worker-Freigabe aus der Sitzung),
+  nutzen `currentUngeprueft()` und bleiben erreichbar.
+- Die Erstbeglaubigung (unten) setzt sich nicht selbst zurück: scheitert
+  der Request nach Migration 046 (Datenbankfehler genau dann), bleibt der
+  MAC leer – Ausweg ist der Wiederherstellungsschlüssel. Der Installer
+  merkt sich vor dem Migrieren, dass 046 aussteht, damit ein
+  wiederholter Schritt sie nicht verliert, und prüft bei einer frischen
+  Installation vor dem Migrieren, ob schon ein Tresor existiert.
 - **Wer den Anker setzt** – nur, wer den Schlüssel *beweisen* kann:
   1. der Installer beim Anlegen (Schlüsselpaar im selben Request erzeugt),
   2. der Start einer Rotation (ebenso; die neue Generation ist von Anfang

@@ -357,9 +357,10 @@ $serverCrypto = new ServerCrypto($config->serverKey);
 // N-01): every VaultRepository of the application checks it before anything
 // is sealed (tests/Support/TresorAnkerPflichtTest), and a failed check is
 // written to the audit log at most once per generation and hour.
+$tresorAnker = $serverCrypto->tresorAnker();
 $vaultsFor = static fn(\PDO $pdo): VaultRepository => new VaultRepository(
     $pdo,
-    $serverCrypto->tresorAnker(),
+    $tresorAnker,
     \Closure::fromCallable(new TresorAnkerAlarm($pdo, $serverCrypto)),
 );
 

@@ -71,6 +71,22 @@ final readonly class VaultRepository
     }
 
     /**
+     * current() for the places that answer "no vault" in their own words
+     * (public submission, internal capture, upload, worker): a key whose
+     * anchor fails counts as none - reported like in current(), then null.
+     * Those callers refuse with their structured "kein Tresor" error
+     * instead of a bare 500; nothing is sealed either way.
+     */
+    public function zumVersiegeln(): ?Vault
+    {
+        try {
+            return $this->current();
+        } catch (TresorAnkerException) {
+            return null;
+        }
+    }
+
+    /**
      * current() without the anchor check - only for callers that prove the
      * key themselves with the paper recovery key (it contains VK_priv, and
      * VK_pub follows from it): /admin/wiederherstellen and the installer's
@@ -225,7 +241,7 @@ final readonly class VaultRepository
      */
     public function all(): array
     {
-        $abfragen = [
+        $stmt = $this->ersteGelungene([
             'SELECT version, public_key, public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
             // Before migration 046 (update between 'switch' and 'migrate'):
             // no MAC - with an anchor configured nothing verifies then, so
@@ -233,24 +249,10 @@ final readonly class VaultRepository
             'SELECT version, public_key, NULL AS public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
             // Before migration 040: no rotation can exist, every generation
             // is active - logins and the update chain must keep working.
-            'SELECT version, public_key, public_key_mac, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
             'SELECT version, public_key, NULL AS public_key_mac, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version',
-        ];
-        foreach ($abfragen as $i => $sql) {
-            try {
-                $stmt = $this->pdo->query($sql);
-                break;
-            } catch (\PDOException $e) {
-                if ($i === count($abfragen) - 1) {
-                    throw $e;
-                }
-            }
-        }
-        if (!isset($stmt) || $stmt === false) {
-            return [];
-        }
+        ]);
 
-        return array_map(self::generation(...), $stmt->fetchAll(\PDO::FETCH_ASSOC));
+        return $stmt === null ? [] : array_map(self::generation(...), $stmt->fetchAll(\PDO::FETCH_ASSOC));
     }
 
     /**
@@ -391,17 +393,48 @@ final readonly class VaultRepository
         $stmt->execute([$version]);
     }
 
-    /** The newest generation with a confirmed recovery key - what current() is about. */
+    /**
+     * The newest generation with a confirmed recovery key - what current()
+     * is about. One row, not all(): it runs for every sealed audit detail
+     * and every submission.
+     */
     private function neuesteBestaetigte(): ?VaultGeneration
     {
-        $neueste = null;
-        foreach ($this->all() as $generation) {
-            if ($generation->schluesselBestaetigt()) {
-                $neueste = $generation;
+        $abfragen = [
+            'SELECT version, public_key, public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
+            // Before migration 046 (between the updater's 'switch' and
+            // 'migrate'): no MAC, so with an anchor nothing verifies.
+            'SELECT version, public_key, NULL AS public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
+            // Before migration 040: every generation counts as confirmed.
+            'SELECT version, public_key, NULL AS public_key_mac, created_at, created_at AS recovery_confirmed_at, NULL AS retired_at FROM vault ORDER BY version DESC LIMIT 1',
+        ];
+        $row = $this->ersteGelungene($abfragen)?->fetch(\PDO::FETCH_ASSOC);
+
+        return is_array($row) ? self::generation($row) : null;
+    }
+
+    /**
+     * Runs the first query the schema can answer - the newest one first,
+     * then those for older schemas (an update between 'switch' and
+     * 'migrate' runs the new code on the old schema).
+     *
+     * @param non-empty-list<string> $abfragen
+     */
+    private function ersteGelungene(array $abfragen): ?\PDOStatement
+    {
+        foreach ($abfragen as $i => $sql) {
+            try {
+                $stmt = $this->pdo->query($sql);
+
+                return $stmt === false ? null : $stmt;
+            } catch (\PDOException $e) {
+                if ($i === count($abfragen) - 1) {
+                    throw $e;
+                }
             }
         }
 
-        return $neueste;
+        return null;
     }
 
     private function ankerOderFehler(): TresorAnker

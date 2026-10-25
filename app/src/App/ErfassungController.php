@@ -62,7 +62,7 @@ final readonly class ErfassungController
             'csrf' => $this->session->csrfToken(),
             'erfassung' => InterneErfassung::neueErfassungsId(),
             'kostenstellen' => $this->kostenstellen->active(),
-            'hatTresor' => $this->vaults->current() !== null,
+            'hatTresor' => $this->vaults->zumVersiegeln() !== null,
             'maxBelege' => InterneErfassung::MAX_BELEGE,
             'maxSeiten' => InterneErfassung::MAX_SEITEN,
             'maxDateiMb' => intdiv(UploadService::MAX_FILE_BYTES, 1024 * 1024),
@@ -86,7 +86,7 @@ final readonly class ErfassungController
             return Response::json(['fehler' => self::CSRF_MESSAGE], 403);
         }
 
-        $vault = $this->vaults->current();
+        $vault = $this->vaults->zumVersiegeln();
         if ($vault === null) {
             return Response::json(['fehler' => self::VAULT_MESSAGE], 503);
         }

@@ -216,18 +216,29 @@ final readonly class InstallController
             return $this->startRestore($values, $zipPfad, $vomServer);
         }
 
+        $setup = new FirstAdminSetup($pdo);
+        // Looked at BEFORE the migrations too (an empty database has no
+        // vault table yet): on an existing installation from before
+        // migration 046 they would use up the one first-use anchoring of
+        // its vault key (issue #240) without writing it.
+        try {
+            $schonEinTresor = $setup->vaultExists();
+        } catch (\PDOException) {
+            $schonEinTresor = false;
+        }
+
         // Fresh install: every migration from 0. The channel setting is
         // written before the vault, so a failure here leaves the installer
         // open instead of a half-configured installation behind.
-        new Migrator($pdo, $this->paths->migrationsDir())->migrate();
-        new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
+        if (!$schonEinTresor) {
+            new Migrator($pdo, $this->paths->migrationsDir())->migrate();
+            new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
+        }
 
-        $setup = new FirstAdminSetup($pdo);
-        if ($setup->vaultExists()) {
-            // Every migration from 0 ran above regardless (harmless, they
-            // are idempotent) - but a vault already exists, so this is not
-            // an empty database: refuse rather than seal a second one nobody
-            // could ever be granted access to.
+        if ($schonEinTresor || $setup->vaultExists()) {
+            // A vault already exists, so this is not an empty database:
+            // refuse rather than seal a second one nobody could ever be
+            // granted access to.
             return $this->render([
                 'errors' => ['db' => 'Diese Datenbank enthält bereits eine Installation (ein Tresor ist schon vorhanden). Bitte eine leere Datenbank verwenden oder ein Backup einspielen.'],
                 'values' => $values,
@@ -485,7 +496,14 @@ final readonly class InstallController
             }
 
             // Everything is in: only migrations newer than the backup remain.
-            $migriert = new Migrator($pdo, $this->paths->migrationsDir())->migrate();
+            $migrator = new Migrator($pdo, $this->paths->migrationsDir());
+            // Noted BEFORE migrating, and kept: a request that dies after
+            // migration 046 but before config.php must not lose the vault
+            // anchor's first use (issue #240) - its retry finds nothing pending.
+            if (Erstbeglaubigung::darunter($migrator->pending())) {
+                $_SESSION['install_restore']['erstbeglaubigung'] = true;
+            }
+            $migriert = $migrator->migrate();
             new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
             @unlink($dumpDatei);
@@ -506,7 +524,7 @@ final readonly class InstallController
             // A backup from before the vault anchor (issue #240): its rows
             // get their first MAC with the key config.php will hold - known
             // now when the backup carried one, at the access step otherwise.
-            $erstbeglaubigen = Erstbeglaubigung::darunter($migriert->applied);
+            $erstbeglaubigen = ($_SESSION['install_restore']['erstbeglaubigung'] ?? false) === true;
             $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
             if ($serverSchluessel === null) {
                 // No key in the backup: config.php waits for the access step
@@ -599,7 +617,11 @@ final readonly class InstallController
         }
 
         if ($this->erstbeglaubigungAusstehend()) {
-            new RestoreAccess($this->connect($values))->erstbeglaubigen($schluessel);
+            try {
+                new RestoreAccess($this->connect($values))->erstbeglaubigen($schluessel);
+            } catch (\PDOException $e) {
+                return $this->renderAccess(['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()], 422);
+            }
         }
         $cronToken = $this->finishRestore($values, $schluessel);
 

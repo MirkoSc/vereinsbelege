@@ -518,16 +518,20 @@ final class SchluesselrotationTest extends DatabaseTestCase
     /**
      * Between the updater's 'switch' and 'migrate' steps the new code runs on
      * the old schema: the guard and the login must not fail on the missing
-     * columns of migration 040.
+     * columns of migration 040. (Such a schema predates the vault anchor of
+     * migration 046 as well: the login then succeeds with the vault locked,
+     * issue #240 - nothing is sealed until 'migrate' has run.)
      */
     public function testVorMigration040GibtEsKeineRotationUndDieAnmeldungGeht(): void
     {
-        $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at');
+        $this->pdo()->exec('ALTER TABLE vault DROP COLUMN retired_at, DROP COLUMN recovery_confirmed_at, DROP COLUMN public_key_mac');
 
         $vaults = new VaultRepository($this->pdo(), $this->crypto->tresorAnker());
         self::assertFalse($vaults->rotationInProgress());
         self::assertCount(1, $vaults->active());
-        self::assertSame(1, $this->anmelden(self::ADMIN)?->version);
+        self::assertSame(1, $vaults->currentUngeprueft()?->version);
+        self::assertNull($this->anmelden(self::ADMIN), 'no anchor column yet: logged in, vault locked');
+        self::assertSame(1, $this->anmelden(self::ADMIN, new VaultRepository($this->pdo()))?->version, 'without anchor (the release before) it opens');
     }
 
     /**
@@ -778,13 +782,13 @@ final class SchluesselrotationTest extends DatabaseTestCase
         self::fail('Die Umschlüsselung kommt nicht zum Ende.');
     }
 
-    private function anmelden(string $email): ?Vault
+    private function anmelden(string $email, ?VaultRepository $vaults = null): ?Vault
     {
         $ergebnis = new LoginService(
             new UserRepository($this->pdo()),
             new UserKeyRepository($this->pdo()),
             new VaultGrantRepository($this->pdo()),
-            new VaultRepository($this->pdo(), $this->crypto->tresorAnker()),
+            $vaults ?? new VaultRepository($this->pdo(), $this->crypto->tresorAnker()),
             $this->crypto,
             new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::LOGIN_WINDOW_SECONDS),
             new PasswordHasher(),

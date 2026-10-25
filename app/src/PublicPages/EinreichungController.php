@@ -67,7 +67,7 @@ final readonly class EinreichungController
             'token' => $token,
             'pow' => $this->proofOfWork->challenge($tokenData),
             'kostenstellen' => $this->kostenstellen->active(),
-            'hatTresor' => $this->vaults->current() !== null,
+            'hatTresor' => $this->vaults->zumVersiegeln() !== null,
             'pausiert' => $this->einstellungen->pausiert,
             'maxSeiten' => $this->einstellungen->maxSeiten,
             'maxDateiMb' => $this->einstellungen->maxDateiMb,
@@ -93,7 +93,7 @@ final readonly class EinreichungController
             return Response::json(['fehler' => $abgelehnt->message()], $abgelehnt->status());
         }
 
-        $vault = $this->vaults->current();
+        $vault = $this->vaults->zumVersiegeln();
         if ($vault === null) {
             return Response::json(['fehler' => self::VAULT_MESSAGE], 503);
         }
