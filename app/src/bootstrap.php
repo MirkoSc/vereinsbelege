@@ -1394,13 +1394,20 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
     );
 };
 
-// Code integrity check (issue #79/M13-2, 01 section 8): the files of current/
-// against shared/release_checksums.txt. No business data, no vault; the
-// database only for the audit row of a finished run.
+// Code integrity check (issue #79/M13-2, #241, 01 section 8): the files of
+// current/ against the release's checksums.txt (shared/release_checksums.txt
+// as fallback), plus the docroot and config.php. No business data, no vault;
+// the database only for the audit row of a finished run.
 $integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritaetController(
     $view,
     new Session(),
-    new CodeIntegritaet($paths->releaseRoot, $paths->releaseChecksumsFile(), $paths->varDir()),
+    new CodeIntegritaet(
+        $paths->releaseRoot,
+        $paths->releaseChecksumsFile(),
+        $paths->varDir(),
+        webDir: dirname($paths->releaseRoot) . '/web',
+        configDatei: $paths->configFile(),
+    ),
     $auditFor($connections->pdo()),
 );
 

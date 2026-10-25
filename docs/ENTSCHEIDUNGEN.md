@@ -1828,3 +1828,52 @@ Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
 richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
 dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
 zeigen soll.
+## E-63 ❓ Release-Signatur, erlaubte Download-Hosts, Prüfsummenliste je Release (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #241 (N-02, N-03, N-18, N-19 aus #78, Folge-Idee aus #79), 06 §1, 01 §8, `docs/betrieb.md` §13*
+
+1. **Was signiert wird:** die `checksums.txt` (nicht das ZIP einzeln). Sie
+   nennt den SHA-256 des ZIP und jeder Datei darin – eine Signatur deckt
+   damit Download **und** die Liste des Integritätschecks ab. Ed25519
+   (`sodium_crypto_sign_detached`), base64, Asset `checksums.txt.sig`.
+2. **Ohne Schlüssel keine Sperre:** `ReleaseSignatur::PUBLIC_KEY` ist
+   leer, bis Mirko ein Schlüsselpaar erzeugt hat. Bis dahin meldet Updater
+   bzw. `setup.php` „nicht signiert“ als Hinweis, der Release-Workflow
+   warnt nur. Ist der Schlüssel gesetzt, gilt: fehlende oder falsche
+   Signatur bricht Update und Installation ab, fehlendes oder nicht
+   passendes Secret bricht den Release-Workflow ab.
+3. **Schlüssel im Code, nicht in der Konfiguration:** was in `shared/`
+   oder der DB liegt, kann derselbe Angreifer ändern, gegen den die
+   Signatur schützt. Geprüft wird mit dem Schlüssel des laufenden
+   Releases; ein Schlüsselwechsel muss also mit dem alten Schlüssel
+   signiert ausgeliefert werden (`docs/betrieb.md` §13).
+4. **Erlaubte Hosts:** `api.github.com`, `github.com`,
+   `objects.githubusercontent.com` **und**
+   `release-assets.githubusercontent.com` – das Issue nennt nur die ersten
+   drei, GitHub leitet Release-Downloads aber inzwischen auf den vierten
+   um; ohne ihn bräche jedes Update. Nur `https`, Port 443, keine
+   Zugangsdaten in der URL, jeder Weiterleitungs-Sprung einzeln geprüft
+   (höchstens 5). Der Selbsttest (eigene Startseite) ist ausgenommen.
+5. **Liste je Release** als `checksums.txt`/`checksums.txt.sig` im
+   Release-Wurzelverzeichnis statt eines Ordners je Version in `shared/`:
+   `rename()` tauscht sie dann atomar mit, auch beim Rollback, ohne
+   zusätzliche Logik im `ReleaseSwitcher`. Eine Auswahl „Liste passend zu
+   `current/VERSION`“ hätte eine manipulierte `VERSION` die Prüfung
+   umlenken lassen. `shared/release_checksums.txt` bleibt nur als
+   Rückfall für Altinstallationen.
+6. **Integritätscheck außerhalb von `current/`:** `.htaccess`/`.user.ini`,
+   die von der Vorlage abweichen, sind Befunde, obwohl der Updater
+   handangepasste Dateien bewusst stehen lässt – der Check soll zeigen,
+   was sich verändert hat; der Admin entscheidet, ob es gewollt war.
+   `config.php`: erlaubt sind 0600 und 0640, der Aufbau muss
+   `return <Array aus Literalen>;` sein (Token-Prüfung, Datei wird nie
+   ausgeführt). Ein liegengebliebenes `setup.php` in `web/` ist ein Befund.
+7. **Alarm statt still:** eine ungültige oder fehlende Signatur und – mit
+   festgelegtem Schlüssel – eine fehlende Liste verhindern die Prüfung und
+   erscheinen rot; das Löschen der Liste soll die Prüfung nicht unbemerkt
+   abschalten.
+
+Offen für Mirko: Schlüsselpaar erzeugen, Secret `RELEASE_SIGNING_KEY`
+anlegen, `PUBLIC_KEY` committen (`docs/betrieb.md` §13); ob der vierte
+Host so in Ordnung ist; ob handangepasste `.htaccess` dauerhaft als Befund
+erscheinen soll (Alternative: eine im Admin bestätigte „erwartete“
+Prüfsumme).

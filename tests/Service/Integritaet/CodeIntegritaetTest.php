@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\Integritaet;
 
+use App\Installer\ConfigWriter;
 use App\Service\Integritaet\CodeIntegritaet;
 use App\Service\Integritaet\IntegritaetPruefungNichtMoeglich;
+use App\Service\Update\ReleaseSignatur;
+use App\Service\Update\ReleaseSwitcher;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -57,7 +60,7 @@ final class CodeIntegritaetTest extends TestCase
 
         self::assertSame(CodeIntegritaet::PHASE_FERTIG, $stand['phase']);
         self::assertTrue(CodeIntegritaet::unveraendert($stand));
-        self::assertSame(['geaendert' => 0, 'fehlend' => 0, 'zusaetzlich' => 0], $stand['anzahl']);
+        self::assertSame(['geaendert' => 0, 'fehlend' => 0, 'zusaetzlich' => 0, 'umgebung' => 0], $stand['anzahl']);
         self::assertSame(5, $stand['gesamt']);
         self::assertSame(5, $stand['position']);
         self::assertSame('1.2.3', $stand['version']);
@@ -74,7 +77,7 @@ final class CodeIntegritaetTest extends TestCase
         $stand = $this->durchlaufen($this->pruefung());
 
         self::assertFalse(CodeIntegritaet::unveraendert($stand));
-        self::assertSame(['geaendert' => 1, 'fehlend' => 1, 'zusaetzlich' => 2], $stand['anzahl']);
+        self::assertSame(['geaendert' => 1, 'fehlend' => 1, 'zusaetzlich' => 2, 'umgebung' => 0], $stand['anzahl']);
         self::assertSame(['app/src/A.php'], $stand['pfade']['geaendert']);
         self::assertSame(['vendor/lib/C.php'], $stand['pfade']['fehlend']);
         self::assertSame(['app/src/shell.php', 'public/.hidden.php'], $stand['pfade']['zusaetzlich'], 'hidden files too');
@@ -117,6 +120,7 @@ final class CodeIntegritaetTest extends TestCase
             [CodeIntegritaet::PHASE_DATEIEN, 2, false],
             [CodeIntegritaet::PHASE_DATEIEN, 4, false],
             [CodeIntegritaet::PHASE_ZUSAETZLICH, 5, false],
+            [CodeIntegritaet::PHASE_UMGEBUNG, 5, false],
             [CodeIntegritaet::PHASE_FERTIG, 5, true],
         ], $schritte);
 
@@ -253,6 +257,7 @@ final class CodeIntegritaetTest extends TestCase
         $pruefung = $this->pruefung();
         $pruefung->starten();
         $pruefung->schritt();
+        $pruefung->schritt();
         $aufrufe = 0;
 
         try {
@@ -264,7 +269,7 @@ final class CodeIntegritaetTest extends TestCase
         } catch (\RuntimeException $e) {
             self::assertSame('Datenbank weg', $e->getMessage());
         }
-        self::assertSame(CodeIntegritaet::PHASE_ZUSAETZLICH, $pruefung->stand()['phase'] ?? null, 'not stored as finished');
+        self::assertSame(CodeIntegritaet::PHASE_UMGEBUNG, $pruefung->stand()['phase'] ?? null, 'not stored as finished');
 
         $stand = $pruefung->schritt(static function (array $stand) use (&$aufrufe): void {
             $aufrufe++;
@@ -326,6 +331,296 @@ final class CodeIntegritaetTest extends TestCase
         $json = (string) file_get_contents($this->var . '/integritaet.json');
         self::assertStringNotContainsString('GEHEIMER-INHALT', $json);
         self::assertStringContainsString('app/src/A.php', $json);
+    }
+
+    // ---- issue #241: list in the release, signature, web/ and config.php ----
+
+    /**
+     * Since #241 the list lies in the release directory and moves with it;
+     * it is preferred over shared/ and is no additional file itself.
+     */
+    public function testTheListInTheReleaseIsPreferredAndNoFinding(): void
+    {
+        rename($this->liste, $this->release . '/checksums.txt');
+        file_put_contents($this->release . '/checksums.txt.sig', "irrelevant\n");
+        // A stale list in shared/ (from the updater before #241) is ignored.
+        file_put_contents($this->liste, str_repeat('3', 64) . "  vereinsbelege-v0.9.0.zip\n"
+            . str_repeat('3', 64) . "  release/VERSION\n");
+
+        $pruefung = $this->pruefung();
+        self::assertNull($pruefung->warnung(), 'the list of the release itself, not the stale one');
+        $stand = $this->durchlaufen($pruefung);
+
+        self::assertTrue(CodeIntegritaet::unveraendert($stand), (string) json_encode($stand['pfade']));
+        self::assertSame(5, $stand['gesamt']);
+    }
+
+    public function testAListElsewhereThanTheRootIsAdditional(): void
+    {
+        rename($this->liste, $this->release . '/checksums.txt');
+        $this->datei('app/checksums.txt', 'x');
+
+        $stand = $this->durchlaufen($this->pruefung());
+
+        self::assertSame(['app/checksums.txt'], $stand['pfade']['zusaetzlich']);
+    }
+
+    public function testAValidSignatureLetsTheCheckRun(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $this->docroot();
+        $this->signierteListe($paar['secret']);
+
+        $pruefung = $this->pruefungMit(publicKey: $paar['public']);
+
+        self::assertNull($pruefung->hindernis());
+        self::assertNull($pruefung->echtheitsfehler());
+        self::assertNull($pruefung->signaturHinweis(), 'protected - nothing to point out');
+        self::assertTrue(CodeIntegritaet::unveraendert($this->durchlaufen($pruefung)));
+    }
+
+    /**
+     * N-19: once a key is fixed, whoever rewrites the list to match a
+     * changed file is caught - the list is no longer trusted at all.
+     */
+    public function testARewrittenSignedListStopsTheCheckWithAnAlarm(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $this->signierteListe($paar['secret']);
+        $this->datei('app/src/A.php', '<?php // hintertuer');
+        $liste = $this->release . '/checksums.txt';
+        file_put_contents($liste, str_replace(
+            hash('sha256', "<?php // a\n"),
+            hash('sha256', '<?php // hintertuer'),
+            (string) file_get_contents($liste),
+        ));
+
+        $pruefung = $this->pruefungMit(publicKey: $paar['public']);
+
+        self::assertStringContainsString('Signatur der Prüfsummenliste ist ungültig', (string) $pruefung->echtheitsfehler());
+        self::assertSame($pruefung->echtheitsfehler(), $pruefung->hindernis());
+        $this->expectException(IntegritaetPruefungNichtMoeglich::class);
+        $pruefung->starten();
+    }
+
+    public function testAMissingSignatureOrListIsAnAlarmOnceAKeyIsFixed(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $this->signierteListe($paar['secret']);
+        unlink($this->release . '/checksums.txt.sig');
+        $pruefung = $this->pruefungMit(publicKey: $paar['public']);
+        self::assertStringContainsString('nicht signiert', (string) $pruefung->hindernis());
+
+        // The shared/ fallback has no signature either.
+        rename($this->release . '/checksums.txt', $this->liste);
+        self::assertStringContainsString('nicht signiert', (string) $pruefung->hindernis());
+
+        // Deleting the list must not quietly switch the check off.
+        unlink($this->liste);
+        self::assertStringContainsString('fehlt', (string) $pruefung->echtheitsfehler());
+        self::assertSame($pruefung->echtheitsfehler(), $pruefung->hindernis());
+
+        // The development environment (no current/VERSION) stays calm.
+        unlink($this->release . '/VERSION');
+        self::assertNull($pruefung->echtheitsfehler());
+        self::assertStringContainsString('keine Prüfsummenliste', (string) $pruefung->hindernis());
+    }
+
+    public function testWithoutAKeyTheCheckRunsAndSaysTheListIsUnprotected(): void
+    {
+        $pruefung = $this->pruefungMit(publicKey: '');
+
+        self::assertNull($pruefung->hindernis());
+        self::assertNull($pruefung->echtheitsfehler());
+        self::assertStringContainsString('nicht durch eine Signatur geschützt', (string) $pruefung->signaturHinweis());
+    }
+
+    public function testAnUntouchedDocrootAndConfigHaveNoFinding(): void
+    {
+        $this->docroot();
+
+        $stand = $this->durchlaufen($this->pruefungMit());
+
+        self::assertTrue(CodeIntegritaet::unveraendert($stand), (string) json_encode($stand['pfade']));
+    }
+
+    /**
+     * N-03: the docroot runs with every request but lies outside current/.
+     */
+    public function testDocrootDifferencesAreFindings(): void
+    {
+        $web = $this->docroot();
+        file_put_contents($web . '/index.php', ReleaseSwitcher::SHIM . "\n@eval(\$_POST['x']);\n");
+        unlink($web . '/.htaccess');
+        file_put_contents($web . '/.user.ini', "zend.exception_ignore_args = Off\n");
+        file_put_contents($web . '/shell.php', '<?php');
+        file_put_contents($web . '/.versteckt', 'x');
+        mkdir($web . '/upload');
+
+        $stand = $this->durchlaufen($this->pruefungMit());
+
+        self::assertSame([
+            'web/index.php – weicht vom Shim des Releases ab',
+            'web/.htaccess – fehlt',
+            'web/.user.ini – weicht von der Vorlage des Releases ab (von Hand geändert?)',
+            'web/.versteckt – nicht Teil der Installation',
+            'web/shell.php – nicht Teil der Installation',
+            'web/upload/ – nicht Teil der Installation',
+        ], $stand['pfade']['umgebung']);
+        self::assertSame(6, $stand['anzahl']['umgebung']);
+        self::assertSame(0, $stand['anzahl']['geaendert'], 'kept apart from the release files');
+        self::assertFalse(CodeIntegritaet::unveraendert($stand));
+    }
+
+    public function testASymlinkedShimAndAMissingDocrootAreFindings(): void
+    {
+        $web = $this->docroot();
+        unlink($web . '/index.php');
+        symlink($this->release . '/VERSION', $web . '/index.php');
+
+        $stand = $this->durchlaufen($this->pruefungMit());
+        self::assertContains('web/index.php – Verweis (Symlink) statt Datei', $stand['pfade']['umgebung']);
+
+        $ohne = $this->durchlaufen($this->pruefungMit(webDir: $this->basis . '/gibt-es-nicht'));
+        self::assertSame(['web/ – Verzeichnis nicht gefunden'], $ohne['pfade']['umgebung']);
+    }
+
+    /**
+     * config.php is individual - its content is never compared, only its
+     * permissions and that it holds nothing but values.
+     */
+    public function testConfigPermissionsAndStructureAreChecked(): void
+    {
+        $this->docroot();
+        $config = $this->basis . '/shared/config.php';
+
+        chmod($config, 0640);
+        self::assertTrue(CodeIntegritaet::unveraendert($this->durchlaufen($this->pruefungMit())), 'group read is fine');
+
+        chmod($config, 0644);
+        self::assertSame(
+            ['shared/config.php – Rechte 0644, erwartet 0600 (nur der Besitzer darf lesen und schreiben)'],
+            $this->durchlaufen($this->pruefungMit())['pfade']['umgebung'],
+        );
+
+        chmod($config, 0600);
+        file_put_contents($config, "<?php\nif (isset(\$_GET['x'])) { system(\$_GET['x']); }\n"
+            . (string) preg_replace('/^<\?php\s*/', '', (string) file_get_contents($config)));
+        self::assertSame(
+            ['shared/config.php – enthält mehr als die Einstellungen (Code oder Ausgabe außerhalb des Werte-Arrays)'],
+            $this->durchlaufen($this->pruefungMit())['pfade']['umgebung'],
+        );
+
+        unlink($config);
+        self::assertSame(['shared/config.php – fehlt'], $this->durchlaufen($this->pruefungMit())['pfade']['umgebung']);
+    }
+
+    /**
+     * What ConfigWriter writes passes; everything that is more than values
+     * does not.
+     */
+    public function testOnlyValuesPassTheStructureCheck(): void
+    {
+        $config = $this->basis . '/shared/config-test.php';
+        ConfigWriter::write($config, ['host' => "db'host", 'port' => 3306, 'name' => 'n', 'user' => 'u', 'password' => "p\0w\"d"]);
+        $echt = (string) file_get_contents($config);
+
+        self::assertTrue(CodeIntegritaet::nurWerte($echt));
+        self::assertTrue(CodeIntegritaet::nurWerte($echt . "?>\n"));
+        self::assertTrue(CodeIntegritaet::nurWerte("<?php return ['a' => [1, -2.5, true, NULL, 'x' . \"\\0\"]];"));
+
+        foreach ([
+            'code before' => str_replace('return', 'system($_GET[1]); return', $echt),
+            'code after' => $echt . "eval(\$x);\n",
+            'interpolation' => "<?php return ['a' => \"{\$x}\"];",
+            'backticks' => '<?php return [`id`];',
+            'constant' => '<?php return [PHP_EOL];',
+            'call' => "<?php return [getenv('X')];",
+            'output before' => "\xEF\xBB\xBF" . $echt,
+            'output after' => $echt . "?>\nhallo",
+            'no return' => "<?php\n\$x = 1;",
+            'include' => "<?php return include 'x.php';",
+        ] as $fall => $php) {
+            self::assertFalse(CodeIntegritaet::nurWerte($php), $fall);
+        }
+    }
+
+    /**
+     * A check started by the release before #241 knows no `umgebung` kind;
+     * continued after the update it still finishes.
+     */
+    public function testAStateFromBeforeTheUpdateStillFinishes(): void
+    {
+        $this->docroot();
+        $pruefung = $this->pruefungMit();
+        $pruefung->starten();
+        $pruefung->schritt();
+        $stand = (array) json_decode((string) file_get_contents($this->var . '/integritaet.json'), true);
+        unset($stand['anzahl']['umgebung'], $stand['pfade']['umgebung']);
+        file_put_contents($this->var . '/integritaet.json', json_encode($stand, JSON_THROW_ON_ERROR));
+
+        $ende = $this->durchlaufenAb($pruefung);
+
+        self::assertSame(0, $ende['anzahl']['umgebung']);
+        self::assertTrue(CodeIntegritaet::unveraendert($ende));
+    }
+
+    private function pruefungMit(?string $webDir = null, string $publicKey = ''): CodeIntegritaet
+    {
+        return new CodeIntegritaet(
+            $this->release,
+            $this->liste,
+            $this->var,
+            webDir: $webDir ?? $this->basis . '/web',
+            configDatei: $this->basis . '/shared/config.php',
+            publicKey: $publicKey,
+        );
+    }
+
+    /**
+     * web/ as setup.php leaves it, the templates in the release, and a
+     * config.php as the installer writes it. Template files are part of the
+     * release, so the list is written again.
+     */
+    private function docroot(): string
+    {
+        $web = $this->basis . '/web';
+        mkdir($web);
+        $this->datei('docker/web/index.php', ReleaseSwitcher::SHIM);
+        $this->datei('docker/web/.htaccess', "Header set X-Test 1\n");
+        $this->datei('docker/web/.user.ini', "zend.exception_ignore_args = On\n");
+        file_put_contents($web . '/index.php', ReleaseSwitcher::SHIM);
+        copy($this->release . '/docker/web/.htaccess', $web . '/.htaccess');
+        copy($this->release . '/docker/web/.user.ini', $web . '/.user.ini');
+        ConfigWriter::write(
+            $this->basis . '/shared/config.php',
+            ['host' => 'db', 'port' => 3306, 'name' => 'n', 'user' => 'u', 'password' => 'p'],
+        );
+        chmod($this->basis . '/shared/config.php', 0600);
+
+        $zeilen = [str_repeat('2', 64) . '  vereinsbelege-v1.2.3.zip'];
+        foreach ([
+            '.htaccess', 'VERSION', 'app/src/A.php', 'app/src/B.php', 'vendor/lib/C.php',
+            'docker/web/index.php', 'docker/web/.htaccess', 'docker/web/.user.ini',
+        ] as $pfad) {
+            $zeilen[] = hash_file('sha256', $this->release . '/' . $pfad) . '  release/' . $pfad;
+        }
+        file_put_contents($this->liste, implode("\n", $zeilen) . "\n");
+
+        return $web;
+    }
+
+    /**
+     * The list moved into the release with its signature, as setup.php and
+     * the updater leave it since #241.
+     */
+    private function signierteListe(string $secret): void
+    {
+        rename($this->liste, $this->release . '/checksums.txt');
+        file_put_contents(
+            $this->release . '/checksums.txt.sig',
+            ReleaseSignatur::signiere((string) file_get_contents($this->release . '/checksums.txt'), $secret) . "\n",
+        );
     }
 
     private function pruefung(int $portionDateien = CodeIntegritaet::PORTION_DATEIEN): CodeIntegritaet

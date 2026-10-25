@@ -12,6 +12,7 @@ use App\Service\MaintenanceMode;
 use App\Service\Migration\Migrator;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\ReleaseDownloader;
+use App\Service\Update\ReleaseSignatur;
 use App\Service\Update\ReleaseSwitcher;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
@@ -21,7 +22,8 @@ use App\Tests\Support\DatabaseTestCase;
  * real database (the channel setting and the migrate step both need one).
  *
  * No network: the release is a ZIP on disk, served through the downloader's
- * injected HTTP closure.
+ * injected HTTP and download closures under the GitHub URLs the real
+ * release carries (the downloader refuses any other host, issue #241).
  *
  * What this really guards is the property the chain lives by: every step is
  * a separate short request and may be repeated, so the state has to survive
@@ -30,6 +32,8 @@ use App\Tests\Support\DatabaseTestCase;
  */
 final class UpdateChainTest extends DatabaseTestCase
 {
+    private const string DOWNLOAD = 'https://github.com/MirkoSc/vereinsbelege/releases/download/';
+
     private string $base;
 
     protected function setUp(): void
@@ -84,14 +88,24 @@ final class UpdateChainTest extends DatabaseTestCase
         int $dumpBytes = BackupErstellung::DUMP_BYTES,
         float $backupSekunden = UpdateService::BACKUP_SEKUNDEN,
         ?\Closure $rollbackHindernis = null,
+        string $publicKey = '',
     ): UpdateService {
-        $downloader = new ReleaseDownloader(function (string $url) use ($antworten): string {
-            if (!isset($antworten[$url])) {
-                throw new \RuntimeException('HTTP 404 für ' . $url);
-            }
+        $downloader = new ReleaseDownloader(
+            function (string $url) use ($antworten): string {
+                if (!isset($antworten[$url])) {
+                    throw new \RuntimeException('HTTP 404 für ' . $url);
+                }
 
-            return $antworten[$url];
-        });
+                return $antworten[$url];
+            },
+            // the ZIP's URL answers with the path of the local file
+            function (string $url, string $ziel) use ($antworten): void {
+                if (!isset($antworten[$url])) {
+                    throw new \RuntimeException('Download fehlgeschlagen (HTTP 404)');
+                }
+                copy($antworten[$url], $ziel);
+            },
+        );
 
         return new UpdateService(
             paths: $this->paths(),
@@ -119,24 +133,39 @@ final class UpdateChainTest extends DatabaseTestCase
             ),
             backupSekunden: $backupSekunden,
             rollbackHindernis: $rollbackHindernis,
+            publicKey: $publicKey,
         );
     }
 
     /**
+     * @param string|null $secret signs checksums.txt and publishes
+     *        checksums.txt.sig when given
      * @return array<string, string>
      */
-    private function githubAnswers(string $version, string $zipFile): array
+    private function githubAnswers(string $version, string $zipFile, ?string $secret = null): array
     {
+        $basis = self::DOWNLOAD . 'v' . $version . '/';
+        $assets = [
+            ['name' => 'vereinsbelege-v' . $version . '.zip', 'browser_download_url' => $basis . basename($zipFile)],
+            ['name' => 'checksums.txt', 'browser_download_url' => $basis . 'checksums.txt'],
+        ];
+        $liste = hash_file('sha256', $zipFile) . '  ' . basename($zipFile) . "\n"
+            . hash_file('sha256', $zipFile) . "  release/VERSION\n";
+        $antworten = [
+            $basis . basename($zipFile) => $zipFile,
+            $basis . 'checksums.txt' => $liste,
+        ];
+        if ($secret !== null) {
+            $assets[] = ['name' => 'checksums.txt.sig', 'browser_download_url' => $basis . 'checksums.txt.sig'];
+            $antworten[$basis . 'checksums.txt.sig'] = ReleaseSignatur::signiere($liste, $secret) . "\n";
+        }
+
         return [
             'https://api.github.com/repos/MirkoSc/vereinsbelege/releases/latest' => json_encode([
                 'tag_name' => 'v' . $version,
-                'assets' => [
-                    ['name' => 'vereinsbelege-v' . $version . '.zip', 'browser_download_url' => $zipFile],
-                    ['name' => 'checksums.txt', 'browser_download_url' => 'https://example.test/checksums.txt'],
-                ],
+                'assets' => $assets,
             ], JSON_THROW_ON_ERROR),
-            'https://example.test/checksums.txt' =>
-                hash_file('sha256', $zipFile) . '  ' . basename($zipFile) . "\n",
+            ...$antworten,
         ];
     }
 
@@ -322,28 +351,227 @@ final class UpdateChainTest extends DatabaseTestCase
     }
 
     /**
-     * The checksums file of the installed release is kept for the code
-     * integrity check of the admin area (docs/spec/01-sicherheit.md §8).
+     * The list of the release travels WITH the release directory (issue
+     * #241, follow-up of #79): after a rollback the list in current/ still
+     * belongs to current/.
      */
-    public function testDownloadKeepsTheChecksumsFile(): void
+    public function testTheListTravelsWithTheRelease(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $antworten['http://localhost/'] = '<!DOCTYPE html>';
+        file_put_contents($this->base . '/current/checksums.txt', "liste von 1.0.0\n");
+
+        $this->service($antworten)->check();
+        $this->service($antworten)->download();
+        self::assertNull($this->service($antworten)->extract()->fehler);
+        self::assertSame(
+            $antworten[self::DOWNLOAD . 'v1.1.0/checksums.txt'],
+            file_get_contents($this->base . '/releases/v1.1.0/checksums.txt'),
+        );
+        self::assertFileDoesNotExist($this->base . '/releases/v1.1.0/checksums.txt.sig', 'unsigned release');
+
+        $this->service($antworten)->switchRelease();
+        self::assertStringContainsString(basename($zip), (string) file_get_contents($this->base . '/current/checksums.txt'));
+        self::assertFileDoesNotExist($this->paths()->releaseChecksumsFile(), 'no longer kept in shared/');
+
+        $this->service($antworten)->rollback();
+        self::assertSame("liste von 1.0.0\n", file_get_contents($this->base . '/current/checksums.txt'));
+    }
+
+    public function testTheFinishStepCleansUpTheDownload(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $antworten['http://localhost/'] = '<!DOCTYPE html>';
+
+        foreach (['check', 'download', 'extract', 'switchRelease', 'migrate'] as $schritt) {
+            self::assertNull($this->service($antworten)->{$schritt}()->fehler, $schritt);
+        }
+        self::assertNull($this->service($antworten)->finish('http://localhost')->fehler);
+
+        self::assertSame([], glob($this->base . '/shared/var/update/*') ?: []);
+    }
+
+    /**
+     * The update that brings #241 still downloads with the previous
+     * release's code, which kept the list in shared/release_checksums.txt.
+     * The finish step (first step on the new code) takes it over - only
+     * when it names exactly this version.
+     */
+    public function testTheFinishStepTakesOverTheListOfTheOlderUpdater(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $antworten['http://localhost/'] = '<!DOCTYPE html>';
+        foreach (['check', 'download', 'extract', 'switchRelease'] as $schritt) {
+            $this->service($antworten)->{$schritt}();
+        }
+        // as the previous release's updater left it
+        unlink($this->base . '/current/checksums.txt');
+        $liste = $antworten[self::DOWNLOAD . 'v1.1.0/checksums.txt'];
+        file_put_contents($this->paths()->releaseChecksumsFile(), $liste);
+
+        self::assertNull($this->service($antworten, '1.1.0')->finish('http://localhost')->fehler);
+        self::assertSame($liste, file_get_contents($this->base . '/current/checksums.txt'));
+    }
+
+    public function testTheFinishStepIgnoresAListOfAnotherVersion(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $antworten['http://localhost/'] = '<!DOCTYPE html>';
+        foreach (['check', 'download', 'extract', 'switchRelease'] as $schritt) {
+            $this->service($antworten)->{$schritt}();
+        }
+        unlink($this->base . '/current/checksums.txt');
+        file_put_contents($this->paths()->releaseChecksumsFile(), str_repeat('1', 64) . "  vereinsbelege-v1.0.0.zip\n");
+
+        self::assertNull($this->service($antworten, '1.1.0')->finish('http://localhost')->fehler);
+        self::assertFileDoesNotExist($this->base . '/current/checksums.txt');
+    }
+
+    /**
+     * N-02 before the maintainer has fixed a key: an unsigned release still
+     * installs (an older release has no signature, a build without the
+     * secret neither) - with a warning in the log.
+     */
+    public function testWithoutAKeyAnUnsignedReleaseInstallsWithAWarning(): void
     {
         $zip = $this->buildReleaseZip('1.1.0');
         $antworten = $this->githubAnswers('1.1.0', $zip);
 
         $this->service($antworten)->check();
+        $state = $this->service($antworten)->download();
+
+        self::assertNull($state->fehler);
+        self::assertStringContainsString('nicht signiert', $state->meldungen[count($state->meldungen) - 1]);
+        self::assertNull($this->service($antworten)->extract()->fehler);
+    }
+
+    public function testASignedReleaseIsConfirmedAndKeepsItsSignature(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip, $paar['secret']);
+
+        $this->service($antworten, publicKey: $paar['public'])->check();
+        $state = $this->service($antworten, publicKey: $paar['public'])->download();
+
+        self::assertNull($state->fehler);
+        self::assertStringContainsString('Signatur bestätigt', $state->meldungen[count($state->meldungen) - 1]);
+        self::assertNull($this->service($antworten, publicKey: $paar['public'])->extract()->fehler);
+        self::assertSame(
+            $antworten[self::DOWNLOAD . 'v1.1.0/checksums.txt.sig'],
+            file_get_contents($this->base . '/releases/v1.1.0/checksums.txt.sig'),
+        );
+    }
+
+    public function testOnceAKeyIsFixedAnUnsignedReleaseIsRefused(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+
+        $this->service($antworten, publicKey: $paar['public'])->check();
+        $state = $this->service($antworten, publicKey: $paar['public'])->download();
+
+        self::assertStringContainsString('nicht signiert', (string) $state->fehler);
+        self::assertSame('check', $state->abgeschlossenerSchritt);
+    }
+
+    /**
+     * A forged release with a correct checksums.txt for its own ZIP - what
+     * the SHA-256 alone cannot catch.
+     */
+    public function testAReleaseSignedWithAnotherKeyIsRefused(): void
+    {
+        $echt = ReleaseSignatur::erzeugeSchluesselpaar();
+        $fremd = ReleaseSignatur::erzeugeSchluesselpaar();
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip, $fremd['secret']);
+
+        $this->service($antworten, publicKey: $echt['public'])->check();
+        $state = $this->service($antworten, publicKey: $echt['public'])->download();
+
+        self::assertStringContainsString('Signatur des Releases ist ungültig', (string) $state->fehler);
+    }
+
+    /**
+     * List and ZIP wait in shared/var between download and extract - FTP
+     * access could swap them there. The extract step checks again.
+     */
+    public function testAListSwappedAfterTheDownloadIsCaughtBeforeUnpacking(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip, $paar['secret']);
+        $this->service($antworten, publicKey: $paar['public'])->check();
+        $this->service($antworten, publicKey: $paar['public'])->download();
+
+        file_put_contents($this->base . '/shared/var/update/checksums-v1.1.0.txt', "\n", FILE_APPEND);
+        $state = $this->service($antworten, publicKey: $paar['public'])->extract();
+
+        self::assertStringContainsString('Signatur', (string) $state->fehler);
+        self::assertDirectoryDoesNotExist($this->base . '/releases/v1.1.0');
+    }
+
+    public function testAZipSwappedAfterTheDownloadIsCaughtBeforeUnpacking(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $this->service($antworten)->check();
         $this->service($antworten)->download();
 
-        self::assertStringContainsString(
-            basename($zip),
-            (string) file_get_contents($this->paths()->releaseChecksumsFile()),
-        );
+        file_put_contents($this->base . '/shared/var/update/vereinsbelege-v1.1.0.zip', 'anders', FILE_APPEND);
+        $state = $this->service($antworten)->extract();
+
+        self::assertStringContainsString('Prüfsummen-Fehler', (string) $state->fehler);
+    }
+
+    /**
+     * N-18: shared/update_state.json is writable over FTP; a URL changed
+     * there must not make the updater download from elsewhere.
+     */
+    public function testATamperedDownloadUrlInTheStateIsRefused(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $this->service($antworten)->check();
+
+        $datei = $this->paths()->updateStateFile();
+        $stand = (array) json_decode((string) file_get_contents($datei), true);
+        $stand['zip_url'] = 'https://evil.example/vereinsbelege-v1.1.0.zip';
+        file_put_contents($datei, json_encode($stand, JSON_THROW_ON_ERROR));
+
+        $state = $this->service($antworten)->download();
+
+        self::assertStringContainsString('nicht erlaubt', (string) $state->fehler);
+        self::assertFileDoesNotExist($this->base . '/shared/var/update/vereinsbelege-v1.1.0.zip');
+    }
+
+    /**
+     * The state file of an update started by a release before #241 has no
+     * signatur_url - the chain continues.
+     */
+    public function testAStateWithoutSignatureUrlStillWorks(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $this->service($antworten)->check();
+        $datei = $this->paths()->updateStateFile();
+        $stand = (array) json_decode((string) file_get_contents($datei), true);
+        unset($stand['signatur_url']);
+        file_put_contents($datei, json_encode($stand, JSON_THROW_ON_ERROR));
+
+        self::assertNull($this->service($antworten)->download()->fehler);
     }
 
     public function testATamperedZipStopsTheChain(): void
     {
         $zip = $this->buildReleaseZip('1.1.0');
         $antworten = $this->githubAnswers('1.1.0', $zip);
-        $antworten['https://example.test/checksums.txt'] = str_repeat('0', 64) . '  ' . basename($zip) . "\n";
+        $antworten[self::DOWNLOAD . 'v1.1.0/checksums.txt'] = str_repeat('0', 64) . '  ' . basename($zip) . "\n";
 
         $this->service($antworten)->check();
         $state = $this->service($antworten)->download();
@@ -363,10 +591,11 @@ final class UpdateChainTest extends DatabaseTestCase
      */
     public function testAReleaseWithTheWrongVersionFileIsRejected(): void
     {
+        // Built as 9.9.9 but published under the name of 1.1.0.
         $zip = $this->buildReleaseZip('9.9.9');
+        rename($zip, $this->base . '/vereinsbelege-v1.1.0.zip');
+        $zip = $this->base . '/vereinsbelege-v1.1.0.zip';
         $antworten = $this->githubAnswers('1.1.0', $zip);
-        $antworten['https://example.test/checksums.txt'] =
-            hash_file('sha256', $zip) . '  ' . basename($zip) . "\n";
 
         $this->service($antworten)->check();
         $this->service($antworten)->download();
