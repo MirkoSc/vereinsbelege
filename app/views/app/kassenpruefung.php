@@ -43,11 +43,7 @@ $buchungZelle = static function (Pruefbuchung $p): string {
         Vollständigkeitsbericht für einen Zeitraum: Salden je Konto am Anfang und Ende, Buchungen ohne Beleg,
         von Hand entschiedene Fälle und alle Buchungen mit ihrem Belegstatus. Zum Ausdrucken oder als CSV für Excel.
     </p>
-    <?php
-    $erstesJahr ??= 2000;
-    $letztesJahr ??= (int) date('Y') + 1;
-    require __DIR__ . '/../partials/zeitraum-filter.php';
-    ?>
+    <?php require __DIR__ . '/../partials/zeitraum-filter.php'; ?>
     <p class="nur-druck">
         Zeitraum <?= e($datum(($sichtbar ?? $auswahl->zeitraum)->von)) ?> bis <?= e($datum(($sichtbar ?? $auswahl->zeitraum)->bis)) ?>,
         erstellt am <?= e(date('d.m.Y H:i')) ?>
@@ -98,7 +94,10 @@ $buchungZelle = static function (Pruefbuchung $p): string {
             <?php endif; ?>
         </p>
         <?php if ($bericht->unlesbar > 0): ?>
-            <p class="hinweis hinweis-warnung"><?= e(sprintf('%d %s nicht entschlüsseln und %s nicht enthalten.', $bericht->unlesbar, $bericht->unlesbar === 1 ? 'Buchung oder Konto ließ sich' : 'Buchungen oder Konten ließen sich', $bericht->unlesbar === 1 ? 'ist' : 'sind')) ?></p>
+            <p class="hinweis hinweis-warnung"><?= e(sprintf('%d %s des Zeitraums %s nicht entschlüsseln und %s in den Listen.', $bericht->unlesbar, $bericht->unlesbar === 1 ? 'Buchung' : 'Buchungen', $bericht->unlesbar === 1 ? 'ließ sich' : 'ließen sich', $bericht->unlesbar === 1 ? 'fehlt' : 'fehlen')) ?></p>
+        <?php endif; ?>
+        <?php if ($bericht->saldenUnlesbar > 0): ?>
+            <p class="hinweis hinweis-warnung"><?= e(sprintf('%d %s nicht lesbar oder in einer anderen Währung als das Konto – die Salden sind unvollständig.', $bericht->saldenUnlesbar, $bericht->saldenUnlesbar === 1 ? 'Konto oder Buchung ist' : 'Konten oder Buchungen sind')) ?></p>
         <?php endif; ?>
         <?php if ($bericht->zuordnungUnlesbar() > 0): ?>
             <p class="hinweis hinweis-warnung"><?= e(sprintf('Bei %d %s ließ sich eine Zuordnung nicht entschlüsseln – der Belegstatus ist dort nicht prüfbar.', $bericht->zuordnungUnlesbar(), $bericht->zuordnungUnlesbar() === 1 ? 'Buchung' : 'Buchungen')) ?></p>
@@ -111,8 +110,9 @@ $buchungZelle = static function (Pruefbuchung $p): string {
             <div class="leer">In diesem Zeitraum gibt es kein Konto.</div>
         <?php else: ?>
             <?php if ($bericht->uebertrag): ?>
-                <p class="gedaempft">Der Anfangsbestand ist der Übertrag aus der Zeit vor dem für Sie freigegebenen Zeitraum.</p>
+                <p class="gedaempft">Der Anfangsbestand enthält den Übertrag aus der Zeit vor dem für Sie freigegebenen Zeitraum.</p>
             <?php endif; ?>
+            <?php $mitEroeffnung = array_filter($bericht->salden, static fn(\App\Service\Report\KontosaldoZeile $z): bool => $sichtbar->enthaelt($z->konto->openingDate)) !== []; ?>
             <div class="tabelle-rahmen">
                 <table class="tabelle">
                     <caption>Bestand am Anfang des <?= e($datum($sichtbar->von)) ?> und am Ende des <?= e($datum($sichtbar->bis)) ?>, Umbuchungen eingeschlossen</caption>
@@ -120,6 +120,9 @@ $buchungZelle = static function (Pruefbuchung $p): string {
                         <tr>
                             <th scope="col">Konto</th>
                             <th scope="col" class="zahl"><?= $bericht->uebertrag ? 'Anfang (Übertrag)' : 'Anfang' ?></th>
+                            <?php if ($mitEroeffnung): ?>
+                                <th scope="col" class="zahl">Eröffnung</th>
+                            <?php endif; ?>
                             <th scope="col" class="zahl">Zugänge</th>
                             <th scope="col" class="zahl">Abgänge</th>
                             <th scope="col" class="zahl">Ende</th>
@@ -132,10 +135,13 @@ $buchungZelle = static function (Pruefbuchung $p): string {
                                 <th scope="row">
                                     <?= e($z->konto->data->name) ?>
                                     <?php if ($sichtbar->enthaelt($z->konto->openingDate)): ?>
-                                        <br><span class="gedaempft klein">eröffnet am <?= e($datum($z->konto->openingDate)) ?> mit <?= e($geld($s->eroeffnung, $w)) ?></span>
+                                        <br><span class="gedaempft klein">eröffnet am <?= e($datum($z->konto->openingDate)) ?></span>
                                     <?php endif; ?>
                                 </th>
                                 <td class="zahl"><?= e($geld($s->anfang, $w)) ?></td>
+                                <?php if ($mitEroeffnung): ?>
+                                    <td class="zahl"><?= e($geld($s->eroeffnung, $w)) ?></td>
+                                <?php endif; ?>
                                 <td class="zahl"><?= e($geld($s->zugaenge, $w)) ?></td>
                                 <td class="zahl"><?= e($geld($s->abgaenge, $w)) ?></td>
                                 <td class="zahl"><strong><?= e($geld($s->ende, $w)) ?></strong></td>
@@ -254,6 +260,9 @@ $buchungZelle = static function (Pruefbuchung $p): string {
                                     <?= $buchungZelle($p) ?>
                                     <?php if ($p->buchung->istManuell()): ?>
                                         <br><span class="marke">von Hand erfasst</span>
+                                    <?php endif; ?>
+                                    <?php if ($p->nichtImSaldo !== null): ?>
+                                        <br><span class="marke marke-warnung">nicht im Saldo: <?= e($p->nichtImSaldo) ?></span>
                                     <?php endif; ?>
                                 </td>
                                 <td class="zahl"><?= e($geld($p->buchung->amount, $p->buchung->currency)) ?></td>

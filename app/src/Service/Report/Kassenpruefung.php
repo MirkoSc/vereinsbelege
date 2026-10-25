@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Service\Report;
 
 use App\Domain\Allocation;
+use App\Domain\BankAccount;
+use App\Domain\BankTransaction;
 use App\Domain\BankTransactionRecord;
 use App\Domain\Zugriffsbereich;
 use App\Repository\BankTransactionRepository;
@@ -53,20 +55,26 @@ final readonly class Kassenpruefung
     public function bericht(Vault $vault, Zeitraum $zeitraum, Zugriffsbereich $buchungsbereich, Zugriffsbereich $belegbereich): KassenpruefungBericht
     {
         $sichtbar = $zeitraum->begrenztAuf($buchungsbereich);
-        // Bookings carry no cost center: a cost-center scope sees none (01 §4).
+        // Bookings carry no cost center: a cost-center scope would see none
+        // (01 §4). `bank.view` cannot be cost-center scoped today
+        // (Permission::kostenstellenFaehig()) - this only keeps it that way.
         if ($sichtbar === null || $buchungsbereich->kostenstellen !== null) {
             return new KassenpruefungBericht($zeitraum, null, [], []);
         }
 
-        ['konten' => $konten, 'bewegungen' => $bewegungen, 'unlesbar' => $unlesbar] = $this->quelle->kontobewegungen($vault, $zeitraum, $buchungsbereich);
-        $salden = [];
-        $kontoNamen = [];
+        ['konten' => $konten, 'bewegungen' => $bewegungen, 'unlesbar' => $saldenUnlesbar] = $this->quelle->kontobewegungen($vault, $zeitraum, $buchungsbereich);
+        $kontenNachId = [];
         foreach ($konten as $konto) {
-            $kontoNamen[$konto->id] = $konto;
+            $kontenNachId[$konto->id] = $konto;
         }
+        $salden = [];
         foreach ($this->quelle->rechner()->kontosalden($konten, $bewegungen, $zeitraum, $buchungsbereich) as $saldo) {
-            $salden[] = new KontosaldoZeile($kontoNamen[$saldo->kontoId], $saldo);
+            $salden[] = new KontosaldoZeile($kontenNachId[$saldo->kontoId], $saldo);
         }
+        // The opening balance holds a carry-over (E-44) when the scope cuts
+        // off bookings of an account that existed before its start.
+        $ab = $buchungsbereich->von?->format('Y-m-d');
+        $uebertrag = $ab !== null && array_filter($konten, static fn(BankAccount $k): bool => $k->openingDate->format('Y-m-d') < $ab) !== [];
 
         // liste() is newest first; the report reads oldest first.
         $records = array_reverse($this->buchungen->liste(new BuchungFilter(von: $sichtbar->von, bis: $sichtbar->bis), $buchungsbereich));
@@ -74,6 +82,7 @@ final readonly class Kassenpruefung
         $belege = $this->belege($vault, $zuordnungen, $belegbereich);
 
         $buchungen = [];
+        $unlesbar = 0;
         foreach ($records as $record) {
             try {
                 $buchung = Buchungen::entschluesseln($vault, $record);
@@ -81,16 +90,34 @@ final readonly class Kassenpruefung
                 ++$unlesbar;
                 continue;
             }
-            $liste = $zuordnungen[$record->id] ?? [];
+            // null = an allocation of this booking did not decrypt.
+            $liste = array_key_exists($record->id, $zuordnungen) ? $zuordnungen[$record->id] : [];
+            $konto = $kontenNachId[$buchung->accountId] ?? null;
             $buchungen[] = new Pruefbuchung(
                 $buchung,
-                isset($kontoNamen[$buchung->accountId]) ? $kontoNamen[$buchung->accountId]->data->name : 'Konto ' . $buchung->accountId,
+                $konto?->data->name ?? 'Konto ' . $buchung->accountId,
                 array_map(static fn(Allocation $a): Pruefzuordnung => new Pruefzuordnung($a, $belege[$a->invoiceId] ?? null), self::sortiert($liste ?? [])),
                 $liste === null,
+                self::nichtImSaldo($buchung, $konto),
             );
         }
 
-        return new KassenpruefungBericht($zeitraum, $sichtbar, $salden, $buchungen, $buchungsbereich->von !== null, $unlesbar);
+        return new KassenpruefungBericht($zeitraum, $sichtbar, $salden, $buchungen, $uebertrag, $unlesbar, $saldenUnlesbar);
+    }
+
+    /**
+     * Why a listed booking is not in its account's balance - the same rules
+     * as Auswertungsdaten::kontobewegungen() and ReportService::
+     * kontosalden(), so the auditor can reconcile list and balances.
+     */
+    private static function nichtImSaldo(BankTransaction $buchung, ?BankAccount $konto): ?string
+    {
+        return match (true) {
+            $konto === null => 'Konto nicht lesbar',
+            strtoupper($buchung->currency) !== strtoupper($konto->currency) => 'andere Währung als das Konto',
+            $buchung->bookingDate->format('Y-m-d') < $konto->openingDate->format('Y-m-d') => 'vor der Kontoeröffnung',
+            default => null,
+        };
     }
 
     /**
@@ -116,10 +143,7 @@ final readonly class Kassenpruefung
 
         $namen = [];
         $belege = [];
-        foreach ($this->belege->mitDokumentStatus($ids) as $id => ['record' => $record, 'status' => $status]) {
-            if (!$belegbereich->erlaubt($record->costCenterId, $record->invoiceDate)) {
-                continue;
-            }
+        foreach ($this->belege->mitDokumentStatus($ids, $belegbereich) as $id => ['record' => $record, 'status' => $status]) {
             try {
                 $nummer = Pruefung::entschluesseln($vault, $record)->invoiceNumber;
             } catch (CryptoException | \JsonException) {

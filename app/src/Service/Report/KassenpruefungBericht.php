@@ -25,13 +25,19 @@ final readonly class KassenpruefungBericht
         public array $salden,
         public array $buchungen,
         /**
-         * The period scope cuts the start: the opening balance is the
-         * carry-over of everything before the released period (E-44),
-         * not a sum the reader could check against single bookings.
+         * The period scope cuts the start of an account that existed before
+         * it: its opening balance includes the carry-over of everything
+         * before the released period (E-44), not a sum the reader could
+         * check against single bookings.
          */
         public bool $uebertrag = false,
-        /** Bookings or accounts that could not be decrypted - left out, never guessed. */
+        /** Bookings of the period that could not be decrypted - not in the list, never guessed. */
         public int $unlesbar = 0,
+        /**
+         * Accounts or bookings left out of the balances (unreadable, or in
+         * another currency than their account) - the balances are incomplete.
+         */
+        public int $saldenUnlesbar = 0,
     ) {
     }
 

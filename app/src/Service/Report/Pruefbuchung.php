@@ -18,12 +18,16 @@ final readonly class Pruefbuchung
     /**
      * @param list<Pruefzuordnung> $zuordnungen in allocation order
      * @param bool $zuordnungUnlesbar an allocation of it could not be decrypted
+     * @param string|null $nichtImSaldo why the booking is not part of its
+     *        account's balance (before the opening date, other currency,
+     *        account unreadable); null = it is
      */
     public function __construct(
         public BankTransaction $buchung,
         public string $konto,
         public array $zuordnungen,
         public bool $zuordnungUnlesbar = false,
+        public ?string $nichtImSaldo = null,
     ) {
     }
 
@@ -46,7 +50,7 @@ final readonly class Pruefbuchung
      */
     public function ohneBeleg(): int
     {
-        if ($this->buchung->docStatus !== BankTransactionDocStatus::Fehlt && $this->buchung->docStatus !== BankTransactionDocStatus::Teilweise) {
+        if (!$this->fehltBeleg()) {
             return 0;
         }
 

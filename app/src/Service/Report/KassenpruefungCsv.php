@@ -69,11 +69,12 @@ final class KassenpruefungCsv
                     ...array_map(static fn(Pruefzuordnung $z): string => $z->bezeichnung() . ' ' . Betrag::format($z->zuordnung->amount), $p->zuordnungen),
                     ...($p->zuordnungUnlesbar ? ['Zuordnung nicht lesbar'] : []),
                 ]),
+                $p->nichtImSaldo === null ? null : 'nicht im Saldo: ' . $p->nichtImSaldo,
             ];
         }
 
         return new Berichtstabelle(
-            ['Datum', 'Konto', 'Gegenseite', 'Verwendungszweck', 'Betrag', 'Währung', 'Erfasst über', 'Belegstatus', 'Zugeordnet', 'Ohne Beleg', 'Belege'],
+            ['Datum', 'Konto', 'Gegenseite', 'Verwendungszweck', 'Betrag', 'Währung', 'Erfasst über', 'Belegstatus', 'Zugeordnet', 'Ohne Beleg', 'Belege', 'Hinweis'],
             $zeilen,
         );
     }

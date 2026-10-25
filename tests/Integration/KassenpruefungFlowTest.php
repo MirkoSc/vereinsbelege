@@ -121,9 +121,9 @@ final class KassenpruefungFlowTest extends DatabaseTestCase
         self::assertSame('2', $this->kennzahl($seite->body, 'Von Hand entschieden'));
 
         // Girokonto: 1.000,00 - 9,99 before 2025; +500,00; -8,00 -120,00 -30,00 -50,00 -15,00 -10,00 (transfer).
-        self::assertMatchesRegularExpression('#Girokonto\s*</th>\s*<td class="zahl">990,01 €</td>\s*<td class="zahl">500,00 €</td>\s*<td class="zahl">233,00 €</td>\s*<td class="zahl"><strong>1\.257,01 €#', $seite->body);
+        self::assertMatchesRegularExpression('#Girokonto\s*</th>\s*<td class="zahl">990,01 €</td>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">500,00 €</td>\s*<td class="zahl">233,00 €</td>\s*<td class="zahl"><strong>1\.257,01 €#', $seite->body);
         // Kasse: opened in 2025 with 50,00, -15,00, +10,00 (transfer).
-        self::assertMatchesRegularExpression('#Kasse\s*<br><span class="gedaempft klein">eröffnet am 01\.02\.2025 mit 50,00 €</span>\s*</th>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">10,00 €</td>\s*<td class="zahl">15,00 €</td>\s*<td class="zahl"><strong>45,00 €#', $seite->body);
+        self::assertMatchesRegularExpression('#Kasse\s*<br><span class="gedaempft klein">eröffnet am 01\.02\.2025</span>\s*</th>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">50,00 €</td>\s*<td class="zahl">10,00 €</td>\s*<td class="zahl">15,00 €</td>\s*<td class="zahl"><strong>45,00 €#', $seite->body);
         self::assertStringNotContainsString('(Übertrag)', $seite->body);
 
         $ohneBeleg = $this->abschnitt($seite->body, 'kp-ohne-beleg');
@@ -208,7 +208,7 @@ final class KassenpruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Anfang (Übertrag)', $seite->body);
         self::assertStringContainsString('Übertrag aus der Zeit vor dem für Sie freigegebenen Zeitraum', $seite->body);
         // Girokonto at the end of June: 990,01 + 500 - 8 - 120 - 30 - 50.
-        self::assertMatchesRegularExpression('#Girokonto\s*</th>\s*<td class="zahl">990,01 €</td>\s*<td class="zahl">500,00 €</td>\s*<td class="zahl">208,00 €</td>\s*<td class="zahl"><strong>1\.282,01 €#', $seite->body);
+        self::assertMatchesRegularExpression('#Girokonto\s*</th>\s*<td class="zahl">990,01 €</td>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">500,00 €</td>\s*<td class="zahl">208,00 €</td>\s*<td class="zahl"><strong>1\.282,01 €#', $seite->body);
         self::assertSame('6', $this->kennzahl($seite->body, 'Buchungen'));
         self::assertStringNotContainsString('Kontoführung', $seite->body, 'July is outside the released period');
         self::assertStringNotContainsString('Vorjahr', $seite->body, 'no single booking before it');
@@ -275,6 +275,38 @@ final class KassenpruefungFlowTest extends DatabaseTestCase
         self::assertSame(403, $csv->status);
         self::assertStringNotContainsString('Girokonto', $csv->body);
         self::assertStringNotContainsString('text/csv', $csv->headers['Content-Type'] ?? '');
+    }
+
+    public function testWhatIsListedButNotInABalanceOrNotReadableIsSaid(): void
+    {
+        $giro = $this->bankkonto('Girokonto', '2025-01-01', '100,00');
+        $kasse = $this->bankkonto('Kasse', '2025-03-01', '0,00');
+        // Entered before the box was opened: listed, but not in its balance.
+        $this->buchung($kasse, '2025-02-20', -500, 'Vorab');
+        // An allocation whose ciphertext is damaged.
+        $sport = $this->buchung($giro, '2025-05-01', -3000, 'Sportshop');
+        $this->zuordnen($this->beleg(3000, 'Ballhaus GmbH', 'R-1'), $sport, 3000, ZuordnungMethode::Manuell);
+        $this->pdo()->prepare('UPDATE allocation SET amount_enc = ? WHERE transaction_id = ?')->execute([random_bytes(40), $sport]);
+        // A booking that does not decrypt at all.
+        $kaputt = $this->buchung($giro, '2025-06-01', -100, 'Kaputt');
+        $this->pdo()->prepare('UPDATE bank_transaction SET data_enc = ? WHERE id = ?')->execute([random_bytes(60), $kaputt]);
+
+        $seite = $this->get('/app/auswertung/kassenpruefung', ['art' => 'jahr', 'jahr' => '2025']);
+
+        self::assertSame(200, $seite->status);
+        self::assertStringContainsString('nicht im Saldo: vor der Kontoeröffnung', $seite->body);
+        self::assertMatchesRegularExpression('#Kasse\s*<br><span class="gedaempft klein">eröffnet am 01\.03\.2025</span>\s*</th>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">0,00 €</td>\s*<td class="zahl">0,00 €</td>#', $seite->body);
+        self::assertStringContainsString('Zuordnung nicht lesbar', $seite->body);
+        self::assertStringContainsString('Bei 1 Buchung ließ sich eine Zuordnung nicht entschlüsseln', $seite->body);
+        // The broken booking is counted once - in the list, and once for the balances.
+        self::assertStringContainsString('1 Buchung des Zeitraums ließ sich nicht entschlüsseln und fehlt in den Listen.', $seite->body);
+        self::assertStringContainsString('1 Konto oder Buchung ist nicht lesbar oder in einer anderen Währung als das Konto', $seite->body);
+        self::assertStringNotContainsString('Kaputt', $seite->body);
+        self::assertSame('2', $this->kennzahl($seite->body, 'Buchungen'));
+
+        $csv = $this->get('/app/auswertung/kassenpruefung/buchungen.csv', ['art' => 'jahr', 'jahr' => '2025'])->body;
+        self::assertStringContainsString(';Vorab;Zweck;-5,00;EUR;Kontoauszug;Beleg fehlt;0,00;5,00;;nicht im Saldo: vor der Kontoeröffnung', $csv);
+        self::assertStringContainsString(';Zuordnung nicht lesbar;', $csv);
     }
 
     public function testAMalformedPeriodFallsBackToTheLastYear(): void
