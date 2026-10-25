@@ -59,7 +59,8 @@ Erweiterungen im `/install`-Flow:
 6. „Frische Installation" oder „Backup einspielen"
 
 Stand M3-2 (issue #15): Schritt 1, 3, 4 und 6 sind umgesetzt, dazu alle
-Migrationen ab 0 und der Release-Kanal. 5 kommt mit M3-1 (Mail) – Schritt 2,
+Migrationen ab 0 und der Release-Kanal. Schritt 5 kam mit issue #249 (siehe
+„Mail-Schritt“ unten). Schritt 2,
 den Server-Schlüssel, erzeugt der fertige Flow schon eine Anfrage vor Schritt
 3, weil `ServerCrypto` das Sperren der E-Mail-Adresse des ersten Admins
 braucht, bevor `config.php` geschrieben werden darf (siehe unten). Den Kanal
@@ -77,7 +78,8 @@ Klartext auf Platte liegen – auch nicht in der PHP-Session-Datei. Deshalb
 schreibt schon das Absenden des Formulars Tresor, ersten Admin, `user_key`
 und `vault_grant` in die Datenbank; `config.php` und damit der Abschluss
 kommen erst, wenn die letzte Gruppe des angezeigten Wiederherstellungs-
-schlüssels bestätigt ist. Drei Requests:
+schlüssels bestätigt und der Mail-Schritt erledigt oder übersprungen ist.
+Die Requests:
 1. `POST /install` (`modus=frisch`): Migrationen, Kanal-Setting, `Vault::create()`,
    `UserKeyPair::create()`, `UserKey::wrap()`, `VaultGrant::seal()`,
    `password_hash()` (`PASSWORD_ARGON2ID`, Fallback `PASSWORD_BCRYPT`, 01 §3).
@@ -86,9 +88,25 @@ schlüssels bestätigt ist. Drei Requests:
    (`$_SESSION['install_admin']`, wie schon `install_restore` bei der
    Wiederherstellung). Die Seite zeigt den Schlüssel **einmalig**.
 2. `POST /install/schluessel`: stimmt die eingetippte Gruppe (verglichen als
-   Hash, über `RecoveryKey::normalizeGroup()`), schreibt `ConfigWriter::write()`
-   den Server-Schlüssel nach `config.php` – das schließt den Installer. Sonst
-   422, der Schlüssel wird nicht erneut angezeigt.
+   Hash, über `RecoveryKey::normalizeGroup()`), setzt sie
+   `$_SESSION['install_admin']['phase'] = 'mail'`, verwirft den Hash und
+   zeigt den Mail-Schritt (bis issue #249 schrieb schon dieser Request
+   `config.php`). Sonst 422, der Schlüssel wird nicht erneut angezeigt.
+2a. `POST /install/mail` (**Mail-Schritt**, issue #249, E-71): dieselben
+   Felder wie `/admin/mail` (geprüft von `MailSettings::eingabeFehler()`,
+   das beide teilen) plus „Testmail an“ (vorbelegt mit der Adresse des
+   ersten Admins, die auch als Absender vorgeschlagen wird). `aktion`:
+   `testen` speichert die Einstellungen und schickt die Testmail
+   (`Mailer::sendeTestmail()`, Ergebnis auf der Seite, der Schritt bleibt
+   offen), `abschliessen` speichert und schließt ab, `ueberspringen`
+   schließt ohne Mail-Einstellungen ab – die Abschlussseite weist dann auf
+   `/admin/mail` hin. Gespeichert wird sofort in `setting`, das Passwort mit
+   dem Server-Schlüssel aus der Session verschlüsselt – genau die Zeilen,
+   die `/admin/mail` später liest; in die Session kommt nichts davon. Ein
+   leeres Passwortfeld behält ein schon gespeichertes. Erst `abschliessen`
+   oder `ueberspringen` schreiben mit `ConfigWriter::write()` den
+   Server-Schlüssel nach `config.php` – das schließt den Installer. Neu
+   laden oder eine erneute Bestätigung zeigt wieder den Mail-Schritt.
 3. `POST /install/neu` („Neu beginnen“): für den Fall, dass der Browser vor
    der Bestätigung geschlossen wurde – entfernt Admin und Tresor wieder
    (`FirstAdminSetup::remove()`, über die Fremdschlüssel aus
@@ -153,7 +171,10 @@ Gruppe verrät den Schlüssel nicht erneut, Admin-Zeile per Server-Schlüssel
 verschlüsselt und über den Blind Index auffindbar, `vault_grant` öffnet mit
 dem Passwort denselben Tresor wie `vault.public_key`, der
 Wiederherstellungsschlüssel ebenso und landet in keiner Spalte, erneutes
-Absenden legt keinen zweiten Admin an, „Neu beginnen“ räumt auf, bereits
+Absenden legt keinen zweiten Admin an, „Neu beginnen“ räumt auf, Mail-Schritt
+nach der Bestätigung: überspringbar, Testmail speichert und bleibt offen,
+Fehler behält Eingaben ohne Passwort, SMTP-Passwort nie in der Session und mit
+dem Server-Schlüssel aus `config.php` lesbar, ohne bestätigten Schlüssel 409, bereits
 vorhandener Tresor wird abgelehnt, ungültige E-Mail/zu kurzes/bekanntes/nicht
 übereinstimmendes Passwort); `PasswordPolicyTest` (Mindestlänge in Zeichen
 nicht Bytes, Liste vorhanden); `tests/js/update.test.js` (Reihenfolge der
@@ -573,7 +594,7 @@ Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
   `mail_antwort_an`, `mail_vereinsname`). SPF/DKIM beim Hoster einrichten
   (Anleitung für den Verein: `docs/betrieb.md` §4).
 - Admin: Testmail senden, Queue einsehen (Empfänger maskiert, Betreff wird
-  gar nicht angezeigt).
+  gar nicht angezeigt), Abstand der Erinnerungs-Mails (§4) wählen.
 
   **Stand M3-1** (issue #14): kein SMTP-Paket als Abhängigkeit – ein
   Roh-Socket-Client (`App\Service\Mail\SmtpTransport` +
@@ -687,6 +708,32 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     Session-Indexe der Volltextsuche unter `shared/var/tmp/suche/`, deren
     neueste Datei älter als 24 h ist – Sessions, die ohne Abmelden endeten.
     Nur Dateizeiten, kein Tresor, keine DB.
+  - *Rückfall vom Worker* (07 §6, issue #53): `WorkerFallbackTask`
+    (`worker_fallback`, in `jedesMal`) ist mit dieser Regel vereinbar
+    (geprüft in issue #249): er setzt nur Strukturfelder freier Worker-Jobs
+    um (`executor`, `status`, Schritt/Zustand/Versuche), löscht Grants und
+    nicht festgeschriebene Uploads und markiert Artefakte – nichts davon
+    wird gelesen oder entschlüsselt. Geöffnet werden nur die Mail-Adressen
+    der Admins für die Alarm-Mail (Server-Schlüssel, Betriebsdaten).
+  - *Erinnerungs-Mails* (issue #249, E-71): `ErinnerungTask`
+    (`erinnerung_offene_belege`, in `jedesMal`, **vor** `mail_versenden`,
+    damit die Mail im selben Lauf rausgeht; App\Service\Mail\
+    OffeneBelegeErinnerung). Empfänger: alle anmeldefähigen Konten mit
+    `document.edit` (wie die Mail zur neuen Einreichung, 03 §1). Inhalt:
+    genau zwei Zahlen, je Konto in dessen Scope in SQL gezählt – Posteingang
+    „Offen“ (`eingegangen` und fällige Wiedervorlagen, nur mit
+    `inbox.view`) und „Belege in Prüfung“ (`DocumentStatus::pruefbare()`),
+    dieselben Zähler wie die Startseite (05). Keine Referenz, kein Name,
+    kein Betrag, kein Datum; ein Link nur mit eingestellter
+    `oeffentliche_url` (der Cron hat keinen Request-Host, §3). Wer nichts
+    offen hat, bekommt keine Mail. Abstand über das Setting
+    `erinnerung_intervall_tage` auf `/admin/mail`: `0` aus, `1` täglich,
+    `7` wöchentlich (Standard; unbekannte Werte zählen als 7). Fällig beim
+    ersten Lauf ab 7 Uhr an dem Tag, an dem seit `erinnerung_letzter_lauf`
+    (Y-m-d) der Abstand vergangen ist; der Tag wird **vor** dem Einreihen
+    gesetzt, ein abgebrochener Lauf mailt also niemanden doppelt (er lässt
+    eher eine Erinnerung aus). Nicht je Benutzer abschaltbar – die Spec
+    sieht keine Benutzer-Einstellungen vor (E-71).
   - *Wartungsmodus:* der Shim lässt `/cron` nicht durch (nur `/admin`, `/css/`,
     `/js/`); der Aufruf bekommt 503 und der nächste Minutenlauf holt nach.
   - *Antwort:* JSON `status` (`ok`/`fehler`/`laeuft_bereits`), `aufgaben`,
@@ -707,7 +754,12 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   abgelaufene Sperre wird übernommen, Sperre nach Absturz frei, fremde Sperre
   bleibt bei `release`, Aufräumen einmal je Intervall und konfigurierbar,
   fehlschlagender Task ohne Meldung in der Antwort); `CronTokenTest`
-  (Token-Prüfung ohne Datenbank).
+  (Token-Prüfung ohne Datenbank); `OffeneBelegeErinnerungTest` (nur aktive
+  Konten mit `document.edit`, beide Zähler, Wiedervorlage erst ab Datum,
+  ohne Offenes keine Mail, wöchentlich/täglich/aus, nicht vor 7 Uhr, höchstens
+  einmal am Tag, kein Link ohne `oeffentliche_url`, keine Belegdaten,
+  unlesbare Adresse wird übersprungen); `MailControllerTest` (Abstand
+  speichern, unbekannter Wert und fehlendes CSRF ändern nichts).
 
   **Stand M4-7 (issue #29):** der Browser-Worker treibt `executor=session`-
   Jobs an, solange eine angemeldete Person eine Seite offen hat.

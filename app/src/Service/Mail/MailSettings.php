@@ -35,6 +35,39 @@ final readonly class MailSettings
     ) {
     }
 
+    /**
+     * What is wrong with a submitted form, or null - shared by /admin/mail
+     * and the installer's mail step (issue #249), so both accept the same.
+     */
+    public static function eingabeFehler(
+        string $transport,
+        string $host,
+        int $port,
+        ?SmtpSecurity $sicherheit,
+        string $absender,
+        string $antwortAn,
+    ): ?string {
+        if (filter_var($absender, FILTER_VALIDATE_EMAIL) === false) {
+            return 'Bitte eine gültige Absenderadresse angeben.';
+        }
+        if ($antwortAn !== '' && filter_var($antwortAn, FILTER_VALIDATE_EMAIL) === false) {
+            return 'Die Antwort-an-Adresse ist keine gültige E-Mail-Adresse.';
+        }
+        if ($transport === 'smtp') {
+            if ($host === '') {
+                return 'Bitte einen SMTP-Server angeben.';
+            }
+            if ($port < 1 || $port > 65535) {
+                return 'Der Port muss zwischen 1 und 65535 liegen.';
+            }
+            if ($sicherheit === null) {
+                return 'Bitte eine Verschlüsselung auswählen.';
+            }
+        }
+
+        return null;
+    }
+
     /** Whether sending can be attempted at all - checked before every attempt. */
     public function istVollstaendig(): bool
     {

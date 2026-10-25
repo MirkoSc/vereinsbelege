@@ -187,6 +187,23 @@ final readonly class Mailer
     }
 
     /**
+     * The reminder "N Belege warten auf Prüfung" (issue #249, App\Service\
+     * Mail\OffeneBelegeErinnerung). Counts and a link only. Queued by the
+     * cron, sent with the next queue run.
+     */
+    public function reiheErinnerungEin(string $empfaenger, int $posteingang, int $pruefung, ?string $basis, ?\DateTimeImmutable $now = null): void
+    {
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('erinnerung-offen', [
+            'vereinsname' => $settings->vereinsname,
+            'posteingang' => $posteingang,
+            'pruefung' => $pruefung,
+            'link' => $basis === null ? null : $basis . '/',
+        ]);
+        $this->queue->enqueue($empfaenger, 'Erinnerung: offene Belege', $body, $now ?? new \DateTimeImmutable());
+    }
+
+    /**
      * "Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
      * geändert, Tresor-Freigabe erteilt/entzogen" (docs/spec/01-sicherheit.md
      * section 3). $ereignis is one sentence from a fixed list the caller

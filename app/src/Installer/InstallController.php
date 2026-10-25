@@ -9,10 +9,19 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Repository\MailQueueRepository;
 use App\Repository\SettingRepository;
 use App\Service\Account\PasswordPolicy;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\RecoveryKey;
+use App\Service\Crypto\ServerCrypto;
+use App\Service\Mail\Mailer;
+use App\Service\Mail\MailSettings;
+use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\MailTemplates;
+use App\Service\Mail\MailTransport;
+use App\Service\Mail\PublicUrl;
+use App\Service\Mail\SmtpSecurity;
 use App\Service\Migration\Migrator;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
@@ -41,8 +50,12 @@ use App\View\View;
  *   submit()     modus=frisch: migrate, create vault + admin, show the
  *                recovery key once, remember its hash in the session as
  *                $_SESSION['install_admin'].
- *   confirmKey() the last group typed back; right hash -> config.php written,
- *                install closed; wrong hash -> ask again, key never re-shown.
+ *   confirmKey() the last group typed back; right hash -> on to the mail
+ *                step; wrong hash -> ask again, key never re-shown.
+ *   mail()       step 5 of the spec (issue #249): SMTP settings plus a test
+ *                mail, or skipped; either way config.php is written now,
+ *                install closed. The settings go straight to the database
+ *                (password under the server key), never into the session.
  *   restart()    "Neu beginnen": browser was closed before confirming: the
  *                half-finished vault/admin are removed so the form can be
  *                submitted again.
@@ -73,6 +86,9 @@ final readonly class InstallController
     /** $_SESSION['install_restore']['phase'] while the access step is open. */
     public const string PHASE_ZUGANG = 'zugang';
 
+    /** $_SESSION['install_admin']['phase'] once the recovery key is confirmed (issue #249). */
+    public const string PHASE_MAIL = 'mail';
+
     public function __construct(
         private View $view,
         private Paths $paths,
@@ -84,6 +100,8 @@ final readonly class InstallController
          * @var (\Closure(string): bool)|null
          */
         private ?\Closure $istUpload = null,
+        /** Test seam for the mail step's test mail, like Mailer's own. */
+        private ?MailTransport $mailTransport = null,
     ) {
     }
 
@@ -92,7 +110,7 @@ final readonly class InstallController
         $this->session->start();
 
         if (is_array($_SESSION['install_admin'] ?? null)) {
-            return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+            return $this->renderPending();
         }
         if ($this->pendingAccess() !== null) {
             return $this->renderAccess();
@@ -127,7 +145,7 @@ final readonly class InstallController
         // a second vault/admin - the pending confirmation step is shown
         // again instead of processing the form a second time.
         if (is_array($_SESSION['install_admin'] ?? null)) {
-            return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+            return $this->renderPending();
         }
         // Likewise a restore that only waits for its access step: the data
         // is in, submitting the form again must not start another one.
@@ -254,6 +272,11 @@ final readonly class InstallController
             ], 409);
         }
 
+        if (($stand['phase'] ?? null) === self::PHASE_MAIL) {
+            // Confirmed already (back button): the mail step is next.
+            return $this->renderMail($stand);
+        }
+
         $eingabe = RecoveryKey::normalizeGroup((string) ($request->post['schluessel_letzte_gruppe'] ?? ''));
         $stimmtUeberein = hash_equals((string) $stand['confirm_hash'], hash('sha256', $eingabe));
 
@@ -265,14 +288,124 @@ final readonly class InstallController
             ], 422);
         }
 
-        /** @var array<string, string> $dbValues */
-        $dbValues = $stand['db'];
-        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+        $_SESSION['install_admin']['phase'] = self::PHASE_MAIL;
+        // The hash has done its job; nothing else may confirm with it.
+        unset($_SESSION['install_admin']['confirm_hash']);
 
-        unset($_SESSION['install_admin']);
-        $this->cleanUpSetupLeftovers();
+        return $this->renderMail($_SESSION['install_admin']);
+    }
 
-        return $this->render(['fertig' => true, 'errors' => [], 'values' => []]);
+    /**
+     * Step 5 of docs/spec/06-betrieb.md section 1 (issue #249): mail
+     * settings plus a test mail - skippable. `aktion` is `testen` (save,
+     * send the test mail, stay), `abschliessen` (save, finish) or
+     * `ueberspringen` (finish without mail settings). Finishing writes
+     * config.php, which closes /install.
+     *
+     * The settings land in the database right away, the password encrypted
+     * with the server key that config.php gets at the end - the same row
+     * /admin/mail writes later. Nothing of it goes into the session.
+     */
+    public function mail(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->render([
+                'schritt' => 'mail',
+                'errors' => ['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'],
+                'values' => [],
+                'mail' => null,
+            ], 403);
+        }
+
+        $stand = $_SESSION['install_admin'] ?? null;
+        if (!is_array($stand) || ($stand['phase'] ?? null) !== self::PHASE_MAIL || !is_array($stand['db'] ?? null)) {
+            return $this->render([
+                'errors' => [],
+                'values' => ['kanal' => $this->channelFromSetup()],
+            ], 409);
+        }
+
+        $aktion = (string) ($request->post['aktion'] ?? '');
+        if ($aktion === 'ueberspringen') {
+            return $this->finishFresh($stand, false);
+        }
+        if ($aktion !== 'testen' && $aktion !== 'abschliessen') {
+            return $this->renderMail($stand, ['mail' => 'Unbekannte Aktion.'], 422);
+        }
+
+        $transport = (string) ($request->post['transport'] ?? 'smtp');
+        $transport = $transport === 'php_mail' ? 'php_mail' : 'smtp';
+        $host = trim((string) ($request->post['host'] ?? ''));
+        $port = (int) ($request->post['port'] ?? 587);
+        $sicherheit = SmtpSecurity::tryFrom((string) ($request->post['sicherheit'] ?? ''));
+        $benutzer = trim((string) ($request->post['benutzer'] ?? ''));
+        $passwort = (string) ($request->post['passwort'] ?? '');
+        $absender = trim((string) ($request->post['absender'] ?? ''));
+        $antwortAn = trim((string) ($request->post['antwort_an'] ?? ''));
+        $vereinsname = trim((string) ($request->post['vereinsname'] ?? ''));
+        $urlEingabe = trim((string) ($request->post['oeffentliche_url'] ?? ''));
+        $empfaenger = trim((string) ($request->post['empfaenger'] ?? ''));
+
+        $fehler = MailSettings::eingabeFehler($transport, $host, $port, $sicherheit, $absender, $antwortAn);
+        $url = $urlEingabe === '' ? '' : PublicUrl::normalize($urlEingabe);
+        if ($fehler === null && $url === null) {
+            $fehler = 'Die Adresse der Installation muss mit https:// beginnen und darf nur aus Schema, Host und ggf. Port bestehen.';
+        }
+        if ($fehler === null && $aktion === 'testen' && filter_var($empfaenger, FILTER_VALIDATE_EMAIL) === false) {
+            $fehler = 'Bitte eine gültige Empfängeradresse für die Testmail angeben.';
+        }
+
+        $pdo = $this->connect($stand['db']);
+        $repo = $this->mailSettings($pdo, (string) $stand['server_key']);
+        if ($fehler !== null) {
+            // What was typed comes back - never the password.
+            $gespeichert = $repo->get();
+
+            return $this->renderMail($stand, ['mail' => $fehler], 422, new MailSettings(
+                transport: $transport,
+                host: $host,
+                port: $port,
+                sicherheit: $sicherheit ?? $gespeichert->sicherheit,
+                benutzer: $benutzer,
+                passwort: '',
+                passwortGesetzt: $gespeichert->passwortGesetzt,
+                absender: $absender,
+                antwortAn: $antwortAn,
+                vereinsname: $vereinsname,
+                oeffentlicheUrl: $urlEingabe,
+            ), $empfaenger);
+        }
+
+        $repo->save(
+            transport: $transport,
+            host: $host,
+            port: $port,
+            sicherheit: $sicherheit ?? SmtpSecurity::Starttls,
+            benutzer: $benutzer,
+            // Empty keeps a password saved by an earlier test in this step.
+            neuesPasswort: $passwort === '' ? null : $passwort,
+            absender: $absender,
+            antwortAn: $antwortAn,
+            vereinsname: $vereinsname,
+            oeffentlicheUrl: $url,
+        );
+
+        if ($aktion === 'abschliessen') {
+            return $this->finishFresh($stand, true);
+        }
+
+        $ergebnis = new Mailer(
+            new MailQueueRepository($pdo, $this->serverCrypto((string) $stand['server_key'])),
+            $repo,
+            new MailTemplates($this->paths->viewsDir() . '/mail'),
+            $this->mailTransport,
+        )->sendeTestmail($empfaenger);
+
+        return $this->renderMail($stand, [], 200, null, $empfaenger, $ergebnis->erfolg
+            ? ['ok' => true, 'text' => 'Testmail wurde versendet. Bitte den Posteingang prüfen und dann abschließen.']
+            : ['ok' => false, 'text' => 'Testmail konnte nicht versendet werden: ' . ($ergebnis->fehlermeldung ?? 'unbekannter Fehler.')]);
     }
 
     /**
@@ -611,6 +744,92 @@ final readonly class InstallController
             'errors' => [],
             'values' => [],
         ]);
+    }
+
+    /**
+     * The last request of a fresh install: config.php (which closes
+     * /install), the leftovers of setup.php, the session state.
+     *
+     * @param array<string, mixed> $stand $_SESSION['install_admin']
+     */
+    private function finishFresh(array $stand, bool $mailEingerichtet): Response
+    {
+        /** @var array<string, string> $dbValues */
+        $dbValues = $stand['db'];
+        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+
+        unset($_SESSION['install_admin']);
+        $this->cleanUpSetupLeftovers();
+
+        return $this->render(['fertig' => true, 'mailEingerichtet' => $mailEingerichtet, 'errors' => [], 'values' => []]);
+    }
+
+    /** The open step of a fresh install: confirming the key, or the mail step after it. */
+    private function renderPending(): Response
+    {
+        $stand = $_SESSION['install_admin'] ?? null;
+        if (is_array($stand) && ($stand['phase'] ?? null) === self::PHASE_MAIL) {
+            return $this->renderMail($stand);
+        }
+
+        return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
+    }
+
+    /**
+     * @param array<string, mixed> $stand $_SESSION['install_admin']
+     * @param array<string, string> $errors
+     * @param MailSettings|null $eingabe what the form shows; null = what is saved
+     * @param array{ok: bool, text: string}|null $testergebnis
+     */
+    private function renderMail(
+        array $stand,
+        array $errors = [],
+        int $status = 200,
+        ?MailSettings $eingabe = null,
+        ?string $empfaenger = null,
+        ?array $testergebnis = null,
+    ): Response {
+        /** @var array<string, string> $db */
+        $db = $stand['db'];
+        $adminEmail = (string) ($db['admin_email'] ?? '');
+        if ($eingabe === null) {
+            $eingabe = $this->mailSettings($this->connect($db), (string) $stand['server_key'])->get();
+            if ($eingabe->absender === '' && !$eingabe->passwortGesetzt && $eingabe->host === '') {
+                // Nothing saved yet: the admin's address is the likeliest sender.
+                $eingabe = new MailSettings(
+                    transport: $eingabe->transport,
+                    host: '',
+                    port: $eingabe->port,
+                    sicherheit: $eingabe->sicherheit,
+                    benutzer: '',
+                    passwort: '',
+                    passwortGesetzt: false,
+                    absender: $adminEmail,
+                    antwortAn: '',
+                    vereinsname: '',
+                );
+            }
+        }
+
+        return $this->render([
+            'schritt' => 'mail',
+            'errors' => $errors,
+            'values' => [],
+            'mail' => $eingabe,
+            'sicherheiten' => SmtpSecurity::cases(),
+            'empfaenger' => $empfaenger ?? $adminEmail,
+            'testergebnis' => $testergebnis,
+        ], $status);
+    }
+
+    private function mailSettings(\PDO $pdo, string $serverKeyBase64): MailSettingsRepository
+    {
+        return new MailSettingsRepository(new SettingRepository($pdo), $this->serverCrypto($serverKeyBase64));
+    }
+
+    private function serverCrypto(#[\SensitiveParameter] string $serverKeyBase64): ServerCrypto
+    {
+        return new ServerCrypto((string) base64_decode($serverKeyBase64, true));
     }
 
     /**

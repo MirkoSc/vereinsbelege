@@ -3,7 +3,12 @@
  * @var array<string, string> $errors
  * @var array<string, string> $values
  * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
- * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
+ * @var string $schritt one of 'schluessel', 'schluessel_offen', 'mail', 'zugang', or unset for the default form/restore/fertig
+ * @var \App\Service\Mail\MailSettings|null $mail what the mail step shows (issue #249)
+ * @var list<\App\Service\Mail\SmtpSecurity> $sicherheiten
+ * @var string $empfaenger test mail recipient
+ * @var array{ok: bool, text: string}|null $testergebnis
+ * @var bool $mailEingerichtet the mail step was saved, not skipped
  */
 $schritt = $schritt ?? '';
 ?>
@@ -62,6 +67,12 @@ $schritt = $schritt ?? '';
                 gelöscht werden und liegt noch im Web-Verzeichnis. Bitte per FTP entfernen.
             </p>
         <?php endif; ?>
+        <?php if (($restore ?? false) !== true && ($mailEingerichtet ?? false) !== true): ?>
+            <p class="hinweis hinweis-warnung">
+                Mail ist noch nicht eingerichtet. Ohne Mail funktionieren Anmeldecodes per E-Mail,
+                „Passwort vergessen“ und Erinnerungen nicht – bitte unter „Admin → Mail“ nachholen.
+            </p>
+        <?php endif; ?>
         <p>
             Als Nächstes in der Anwendung anmelden und unter „Admin“ den Systemcheck, die
             Mail-Einstellungen und die KI-Anbieter einrichten.
@@ -116,7 +127,7 @@ $schritt = $schritt ?? '';
                     <input type="text" id="schluessel-letzte-gruppe" name="schluessel_letzte_gruppe"
                         autocomplete="off" autocapitalize="characters" spellcheck="false">
                 </label>
-                <p><button type="submit" class="knopf knopf-primaer">Bestätigen und Installation abschließen</button></p>
+                <p><button type="submit" class="knopf knopf-primaer">Bestätigen und weiter</button></p>
             </form>
 
             <form method="post" action="/install/neu" class="nicht-drucken">
@@ -128,6 +139,103 @@ $schritt = $schritt ?? '';
                     Entfernt den noch unbestätigten Admin und Tresor wieder, damit das Formular erneut
                     ausgefüllt werden kann. Nichts davon wurde bisher irgendwo gespeichert, das der
                     Vereinstresor nicht ohnehin verlangt.
+                </p>
+            </form>
+        </div>
+
+    <?php elseif ($schritt === 'mail'): ?>
+        <div class="karte">
+            <h3>Mail-Versand (optional)</h3>
+            <p>
+                Der Wiederherstellungsschlüssel ist bestätigt. Zum Schluss lässt sich der Mail-Versand
+                einrichten und mit einer Testmail prüfen – oder dieser Schritt überspringen und später
+                unter „Admin → Mail“ nachholen. Das Passwort wird mit dem Server-Schlüssel
+                verschlüsselt gespeichert.
+            </p>
+
+            <?php foreach (['csrf', 'mail'] as $schluessel): ?>
+                <?php if (isset($errors[$schluessel])): ?>
+                    <p class="hinweis hinweis-fehler"><?= e($errors[$schluessel]) ?></p>
+                <?php endif; ?>
+            <?php endforeach; ?>
+            <?php if (($testergebnis ?? null) !== null): ?>
+                <p class="hinweis <?= $testergebnis['ok'] ? 'hinweis-ok' : 'hinweis-fehler' ?>"><?= e($testergebnis['text']) ?></p>
+            <?php endif; ?>
+
+            <?php if (($mail ?? null) !== null): ?>
+                <form method="post" action="/install/mail" class="formular">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+                    <fieldset>
+                        <legend>Versandweg</legend>
+                        <label class="feld-ankreuz">
+                            <input type="radio" name="transport" value="smtp"
+                                   <?= $mail->transport === 'smtp' ? 'checked' : '' ?>> SMTP
+                        </label>
+                        <label class="feld-ankreuz">
+                            <input type="radio" name="transport" value="php_mail"
+                                   <?= $mail->transport === 'php_mail' ? 'checked' : '' ?>> PHP <code>mail()</code>
+                        </label>
+                    </fieldset>
+
+                    <label for="install-mail-host">SMTP-Server
+                        <input type="text" id="install-mail-host" name="host" value="<?= e($mail->host) ?>"
+                               autocomplete="off" placeholder="z. B. mail.example.org">
+                    </label>
+                    <label for="install-mail-port" class="feld-kurz">Port
+                        <input type="text" id="install-mail-port" name="port" inputmode="numeric"
+                               value="<?= e((string) $mail->port) ?>">
+                    </label>
+                    <fieldset>
+                        <legend>Verschlüsselung</legend>
+                        <?php foreach ($sicherheiten as $sicherheit): ?>
+                            <label class="feld-ankreuz">
+                                <input type="radio" name="sicherheit" value="<?= e($sicherheit->value) ?>"
+                                       <?= $sicherheit === $mail->sicherheit ? 'checked' : '' ?>>
+                                <?= e($sicherheit->bezeichnung()) ?>
+                            </label>
+                        <?php endforeach; ?>
+                    </fieldset>
+                    <label for="install-mail-benutzer">Benutzername
+                        <input type="text" id="install-mail-benutzer" name="benutzer" value="<?= e($mail->benutzer) ?>"
+                               autocomplete="off">
+                    </label>
+                    <label for="install-mail-passwort">Passwort
+                        <input type="password" id="install-mail-passwort" name="passwort" autocomplete="off">
+                    </label>
+                    <p class="feld-hilfe">
+                        <?= $mail->passwortGesetzt ? 'Ein Passwort ist gespeichert – leer lassen, um es zu behalten.' : 'Noch kein Passwort gespeichert.' ?>
+                    </p>
+                    <label for="install-mail-absender">Absenderadresse
+                        <input type="email" id="install-mail-absender" name="absender" value="<?= e($mail->absender) ?>">
+                    </label>
+                    <label for="install-mail-antwort-an">Antwort-an-Adresse
+                        <input type="email" id="install-mail-antwort-an" name="antwort_an" value="<?= e($mail->antwortAn) ?>">
+                    </label>
+                    <label for="install-mail-vereinsname">Vereinsname im Absender
+                        <input type="text" id="install-mail-vereinsname" name="vereinsname" value="<?= e($mail->vereinsname) ?>">
+                    </label>
+                    <label for="install-mail-url">Adresse dieser Installation
+                        <input type="url" id="install-mail-url" name="oeffentliche_url" value="<?= e($mail->oeffentlicheUrl) ?>"
+                               placeholder="z. B. https://belege.example.org" autocomplete="off" spellcheck="false">
+                    </label>
+                    <p class="feld-hilfe">Grundlage für Links in Mails – optional.</p>
+                    <label for="install-mail-empfaenger">Testmail an
+                        <input type="email" id="install-mail-empfaenger" name="empfaenger" value="<?= e($empfaenger ?? '') ?>"
+                               autocomplete="off">
+                    </label>
+
+                    <p class="knopfreihe">
+                        <button type="submit" name="aktion" value="testen" class="knopf">Speichern und Testmail senden</button>
+                        <button type="submit" name="aktion" value="abschliessen" class="knopf knopf-primaer">Speichern und Installation abschließen</button>
+                    </p>
+                </form>
+            <?php endif; ?>
+
+            <form method="post" action="/install/mail">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <p>
+                    <button type="submit" name="aktion" value="ueberspringen" class="knopf">Überspringen und Installation abschließen</button>
                 </p>
             </form>
         </div>
