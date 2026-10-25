@@ -45,6 +45,12 @@ final readonly class MailSettingsRepository
     ) {
     }
 
+    /** The club's name alone - the payer of a SEPA payment run (issue #85) - without decrypting anything. */
+    public function vereinsname(): string
+    {
+        return $this->settings->get(self::VEREINSNAME);
+    }
+
     public function get(): MailSettings
     {
         $passwortEnc = $this->settings->get(self::PASSWORT_ENC);

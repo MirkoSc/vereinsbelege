@@ -428,6 +428,15 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/app/buchungen/7/erstattung', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/buchungen/7/erstattung', false],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/buchungen/7/erstattung', false],
+            // SEPA payment runs (issue #85): `matching.edit` like the reimbursement matching.
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/zahllaeufe', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/zahllaeufe/neu', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/zahllaeufe', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/app/zahllaeufe/3/datei', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/zahllaeufe/3/verwerfen', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/zahllaeufe', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/zahllaeufe/3/datei', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/zahllaeufe', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/app/buchungen/7', false],
             [SystemRole::Vorstand, HttpMethod::Post, '/app/buchungen/7/loeschen', false],
             // ZIP export (M12-2): export.zip on the user side - the board,
@@ -806,6 +815,8 @@ final class RoutePermissionMatrixTest extends TestCase
             tresorRotation: $stellvertreter,
             // The reimbursement page (issue #67/M10-3), optional.
             erstattungen: $stellvertreter,
+            // The SEPA payment runs (issue #85), optional.
+            zahllaeufe: $stellvertreter,
             // The dashboard on /app (issue #72/M11-2), optional.
             dashboard: $stellvertreter,
         );
