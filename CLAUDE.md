@@ -148,8 +148,10 @@ zu erfinden.
   Dateinamen oder URLs. Blob-Dateinamen sind zufällige IDs.
 - Passwörter nie loggen (Error-Handler loggt nur Klasse, Message, Route,
   Ort – wie im Vereinskalender). `zend.exception_ignore_args=On`.
-- CSRF-Token auf allen Schreibrouten; Session-Cookie `httponly`,
-  `samesite=Lax`, `secure` aus dem Request-Schema abgeleitet.
+- CSRF-Token auf allen Schreibrouten – zentral geprüft für jede POST-Route
+  (`App\Http\CsrfSchutz`, Ausnahmen nur `/einreichen*` und
+  `/api/worker/*`); Session-Cookie `httponly`, `samesite=Lax`, `secure` aus
+  dem Request-Schema abgeleitet, über HTTPS als `__Host-sid` (01 §3).
 - CSP wie im Vereinskalender: `script-src 'self'` **ohne** `unsafe-inline`
   (kein Inline-JS, keine `on*`-Attribute, htmx ohne `hx-on`), keine
   externen Hosts. Alle JS-Bibliotheken (htmx, pdf.js, ggf. OpenCV.js) werden
