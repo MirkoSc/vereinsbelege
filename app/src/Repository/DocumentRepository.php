@@ -430,6 +430,29 @@ final readonly class DocumentRepository
     }
 
     /**
+     * Of $ids, the documents inside $bereich - the same check as
+     * inboxItem(), so a link to a receipt page is only drawn where that page
+     * opens instead of answering 404 (issue #250).
+     *
+     * @param list<int> $ids
+     *
+     * @return list<int>
+     */
+    public function idsImBereich(array $ids, Zugriffsbereich $bereich): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT d.id FROM document d WHERE d.id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') AND ' . $scope . ' ORDER BY d.id',
+        );
+        $stmt->execute([...array_map(intval(...), $ids), ...$parameter]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
      * The review queue (issue #37/M6-3): every document the review page may
      * capture (App\Domain\DocumentStatus::pruefbare()), oldest first - a
      * queue is worked off in the order it came in. Narrowed to $bereich

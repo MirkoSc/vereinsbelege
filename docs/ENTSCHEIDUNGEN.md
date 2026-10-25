@@ -1524,14 +1524,19 @@ hinter einer Zuordnung auch außerhalb ihres Zeitraums sehen dürfen.
   `?art=jahr|quartal|monat|frei`, E-52), Standard wie das Dashboard
   (laufendes Jahr bzw. Ende des Zeitraum-Scopes). Ein freier Zeitraum
   umfasst hier höchstens 3 Jahre (ein Request entschlüsselt alles darin,
-  CLAUDE.md §1), sonst Standardjahr mit Hinweis. Die Kassenprüfung hat
-  diese Grenze nicht – Folge-Idee: sie in `ZeitraumAuswahl` selbst ziehen.
+  CLAUDE.md §1), sonst Standardjahr mit Hinweis. Nachtrag #250: die Grenze
+  sitzt jetzt in `ZeitraumAuswahl` (`MAX_JAHRE_FREI`) und gilt für jede
+  Seite mit dem Zeitraumfilter (auch die Kassenprüfung); zu lang → der
+  Standard der Seite, der Hinweis kommt aus `partials/zeitraum-filter.php`.
 - **Drilldown:** Gruppe → Einzelposten (Datum, Lieferant bzw. Gegenseite,
   Rechnungsnummer/Zweck, andere Dimension, Betrag). URL nur Struktur:
   Filter + `nach` (kategorie|kostenstelle) + `schluessel` (ID oder `ohne`);
   alles andere 404. Der Beleg-Link führt auf die normale Belegseite
   (Prüfansicht mit `document.edit`, sonst Posteingang mit `inbox.view`),
   die Recht und Scope selbst prüft; der Buchungs-Link nur mit `bank.view`.
+  Nachtrag #250: liegt der Beleg außerhalb des Scopes dieser Seite
+  (Upload-Datum/Kostenstelle des Dokuments), entfällt der Link statt auf
+  404 zu führen.
   Gegenseite und Zweck einer Buchung ohne Beleg nur mit `bank.view` und
   nur innerhalb von dessen Scope, sonst „Buchung ohne Beleg“.
 - **Gutschriften** mindern ihre Gruppe; ein negativer Gruppenbetrag hat

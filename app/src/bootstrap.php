@@ -968,6 +968,7 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
             new InvoiceRepository($pdo),
+            new DocumentRepository($pdo),
             new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
