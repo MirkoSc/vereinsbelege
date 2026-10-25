@@ -112,6 +112,19 @@ final readonly class WorkerRouting
     }
 
     /**
+     * Whether the IMAP access of the mail intake may be sealed to the
+     * worker (issue #87, E-54): like the AI keys only with the module on
+     * and only for a worker that reports `mail`. Whether the intake itself
+     * is switched on and complete, WorkerKonfiguration checks.
+     *
+     * @param list<WorkerFaehigkeit> $faehigkeiten what the worker reported
+     */
+    public function mailZugangErlaubt(array $faehigkeiten): bool
+    {
+        return $this->modulAktiv() && in_array(WorkerFaehigkeit::Mail, $faehigkeiten, true);
+    }
+
+    /**
      * Whether open worker jobs must go back to the browser/session route:
      * module off, no worker ready, or silent for longer than the fallback
      * period (section 6).

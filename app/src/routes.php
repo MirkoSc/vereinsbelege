@@ -287,6 +287,7 @@ return static function (
     ?\Closure $dashboard = null,
     ?\Closure $datev = null,
     ?\Closure $datevAdmin = null,
+    ?\Closure $workerMail = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -297,6 +298,7 @@ return static function (
     $workerAuth ??= static fn(): never => throw new \LogicException('The worker signature check is not wired into this route table.');
     $workerApi ??= static fn(): never => throw new \LogicException('The worker API is not wired into this route table.');
     $workerAdmin ??= static fn(): never => throw new \LogicException('The worker admin page is not wired into this route table.');
+    $workerMail ??= static fn(): never => throw new \LogicException('The worker mail intake is not wired into this route table.');
     $abgleich ??= static fn(): never => throw new \LogicException('The matching page is not wired into this route table.');
     $offen ??= static fn(): never => throw new \LogicException('The work lists are not wired into this route table.');
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
@@ -469,6 +471,15 @@ return static function (
     $post('/api/worker/jobs/{id:\d+}/artifacts', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktAnmelden($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/chunks/{index:\d+}', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktChunk($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/commit', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktFestschreiben($r, $p, $w));
+    // The mail intake (issue #87, E-54, 07 section 9): the worker hands in
+    // the attachments of a mail from the club's IMAP mailbox; the web host
+    // encrypts them to VK_pub on arrival and makes the receipt. Signed
+    // like every worker route; refused unless module and intake are on.
+    $post('/api/worker/mail/pruefen', $worker, static fn(Request $r, array $p, Worker $w) => $workerMail()->pruefen($r, $w));
+    $post('/api/worker/mail/uploads', $worker, static fn(Request $r, array $p, Worker $w) => $workerMail()->uploadAnlegen($r, $w));
+    $post('/api/worker/mail/uploads/{upload:[0-9a-f]{32}}/chunks/{n:\d+}', $worker, static fn(Request $r, array $p, Worker $w) => $workerMail()->uploadChunk($r, $p, $w));
+    $post('/api/worker/mail/uploads/{upload:[0-9a-f]{32}}/finish', $worker, static fn(Request $r, array $p, Worker $w) => $workerMail()->uploadAbschliessen($r, $p, $w));
+    $post('/api/worker/mail/einreichen', $worker, static fn(Request $r, array $p, Worker $w) => $workerMail()->einreichen($r, $w));
 
     // Chunk upload (03 section 4, issue #11). Files arrive in 2 MiB pieces so
     // that no request runs long and the hoster's upload limit stops mattering.
@@ -1004,6 +1015,7 @@ return static function (
     $post('/admin/worker/koppeln', $einstellungen, static fn(Request $r) => $workerAdmin()->koppeln($r));
     $post('/admin/worker/einstellungen', $einstellungen, static fn(Request $r) => $workerAdmin()->einstellungen($r));
     $post('/admin/worker/ocr-nachholen', $einstellungen, static fn(Request $r) => $workerAdmin()->ocrNachholen($r));
+    $post('/admin/worker/mail-eingang', $einstellungen, static fn(Request $r) => $workerAdmin()->mailEingang($r));
     $post('/admin/worker/{id:\d+}/bestaetigen', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->bestaetigen($r, $params));
     $post('/admin/worker/{id:\d+}/entkoppeln', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->entkoppeln($r, $params));
 
