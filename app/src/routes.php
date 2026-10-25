@@ -494,6 +494,8 @@ return static function (
     $post('/api/worker/jobs/{id:\d+}/extend', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->extend($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/complete', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->complete($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/fail', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->fail($r, $p, $w));
+    // Issue #248: give a job back on shutdown without using up an attempt.
+    $post('/api/worker/jobs/{id:\d+}/release', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->release($r, $p, $w));
     // Issue #52/M7b-2 (07 section 3): ciphertext plus a data key sealed to
     // the worker, only with a grant and a running claim on the document;
     // the job's context; results uploaded as ciphertext sealed to VK_pub.
@@ -632,6 +634,8 @@ return static function (
     $post('/app/posteingang/{id:\d+}/ablehnen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->ablehnen($r, $params));
     $post('/app/posteingang/{id:\d+}/wiedervorlage', $documentEdit, static fn(Request $r, array $params) => $posteingang()->wiedervorlage($r, $params));
     $post('/app/posteingang/{id:\d+}/kostenstelle', $documentEdit, static fn(Request $r, array $params) => $posteingang()->kostenstelle($r, $params));
+    // Issue #248: catch up the skipped OCR of this one receipt at the worker.
+    $post('/app/posteingang/{id:\d+}/ocr-nachholen', $documentEdit, static fn(Request $r, array $params) => $posteingang()->ocrNachholen($r, $params));
     // Duplicate detection (M6-6, issue #40): resolving a suspected duplicate
     // - discard it (rejected) or keep it deliberately. `document.edit`, the
     // inbox scope, CSRF, the unlocked vault (App\App\InboxController).

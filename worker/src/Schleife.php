@@ -22,9 +22,10 @@ use App\Worker\Schritt\Schritt;
  * jitter - and starts over; the first good heartbeat resets it.
  *
  * SIGTERM/SIGINT (Abbruch): no new claim; a running job is cut off (its
- * tool terminated, its HTTP transfer aborted) and given back with `fail`
- * without `endgueltig` - the web host offers it again, to this worker
- * after its restart or, after the waiting time, to the browser/session.
+ * tool terminated, its HTTP transfer aborted) and given back with `release`
+ * (issue #248: no attempt used up, what it uploaded is dropped) - the web
+ * host offers it again, to this worker after its restart or, after the
+ * waiting time, to the browser/session.
  */
 final class Schleife
 {
@@ -206,7 +207,7 @@ final class Schleife
             $this->api->json('POST', '/jobs/' . $lauf->id . '/complete', ['lock' => $lauf->lock], abbrechbar: false);
             $this->log->ereignis('job_fertig', ['job' => $lauf->id, 'typ' => $lauf->typ, 'sekunden' => round(microtime(true) - $start, 1)]);
         } catch (Abgebrochen) {
-            $this->zurueckgeben($lauf, 'WorkerBeendet', false);
+            $this->freigeben($lauf);
         } catch (JobFehler $e) {
             $this->zurueckgeben($lauf, $e->fehlercode, $e->endgueltig);
         } catch (ApiFehler $e) {
@@ -220,6 +221,36 @@ final class Schleife
         } catch (\Throwable $e) {
             // The class name only - a message could quote receipt data.
             $this->zurueckgeben($lauf, 'WorkerFehler:' . (new \ReflectionClass($e))->getShortName(), false);
+        }
+    }
+
+    /**
+     * Shutdown (issue #248): the job goes back via `release` - no attempt
+     * used up, the cut-off run was not the job's fault. A web host without
+     * that route (older release: 404/405 from the router, not the
+     * controller's `job_unbekannt`) gets the old `fail` instead.
+     */
+    private function freigeben(JobLauf $lauf): void
+    {
+        $this->log->ereignis('job_freigabe', ['job' => $lauf->id, 'typ' => $lauf->typ]);
+        try {
+            $this->api->json(
+                'POST',
+                '/jobs/' . $lauf->id . '/release',
+                ['lock' => $lauf->lock],
+                abbrechbar: false,
+                zeitlimit: self::RUECKGABE_ZEITLIMIT,
+            );
+        } catch (ApiFehler $e) {
+            if (in_array($e->status, [404, 405], true) && $e->fehler !== 'job_unbekannt') {
+                $this->zurueckgeben($lauf, 'WorkerBeendet', false);
+
+                return;
+            }
+            $this->log->ereignis('rueckgabe_fehlgeschlagen', ['job' => $lauf->id, 'fehler' => $e->fehler]);
+        } catch (\Throwable $e) {
+            // The lock runs out after 30 min; the web host offers it again.
+            $this->log->ereignis('rueckgabe_fehlgeschlagen', ['job' => $lauf->id, 'fehler' => (new \ReflectionClass($e))->getShortName()]);
         }
     }
 

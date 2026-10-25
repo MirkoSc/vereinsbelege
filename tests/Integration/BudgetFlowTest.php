@@ -346,6 +346,78 @@ final class BudgetFlowTest extends DatabaseTestCase
         self::assertSame(4, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
     }
 
+    public function testAScopedWriterKeepsOnlyBudgetsOfHisCostCenters(): void
+    {
+        // N-07: writing and deleting stay inside the cost-center scope.
+        $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '500,00']);
+        $this->speichern(['kategorie' => (string) $this->reise, 'kostenstelle' => (string) $this->herren, 'betrag' => '100,00']);
+        $this->speichern(['kostenstelle' => (string) $this->jugend, 'betrag' => '200']);
+        $ids = array_map(intval(...), $this->pdo()->query('SELECT id FROM budget ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN));
+        [$ohneKostenstelle, $herren, $jugend] = $ids;
+
+        $rollen = new RoleRepository($this->pdo());
+        $rolle = $rollen->create('Testrolle Abteilungskasse', false, [
+            Permission::BankBook->value => PermissionScope::Kostenstelle,
+            Permission::ReportView->value => PermissionScope::Kostenstelle,
+        ]);
+        $rollen->assignToUser($this->userId, [$rolle]);
+        new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$this->jugend]);
+
+        $seite = $this->get('/app/auswertung/budget', ['jahr' => '2025']);
+        self::assertStringContainsString('Budget speichern', $seite->body);
+        self::assertStringContainsString('>Testkst Jugend</option>', $seite->body);
+        self::assertStringNotContainsString('Testkst Herren', $seite->body, 'neither as a row nor as an option');
+        self::assertStringNotContainsString('<option value="">alle Kostenstellen</option>', $seite->body);
+
+        $hinweis = 'Budgets pflegen Sie nur für Ihre eigenen Kostenstellen.';
+        foreach ([
+            ['kategorie' => (string) $this->platz, 'betrag' => '1,00'],
+            ['kategorie' => (string) $this->reise, 'kostenstelle' => (string) $this->herren, 'betrag' => '1,00'],
+        ] as $felder) {
+            $antwort = $this->speichern($felder);
+            self::assertSame(422, $antwort->status);
+            self::assertStringContainsString($hinweis, $antwort->body);
+        }
+        self::assertSame(3, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
+        self::assertCount(3, $this->protokoll(AuditAction::BudgetGespeichert), 'the refused saves leave no audit entry');
+
+        self::assertSame(302, $this->speichern(['kostenstelle' => (string) $this->jugend, 'betrag' => '250'])->status);
+        self::assertSame(302, $this->speichern(['kategorie' => (string) $this->platz, 'kostenstelle' => (string) $this->jugend, 'betrag' => '50'])->status);
+        self::assertSame(4, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
+
+        // A budget outside the scope looks like one that does not exist.
+        self::assertSame(404, $this->post('/app/auswertung/budget/' . $herren . '/loeschen', ['jahr' => '2025'])->status);
+        self::assertSame(404, $this->post('/app/auswertung/budget/' . $ohneKostenstelle . '/loeschen', ['jahr' => '2025'])->status);
+        self::assertSame([], $this->protokoll(AuditAction::BudgetGeloescht));
+        self::assertSame(302, $this->post('/app/auswertung/budget/' . $jugend . '/loeschen', ['jahr' => '2025'])->status);
+        $uebrig = array_map(intval(...), $this->pdo()->query('SELECT id FROM budget ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN));
+        self::assertSame([$ohneKostenstelle, $herren], array_slice($uebrig, 0, 2));
+        self::assertCount(3, $uebrig);
+    }
+
+    public function testAWriteScopeNarrowerThanTheReadScopeShowsDeleteOnlyWhereItWorks(): void
+    {
+        $this->speichern(['kategorie' => (string) $this->reise, 'kostenstelle' => (string) $this->herren, 'betrag' => '100,00']);
+        $this->speichern(['kostenstelle' => (string) $this->jugend, 'betrag' => '200']);
+        [$herren, $jugend] = array_map(intval(...), $this->pdo()->query('SELECT id FROM budget ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN));
+
+        $rollen = new RoleRepository($this->pdo());
+        $rolle = $rollen->create('Testrolle Abteilung liest alles', false, [
+            Permission::BankBook->value => PermissionScope::Kostenstelle,
+            Permission::ReportView->value => PermissionScope::Alle,
+        ]);
+        $rollen->assignToUser($this->userId, [$rolle]);
+        new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$this->jugend]);
+
+        $seite = $this->get('/app/auswertung/budget', ['jahr' => '2025']);
+        self::assertStringContainsString('Testkst Herren', $seite->body, 'reading is not narrowed');
+        self::assertStringContainsString('action="/app/auswertung/budget/' . $jugend . '/loeschen"', $seite->body);
+        self::assertStringNotContainsString('action="/app/auswertung/budget/' . $herren . '/loeschen"', $seite->body);
+        self::assertStringNotContainsString('>Testkst Herren</option>', $seite->body);
+        self::assertSame(404, $this->post('/app/auswertung/budget/' . $herren . '/loeschen', ['jahr' => '2025'])->status);
+        self::assertSame(2, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
+    }
+
     public function testAPeriodScopeCountsOnlyTheReleasedPartOfTheYear(): void
     {
         $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '500,00']);

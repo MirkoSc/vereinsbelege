@@ -323,6 +323,8 @@ if (!is_file($configFile)) {
     $offen = Zugriff::oeffentlich();
     $router = new Router();
     $router->get('/install', $offen, $installer->form(...));
+    // The installation token (security review N-05) typed in by hand.
+    $router->post('/install/freigabe', $offen, $installer->release(...));
     $router->post('/install', $offen, $installer->submit(...));
     $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
     $router->post('/install/mail', $offen, $installer->mail(...));
@@ -1772,6 +1774,8 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
         ),
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $audit),
+        // Issue #248: "OCR nachholen" per receipt.
+        $workerUebergabeFor($pdo),
     );
 };
 
@@ -2031,7 +2035,7 @@ $workerMail = static function () use ($vaultsFor, $connections, $workerRoutingFo
         $logger,
     );
 };
-$workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor, $bestandsOcrFor, $serverCrypto, $auditFor): WorkerController {
+$workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor, $bestandsOcrFor, $serverCrypto, $auditFor, $version): WorkerController {
     $pdo = $connections->pdo();
 
     return new WorkerController(
@@ -2051,6 +2055,8 @@ $workerAdmin = static function () use ($connections, $view, $workerKopplungFor, 
         // Issue #87: the mail intake's settings.
         new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
         $auditFor($pdo),
+        // Issue #248: "Worker-Version veraltet".
+        $version->value,
     );
 };
 

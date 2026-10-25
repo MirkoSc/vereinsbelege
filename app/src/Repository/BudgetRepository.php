@@ -31,8 +31,7 @@ final readonly class BudgetRepository
      */
     public function forYear(int $year, Zugriffsbereich $bereich): array
     {
-        // Without a period the date column is never used.
-        [$bedingung, $parameter] = new Zugriffsbereich($bereich->kostenstellen)->sqlBedingung('b.created_at', 'b.cost_center_id');
+        [$bedingung, $parameter] = self::kostenstellenBedingung($bereich);
         $stmt = $this->pdo->prepare(
             'SELECT b.id, b.year, b.category_id, b.cost_center_id, b.dek_sealed, b.data_enc
              FROM budget b WHERE b.year = ? AND ' . $bedingung . ' ORDER BY b.id',
@@ -42,10 +41,16 @@ final readonly class BudgetRepository
         return array_map(self::hydrate(...), $stmt->fetchAll());
     }
 
-    public function find(int $id): ?BudgetRecord
+    /**
+     * One budget by id, null if there is none or it is outside the
+     * cost-center scope of $bereich (only the cost centers are taken, as in
+     * forYear()).
+     */
+    public function find(int $id, ?Zugriffsbereich $bereich = null): ?BudgetRecord
     {
-        $stmt = $this->pdo->prepare('SELECT id, year, category_id, cost_center_id, dek_sealed, data_enc FROM budget WHERE id = ?');
-        $stmt->execute([$id]);
+        [$bedingung, $parameter] = self::kostenstellenBedingung($bereich);
+        $stmt = $this->pdo->prepare('SELECT b.id, b.year, b.category_id, b.cost_center_id, b.dek_sealed, b.data_enc FROM budget b WHERE b.id = ? AND ' . $bedingung);
+        $stmt->execute([$id, ...$parameter]);
         $row = $stmt->fetch();
 
         return $row === false ? null : self::hydrate($row);
@@ -106,12 +111,29 @@ final readonly class BudgetRepository
         $stmt->execute();
     }
 
-    public function delete(int $id): bool
+    /** Deletes a budget inside the cost-center scope of $bereich. */
+    public function delete(int $id, ?Zugriffsbereich $bereich = null): bool
     {
-        $stmt = $this->pdo->prepare('DELETE FROM budget WHERE id = ?');
-        $stmt->execute([$id]);
+        [$bedingung, $parameter] = self::kostenstellenBedingung($bereich);
+        $stmt = $this->pdo->prepare('DELETE b FROM budget b WHERE b.id = ? AND ' . $bedingung);
+        $stmt->execute([$id, ...$parameter]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * The cost-center part of a scope as SQL on alias `b`; without a period
+     * the date column is never used. No scope = no restriction.
+     *
+     * @return array{0: string, 1: list<int|string>}
+     */
+    private static function kostenstellenBedingung(?Zugriffsbereich $bereich): array
+    {
+        if ($bereich === null) {
+            return ['1 = 1', []];
+        }
+
+        return new Zugriffsbereich($bereich->kostenstellen)->sqlBedingung('b.created_at', 'b.cost_center_id');
     }
 
     /**

@@ -25,6 +25,7 @@ use App\Service\Inbox\InboxEintrag;
 use App\Service\Inbox\InboxFilter;
 use App\Service\Inbox\InboxRuleViolation;
 use App\Service\Inbox\Posteingang;
+use App\Service\Worker\WorkerUebergabe;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -60,6 +61,8 @@ final readonly class InboxController
         private Posteingang $posteingang,
         private CostCenterRepository $kostenstellen,
         private Duplikatpruefung $duplikate,
+        // Issue #248: "OCR nachholen" per receipt; null = no worker wiring.
+        private ?WorkerUebergabe $workerUebergabe = null,
     ) {
     }
 
@@ -126,8 +129,51 @@ final readonly class InboxController
             'alleKostenstellen' => $alle,
             'entsperrt' => $tresor !== null,
             'heute' => self::heute(),
+            'ocrNachholbar' => $darfEntscheiden && $tresor !== null
+                && ($this->workerUebergabe?->ocrNachholbarFuer($document->id, new \DateTimeImmutable()) ?? false),
             ...$this->rasterungDaten(),
         ], Area::App));
+    }
+
+    /**
+     * "OCR nachholen" for this one receipt (issue #248, docs/spec/
+     * 07-worker.md section 6): its OCR was skipped (no worker at the time,
+     * or the fallback) and the worker takes OCR now. Needs the unlocked
+     * vault - the grants are made from this session - and `document.edit`
+     * (route). The same rule as the admin's batch action.
+     *
+     * @param array<string, string> $params
+     */
+    public function ocrNachholen(Request $request, array $params): ResponseInterface
+    {
+        $this->session->start();
+        $id = (int) $params['id'];
+        $ziel = '/app/posteingang/' . $id;
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure($ziel);
+        }
+
+        $tresor = $this->tresor($request);
+        if ($tresor === null) {
+            $this->session->flash(self::TRESOR_GESPERRT, FlashArt::Fehler);
+
+            return Response::redirect($ziel);
+        }
+
+        $eintrag = $this->posteingang->eintrag($id, $this->bereich(), null);
+        if ($eintrag === null) {
+            return $this->nichtGefunden();
+        }
+
+        $uebergeben = $this->workerUebergabe?->ocrNachholenFuer($eintrag->item->document->id, $tresor, new \DateTimeImmutable()) ?? false;
+        $this->session->flash(
+            $uebergeben
+                ? 'Der Beleg ist an die Texterkennung des Workers übergeben.'
+                : 'Für diesen Beleg lässt sich die Texterkennung gerade nicht nachholen (Worker nicht bereit, schon erledigt oder in Arbeit).',
+            $uebergeben ? FlashArt::Ok : FlashArt::Fehler,
+        );
+
+        return Response::redirect($ziel);
     }
 
     /**

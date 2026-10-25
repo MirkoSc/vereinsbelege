@@ -80,6 +80,8 @@ final readonly class WorkerController
         private ArchiveImportRepository $imports,
         private ?MailEingangSpeicher $mailEingang = null,
         private ?AuditLog $audit = null,
+        // Issue #248: the web host's release, for "Worker-Version veraltet".
+        private ?string $serverVersion = null,
     ) {
     }
 
@@ -334,6 +336,9 @@ final readonly class WorkerController
             'worker' => $worker,
             'fingerabdruck' => $worker === null ? '' : WorkerProtokoll::fingerabdruckAnzeige($worker->fingerprint),
             'protokollOk' => $worker === null || WorkerProtokoll::unterstuetzt($worker->protokollVersion),
+            'versionVeraltet' => $worker !== null && $this->serverVersion !== null
+                && WorkerProtokoll::versionVeraltet($worker->appVersion, $this->serverVersion),
+            'serverVersion' => $this->serverVersion,
             'code' => $code,
             'codeBis' => $code === null ? null : $this->workers->offenerCodeBis($now),
             'offenerCodeBis' => $code === null && $worker === null ? $this->workers->offenerCodeBis($now) : null,

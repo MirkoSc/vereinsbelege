@@ -26,6 +26,9 @@ final class InProzessHttp implements WorkerHttp
     /** @var list<string> "METHOD path" of every request */
     public array $anfragen = [];
 
+    /** Issue #248: play a web host from before the release route. */
+    public bool $ohneRelease = false;
+
     /** @var list<string> every nonce sent */
     public array $nonces = [];
 
@@ -54,6 +57,10 @@ final class InProzessHttp implements WorkerHttp
             return self::antwort($this->api->pair($request));
         }
         foreach ($this->routen() as $muster => $handler) {
+            // A web host from before issue #248 has no release route.
+            if ($this->ohneRelease && str_ends_with($pfad, '/release')) {
+                break;
+            }
             if (preg_match($muster, $methode . ' ' . $pfad, $treffer) === 1) {
                 $params = array_filter($treffer, is_string(...), ARRAY_FILTER_USE_KEY);
 
@@ -83,6 +90,7 @@ final class InProzessHttp implements WorkerHttp
             '#^POST /api/worker/jobs/(?<id>\d+)/extend$#' => static fn(Request $r, array $p, Worker $w) => $api->extend($r, $p, $w),
             '#^POST /api/worker/jobs/(?<id>\d+)/complete$#' => static fn(Request $r, array $p, Worker $w) => $api->complete($r, $p, $w),
             '#^POST /api/worker/jobs/(?<id>\d+)/fail$#' => static fn(Request $r, array $p, Worker $w) => $api->fail($r, $p, $w),
+            '#^POST /api/worker/jobs/(?<id>\d+)/release$#' => static fn(Request $r, array $p, Worker $w) => $api->release($r, $p, $w),
             '#^GET /api/worker/jobs/(?<id>\d+)/context$#' => static fn(Request $r, array $p, Worker $w) => $api->context($r, $p, $w),
             '#^GET /api/worker/blobs/(?<id>\d+)$#' => static fn(Request $r, array $p, Worker $w) => $api->blob($r, $p, $w),
             '#^POST /api/worker/jobs/(?<id>\d+)/artifacts$#' => static fn(Request $r, array $p, Worker $w) => $api->artefaktAnmelden($r, $p, $w),

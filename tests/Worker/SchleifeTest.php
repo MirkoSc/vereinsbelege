@@ -92,7 +92,7 @@ final class SchleifeTest extends TestCase
     {
         $http = new SkriptHttp([
             $this->herzschlag('aktiv', 1),
-            SkriptHttp::json(200, ['jobs' => [['id' => 5, 'typ' => 'image_cleanup', 'ref_type' => 'document', 'ref_id' => 2, 'step' => '', 'versuch' => 1, 'lock' => 'w1-abc', 'gesperrt_bis' => 0]]]),
+            SkriptHttp::json(200, ['jobs' => [['id' => 5, 'typ' => 'unbekannter_typ', 'ref_type' => 'document', 'ref_id' => 2, 'step' => '', 'versuch' => 1, 'lock' => 'w1-abc', 'gesperrt_bis' => 0]]]),
             SkriptHttp::json(200, ['status' => 'fehler']),
         ]);
 
