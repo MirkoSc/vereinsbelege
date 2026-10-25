@@ -60,7 +60,9 @@ final readonly class VaultGrantController
     {
         $this->session->start();
         $jetzt = new \DateTimeImmutable();
-        $aktuell = $this->vaults->current();
+        // Version only, nothing is sealed to it: the page stays reachable
+        // while the vault anchor fails (issue #240).
+        $aktuell = $this->vaults->currentUngeprueft();
         $mitGrant = $aktuell === null ? [] : $this->grants->grantsFor($aktuell->version);
         $ausstehend = array_flip($this->verwaltung->ausstehend($jetzt));
 

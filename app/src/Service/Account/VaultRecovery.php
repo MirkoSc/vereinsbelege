@@ -59,7 +59,9 @@ final readonly class VaultRecovery
             );
         }
 
-        $aktuell = $this->vaults->current();
+        // Unchecked on purpose: this is the way out of a failed anchor
+        // check (issue #240) - the paper key below proves the key itself.
+        $aktuell = $this->vaults->currentUngeprueft();
         if ($aktuell === null) {
             // Cannot happen once the installer has run, but a null current()
             // must not become a false-shaped call into openVault() below.
@@ -88,6 +90,17 @@ final readonly class VaultRecovery
 
         $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
 
+        // The paper key holds VK_priv, and VK_pub follows from it: the one
+        // proof of the public key that does not come from the database.
+        // A generation whose anchor is missing or wrong (the key matches,
+        // so the row itself is genuine) is anchored again - before the
+        // grant below, which seals with it.
+        $generation = $this->vaults->generationOf($tresor->version);
+        $ankerErneuert = $generation !== null
+            && hash_equals($generation->publicKey, $tresor->publicKey())
+            && !$this->vaults->beglaubigt($generation)
+            && $this->vaults->beglaubige($tresor->version, $tresor->publicKey());
+
         $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($tresor->version, $now), true);
         if (!$bereitsFreigegeben) {
             try {
@@ -97,7 +110,7 @@ final readonly class VaultRecovery
             }
         }
 
-        return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben);
+        return VaultRecoveryResult::erfolg($tresor, freigabeErteilt: !$bereitsFreigegeben, ankerErneuert: $ankerErneuert);
     }
 
     /** Whether $tresor is a generation still in use (not retired, not foreign). */

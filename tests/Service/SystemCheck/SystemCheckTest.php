@@ -523,4 +523,35 @@ final class SystemCheckTest extends TestCase
 
     /** @var list<string> */
     private array $aufraeumen = [];
+
+    public function testTheVaultAnchorCheckIsOkWhenEveryGenerationVerifies(): void
+    {
+        $ok = new SystemCheck()->tresorAnker([1 => true, 2 => true]);
+        self::assertSame('vault_anchor', $ok->key);
+        self::assertSame(CheckStatus::Ok, $ok->status);
+
+        $leer = new SystemCheck()->tresorAnker([]);
+        self::assertSame(CheckStatus::Ok, $leer->status);
+        self::assertSame('noch kein Tresor', $leer->actual);
+    }
+
+    public function testTheVaultAnchorCheckFailsAndNamesOnlyTheGeneration(): void
+    {
+        $ergebnis = new SystemCheck()->tresorAnker([1 => true, 2 => false]);
+
+        self::assertSame(CheckStatus::Fail, $ergebnis->status);
+        self::assertSame('nicht beglaubigt (Generation 2)', $ergebnis->actual);
+        self::assertStringContainsString('Wiederherstellungsschlüssel', $ergebnis->detail);
+    }
+
+    public function testTheVaultAnchorCheckJoinsOnlyWithItsSource(): void
+    {
+        $ohne = array_map(static fn(CheckResult $r): string => $r->key, new SystemCheck()->all());
+        self::assertNotContains('vault_anchor', $ohne);
+
+        $mit = new SystemCheck(tresorAnker: static fn(): array => [1 => false])->all();
+        $treffer = array_values(array_filter($mit, static fn(CheckResult $r): bool => $r->key === 'vault_anchor'));
+        self::assertCount(1, $treffer);
+        self::assertSame(CheckStatus::Fail, $treffer[0]->status);
+    }
 }

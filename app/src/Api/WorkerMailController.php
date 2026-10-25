@@ -17,6 +17,7 @@ use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadException;
 use App\Service\Upload\UploadService;
+use App\Service\Worker\MailEingangGrenze;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Worker\WorkerProtokoll;
 use App\Service\Worker\WorkerRouting;
@@ -43,7 +44,8 @@ use App\Support\FileLogger;
  * protocol, the module on, the mail intake switched on and `mail`
  * reported - otherwise 409 `mail_eingang_aus`. File types are decided by
  * the magic bytes here, not by the worker; sizes and page counts by the
- * public submission's limits.
+ * public submission's limits; mails and bytes per worker and hour by
+ * App\Service\Worker\MailEingangGrenze (429 `mail_limit`, issue #243).
  */
 final readonly class WorkerMailController
 {
@@ -67,6 +69,7 @@ final readonly class WorkerMailController
         private UploadService $uploads,
         private SubmissionUploadStore $store,
         private EinreichungsEinstellungen $einstellungen,
+        private MailEingangGrenze $grenze,
         private ?\Closure $linkBasis = null,
         private ?FileLogger $logger = null,
     ) {
@@ -83,16 +86,31 @@ final readonly class WorkerMailController
 
     public function uploadAnlegen(Request $request, Worker $worker): Response
     {
-        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request): Response {
+        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request, $worker): Response {
             $groesse = $daten['groesse'] ?? null;
             if (!is_int($groesse) || $groesse < 1) {
                 return self::fehler(422, 'groesse_ungueltig', 'Ungültige Dateigröße.');
             }
-            if ($groesse > $this->einstellungen->maxDateiBytes()) {
+            // Larger than a whole hour allows: 413, so the worker sets the
+            // mail aside instead of waiting for it hour after hour.
+            if ($groesse > $this->einstellungen->maxDateiBytes() || $this->grenze->passtNie($groesse)) {
                 return self::fehler(413, 'zu_gross', 'Die Datei ist zu groß.');
             }
+            if (!$this->grenze->mailErlaubt($worker->id) || !$this->grenze->bytesReservieren($worker->id, $groesse)) {
+                return self::mengenGrenze();
+            }
 
-            return $this->ausgefuehrt($request, fn(): Response => Response::json($this->uploads->create($groesse)->toArray(), 201));
+            return $this->ausgefuehrt($request, function () use ($groesse, $worker): Response {
+                try {
+                    $ticket = $this->uploads->create($groesse);
+                } catch (\Throwable $e) {
+                    $this->grenze->bytesFreigeben($worker->id, $groesse);
+
+                    throw $e;
+                }
+
+                return Response::json($ticket->toArray(), 201);
+            });
         });
     }
 
@@ -165,23 +183,36 @@ final readonly class WorkerMailController
 
     public function einreichen(Request $request, Worker $worker): Response
     {
-        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request): Response {
+        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request, $worker): Response {
             $absender = is_array($daten['absender'] ?? null) ? $daten['absender'] : [];
             $blobs = $daten['blobs'] ?? null;
             if (!is_array($blobs) || !array_is_list($blobs)) {
                 return self::fehler(422, 'anhaenge_ungueltig', 'Erwartet wird eine Liste von Blob-IDs.');
             }
+            if (!$this->grenze->mailReservieren($worker->id)) {
+                return self::mengenGrenze();
+            }
 
-            $ergebnis = $this->einreichung->einreichen(
-                $schluessel,
-                $blobs,
-                is_string($absender['name'] ?? null) ? $absender['name'] : '',
-                is_string($absender['adresse'] ?? null) ? $absender['adresse'] : '',
-                is_string($daten['betreff'] ?? null) ? $daten['betreff'] : '',
-                $this->speicher->laden()->absender,
-                new \DateTimeImmutable(),
-                $this->linkBasis === null ? null : ($this->linkBasis)($request),
-            );
+            try {
+                $ergebnis = $this->einreichung->einreichen(
+                    $schluessel,
+                    $blobs,
+                    is_string($absender['name'] ?? null) ? $absender['name'] : '',
+                    is_string($absender['adresse'] ?? null) ? $absender['adresse'] : '',
+                    is_string($daten['betreff'] ?? null) ? $daten['betreff'] : '',
+                    $this->speicher->laden()->absender,
+                    new \DateTimeImmutable(),
+                    $this->linkBasis === null ? null : ($this->linkBasis)($request),
+                );
+            } catch (\Throwable $e) {
+                $this->grenze->mailFreigeben($worker->id);
+
+                throw $e;
+            }
+            // Only a new receipt counts against the hour.
+            if ($ergebnis->status !== MailEinreichungErgebnis::EINGEREICHT) {
+                $this->grenze->mailFreigeben($worker->id);
+            }
 
             return match ($ergebnis->status) {
                 MailEinreichungErgebnis::EINGEREICHT => Response::json(['status' => $ergebnis->status, 'referenz' => $ergebnis->referenz], 201),
@@ -257,6 +288,12 @@ final readonly class WorkerMailController
         $sauber = preg_replace('/[\x00-\x1F\x7F]/u', '', basename(str_replace('\\', '/', $name)));
 
         return mb_substr(trim($sauber ?? ''), 0, self::MAX_NAME);
+    }
+
+    /** The worker ends its run and tries again later; the mail waits in the mailbox. */
+    private static function mengenGrenze(): Response
+    {
+        return self::fehler(429, 'mail_limit', 'Die Mengengrenze des E-Mail-Eingangs ist für diese Stunde erreicht.');
     }
 
     private static function fehler(int $status, string $fehler, string $meldung): Response

@@ -156,8 +156,11 @@ final readonly class RestoreAccess
         }
         $crypto = new ServerCrypto((string) base64_decode($newServerKeyBase64, true));
 
-        $vaults = new VaultRepository($this->pdo);
-        $aktuell = $vaults->current();
+        // Under the NEW key: the MACs in the dump were made with the old one
+        // and fail now. Unchecked, because the recovery key below proves
+        // the public key - and then anchors it (issue #240).
+        $vaults = new VaultRepository($this->pdo, $crypto->tresorAnker());
+        $aktuell = $vaults->currentUngeprueft();
         if ($aktuell === null) {
             throw new RestoreAccessException('Das eingespielte Backup enthält keinen Tresor.');
         }
@@ -212,6 +215,11 @@ final readonly class RestoreAccess
 
         $this->pdo->beginTransaction();
         try {
+            // First: the grant and the audit entry below seal with it.
+            $vaults->beglaubige($aktuell->version, $aktuell->publicKey());
+            $audit = new AuditLog(new AuditLogRepository($this->pdo), $vaults, $crypto);
+            $audit->record(AuditAction::TresorAnkerGesetzt, $konto->id, $ip, $aktuell->version, ['weg' => 'wiederherstellungsschluessel'], $now);
+
             $users->updateEmail(
                 $konto->id,
                 $crypto->encrypt($email),
@@ -244,7 +252,7 @@ final readonly class RestoreAccess
             // and break the admin queue page.
             new MailQueueRepository($this->pdo, $crypto)->deleteAll();
 
-            new AuditLog(new AuditLogRepository($this->pdo), $vaults, $crypto)->record(
+            $audit->record(
                 AuditAction::ZugangNeuVerknuepft,
                 $konto->id,
                 $ip,

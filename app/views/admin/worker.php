@@ -54,6 +54,7 @@ $mailFehler = static fn(string $code): string => match ($code) {
     'imap_ordner' => 'Ordner nicht gefunden',
     'imap_protokoll' => 'Unerwartete Antwort des Servers',
     'webhoster' => 'Einreichen beim Webhoster fehlgeschlagen',
+    'mail_limit' => 'Mengengrenze je Stunde erreicht – der Rest folgt später',
     default => $code,
 };
 ?>
@@ -446,7 +447,9 @@ $mailFehler = static fn(string $code): string => match ($code) {
             <p class="feld-hilfe">
                 Es gelten die Grenzen der Einreichung (Seiten, Dateigröße, Gesamtgröße). Mails darüber,
                 ohne passenden Anhang oder als Spam markiert werden nicht übernommen und bleiben markiert
-                im Postfach.
+                im Postfach. Der Webhoster nimmt je Stunde höchstens
+                <?= e((string) $mailGrenze['mails']) ?> Mails und <?= e((string) $mailGrenze['mb']) ?> MB an;
+                was darüber liegt, wartet im Postfach auf den nächsten Abruf.
             </p>
 
             <p class="knopfreihe">

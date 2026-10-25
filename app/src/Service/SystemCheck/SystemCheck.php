@@ -71,6 +71,10 @@ final readonly class SystemCheck
      *        an origin for all(), the config exposure check is left out
      * @param ?string $sharedDir absolute path of shared/; its parent holds
      *        the directories whose deny-all .htaccess is checked
+     * @param (\Closure(): array<int, bool>)|null $tresorAnker the anchor
+     *        state of the vault generations in use, version => valid
+     *        (VaultRepository::ankerStand(), issue #240); without it the
+     *        check is left out
      * @param (\Closure(): UploadBudgetStand)|null $uploadBudget today's byte
      *        budget of the public upload (issue #242); without it that
      *        check is left out
@@ -80,6 +84,7 @@ final readonly class SystemCheck
         private ?string $varDir = null,
         private ?\Closure $statusProbe = null,
         private ?string $sharedDir = null,
+        private ?\Closure $tresorAnker = null,
         private ?\Closure $uploadBudget = null,
     ) {
     }
@@ -120,11 +125,15 @@ final readonly class SystemCheck
             $results[] = $this->configExposure($origin);
         }
 
+        if ($this->tresorAnker !== null) {
+            $results[] = $this->tresorAnker(($this->tresorAnker)());
+        }
+
         if ($this->uploadBudget !== null) {
             try {
                 $results[] = $this->uploadBudget(($this->uploadBudget)());
             } catch (\Throwable) {
-                // E.g. migration 046 not run yet: the page that diagnoses
+                // E.g. migration 048 not run yet: the page that diagnoses
                 // such a state must not fail on it.
                 $results[] = new CheckResult(
                     key: 'upload_budget',
@@ -436,6 +445,41 @@ final readonly class SystemCheck
                 ? 'Auch eine Domain, die eine Ebene zu hoch zeigt, bekäme nichts ausgeliefert.'
                 : 'Die Installation und jedes Update legen die Datei an. Fehlt sie weiter: Schreibrechte '
                     . 'prüfen oder eine .htaccess mit „Require all denied“ per FTP anlegen.',
+        );
+    }
+
+    /**
+     * Issue #240 (finding N-01): does the public key of every vault
+     * generation in use carry a valid MAC under the server key? Only version
+     * numbers reach the output, never a key. A failure means nothing is
+     * sealed - the public submission and every vault page stop - until the
+     * recovery key proves the key again.
+     *
+     * @param array<int, bool> $stand version => anchor valid
+     */
+    public function tresorAnker(array $stand): CheckResult
+    {
+        $abweichend = array_keys(array_filter($stand, static fn(bool $ok): bool => !$ok));
+        sort($abweichend);
+        $liste = implode(', ', $abweichend);
+
+        return new CheckResult(
+            key: 'vault_anchor',
+            label: 'Beglaubigung des Tresor-Schlüssels',
+            expected: 'beglaubigt',
+            actual: match (true) {
+                $stand === [] => 'noch kein Tresor',
+                $abweichend === [] => 'beglaubigt',
+                default => 'nicht beglaubigt (Generation ' . $liste . ')',
+            },
+            status: $abweichend === [] ? CheckStatus::Ok : CheckStatus::Fail,
+            detail: $abweichend === []
+                ? 'Der öffentliche Tresor-Schlüssel passt zu seinem Fingerabdruck mit dem Server-Schlüssel aus config.php.'
+                : 'Der öffentliche Tresor-Schlüssel in der Datenbank passt nicht zu seinem Fingerabdruck mit dem Server-Schlüssel – '
+                    . 'er könnte ausgetauscht worden sein. Bis zur Klärung wird nichts versiegelt (Einreichung und Belege gesperrt). '
+                    . 'Ein Admin gibt unter „Tresor wiederherstellen“ den Wiederherstellungsschlüssel ein: passt er zum Schlüssel, '
+                    . 'wird dieser neu beglaubigt. Passt er nicht, wurde der Schlüssel ausgetauscht – dann das Audit-Log prüfen '
+                    . 'und ein Backup von vor der Änderung einspielen.',
         );
     }
 

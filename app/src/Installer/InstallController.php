@@ -25,6 +25,7 @@ use App\Service\Mail\PublicUrl;
 use App\Service\Mail\SmtpSecurity;
 use App\Service\Migration\Migrator;
 use App\Service\SystemCheck\SystemCheck;
+use App\Service\Tresor\Erstbeglaubigung;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\View\View;
@@ -233,18 +234,29 @@ final readonly class InstallController
             return $this->startRestore($values, $zipPfad, $vomServer);
         }
 
+        $setup = new FirstAdminSetup($pdo);
+        // Looked at BEFORE the migrations too (an empty database has no
+        // vault table yet): on an existing installation from before
+        // migration 047 they would use up the one first-use anchoring of
+        // its vault key (issue #240) without writing it.
+        try {
+            $schonEinTresor = $setup->vaultExists();
+        } catch (\PDOException) {
+            $schonEinTresor = false;
+        }
+
         // Fresh install: every migration from 0. The channel setting is
         // written before the vault, so a failure here leaves the installer
         // open instead of a half-configured installation behind.
-        new Migrator($pdo, $this->paths->migrationsDir())->migrate();
-        new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
+        if (!$schonEinTresor) {
+            new Migrator($pdo, $this->paths->migrationsDir())->migrate();
+            new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
+        }
 
-        $setup = new FirstAdminSetup($pdo);
-        if ($setup->vaultExists()) {
-            // Every migration from 0 ran above regardless (harmless, they
-            // are idempotent) - but a vault already exists, so this is not
-            // an empty database: refuse rather than seal a second one nobody
-            // could ever be granted access to.
+        if ($schonEinTresor || $setup->vaultExists()) {
+            // A vault already exists, so this is not an empty database:
+            // refuse rather than seal a second one nobody could ever be
+            // granted access to.
             return $this->render([
                 'errors' => ['db' => 'Diese Datenbank enthält bereits eine Installation (ein Tresor ist schon vorhanden). Bitte eine leere Datenbank verwenden oder ein Backup einspielen.'],
                 'values' => $values,
@@ -642,6 +654,9 @@ final readonly class InstallController
                 'migrationen' => count($migriert->applied),
             ];
 
+            // A backup from before the vault anchor (issue #240): its rows
+            // get their first MAC with the key config.php will hold - known
+            // now when the backup carried one, at the access step otherwise.
             $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
             if ($serverSchluessel === null) {
                 // No key in the backup: config.php waits for the access step
@@ -814,6 +829,9 @@ final readonly class InstallController
         /** @var array<string, string> $dbValues */
         $dbValues = $stand['db'];
         $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+        // The vault was anchored when it was created; from now on nothing
+        // is anchored on trust (issue #240).
+        Erstbeglaubigung::markieren($this->paths->vaultAnchorFlagFile());
 
         unset($_SESSION['install_admin']);
         $this->cleanUpSetupLeftovers();
@@ -944,6 +962,9 @@ final readonly class InstallController
     /** What follows a written config.php: the leftovers of setup.php, the session state. */
     private function closeInstaller(): void
     {
+        // A restore never anchors on trust; from now on nothing is (issue
+        // #240) - rows of an older backup wait for the recovery key.
+        Erstbeglaubigung::markieren($this->paths->vaultAnchorFlagFile());
         unset($_SESSION['install_restore']);
         $this->cleanUpSetupLeftovers();
     }

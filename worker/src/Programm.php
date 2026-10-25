@@ -14,6 +14,7 @@ use App\Worker\Mail\ImapClient;
 use App\Worker\Mail\MailEingang;
 use App\Worker\Mail\MailZugang;
 use App\Worker\Mail\SocketStrom;
+use App\Worker\Mail\VersuchsSpeicher;
 use App\Worker\Schritt\KiAuslesen;
 use App\Worker\Schritt\Ocr;
 use App\Worker\Schritt\SeitenRendern;
@@ -183,6 +184,9 @@ final class Programm
                 $abbruch,
                 $log,
                 $uhr,
+                // Review of #243: attempts survive a restart also without
+                // own IMAP keywords - next to the identity, no mail content.
+                new VersuchsSpeicher(dirname($datei) . '/mail_versuche.json', hash_hmac('sha256', 'mail-versuche', $identitaet->schluessel, true), $uhr),
             ),
         ))->laufen();
 
