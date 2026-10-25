@@ -72,7 +72,7 @@ final class BestandsOcrTest extends WorkerTestCase
         self::assertSame([$gesperrt, $offen], $this->ocrJobs());
         self::assertSame(DocumentStatus::Festgeschrieben, $this->documents->find($gesperrt)?->status);
         $job = $this->laufender();
-        self::assertSame(['gesamt' => 3, 'mitText' => 1, 'inErkennung' => 0, 'beimWorker' => 2, 'offen' => 0], $this->bestand->stand($job));
+        self::assertSame(['gesamt' => 3, 'mitText' => 1, 'inErkennung' => 0, 'beimWorker' => 2, 'fehlgeschlagen' => 0, 'offen' => 0], $this->bestand->stand($job));
         // At the end, but the worker still has two: another pass later (one may fail).
         self::assertSame(JobStatus::Offen, $this->schritt()->status);
         foreach ($this->ocrJobIds() as $id) {
@@ -184,6 +184,28 @@ final class BestandsOcrTest extends WorkerTestCase
         $this->schritt(); // end of the pass, the worker still has one: from the start again
         $this->schritt();
         self::assertSame([$frueh, $spaet], $this->ocrJobs());
+    }
+
+    public function testADocumentWhoseOcrFailsForGoodIsNotHandedOverAgain(): void
+    {
+        $kaputt = $this->dokument(DocumentSource::Archiv);
+        $gut = $this->dokument(DocumentSource::Archiv);
+        $this->onlineWorker();
+        $this->bestand->starten(null, new \DateTimeImmutable());
+        $this->schritt();
+        self::assertSame([$kaputt, $gut], $this->ocrJobs());
+
+        // The worker gives up on the broken PDF for good; the other one is done.
+        [$fehlerJob, $gutJob] = $this->ocrJobIds();
+        $this->jobs->finish($fehlerJob, JobStatus::Fehler);
+        $this->jobs->finish($gutJob, JobStatus::Fertig);
+
+        self::assertSame(JobStatus::Fertig, $this->schritt()->status, 'The run ends instead of looping.');
+        self::assertSame([], $this->ocrJobs(), 'The broken one is not handed over again.');
+        self::assertSame(1, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE typ = 'ocr' AND ref_id = " . $kaputt)->fetchColumn());
+        $stand = $this->bestand->stand($this->bestand->letzter() ?? self::fail('no run'));
+        self::assertSame(1, $stand['fehlgeschlagen']);
+        self::assertSame(0, $stand['offen']);
     }
 
     public function testARunningImportCannotBeChosen(): void

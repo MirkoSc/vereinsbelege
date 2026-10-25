@@ -294,7 +294,7 @@ final readonly class WorkerController
      * The archive OCR backfill section (issue #88): the newest run with its
      * progress, and the import runs to choose from.
      *
-     * @return array{bestandJob: ?Job, bestandZustand: ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int}, bestandStand: ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int}, bestandLaeuft: bool, importLaeufe: list<ArchiveImportRecord>}
+     * @return array{bestandJob: ?Job, bestandZustand: ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int}, bestandStand: ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int}, bestandLaeuft: bool, importLaeufe: list<ArchiveImportRecord>}
      */
     private function bestand(): array
     {

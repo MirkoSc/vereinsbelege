@@ -25,7 +25,7 @@
  * @var bool $ocrVerfuegbar
  * @var ?\App\Domain\Job $bestandJob
  * @var ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int} $bestandZustand
- * @var ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int} $bestandStand
+ * @var ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int} $bestandStand
  * @var bool $bestandLaeuft
  * @var list<\App\Domain\ArchiveImportRecord> $importLaeufe
  */
@@ -275,6 +275,9 @@ $typName = static fn(string $typ): string => match ($typ) {
                 <?= e((string) $bestandStand['mitText']) ?> von <?= e((string) $bestandStand['gesamt']) ?> Belegen haben eine Textebene ·
                 beim Worker: <?= e((string) $bestandStand['beimWorker']) ?> ·
                 noch ohne: <?= e((string) $bestandStand['offen']) ?>
+                <?php if ($bestandStand['fehlgeschlagen'] > 0): ?>
+                    · Texterkennung gescheitert (in diesem Lauf nicht erneut): <?= e((string) $bestandStand['fehlgeschlagen']) ?>
+                <?php endif; ?>
             </p>
             <p class="gedaempft">
                 In diesem Lauf übergeben: <?= e((string) $bestandZustand['uebergeben']) ?>

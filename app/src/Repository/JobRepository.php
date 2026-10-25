@@ -510,6 +510,31 @@ final readonly class JobRepository
     }
 
     /**
+     * Runs $aktion under a named MariaDB lock (GET_LOCK, issue #88: one
+     * archive OCR backfill at a time even when two requests start it at
+     * once). Waits up to 5 seconds for the lock; without it nothing runs
+     * and null comes back.
+     *
+     * @template T
+     * @param \Closure(): ?T $aktion
+     * @return ?T
+     */
+    public function unterSperre(string $name, \Closure $aktion): mixed
+    {
+        $sperre = 'vereinsbelege_job_' . $name;
+        $stmt = $this->pdo->prepare('SELECT GET_LOCK(?, 5)');
+        $stmt->execute([$sperre]);
+        if ((int) $stmt->fetchColumn() !== 1) {
+            return null;
+        }
+        try {
+            return $aktion();
+        } finally {
+            $this->pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$sperre]);
+        }
+    }
+
+    /**
      * Stops a job that is still `offen` or `laeuft` from the outside (issue
      * #88: "Abbrechen" of the archive OCR backfill): `uebersprungen`, state
      * kept for the report. A step running right now loses its lock, so its

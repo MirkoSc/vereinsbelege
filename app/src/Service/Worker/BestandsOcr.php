@@ -85,9 +85,6 @@ final readonly class BestandsOcr implements HintergrundJob
      */
     public function starten(?int $importId, \DateTimeImmutable $now): ?int
     {
-        if ($this->laufender() !== null) {
-            return null;
-        }
         [$von, $bis] = [0, 0];
         if ($importId !== null) {
             $import = $this->imports->find($importId);
@@ -100,14 +97,15 @@ final readonly class BestandsOcr implements HintergrundJob
             [$von, $bis] = [$import->stats->ersteDocumentId, $import->stats->letzteDocumentId];
         }
 
-        return $this->jobs->enqueue(self::JOB_TYP, JobExecutor::Session, state: [
+        // Check and insert under one named lock: two clicks at once start one run.
+        return $this->jobs->unterSperre(self::JOB_TYP, fn(): ?int => $this->laufender() !== null ? null : $this->jobs->enqueue(self::JOB_TYP, JobExecutor::Session, state: [
             'import' => $importId ?? 0,
             'von' => $von,
             'bis' => $bis,
             'nach' => 0,
             'uebergeben' => 0,
             'ausgelassen' => 0,
-        ], now: $now);
+        ], now: $now));
     }
 
     /** The running backfill (`offen`/`laeuft`), or null. */
@@ -135,13 +133,13 @@ final readonly class BestandsOcr implements HintergrundJob
     /**
      * Progress over the backfill's documents.
      *
-     * @return array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int}
+     * @return array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int}
      */
     public function stand(Job $job): array
     {
         $state = self::zustand($job);
 
-        return $this->documents->bestandOcrStand($state['von'], $state['bis']);
+        return $this->documents->bestandOcrStand($state['von'], $state['bis'], $job->createdAt);
     }
 
     public function schritt(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
@@ -160,9 +158,9 @@ final readonly class BestandsOcr implements HintergrundJob
             return JobSchrittErgebnis::warten(self::SCHRITT, $state, self::WARTEN_VOLL);
         }
 
-        $ids = $this->documents->bestandOcrNachholbar($state['von'], $state['bis'], $state['nach'], self::PRUEFEN_JE_SCHRITT);
+        $ids = $this->documents->bestandOcrNachholbar($state['von'], $state['bis'], $job->createdAt, $state['nach'], self::PRUEFEN_JE_SCHRITT);
         if ($ids === []) {
-            return $this->ende($state);
+            return $this->ende($job, $state);
         }
         foreach ($ids as $documentId) {
             try {
@@ -201,13 +199,14 @@ final readonly class BestandsOcr implements HintergrundJob
      * The cursor reached the end. Documents in the range may still become
      * candidates: their own text detection is pending, or a handed-over OCR
      * job may still fail or fall back. While either holds, another pass
-     * starts from the beginning; otherwise the run is done.
+     * starts from the beginning; otherwise the run is done. A document whose
+     * OCR job failed in this run is not a candidate again (it cannot loop).
      *
      * @param array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int} $state
      */
-    private function ende(array $state): JobSchrittErgebnis
+    private function ende(Job $job, array $state): JobSchrittErgebnis
     {
-        $stand = $this->documents->bestandOcrStand($state['von'], $state['bis']);
+        $stand = $this->documents->bestandOcrStand($state['von'], $state['bis'], $job->createdAt);
         if ($stand['inErkennung'] === 0 && $stand['beimWorker'] === 0) {
             return JobSchrittErgebnis::fertig();
         }

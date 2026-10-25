@@ -362,7 +362,11 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     Zeiger bleibt stehen; zwischen zwei Schritten 2 s Pause. Am Ende ein
     weiterer Durchlauf von vorn, solange im Bereich noch eine eigene
     Texterkennung (`extract_text`) aussteht oder OCR-Jobs beim Worker
-    sind. Nur abgeschlossene Import-Läufe sind wählbar. Zeiger und Zähler in
+    sind. Ein Beleg, dessen `ocr`-Job in diesem Lauf endgültig
+    gescheitert ist (`fehler`), ist kein Kandidat mehr (angezeigt als
+    „gescheitert“; ein neuer Lauf versucht ihn erneut). Nur abgeschlossene
+    Import-Läufe sind wählbar; Prüfen und Anlegen des Laufs unter
+    `GET_LOCK`, damit zwei gleichzeitige Starts nur einen Lauf ergeben. Zeiger und Zähler in
     `job.state` → Wiederaufnahme nach Pause, Abmelden, Worker-Ausfall.
     Der Job zählt nicht zur Kopfzeile „N Belege in Verarbeitung“
     (`App\Service\Job\HintergrundJob`).
@@ -494,7 +498,8 @@ Prozess-Aufrufe nur in `worker/src/Prozess.php`; Bestandsarchiv (#88):
 Auswahl nach Import-Lauf, festgeschriebene eingeschlossen und unverändert,
 Drosselung auf 5 wartende OCR-Jobs mit Vorrang neuer Belege, Warten ohne
 Worker mit Wiederaufnahme am Zeiger, ein Lauf zugleich und abbrechbar,
-Archiv-Belege nie einzeln an den Worker, nicht in der Kopfzeilen-Zahl;
+Archiv-Belege nie einzeln an den Worker, nicht in der Kopfzeilen-Zahl,
+dauerhaft scheiternde OCR beendet den Lauf statt ihn endlos zu wiederholen;
 Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).

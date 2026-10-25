@@ -1545,9 +1545,12 @@ Getroffen ohne Rückfrage:
   wird übersprungen und gezählt („ausgelassen“), ein neuer Start versucht
   ihn erneut. Geht der Worker mitten im Schritt weg, bleibt der Zeiger
   stehen. Am Ende folgt ein weiterer Durchlauf, solange im Bereich noch
-  eine eigene Texterkennung aussteht oder OCR-Jobs beim Worker sind (ein
-  fehlgeschlagener wird so erneut versucht). Nur abgeschlossene
-  Import-Läufe sind wählbar. „Abbrechen“ setzt den Job auf
+  eine eigene Texterkennung aussteht oder OCR-Jobs beim Worker sind. Ein
+  Beleg, dessen OCR in diesem Lauf endgültig scheitert (`fehler`, z. B.
+  verschlüsseltes PDF), wird in diesem Lauf nicht erneut übergeben und als
+  „gescheitert“ gezählt; ein neuer Start versucht ihn wieder. Nur
+  abgeschlossene Import-Läufe sind wählbar; der Start läuft unter
+  `GET_LOCK` (kein Doppelstart). „Abbrechen“ setzt den Job auf
   `uebersprungen`; was schon beim Worker ist, wird fertig.
 - **Festgeschriebene Belege (01 §7) sind eingeschlossen.** OCR ergänzt nur
   abgeleitete Daten: Text-Artefakte, `ocr_status` (wie `content_bi` aus

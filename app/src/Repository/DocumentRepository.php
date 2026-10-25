@@ -47,11 +47,14 @@ final readonly class DocumentRepository
     /**
      * bestandOcrNachholbar(): like OCR_NACHHOLBAR, but archive documents
      * only and locked ones included (E-55) - OCR adds a derived text layer,
-     * it never changes the receipt or its files.
+     * it never changes the receipt or its files. An `ocr` job that failed
+     * since the backfill started ($seit) counts as done for this run - a
+     * broken PDF is not handed over again and again (issue #88 review).
      */
     private const string BESTAND_OCR =
         'd.source = ? AND d.ocr_status = ? AND d.status <> ? AND d.id >= ? AND (? = 0 OR d.id <= ?)
          AND NOT EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.status IN (?, ?, ?))
+         AND NOT EXISTS (SELECT 1 FROM job f WHERE f.typ = ? AND f.ref_type = ? AND f.ref_id = d.id AND f.status = ? AND f.created_at >= ?)
          AND NOT EXISTS (SELECT 1 FROM document_artifact a WHERE a.document_id = d.id AND a.producer = ? AND a.kind = ?)';
 
     public function __construct(private \PDO $pdo)
@@ -197,12 +200,12 @@ final readonly class DocumentRepository
      *
      * @return list<int>
      */
-    public function bestandOcrNachholbar(int $von, int $bis, int $nachId, int $limit): array
+    public function bestandOcrNachholbar(int $von, int $bis, \DateTimeImmutable $seit, int $nachId, int $limit): array
     {
         $stmt = $this->pdo->prepare(
             'SELECT d.id FROM document d WHERE ' . self::BESTAND_OCR . ' AND d.id > ? ORDER BY d.id LIMIT ' . max(1, $limit),
         );
-        $stmt->execute([...self::bestandOcrParameter($von, $bis), $nachId]);
+        $stmt->execute([...self::bestandOcrParameter($von, $bis, $seit), $nachId]);
 
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
     }
@@ -212,19 +215,20 @@ final readonly class DocumentRepository
      * no upper end, rejected ones left out): all of them, those with a text
      * layer (`ocr_status` `fertig`), those whose own text detection has not
      * decided yet (`keine`/`ausstehend` with an `extract_text` job pending), those with an `ocr` job at the
-     * worker right now, and those still to be caught up
-     * (bestandOcrNachholbar()).
+     * worker right now, those whose OCR failed since $seit (without a text
+     * layer), and those still to be caught up (bestandOcrNachholbar()).
      *
-     * @return array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int}
+     * @return array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int}
      */
-    public function bestandOcrStand(int $von, int $bis): array
+    public function bestandOcrStand(int $von, int $bis, \DateTimeImmutable $seit): array
     {
         $bereich = 'd.source = ? AND d.status <> ? AND d.id >= ? AND (? = 0 OR d.id <= ?)';
         $bereichParameter = [DocumentSource::Archiv->value, DocumentStatus::Abgelehnt->value, $von, $bis, $bis];
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(*) AS gesamt, COALESCE(SUM(d.ocr_status = ?), 0) AS mit_text,
                     COALESCE(SUM(d.ocr_status IN (?, ?) AND EXISTS (SELECT 1 FROM job t WHERE t.typ = ? AND t.ref_type = ? AND t.ref_id = d.id AND t.status IN (?, ?))), 0) AS in_erkennung,
-                    COALESCE(SUM(EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.executor = ? AND j.status IN (?, ?))), 0) AS beim_worker
+                    COALESCE(SUM(EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.executor = ? AND j.status IN (?, ?))), 0) AS beim_worker,
+                    COALESCE(SUM(d.ocr_status <> ? AND EXISTS (SELECT 1 FROM job f WHERE f.typ = ? AND f.ref_type = ? AND f.ref_id = d.id AND f.status = ? AND f.created_at >= ?)), 0) AS fehlgeschlagen
              FROM document d WHERE ' . $bereich,
         );
         $stmt->execute([
@@ -241,17 +245,23 @@ final readonly class DocumentRepository
             JobExecutor::Worker->value,
             JobStatus::Offen->value,
             JobStatus::Laeuft->value,
+            OcrStatus::Fertig->value,
+            'ocr',
+            'document',
+            JobStatus::Fehler->value,
+            $seit->format(self::FORMAT),
             ...$bereichParameter,
         ]);
         $zeile = $stmt->fetch(\PDO::FETCH_ASSOC);
         $offen = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . self::BESTAND_OCR);
-        $offen->execute(self::bestandOcrParameter($von, $bis));
+        $offen->execute(self::bestandOcrParameter($von, $bis, $seit));
 
         return [
             'gesamt' => (int) ($zeile['gesamt'] ?? 0),
             'mitText' => (int) ($zeile['mit_text'] ?? 0),
             'inErkennung' => (int) ($zeile['in_erkennung'] ?? 0),
             'beimWorker' => (int) ($zeile['beim_worker'] ?? 0),
+            'fehlgeschlagen' => (int) ($zeile['fehlgeschlagen'] ?? 0),
             'offen' => (int) $offen->fetchColumn(),
         ];
     }
@@ -259,7 +269,7 @@ final readonly class DocumentRepository
     /**
      * @return list<int|string>
      */
-    private static function bestandOcrParameter(int $von, int $bis): array
+    private static function bestandOcrParameter(int $von, int $bis, \DateTimeImmutable $seit): array
     {
         return [
             DocumentSource::Archiv->value,
@@ -273,6 +283,10 @@ final readonly class DocumentRepository
             JobStatus::Offen->value,
             JobStatus::Laeuft->value,
             JobStatus::Fertig->value,
+            'ocr',
+            'document',
+            JobStatus::Fehler->value,
+            $seit->format(self::FORMAT),
             JobExecutor::Worker->value,
             ArtifactKind::Text->value,
         ];
