@@ -995,3 +995,36 @@ Daten-Schlüssel. Getroffen ohne Rückfrage:
   HMAC (Schlüssel aus dem Server-Schlüssel, `worker.config_hash`) über die
   aktiven Anbieter-Profile geändert hat. Eine Änderung erreicht den Worker
   so binnen eines Polling-Intervalls; Klartext wird nie gespeichert.
+
+## E-40 ❓ GiroCode (EPC-QR) für offene Rechnungen (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Backlog (issue #86), 04 §5 „Stand Backlog: GiroCode“*
+
+- **Eigene Seite statt Code in der Prüfansicht:** `/app/offen/rechnungen/{id}/girocode`
+  mit `Cache-Control: no-store`, Recht und Scope der Liste „Unbezahlt“
+  (`report.view`). Die Prüfansicht und die Liste verlinken nur. So bleibt
+  die Prüfansicht wie sie ist, und nur die Seite mit Zahlungsdaten im Bild
+  wird vom Cache ausgenommen.
+- **Wofür:** nur Ausgaben mit Zahlungsweg `konto`, Status `offen`/
+  `teilbezahlt`, Währung EUR, nicht Altbestand (dessen Status sagt nichts
+  über die Zahlung). Betrag = offener Rest, Zweck = Rechnungsnummer,
+  Empfänger = Lieferantenname, IBAN des Lieferanten mit gültiger Prüfziffer,
+  nie ein Konto des Vereins (E-29) – auch nicht, wenn die IBAN vor dem
+  Anlegen des Vereinskontos beim Lieferanten gelernt wurde. Nicht für
+  Erstattungen (die Einreicher-IBAN kommt aus dem öffentlichen Formular;
+  dafür ist die Sammelüberweisung pain.001 im Backlog).
+- **Mehrere IBANs:** ein Code je IBAN mit Hinweis, statt eine zu raten.
+  BIC nur bei genau einer IBAN (der Lieferant hat nur ein BIC-Feld).
+- **EPC069-12 Version 002, UTF-8**, ohne Purpose-Code und ohne
+  strukturierte Referenz; überlange Mehrbyte-Texte kürzen erst den Zweck,
+  dann den Namen; was falsch überweisen würde (Prüfziffer, Betrag außerhalb
+  0,01–999.999.999,99) wird abgelehnt.
+- **Kein neuer Encoder:** `App\Support\QrCode` auf Version 1–13 erweitert,
+  geprüft Matrix für Matrix gegen den Referenz-Encoder `qrcode` (PyPI) und
+  mit zxing-cpp dekodiert (56 Nutzlasten 1–331 Byte, außerhalb des Repos).
+
+Offen für Mirko: Scan mit echten Banking-Apps (Sparkasse, VR, …) noch
+nicht gemacht; ob der Code auch für Erstattungen (Einreicher-IBAN) kommen
+soll; ob Kassenprüfer/Vorstand (`report.view`) den Code sehen sollen oder
+nur, wer zahlt (`bank.book`/`matching.edit`); ob die Rechnungsnummer allein
+als Zweck reicht (z. B. Kundennummer dazu); bei mehreren IBANs die IBAN
+von der Rechnung (KI/E-Rechnung) vorziehen.

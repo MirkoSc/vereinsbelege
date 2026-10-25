@@ -952,6 +952,45 @@ mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
 `SerienFlowTest::testTheWorkListShowsOnlyConfirmedSeriesWhoseReceiptIsMissing`,
 `RoutePermissionMatrixTest`.
 
+#### Stand Backlog: GiroCode zum Bezahlen (issue #86, E-40)
+
+- **Seite** `/app/offen/rechnungen/{Dokument-ID}/girocode` (`report.view`
+  mit Scope in SQL – dieselbe Auswahl wie „Unbezahlt“, sonst 404 ohne
+  Grund). Verlinkt aus „Unbezahlt“ (nur Ausgaben, kein Altbestand) und aus
+  der Prüfansicht (gespeicherte Ausgabe, Zahlungsweg `konto`, Status
+  `offen`/`teilbezahlt`, Konto mit `report.view`). Antwort mit
+  `Cache-Control: no-store, private`; in der URL steht nur die ID. Ohne
+  entsperrten Tresor nichts. `App\App\UebersichtController::girocode()`,
+  Logik `App\Service\Bank\Uebersichten::ueberweisung()`; keine Migration.
+- **Code nur**, wenn: Ausgabe, kein Altbestand, Währung EUR, offener Rest
+  > 0, Lieferant zugeordnet und mit mindestens einer IBAN mit gültiger
+  Prüfziffer, die **kein Konto des Vereins** ist (E-29). Sonst nennt die
+  Seite den Grund statt eines Codes. Mehrere gültige IBANs: ein Code je
+  IBAN mit Hinweis, die von der Rechnung zu nehmen.
+- **Inhalt** (EPC069-12 Version 002, UTF-8, `App\Service\Bank\GiroCode`):
+  BIC des Lieferanten nur bei genau einer IBAN und gültigem Format, Name
+  = Lieferantenname (≤ 70 Zeichen), IBAN, `EUR` + offener Rest (Brutto −
+  zugeordnet, Punkt, zwei Nachkommastellen), Verwendungszweck unstrukturiert
+  = Rechnungsnummer (≤ 140 Zeichen; leer → Hinweis). Zeilenumbrüche und
+  Steuerzeichen werden zu Leerzeichen, leere Schlusszeilen entfallen; wird
+  die Nutzlast durch Mehrbyte-Zeichen länger als 331 Byte, wird erst der
+  Zweck, dann der Name gekürzt. Daneben dieselben Angaben als Text.
+- **QR:** `App\Support\QrCode` (reines PHP, Byte-Modus, Fehlerkorrektur M),
+  erweitert auf Version 1–13 (331 Byte = EPC-Maximum): Versionsinformation,
+  zwei Blockgruppen, mehrere Ausrichtungsmuster, 16-Bit-Längenfeld ab
+  Version 10.
+- Der Code ändert nichts am Status: bezahlt ist der Beleg erst, wenn die
+  Buchung zugeordnet ist.
+
+**Pflicht-Tests GiroCode:** `GiroCodeTest` (Nutzlast exakt, ohne BIC/Zweck,
+Betragsformat, ungültige IBAN/Betrag/Name abgelehnt, Längen, Zeilenumbrüche,
+Sonderzeichen, 331-Byte-Grenze), `QrCodeTest` (Kapazitätsgrenzen 1–13,
+Matrizen gegen Referenz-Encoder, Versionsinformation),
+`UebersichtFlowTest` (offener Rest, Rechnungsnummer, `no-store`, Vereins-
+IBAN/Einnahme/ohne IBAN ohne Code, Scope 404, ohne Tresor),
+`PruefungFlowTest::testAnUnpaidExpenseLinksItsGiroCode`,
+`RoutePermissionMatrixTest`.
+
 ## Pflicht-Tests
 
 MT940: mehrere Auszüge, Fortsetzungszeilen, Jahreswechsel im `:61:`,

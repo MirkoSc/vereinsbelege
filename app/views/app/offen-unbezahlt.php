@@ -107,7 +107,12 @@ $ueberfaellig = count(array_filter($posten, static fn($p): bool => $p->faelligke
                                     <?php endif; ?>
                                 </td>
                                 <td class="zahl"><?= e(Betrag::format($p->brutto) . ' ' . $p->waehrung) ?></td>
-                                <td class="zahl"><?= e(Betrag::format($p->offen) . ' ' . $p->waehrung) ?></td>
+                                <td class="zahl">
+                                    <?= e(Betrag::format($p->offen) . ' ' . $p->waehrung) ?>
+                                    <?php if ($p->record->direction === InvoiceDirection::Ausgabe && !$p->altbestand && $p->record->supplierId !== null && strtoupper($p->waehrung) === 'EUR'): ?>
+                                        <br><a href="<?= e('/app/offen/rechnungen/' . $p->record->documentId . '/girocode') ?>">GiroCode</a>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

@@ -49,9 +49,11 @@ final class Totp
      * separate `issuer` query parameter is left out too - the label already
      * carries it, and every app this project has been checked against reads
      * the issuer from there. Both omissions exist for the same reason:
-     * App\Support\QrCode only covers versions 1-6 (up to 106 bytes at error
-     * correction level M), and a real account name (an e-mail address) can
-     * come close to that on its own.
+     * App\Support\QrCode covered only versions 1-6 (up to 106 bytes at error
+     * correction level M) when this was written, and a real account name (an
+     * e-mail address) can come close to that on its own. It now reaches
+     * version 13 (issue #86); the omissions stay - a smaller code scans more
+     * reliably.
      */
     public static function uri(#[\SensitiveParameter] string $secret, string $accountName, string $issuer): string
     {

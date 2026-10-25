@@ -647,6 +647,7 @@ return static function (
     // only forwards to the first list the account may open.
     $get('/app/offen', $angemeldet, static fn(Request $r) => $offen()->start($r));
     $get('/app/offen/rechnungen', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $offen()->unbezahlt($r));
+    $get('/app/offen/rechnungen/{id:\d+}/girocode', Zugriff::recht(Permission::ReportView), static fn(Request $r, array $params) => $offen()->girocode($r, $params));
     $get('/app/offen/erstattungen', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $offen()->erstattungen($r));
     $get('/app/offen/buchungen', Zugriff::recht(Permission::BankView), static fn(Request $r) => $offen()->buchungen($r));
     $get('/app/offen/erwartet', $documentEdit, static fn(Request $r) => $offen()->erwartet($r));
