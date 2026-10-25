@@ -11,6 +11,7 @@ use App\Domain\Document;
 use App\Domain\DocumentStatus;
 use App\Domain\InboxAction;
 use App\Domain\InboxItem;
+use App\Domain\JobExecutor;
 use App\Domain\Zugriffsbereich;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
@@ -23,6 +24,7 @@ use App\Service\Crypto\Vault;
 use App\Service\Document\KiAuslesung;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
+use App\Service\Worker\WorkerUebergabe;
 
 /**
  * The inbox (issue #27/M4-5, docs/spec/02-datenmodell.md "Statusmodell"):
@@ -68,6 +70,7 @@ final readonly class Posteingang
         private BlobService $blobs,
         private AuditLog $audit,
         private JobRepository $jobs,
+        private ?WorkerUebergabe $uebergabe = null,
     ) {
     }
 
@@ -272,7 +275,13 @@ final readonly class Posteingang
         // bereit_zur_auswertung -> KI-Job). Without a usable AI profile the
         // job skips itself and the receipt is captured by hand.
         if ($ziel === DocumentStatus::BereitZurAuswertung) {
-            KiAuslesung::einreihen($this->jobs, $document->id, $now);
+            // With the worker module on and the worker online it reads the
+            // receipt, without time limit (issue #53); else the session.
+            if ($this->uebergabe !== null) {
+                $this->uebergabe->einreihen(KiAuslesung::JOB_TYP, JobExecutor::Session, $document->id, $vault, $now);
+            } else {
+                KiAuslesung::einreihen($this->jobs, $document->id, $now);
+            }
         }
 
         $this->audit->record($aktion->auditAction(), $userId, $ip, $document->id, $details, $now);

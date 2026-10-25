@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\BackupController;
 use App\Admin\CategoryController;
+use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
@@ -164,6 +165,12 @@ use App\Service\Worker\WorkerAuth;
 use App\Service\Worker\WorkerFreigaben;
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
+use App\Service\Cron\WorkerFallbackTask;
+use App\Service\Mail\WorkerAlarm;
+use App\Service\Worker\WorkerUebernahme;
+use App\Service\Worker\WorkerFallback;
+use App\Service\Worker\WorkerUebergabe;
+use App\Service\Worker\WorkerRouting;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\KiAuslesung;
 use App\Service\Document\LieferantenAufloesung;
@@ -172,6 +179,7 @@ use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Integritaet\CodeIntegritaet;
 use App\Service\Export\Nextcloud\CurlWebDav;
 use App\Service\Export\Nextcloud\NextcloudAblage;
 use App\Service\Export\Nextcloud\NextcloudZielSpeicher;
@@ -450,8 +458,26 @@ $workerFreigabenFor = static function (\PDO $pdo) use ($workerArtefakteFor): Wor
         $workerArtefakteFor($pdo),
     );
 };
+// Issue #53/M7b-3: routing of worker-capable steps, the handover from a
+// session (grants + job), and the fallback to the browser/session route.
+$workerRoutingFor = static fn(\PDO $pdo): WorkerRouting => new WorkerRouting(new WorkerRepository($pdo), new SettingRepository($pdo));
+$workerUebergabeFor = static fn(\PDO $pdo): WorkerUebergabe => new WorkerUebergabe(
+    $workerRoutingFor($pdo),
+    $workerFreigabenFor($pdo),
+    new JobRepository($pdo),
+    new DocumentRepository($pdo),
+);
+$workerFallbackFor = static fn(\PDO $pdo, ?WorkerAlarm $alarm = null): WorkerFallback => new WorkerFallback(
+    $workerRoutingFor($pdo),
+    new WorkerRepository($pdo),
+    new JobRepository($pdo),
+    $workerFreigabenFor($pdo),
+    new SettingRepository($pdo),
+    new DocumentArtifactRepository($pdo),
+    $alarm,
+);
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $workerFreigabenFor): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $workerFreigabenFor, $workerFallbackFor, $serverCrypto): CronRunner {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -460,7 +486,15 @@ $cron = static fn(): CronController => new CronController($config, static functi
         settings: new SettingRepository($pdo),
         // The mail queue (M3-1): nothing that decrypts, ever (CLAUDE.md
         // section 4) - Mailer reads and writes only server-key ciphertext.
-        jedesMal: [new MailQueueTask($mailerFor($pdo))],
+        jedesMal: [
+            new MailQueueTask($mailerFor($pdo)),
+            // M7b-3: worker jobs of a silent worker back to the browser/
+            // session route, and the alarm mail after a day.
+            new WorkerFallbackTask($workerFallbackFor(
+                $pdo,
+                new WorkerAlarm($mailerFor($pdo), $serverCrypto, new UserRepository($pdo), new UserAccessRepository($pdo)),
+            )),
+        ],
         aufraeumen: [
             new JobCleanupTask(new JobRepository($pdo)),
             new UploadCleanupTask(new UploadService($paths->uploadDir())),
@@ -1190,6 +1224,16 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
     );
 };
 
+// Code integrity check (issue #79/M13-2, 01 section 8): the files of current/
+// against shared/release_checksums.txt. No business data, no vault; the
+// database only for the audit row of a finished run.
+$integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritaetController(
+    $view,
+    new Session(),
+    new CodeIntegritaet($paths->releaseRoot, $paths->releaseChecksumsFile(), $paths->varDir()),
+    $auditFor($connections->pdo()),
+);
+
 // The Nextcloud target of the export (issue #95, 05 section 2): vault data,
 // the page needs the session's unlocked vault. Permission: `admin.settings`.
 $nextcloudAdmin = static function () use ($connections, $view, $auditFor): NextcloudSettingsController {
@@ -1467,7 +1511,7 @@ $auditSeite = static function () use ($connections, $view, $serverCrypto, $audit
 
 // The inbox (M4-5, issue #27): list, detail, streamed pages and the
 // decisions. Built lazily like the other pages.
-$posteingangSeite = static function () use ($connections, $view, $paths, $auditFor): InboxController {
+$posteingangSeite = static function () use ($connections, $view, $paths, $auditFor, $workerUebergabeFor): InboxController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
     $kostenstellen = new CostCenterRepository($pdo);
@@ -1484,6 +1528,7 @@ $posteingangSeite = static function () use ($connections, $view, $paths, $auditF
             new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
             $audit,
             new JobRepository($pdo),
+            $workerUebergabeFor($pdo),
         ),
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $audit),
@@ -1553,14 +1598,17 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
 // registered here once and both pick it up.
 //
 // @return list<\App\Service\Job\JobHandler>
-$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor, $serienFor): array {
+$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor, $serienFor, $workerUebergabeFor): array {
     $blobs = new BlobRepository($pdo);
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
+    // Issue #53: render_pages and ocr go to the worker when it should run them.
+    $uebergabe = $workerUebergabeFor($pdo);
+    $texterkennung = new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService, $uebergabe);
 
     return [
-        new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo)),
+        new PdfErzeugung(new DocumentRepository($pdo), $blobs, $blobService, new SubmissionRepository($pdo), new JobRepository($pdo), $uebergabe),
         new Duplikatindex(new DocumentRepository($pdo), $blobService),
-        new Texterkennung(new DocumentRepository($pdo), new DocumentArtifactRepository($pdo), $blobService),
+        $texterkennung,
         // The AI extraction (issue #47/M7-5): its calls run between the two
         // halves of a step, without database (JobController, $jobsSeite).
         $kiAuslesungFor($pdo),
@@ -1568,6 +1616,15 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lief
         $lieferantenAufloesungFor($pdo),
         // Series detection after "Geprüft" (issue #57/M8-1).
         $serienFor($pdo),
+        // Taking over the results of a finished worker job (issue #53).
+        new WorkerUebernahme(
+            new DocumentRepository($pdo),
+            new DocumentArtifactRepository($pdo),
+            $blobs,
+            new JobRepository($pdo),
+            $texterkennung,
+            $kiAuslesungFor($pdo),
+        ),
     ];
 };
 
@@ -1655,7 +1712,7 @@ $workerKopplungFor = static fn(\PDO $pdo): WorkerKopplung => new WorkerKopplung(
     $auditFor($pdo),
     $workerFreigabenFor($pdo),
 );
-$workerApi = static function () use ($connections, $workerKopplungFor, $workerFreigabenFor, $workerArtefakteFor, $serverCrypto, $paths): WorkerApiController {
+$workerApi = static function () use ($connections, $workerKopplungFor, $workerFreigabenFor, $workerArtefakteFor, $workerRoutingFor, $workerFallbackFor, $serverCrypto, $paths): WorkerApiController {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -1671,12 +1728,26 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
         new VaultRepository($pdo),
         new CategoryRepository($pdo),
         new CostCenterRepository($pdo),
+        $workerRoutingFor($pdo),
+        $workerFallbackFor($pdo),
     );
 };
-$workerAdmin = static function () use ($connections, $view, $workerKopplungFor): WorkerController {
+$workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor): WorkerController {
     $pdo = $connections->pdo();
 
-    return new WorkerController($view, new Session(), new WorkerRepository($pdo), $workerKopplungFor($pdo));
+    return new WorkerController(
+        $view,
+        new Session(),
+        new WorkerRepository($pdo),
+        $workerKopplungFor($pdo),
+        $workerRoutingFor($pdo),
+        $workerUebergabeFor($pdo),
+        $workerFallbackFor($pdo),
+        new JobRepository($pdo),
+        new DocumentArtifactRepository($pdo),
+        new SettingRepository($pdo),
+        new SessionVault(),
+    );
 };
 
 $guard = static fn(): LoginGuard => new LoginGuard(
@@ -1770,6 +1841,7 @@ $router = new Router();
     $tresorRotation,
     $erstattungen,
     $zahllaeufe,
+    $integritaetSeite,
     $dashboardSeite,
 );
 
