@@ -19,6 +19,22 @@ enum Dimension: string
     case Monat = 'monat';
     case Konto = 'konto';
 
+    /**
+     * A key as it may come from a request: ids as int (`'12'` -> 12), a
+     * month or sphere as string, '' as none.
+     */
+    public function normalisiere(int|string|null $schluessel): int|string|null
+    {
+        if ($schluessel === null || $schluessel === '') {
+            return null;
+        }
+        if ($this === self::Monat || $this === self::Sphaere) {
+            return (string) $schluessel;
+        }
+
+        return is_int($schluessel) ? $schluessel : (preg_match('/^[1-9][0-9]{0,18}$/', $schluessel) === 1 ? (int) $schluessel : $schluessel);
+    }
+
     public function schluessel(Posten $posten): int|string|null
     {
         return match ($this) {

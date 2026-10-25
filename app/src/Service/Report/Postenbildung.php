@@ -14,7 +14,8 @@ use App\Domain\InvoiceType;
  * Turns decrypted receipts and bookings into report lines (E-44). Pure - no
  * database, no vault; the caller decrypts.
  *
- * Receipt basis: the gross on the receipt's side, a credit note negative.
+ * Receipt basis: the gross on the receipt's side, a credit note negative
+ * (also when it was entered with a negative gross).
  *
  * Booking basis: transfers between own accounts (`doc_source = umbuchung`,
  * E-38) give no line at all. Otherwise every allocation to a checked
@@ -31,7 +32,7 @@ final class Postenbildung
         return new Posten(
             $beleg->datum,
             $beleg->richtung,
-            $beleg->typ === InvoiceType::Gutschrift ? -$brutto : $brutto,
+            $beleg->typ === InvoiceType::Gutschrift ? -abs($brutto) : $brutto,
             $beleg->kategorieId,
             $beleg->kostenstelleId,
             $beleg->lieferantId,

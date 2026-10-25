@@ -130,6 +130,42 @@ final class ReportServiceTest extends TestCase
         self::assertSame([], $r->drilldown($g, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie, 999));
     }
 
+    public function testACreditNoteEnteredWithANegativeGrossStillReducesItsSide(): void
+    {
+        $g = $this->belege(Zeitraum::jahr(2026), [
+            [$this->beleg(1, '2026-02-10', InvoiceDirection::Ausgabe, self::KAT_MATERIAL), 10000],
+            [$this->beleg(2, '2026-02-11', InvoiceDirection::Ausgabe, self::KAT_MATERIAL, typ: InvoiceType::Gutschrift), -2000],
+        ]);
+        self::assertSame([0, 8000, 2], $this->werte((new ReportService())->summen($g, Zugriffsbereich::unbeschraenkt())));
+    }
+
+    public function testDrilldownAcceptsKeysAsTheyComeFromARequest(): void
+    {
+        $g = $this->belege(Zeitraum::jahr(2026), [
+            [$this->beleg(1, '2026-05-01', InvoiceDirection::Ausgabe, 12), 100],
+            [$this->beleg(2, '2026-05-02', InvoiceDirection::Ausgabe, null), 100],
+        ]);
+        $r = new ReportService();
+        self::assertSame([1], array_map(static fn(Posten $p) => $p->belegId, $r->drilldown($g, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie, '12')));
+        self::assertSame([2], array_map(static fn(Posten $p) => $p->belegId, $r->drilldown($g, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie, '')));
+        self::assertSame([1, 2], array_map(static fn(Posten $p) => $p->belegId, $r->drilldown($g, Zugriffsbereich::unbeschraenkt(), Dimension::Monat, '2026-05')));
+        self::assertSame([], $r->drilldown($g, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie, '12abc'));
+    }
+
+    public function testEqualGroupsSortByIdNumericallyAndAPeriodScopeGetsOnlyItsMonths(): void
+    {
+        $g = $this->belege(Zeitraum::jahr(2026), [
+            [$this->beleg(1, '2026-04-01', InvoiceDirection::Ausgabe, 10), 100],
+            [$this->beleg(2, '2026-05-01', InvoiceDirection::Ausgabe, 9), 100],
+        ]);
+        $r = new ReportService();
+        self::assertSame([9, 10], array_map(static fn($x) => $x->schluessel, $r->gruppiert($g, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie)));
+
+        $extern = new Zugriffsbereich(null, new \DateTimeImmutable('2026-04-01'), new \DateTimeImmutable('2026-06-30'));
+        self::assertSame(['2026-04', '2026-05', '2026-06'], array_map(static fn($x) => $x->schluessel, $r->gruppiert($g, $extern, Dimension::Monat)));
+        self::assertSame([], $r->gruppiert($g, new Zugriffsbereich(null, new \DateTimeImmutable('2027-01-01')), Dimension::Monat));
+    }
+
     // ------------------------------------------------------------ receipts vs. bookings
 
     public function testReceiptsAndBookingsCountTheSamePaymentInTheirOwnPeriod(): void
@@ -242,6 +278,13 @@ final class ReportServiceTest extends TestCase
             $kategorien[$zeile->schluessel] = [$zeile->aktuell->ausgaben, $zeile->vorjahr->ausgaben];
         }
         self::assertSame([self::KAT_BEITRAG => [0, 0], self::KAT_HALLE => [12000, 10000], self::KAT_MATERIAL => [0, 2500]], $kategorien);
+
+        // "ohne Kategorie" stays last, also behind keys only the previous year has.
+        $ohne = $this->belege(Zeitraum::jahr(2026), [
+            [$this->beleg(6, '2026-01-10', InvoiceDirection::Ausgabe, self::KAT_HALLE), 100],
+            [$this->beleg(7, '2026-01-11', InvoiceDirection::Ausgabe, null), 100],
+        ]);
+        self::assertSame([self::KAT_HALLE, self::KAT_MATERIAL, null], array_map(static fn($z) => $z->schluessel, $r->vergleich($ohne, $vorjahr, Zugriffsbereich::unbeschraenkt(), Dimension::Kategorie)));
 
         $monate = $r->vergleich($aktuell, $vorjahr, Zugriffsbereich::unbeschraenkt(), Dimension::Monat);
         self::assertCount(12, $monate);

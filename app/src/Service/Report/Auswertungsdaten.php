@@ -80,6 +80,9 @@ final readonly class Auswertungsdaten
      * balance at the start of a period needs the bookings before it, also
      * for a period-scoped reader; only sums of them are shown.
      *
+     * A booking in another currency than its account's is counted as
+     * unreadable rather than added to the balance.
+     *
      * @return array{konten: list<BankAccount>, bewegungen: list<Kontobewegung>, unlesbar: int}
      */
     public function kontobewegungen(Vault $vault, Zeitraum $zeitraum, Zugriffsbereich $bereich): array
@@ -89,14 +92,17 @@ final readonly class Auswertungsdaten
             return ['konten' => [], 'bewegungen' => [], 'unlesbar' => 0];
         }
 
-        $konten = $this->konten->liste($vault);
+        ['konten' => $konten, 'unlesbar' => $unlesbar] = $this->konten->lesbare($vault);
         $bewegungen = [];
-        $unlesbar = 0;
         foreach ($konten as $konto) {
             foreach ($this->buchungen->between($konto->id, $konto->openingDate, $begrenzt->bis->modify('+1 day')) as $record) {
                 try {
                     $buchung = Buchungen::entschluesseln($vault, $record);
                 } catch (CryptoException | \JsonException) {
+                    ++$unlesbar;
+                    continue;
+                }
+                if (strtoupper($buchung->currency) !== strtoupper($konto->currency)) {
                     ++$unlesbar;
                     continue;
                 }
@@ -132,22 +138,11 @@ final readonly class Auswertungsdaten
     private function ausBuchungen(Vault $vault, Zeitraum $zeitraum, Zeitraum $begrenzt, Zugriffsbereich $bereich): Auswertungsgrundlage
     {
         $records = $this->buchungen->fuerAuswertung($begrenzt->von, $begrenzt->bis, self::BELEG_STATUS, $bereich);
-        $zuordnungen = [];
+        // A booking with an unreadable allocation (null) would be split
+        // wrongly - it is left out and counted.
+        $zuordnungen = $this->zuordnung->fuerBuchungen($vault, array_map(static fn(BankTransactionRecord $r): int => $r->id, $records));
         $belege = [];
         $unlesbar = 0;
-        try {
-            $zuordnungen = $this->zuordnung->fuerBuchungen($vault, array_map(static fn(BankTransactionRecord $r): int => $r->id, $records));
-        } catch (CryptoException) {
-            // One unreadable allocation would split a booking wrongly: then
-            // read them booking by booking and leave out only the affected ones.
-            foreach ($records as $record) {
-                try {
-                    $zuordnungen += $this->zuordnung->fuerBuchungen($vault, [$record->id]);
-                } catch (CryptoException) {
-                    $zuordnungen[$record->id] = null;
-                }
-            }
-        }
 
         $ids = [];
         foreach ($zuordnungen as $liste) {

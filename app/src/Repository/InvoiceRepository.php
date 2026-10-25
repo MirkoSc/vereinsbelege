@@ -498,10 +498,7 @@ final readonly class InvoiceRepository
             ...$scopeParameter,
         ]);
 
-        return array_map(
-            static fn(array $row): array => ['record' => InvoiceRecord::fromRow($row), 'sphaere' => $row['sphere'] === null ? null : (string) $row['sphere']],
-            $stmt->fetchAll(),
-        );
+        return array_map(self::auswertungsZeile(...), $stmt->fetchAll());
     }
 
     /**
@@ -529,8 +526,8 @@ final readonly class InvoiceRepository
             );
             $stmt->execute([...$teil, ...array_map(static fn(DocumentStatus $s): string => $s->value, $status)]);
             foreach ($stmt->fetchAll() as $row) {
-                $record = InvoiceRecord::fromRow($row);
-                $ergebnis[$record->id] = ['record' => $record, 'sphaere' => $row['sphere'] === null ? null : (string) $row['sphere']];
+                $zeile = self::auswertungsZeile($row);
+                $ergebnis[$zeile['record']->id] = $zeile;
             }
         }
 
@@ -554,6 +551,18 @@ final readonly class InvoiceRepository
         $stmt->execute([DocumentStatus::Abgelehnt->value, ...$parameter]);
 
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array{record: InvoiceRecord, sphaere: ?string}
+     */
+    private static function auswertungsZeile(array $row): array
+    {
+        $sphaere = $row['sphere'] ?? null;
+
+        return ['record' => InvoiceRecord::fromRow($row), 'sphaere' => $sphaere === null || $sphaere === '' ? null : (string) $sphaere];
     }
 
     /**

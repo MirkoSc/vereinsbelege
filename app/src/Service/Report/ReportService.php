@@ -58,8 +58,10 @@ final readonly class ReportService
 
         /** @var array<string, array{0: int|string|null, 1: Summen}> $gruppen */
         $gruppen = [];
-        if ($dimension === Dimension::Monat) {
-            foreach ($grundlage->zeitraum->monate() as $monat) {
+        $sichtbar = $grundlage->zeitraum->begrenztAuf($bereich);
+        if ($dimension === Dimension::Monat && $sichtbar !== null) {
+            // Only the months the reader may see - not zeros for the others.
+            foreach ($sichtbar->monate() as $monat) {
                 $gruppen[self::index($monat)] = [$monat, new Summen()];
             }
         }
@@ -112,13 +114,15 @@ final readonly class ReportService
 
     /**
      * The lines behind one group ("Drilldown bis zum Beleg"), by date then
-     * receipt and booking id. $schluessel null = the lines without a key.
+     * receipt and booking id. $schluessel null = the lines without a key;
+     * an id may come as a string from a request (`'12'`).
      *
      * @return list<Posten>
      */
     public function drilldown(Auswertungsgrundlage $grundlage, Zugriffsbereich $bereich, Dimension $dimension, int|string|null $schluessel, ?InvoiceDirection $nur = null): array
     {
         $this->pruefeDimension($dimension);
+        $schluessel = $dimension->normalisiere($schluessel);
 
         $treffer = array_values(array_filter(
             $this->relevant($grundlage, $bereich, $nur),
@@ -161,6 +165,9 @@ final readonly class ReportService
         $liste = array_map(static fn(array $z): Vergleichszeile => new Vergleichszeile($z[0], $z[1], $z[2]), array_values($zeilen));
         if ($dimension === Dimension::Monat) {
             usort($liste, static fn(Vergleichszeile $a, Vergleichszeile $b): int => (string) $a->schluessel <=> (string) $b->schluessel);
+        } else {
+            // Stable: current order, then keys only the previous year has; "ohne" last.
+            usort($liste, static fn(Vergleichszeile $a, Vergleichszeile $b): int => ($a->schluessel === null) <=> ($b->schluessel === null));
         }
 
         return $liste;
@@ -284,8 +291,8 @@ final readonly class ReportService
 
     private static function vergleicheGruppen(Gruppe $a, Gruppe $b): int
     {
-        return [$a->schluessel === null, -$a->summen->umfang(), (string) $a->schluessel]
-            <=> [$b->schluessel === null, -$b->summen->umfang(), (string) $b->schluessel];
+        return [$a->schluessel === null, -$a->summen->umfang(), $a->schluessel]
+            <=> [$b->schluessel === null, -$b->summen->umfang(), $b->schluessel];
     }
 
     /** Array key that keeps null, ints and strings apart. */
