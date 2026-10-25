@@ -1517,8 +1517,9 @@ Getroffen ohne Rückfrage:
   selbst Debian trixie; die Werkzeuge kommen weiter aus Debian. Gepinnt auf
   die Patchversion (Tag, kein Digest); Updates des Basis-Images sind eine
   bewusste Änderung im PR.
-- **Tags:** `vX.Y.Z` und `beta` bei jedem Tag-Push, nach bestandenem
-  End-to-End-Test. `stable` beim Hochstufen eines Pre-Release zum
+- **Tags:** `vX.Y.Z` bei jedem Tag-Push, nach bestandenem
+  End-to-End-Test; `beta` nur, wenn es das höchste Versions-Tag ist (ein
+  nachgeschobener Patch für eine ältere Linie zieht `beta` nicht zurück). `stable` beim Hochstufen eines Pre-Release zum
   vollwertigen Release (`release: released`), aber nur, wenn es laut
   GitHub das neueste Release ist – ein nachträglich veröffentlichter
   älterer Patch zieht `stable` nicht zurück. `stable` wird per

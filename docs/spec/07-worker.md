@@ -360,10 +360,11 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - GitHub Action `worker-image.yml` baut bei jedem Tag ein
   **Multi-Arch-Image** (`linux/arm64` + `linux/amd64`, buildx/QEMU) nach
   `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z` und `beta`
-  (jedes Tag) – vorher läuft der End-to-End-Test mit dem amd64-Image. Beim
+  (jedes Tag, `beta` nur für das höchste Versions-Tag) – vorher läuft der End-to-End-Test mit dem amd64-Image. Beim
   Hochstufen eines Releases auf „latest“ (Ereignis `release: released`,
   nur wenn es das neueste Release ist) zeigt `stable` auf das schon
-  getestete `vX.Y.Z` (kein Neubau). Push nur mit dem `GITHUB_TOKEN` des
+  getestete `vX.Y.Z` (kein Neubau; war das Image beim Hochstufen noch
+  nicht gepusht, setzt der Tag-Build `stable` nach). Push nur mit dem `GITHUB_TOKEN` des
   Workflows (`packages: write`), kein gespeichertes Secret. PRs, die
   Worker/Composer/Workflow ändern, bauen das Multi-Arch-Image nur.
 - `worker/docker-compose.yml` als Vorlage: `restart: unless-stopped`,
