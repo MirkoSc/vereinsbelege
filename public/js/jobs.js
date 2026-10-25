@@ -74,7 +74,9 @@ function initJobs() {
         try {
             const antwort = await fetch('/api/jobs/step', {
                 method: 'POST',
-                headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+                // X-Hintergrund: this loop is not user activity and must not
+                // keep an abandoned session alive (App\Http\LoginGuard).
+                headers: { 'X-CSRF-Token': csrf, 'X-Hintergrund': '1', 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: '',
             });
 

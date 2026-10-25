@@ -36,6 +36,12 @@ use App\View\View;
 final readonly class LoginGuard
 {
     /**
+     * Sent by requests the page makes on its own, without the user doing
+     * anything; they leave the idle timeout where it is.
+     */
+    public const string HINTERGRUND_HEADER = 'x-hintergrund';
+
+    /**
      * @param \Closure(): SessionTimeouts $timeouts built lazily: it reads
      *        the settings table, and a request that is turned away at the
      *        door should not pay for a database connection first.
@@ -129,7 +135,14 @@ final readonly class LoginGuard
             return $this->abweisen($request, $api, abgelaufen: true);
         }
 
-        $this->session->touch();
+        // A background poll (public/js/jobs.js, every 30 s for as long as a
+        // tab is open) is no sign of a person at the screen: counting it
+        // would keep an abandoned session - and its unlocked vault - alive
+        // until the absolute limit (security review, issue #78). A request
+        // can only opt OUT of extending its session this way, never in.
+        if ($request->header(self::HINTERGRUND_HEADER) !== '1') {
+            $this->session->touch();
+        }
 
         // The chrome of every page behind the login: who is signed in, and
         // the token their logout form needs. Not for the JSON routes - they

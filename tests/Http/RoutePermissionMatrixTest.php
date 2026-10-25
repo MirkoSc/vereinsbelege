@@ -177,6 +177,37 @@ final class RoutePermissionMatrixTest extends TestCase
         self::assertCount(count(array_unique($tatsaechlich)), $tatsaechlich, 'a route is registered twice');
     }
 
+    /**
+     * Security review (issue #78): the job poller (public/js/jobs.js) runs
+     * for as long as a tab is open. Its requests must not push the idle
+     * timeout out, or a forgotten session would live until the absolute
+     * limit; a request the user made still does.
+     */
+    public function testABackgroundPollDoesNotExtendTheSession(): void
+    {
+        $router = $this->router();
+        $treffer = $router->match(HttpMethod::Post, '/api/jobs/step');
+        assert($treffer->handler !== null);
+        $this->anmelden(self::berechtigungen(SystemRole::Finanzen));
+        $vorher = (int) $_SESSION['last_seen_at'] - 600;
+
+        $_SESSION['last_seen_at'] = $vorher;
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step', headers: [LoginGuard::HINTERGRUND_HEADER => '1']), $treffer->params);
+        self::assertTrue($this->erreicht($antwort));
+        self::assertSame($vorher, $_SESSION['last_seen_at'], 'a background poll is no activity');
+
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step'), $treffer->params);
+        self::assertTrue($this->erreicht($antwort));
+        self::assertGreaterThan($vorher, $_SESSION['last_seen_at'], 'a request of the user is');
+    }
+
+    public function testTheJobPollerMarksItselfAsBackground(): void
+    {
+        $js = (string) file_get_contents(dirname(__DIR__, 2) . '/public/js/jobs.js');
+
+        self::assertStringContainsString("'X-Hintergrund': '1'", $js);
+    }
+
     public function testOnlyTheAllowlistIsPublic(): void
     {
         foreach ($this->router()->routes() as $route) {
