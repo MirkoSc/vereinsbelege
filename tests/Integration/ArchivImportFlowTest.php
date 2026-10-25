@@ -468,7 +468,7 @@ final class ArchivImportFlowTest extends DatabaseTestCase
 
         $ohne = fn(string $pfad): ResponseInterface => $this->kernel()->handle(new Request(HttpMethod::Post, $pfad, cookies: $this->tresorCookie(), ip: self::IP));
 
-        self::assertSame(302, $ohne('/app/archiv-import/' . $id . '/starten')->status);
+        self::assertSame(403, $ohne('/app/archiv-import/' . $id . '/starten')->status);
         self::assertSame(ArchiveImportStatus::Vorschau, $this->importe()->find($id)?->status);
         $this->starten($id);
         self::assertSame(403, $ohne('/app/archiv-import/' . $id . '/schritt')->status);
