@@ -245,7 +245,9 @@ final readonly class PaymentRunRepository
             "SELECT r.*,
                     (SELECT COUNT(*) FROM payment_run_item ci WHERE ci.payment_run_id = r.id) AS anzahl_belege,
                     (SELECT COUNT(*) FROM payment_run_item oi JOIN invoice o ON o.id = oi.invoice_id
-                      WHERE oi.payment_run_id = r.id AND o.payment_status NOT IN (?, ?)) AS offene_belege
+                      WHERE oi.payment_run_id = r.id AND o.payment_status NOT IN (?, ?)) AS offene_belege,
+                    (SELECT COUNT(DISTINCT zi.invoice_id) FROM payment_run_item zi JOIN allocation za ON za.invoice_id = zi.invoice_id
+                      WHERE zi.payment_run_id = r.id AND za.created_at >= r.created_at) AS zugeordnete_belege
              FROM payment_run r
              WHERE NOT EXISTS (
                  SELECT 1 FROM payment_run_item sp JOIN invoice si ON si.id = sp.invoice_id

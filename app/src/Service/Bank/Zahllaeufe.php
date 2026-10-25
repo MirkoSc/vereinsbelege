@@ -275,10 +275,11 @@ final readonly class Zahllaeufe
             if ($record === null || $record->status !== ZahllaufStatus::Angewiesen) {
                 throw new BankRuleViolation('Dieser Zahllauf ist nicht (mehr) angewiesen.');
             }
-            // Settled means the money went out: discarding would free the
-            // receipts for a second payment.
-            if ($record->offeneBelege === 0 || !$this->laeufe->verwerfen($id, $userId, $now)) {
-                throw new BankRuleViolation('Dieser Zahllauf ist bereits ausgeglichen und lässt sich nicht verwerfen.');
+            // Once any receipt of the run got a booking since the run was
+            // created, the bank has executed (part of) the file: discarding
+            // would offer the rest for a second payment.
+            if ($record->offeneBelege === 0 || $record->zugeordneteBelege > 0 || !$this->laeufe->verwerfen($id, $userId, $now)) {
+                throw new BankRuleViolation('Diesem Zahllauf ist schon eine Buchung zugeordnet – die Bank hat ihn (teilweise) ausgeführt. Er lässt sich nicht mehr verwerfen.');
             }
             $this->audit->record(AuditAction::ZahllaufVerworfen, $userId, $ip, $id, ['belege' => $record->anzahlBelege], $now);
             $this->pdo->commit();

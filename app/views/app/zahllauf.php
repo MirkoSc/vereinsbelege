@@ -81,7 +81,7 @@ $angewiesen = $lauf->record->status === ZahllaufStatus::Angewiesen;
     </div>
 </section>
 
-<?php if ($angewiesen && !$lauf->ausgeglichen()): ?>
+<?php if ($lauf->verwerfbar()): ?>
     <section>
         <h3>Zahllauf verwerfen</h3>
         <p>

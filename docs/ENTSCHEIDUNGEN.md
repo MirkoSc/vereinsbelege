@@ -461,7 +461,9 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   Lauf `angewiesen` ist, auch nach dem Ausgleich.
 - **Status:** gespeichert nur `angewiesen`/`verworfen`; „ausgeglichen“ wird
   aus den Belegen abgeleitet (keine zweite Wahrheit neben `payment_status`).
-  Verwerfen ist nur vor dem vollständigen Ausgleich möglich und gedacht für
+  Verwerfen ist nur möglich, solange kein Beleg des Laufs seit dessen
+  Anlage eine Zuordnung bekommen hat (Teilausführung = Geld ist raus), und
+  gedacht für
   eine abgelehnte oder nie eingereichte Datei. **Offen für Mirko:** ob ein
   Lauf nach einer Frist ohne Ausgleich markiert werden soll.
 - **Datei nie gespeichert:** alle Angaben verschlüsselt in

@@ -7,8 +7,9 @@ namespace App\Domain;
 /**
  * One `payment_run` row as stored (issue #85, migrations/042_payment_run.sql):
  * plaintext structure, the sealed data key and the ciphertext, plus two
- * counts the query derives - how many receipts the run holds and how many
- * of them are still open (not yet matched with their booking).
+ * counts the query derives - how many receipts the run holds, how many of
+ * them are still open (not settled) and how many got an allocation since
+ * the run was created (part of its money has gone out).
  */
 final readonly class ZahllaufRecord
 {
@@ -24,6 +25,7 @@ final readonly class ZahllaufRecord
         public ?\DateTimeImmutable $discardedAt,
         public int $anzahlBelege,
         public int $offeneBelege,
+        public int $zugeordneteBelege = 0,
     ) {
     }
 
@@ -44,6 +46,7 @@ final readonly class ZahllaufRecord
             $row['discarded_at'] === null ? null : new \DateTimeImmutable((string) $row['discarded_at']),
             (int) $row['anzahl_belege'],
             (int) $row['offene_belege'],
+            (int) ($row['zugeordnete_belege'] ?? 0),
         );
     }
 }

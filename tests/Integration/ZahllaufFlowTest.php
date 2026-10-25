@@ -264,6 +264,26 @@ final class ZahllaufFlowTest extends DatabaseTestCase
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM payment_run')->fetchColumn());
     }
 
+    public function testARunPartlyMatchedCannotBeDiscarded(): void
+    {
+        $anna = $this->erstattung(2500, 'Anna Auslage', self::IBAN_ANNA);
+        $bert = $this->erstattung(999, 'Bert Beispiel', self::IBAN_BERT);
+        $id = $this->anlegen([$anna, $bert]);
+        $this->erstattungen()->zuordnen($this->tresor, $this->buchung(-2500, self::IBAN_ANNA), [$anna], Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
+
+        $lauf = $this->zahllaeufe()->finde($this->tresor, $id, Zugriffsbereich::unbeschraenkt()) ?? self::fail();
+        self::assertSame('angewiesen', $lauf->statusText(), "Bert's transfer is still open");
+        self::assertFalse($lauf->verwerfbar());
+        try {
+            $this->zahllaeufe()->verwerfen($id, Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('discarded a run the bank has executed in part');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('schon eine Buchung zugeordnet', $e->getMessage());
+        }
+        // Bert's receipt stays reserved: never offered for a second payment.
+        self::assertStringContainsString('Bereits in Zahllauf ' . $id, (string) self::sortiert($this->gruppe('Bert Beispiel'), [$bert])[0]->sperrgrund);
+    }
+
     public function testTheMatchingSettlesTheRun(): void
     {
         $anna1 = $this->erstattung(2500, 'Anna Auslage', self::IBAN_ANNA);
@@ -381,7 +401,7 @@ final class ZahllaufFlowTest extends DatabaseTestCase
             $this->zahllaeufe()->verwerfen($id, Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
             self::fail('discarded a settled run');
         } catch (BankRuleViolation $e) {
-            self::assertStringContainsString('ausgeglichen', $e->getMessage());
+            self::assertStringContainsString('nicht mehr verwerfen', $e->getMessage());
         }
         self::assertSame('ausgeglichen', $this->zahllaeufe()->finde($this->tresor, $id, Zugriffsbereich::unbeschraenkt())?->statusText());
 

@@ -69,6 +69,15 @@ final readonly class Zahllauf
         };
     }
 
+    /**
+     * Discarding frees the receipts - only while nothing of the run has
+     * been matched with a booking since it was created.
+     */
+    public function verwerfbar(): bool
+    {
+        return $this->record->status === ZahllaufStatus::Angewiesen && $this->record->offeneBelege > 0 && $this->record->zugeordneteBelege === 0;
+    }
+
     public function statusText(): string
     {
         return match (true) {

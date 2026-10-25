@@ -916,7 +916,9 @@ mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
   dann zeigt der Lauf **ausgeglichen** (abgeleitet aus den
   `payment_status` seiner Belege, nicht gespeichert); je Überweisung
   „zugeordnet“/„offen“ (ausgeglichen = `bezahlt`/`erstattet`). **Verwerfen**
-  (serverseitig nur `angewiesen` und nicht ausgeglichen) gibt die Belege frei – gedacht für eine abgelehnte oder
+  (serverseitig nur `angewiesen` und solange **kein** Beleg des Laufs seit
+  dessen Anlage eine Zuordnung bekommen hat – sonst hat die Bank ihn
+  zumindest teilweise ausgeführt) gibt die Belege frei – gedacht für eine abgelehnte oder
   nie eingereichte Datei.
 - **Zugriffsbereich:** Ein Lauf ist nur sichtbar (und herunterladbar,
   verwerfbar), wenn **alle** seine Belege im Bereich liegen – die Datei
