@@ -82,6 +82,37 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `bank_transaction`, `bank_account`, `vault`. Neue Tabellen, aus denen
   Berichtszeilen entstehen, gehören in diese Liste.
 
+### Stand M11-4: Kassenprüfung und CSV (issue #74, E-52)
+
+- **Seite `/app/auswertung/kassenpruefung`** (`App\App\Kassenpruefung
+  Controller`, Recht `report.view`, zusätzlich `bank.view` im Controller;
+  Navigationspunkt „Kassenprüfung“). Zeitraum per `App\Service\Report\
+  ZeitraumAuswahl` (`?art=jahr|quartal|monat|frei`, Jahre 2000 … nächstes
+  Jahr, Ungültiges → Standard); Formular als Baustein
+  `app/views/partials/zeitraum-filter.php` für alle Auswertungsseiten.
+  Standard: der freigegebene Zeitraum des Kontos, sonst das Vorjahr.
+- `App\Service\Report\Kassenpruefung` baut den `KassenpruefungBericht`:
+  Salden je Konto über `Auswertungsquelle::kontobewegungen()` +
+  `ReportService::kontosalden()` (Session-Cache; Anfang bei Zeitraum-Scope
+  = Übertrag, E-44); alle Buchungen des Zeitraums (Scope `bank.view` in
+  SQL, Umbuchungen markiert) mit Belegstatus und Zuordnungen; der Beleg
+  hinter einer Zuordnung nur im Scope von `report.view` benannt
+  (`InvoiceRepository::mitDokumentStatus()`, Zeile für Zeile
+  `Zugriffsbereich::erlaubt()`). Listen: „ohne Beleg“ (`fehlt`/
+  `teilweise`, mit unbelegtem Rest), „von Hand entschieden“ (Zuordnung
+  `manuell` oder „kein Beleg nötig“ mit `doc_source = manuell`).
+- **CSV:** `GET …/kassenpruefung/{buchungen|salden|ohne-beleg|manuell}.csv`
+  (Recht `export.csv` + `report.view` + `bank.view`, entsperrter Tresor,
+  sonst 403). `App\Service\Report\Berichtstabelle` ist der allgemeine
+  Baustein „Tabelle → CSV“ für alle Auswertungen: Zelle `string` = Text
+  (Formelschutz `Csv::text()`), `int` = Cent („1.234,56“), `null` = leer;
+  BOM, Semikolon, CRLF. Nur im Speicher, als eine Antwort gesendet,
+  `Cache-Control: no-store`; Dateiname nur Teil + Zeitraum.
+- Druck: `public/js/drucken.js` (`[data-drucken]`, ohne JS unsichtbar),
+  Druck-CSS blendet Formular/Knöpfe aus (`.nicht-drucken`) und zeigt eine
+  Kopfzeile mit Zeitraum und Erstellzeit (`.nur-druck`).
+- Keine neue Tabelle: `AuswertungsStandRepository::TABELLEN` bleibt.
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
@@ -527,7 +558,14 @@ Zeitraum-Scope, gesperrter Tresor, keine veraltete Zahl nach einer Änderung
 – auch nach dem Löschen einer Zuordnung), `tests/Service/Report/
 AuswertungsCacheTest.php` (Treffer, Datenstand/Konto/Tresor/Scope/Alter,
 nur Chiffrat in der Session, Manipulation, Grenzen);
-CSV-Format (BOM, Trennzeichen, Zahlenformat); ZIP-Pfadbildung (Muster-
+CSV-Format (BOM, Trennzeichen, Zahlenformat) – umgesetzt (M11-4):
+`tests/Service/Report/BerichtstabelleTest.php` (inkl. Formelschutz,
+Dateiname), `tests/Service/Report/ZeitraumAuswahlTest.php`,
+`tests/Integration/KassenpruefungFlowTest.php` (Salden Anfang/Ende,
+ohne Beleg mit Rest, manuelle Fälle, alle Buchungen mit Status, CSV je
+Tabelle, Zeitraum-Scope des Kassenprüfers mit Übertrag und verborgenem
+Beleg außerhalb, ohne `bank.view`/`export.csv`, gesperrter Tresor,
+ungültiger Zeitraum), `tests/js/drucken.test.js`; ZIP-Pfadbildung (Muster-
 Platzhalter, verbotene Zeichen, Kollisionssuffix, `_Ohne Lieferant`);
 ZIP-Stream ist gültiges ZIP und enthält genau die gefilterten Belege +
 index.csv; kein Temp-File mit Klartext (Test prüft `var/tmp` nach Export);
