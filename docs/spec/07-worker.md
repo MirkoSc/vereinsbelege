@@ -365,7 +365,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 Code in `worker/src/` (Namespace `App\Worker`, eigener Autoloader
 `worker/autoload.php` – bewusst nicht in `composer.json`, damit die
 Classmap des Webhosters ihn nicht kennt). `worker/` und `bin/worker.php`
-kommen **nicht** ins Release-ZIP (`release.yml`: `-x bin/worker.php`). Er nutzt die gemeinsamen Klassen der
+kommen **nicht** ins Release-ZIP (`release.yml`: `zip -d … bin/worker.php`). Er nutzt die gemeinsamen Klassen der
 Web-App: `WorkerProtokoll` (Signatur), `WorkerKrypto` (Grants, Kontext,
 Versiegeln an `VK_pub`), `BlobCipher`/`FieldCipher`, `Service/Processing`
 (`Auslesung`, `Textlayer`, `PdfTextlayer`, E-Rechnung, `PngZuJpeg`,

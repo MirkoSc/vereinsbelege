@@ -39,8 +39,8 @@ jobs:
         run: |
           mkdir -p dist
           zip -r "dist/vereinsbelege-${GITHUB_REF_NAME}.zip" \
-            app public vendor bin migrations VERSION docker/web .htaccess \
-            -x bin/worker.php
+            app public vendor bin migrations VERSION docker/web .htaccess
+          zip -d "dist/vereinsbelege-${GITHUB_REF_NAME}.zip" bin/worker.php
 
       - name: Stage setup.php (exists from milestone M1-2 on)
         run: if [ -f setup.php ]; then cp setup.php dist/; fi
