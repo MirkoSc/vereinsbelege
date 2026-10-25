@@ -29,6 +29,13 @@ ini_set('display_errors', 'stderr');
 ini_set('memory_limit', getenv('WORKER_SPEICHER') ?: '1024M');
 
 $abbruch = new App\Worker\Abbruch();
+// Without pcntl a SIGTERM (docker stop, an update) would kill the loop
+// without giving the running job back - refused instead of skipped
+// silently (issue #55). pair/status need no signal handler.
+if (!function_exists('pcntl_async_signals') && ($argv[1] ?? 'run') === 'run') {
+    fwrite(STDERR, "Fehler: Die PHP-Erweiterung pcntl fehlt – ohne sie gibt der Worker beim Beenden den laufenden Job nicht zurück.\n");
+    exit(1);
+}
 if (function_exists('pcntl_async_signals')) {
     pcntl_async_signals(true);
     $anhalten = static function () use ($abbruch): void {

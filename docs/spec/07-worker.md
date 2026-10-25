@@ -376,20 +376,51 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 
 ## 7. Paketierung und Betrieb
 
-- `worker/Dockerfile` im Repo, Basis `debian:trixie-slim` mit
-  `php8.x-cli` (+ sodium, curl, mbstring), `ocrmypdf`,
-  `tesseract-ocr-deu`, `ghostscript`, `poppler-utils`, `unpaper`.
-  Worker-Code = `bin/worker.php` + `worker/src/` (`App\Worker`, nicht im
-  Release-ZIP) + gemeinsames `app/src` (§8).
-- GitHub Action baut bei jedem Tag ein **Multi-Arch-Image**
-  (`linux/arm64` + `linux/amd64`) nach
-  `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z`, `beta`
-  (jedes Tag) und `stable` (beim Hochstufen auf „latest").
+- `worker/Dockerfile` im Repo (Build-Kontext: Repo-Wurzel), Basis das
+  offizielle `php:8.5.x-cli-trixie` (Debian trixie, auf eine
+  PHP-Patchversion gepinnt – Debians eigenes `php8.x-cli` ist 8.4, das
+  Projekt zielt auf 8.5, E-53), dazu aus Debian `ocrmypdf`,
+  `tesseract-ocr-deu`/`-eng`/`-osd`, `ghostscript`, `poppler-utils`,
+  `unpaper`, `tini` (PID 1: leitet SIGTERM weiter, räumt Enkelprozesse
+  ab) und die PHP-Erweiterungen `pcntl`, `gd`, `zip`, `pdo_mysql`
+  (+ sodium, curl, mbstring aus dem Basis-Image). Der Build bricht ab, wenn
+  eine Erweiterung oder ein Werkzeug (inkl. Sprachdaten) fehlt;
+  `bin/worker.php run` verweigert den Start ohne `pcntl` (sonst gäbe
+  SIGTERM den laufenden Job nicht zurück). Läuft als Benutzer `worker`
+  (UID 10001). Worker-Code = `bin/worker.php` + `worker/src/`
+  (`App\Worker`, nicht im Release-ZIP) + gemeinsames `app/src` +
+  `app/prompts` + Composer-Autoloader ohne Dev-Pakete (§8).
+- GitHub Action `worker-image.yml` baut bei jedem Tag ein
+  **Multi-Arch-Image** (`linux/arm64` + `linux/amd64`, buildx/QEMU) nach
+  `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z` und `beta`
+  (jedes Tag, `beta` nur für das höchste Versions-Tag) – vorher läuft der End-to-End-Test mit dem amd64-Image. Beim
+  Hochstufen eines Releases auf „latest“ (Ereignis `release: released`,
+  nur wenn es das neueste Release ist) zeigt `stable` auf das schon
+  getestete `vX.Y.Z` (kein Neubau; war das Image beim Hochstufen noch
+  nicht gepusht, setzt der Tag-Build `stable` nach). Push nur mit dem `GITHUB_TOKEN` des
+  Workflows (`packages: write` nur im Job `publish` für Tag-Pushes; PR-Builds
+  und die CI laufen mit `contents: read`, Checkout ohne gespeicherte
+  Zugangsdaten), kein gespeichertes Secret. PRs, die
+  Worker/Composer/Workflow ändern, bauen das Multi-Arch-Image nur.
 - `worker/docker-compose.yml` als Vorlage: `restart: unless-stopped`,
-  `tmpfs` für Arbeitsverzeichnis, Volume nur für Konfiguration + Schlüssel
-  (Dateirechte 600), Speicherlimit, Logrotation.
+  `tmpfs` für das Arbeitsverzeichnis (`/arbeit`), Volume nur für
+  Konfiguration + Schlüssel (`/daten`, Identitätsdatei 600), Speicherlimit
+  (`mem_limit` – tmpfs-Seiten zählen mit), Logrotation,
+  `stop_grace_period: 30s` (Werkzeug beenden ≈ 5 s + `fail` ≤ 10 s; Docker
+  wartet sonst nur 10 s), schreibgeschütztes Root-Dateisystem, keine
+  Capabilities.
 - Updates: `docker compose pull && docker compose up -d` (Doku), optional
   automatisch per systemd-Timer; der Admin zeigt „Worker-Version veraltet".
+- End-to-End-Test: `tests/e2e/worker/run.sh` (CI-Job `worker-e2e` und vor
+  jedem Image-Push) startet Webhoster-Container (Dev-Image + Apache-TLS +
+  MariaDB) und Worker-Container mit den Einstellungen der Vorlage. Eine
+  nur für den Lauf erzeugte Test-CA wird dem Worker als einzige
+  vertrauenswürdige CA mitgegeben (`curl.cainfo`), die TLS-Prüfung bleibt
+  an. Ablauf: koppeln, Fingerabdruck vergleichen, bestätigen, Fixture-Scan
+  (`tests/fixtures/worker/scan-e2e.jpg`, synthetisch) einreichen, OCR an
+  den Worker, Übernahme wie in einer Session, Prüfung von OCR-Text und
+  PDF/A im Posteingang, `docker stop` mit Exit-Code 0, kein Belegtext in
+  den Logs. Die Webhoster-Seite spielt `tests/e2e/worker/treiber.php`.
 - Einrichtungsanleitung für den Pi: `docs/worker-einrichtung.md` (M7b-6).
 
 ## 8. Worker-Programm (`bin/worker.php`)
