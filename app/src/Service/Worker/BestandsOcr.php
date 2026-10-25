@@ -208,7 +208,8 @@ final readonly class BestandsOcr implements HintergrundJob
     {
         $stand = $this->documents->bestandOcrStand($state['von'], $state['bis'], $job->createdAt);
         if ($stand['inErkennung'] === 0 && $stand['beimWorker'] === 0) {
-            return JobSchrittErgebnis::fertig();
+            // The counts stay on the finished job for the admin page.
+            return JobSchrittErgebnis::fertig($state);
         }
 
         return JobSchrittErgebnis::warten(self::SCHRITT, ['nach' => 0, 'ausgelassen' => 0] + $state, self::WARTEN_VOLL);
