@@ -32,6 +32,7 @@ use App\Http\Request;
 use App\App\AccountController;
 use App\App\CsvFormatController;
 use App\App\DashboardController;
+use App\App\KassenpruefungController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
@@ -222,6 +223,7 @@ use App\Service\Report\AuswertungsCache;
 use App\Service\Report\Auswertungsdaten;
 use App\Service\Report\Auswertungsquelle;
 use App\Service\Report\Dashboard;
+use App\Service\Report\Kassenpruefung;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -893,6 +895,27 @@ $dashboardSeite = static fn(): DashboardController => new DashboardController(
             new InvoiceRepository($pdo),
             new BankTransactionRepository($pdo),
             new RecurringSeriesRepository($pdo),
+        );
+    },
+);
+
+// The Kassenprüfung (issue #74/M11-4): balances through the report cache,
+// bookings and their allocations straight from the database - only when
+// the report is read.
+$kassenpruefungSeite = static fn(): KassenpruefungController => new KassenpruefungController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $auswertungsquelleFor, $zuordnungFor): Kassenpruefung {
+        $pdo = $connections->pdo();
+
+        return new Kassenpruefung(
+            // Behind the login guard: the session holds the account.
+            $auswertungsquelleFor($pdo, new Session()->userId() ?? 0),
+            new BankTransactionRepository($pdo),
+            $zuordnungFor($pdo),
+            new InvoiceRepository($pdo),
+            new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
     },
 );
@@ -1980,6 +2003,7 @@ $router = new Router();
     $dashboardSeite,
     $datev,
     $datevAdmin,
+    $kassenpruefungSeite,
     $workerMail,
 );
 
