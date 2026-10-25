@@ -238,6 +238,40 @@ final readonly class DocumentRepository
     }
 
     /**
+     * How many documents the inbox view "Offen" shows (dashboard, issue
+     * #72): new ones and every Wiedervorlage whose date has come, within
+     * $bereich - the same conditions as inbox(), counted in SQL.
+     */
+    public function anzahlPosteingangOffen(Zugriffsbereich $bereich, \DateTimeImmutable $heute): int
+    {
+        [$bedingungen, $parameter] = self::ansicht(InboxAnsicht::Offen, $heute);
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        $bedingungen[] = $scope;
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . implode(' AND ', $bedingungen));
+        $stmt->execute([...$parameter, ...$scopeParameter]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * How many documents are in one of $status within $bereich (dashboard,
+     * issue #72: the review queue is DocumentStatus::pruefbare()).
+     *
+     * @param list<DocumentStatus> $status
+     */
+    public function anzahlImStatus(array $status, Zugriffsbereich $bereich): int
+    {
+        if ($status === []) {
+            return 0;
+        }
+        [$bedingung, $parameter] = self::imStatusBedingung($status, $bereich);
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . $bedingung);
+        $stmt->execute($parameter);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * One inbox entry by id - null when it does not exist or lies outside
      * $bereich (the caller answers both with the same 404).
      */
@@ -307,14 +341,31 @@ final readonly class DocumentRepository
      */
     private function imStatus(array $status, Zugriffsbereich $bereich, int $limit): array
     {
-        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        [$bedingung, $parameter] = self::imStatusBedingung($status, $bereich);
         $stmt = $this->pdo->prepare(
-            self::INBOX_SELECT . ' WHERE d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope
-            . ' ORDER BY d.created_at, d.id LIMIT ' . max(1, $limit),
+            self::INBOX_SELECT . ' WHERE ' . $bedingung . ' ORDER BY d.created_at, d.id LIMIT ' . max(1, $limit),
         );
-        $stmt->execute([...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter]);
+        $stmt->execute($parameter);
 
         return array_map(InboxItem::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The WHERE of the status lists and their counts (the dashboard links
+     * to the list it counts, so both use this one condition).
+     *
+     * @param non-empty-list<DocumentStatus> $status
+     *
+     * @return array{0: string, 1: list<int|string>}
+     */
+    private static function imStatusBedingung(array $status, Zugriffsbereich $bereich): array
+    {
+        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+
+        return [
+            'd.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope,
+            [...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter],
+        ];
     }
 
     /**

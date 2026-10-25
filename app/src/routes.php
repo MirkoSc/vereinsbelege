@@ -36,6 +36,7 @@ use App\App\ErstattungController;
 use App\App\ZahllaufController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
+use App\App\DashboardController;
 use App\App\ErfassungController;
 use App\App\ExportController;
 use App\App\InboxController;
@@ -215,6 +216,10 @@ use App\View\View;
  *        from the settings (issue #80/M13-3). Optional like $nextcloudAdmin.
  * @param (\Closure(): RechtstexteController)|null $rechtstexteAdmin built
  *        lazily, same reason (issue #80/M13-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): DashboardController)|null $dashboard built lazily,
+ *        same reason as $mail: only the dashboard needs the database (issue
+ *        #72/M11-2). Optional and last; without it /app is the plain start
+ *        page with the quick links (route tables built for other pages).
  */
 return static function (
     Router $router,
@@ -271,6 +276,7 @@ return static function (
     ?\Closure $integritaet = null,
     ?\Closure $rechtstexte = null,
     ?\Closure $rechtstexteAdmin = null,
+    ?\Closure $dashboard = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -364,18 +370,22 @@ return static function (
     $get('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->form($r));
     $post('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->submit($r));
 
-    // Start page of the user area. The areas behind it (Belege, Konten, ...)
-    // arrive milestone by milestone - the Posteingang since M4-5; the rest are
-    // already in the
-    // navigation as inactive entries (App\View\Area::navigation()), each with
-    // the right its page will need. Permission: any logged-in account.
-    $get('/app', $angemeldet, static fn(): Response => Response::html(
-        $view->render('app/start', [
-            'title' => '',
-            'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
-            'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
-        ], Area::App),
-    ));
+    // Start page of the user area: the dashboard (issue #72/M11-2, docs/spec/
+    // 05-auswertung-und-export.md section 1). Permission: any logged-in
+    // account - every block on it is checked against its own right and scope
+    // inside App\Service\Report\Dashboard (sums `report.view`, balances
+    // `bank.view`, counts the right of the list they link to), so an account
+    // without any of them sees the quick links only. `?jahr=` is a plain
+    // year, read by App\App\DashboardController.
+    $get('/app', $angemeldet, $dashboard !== null
+        ? static fn(Request $r) => $dashboard()->start($r)
+        : static fn(): Response => Response::html(
+            $view->render('app/start', [
+                'title' => '',
+                'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
+                'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
+            ], Area::App),
+        ));
 
     // One job step (M4-7, issue #29, docs/spec/06-betrieb.md section 4):
     // `public/js/jobs.js` polls this from the browser of a signed-in person

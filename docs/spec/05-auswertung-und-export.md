@@ -54,6 +54,34 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Fremdwährung werden gezählt, nicht geraten) und liest `sphaeren_aktiv`.
   Laufzeit: etwa 0,04 ms je Zeile – keine Schrittkette nötig (E-44).
 
+### Stand M11-2: Dashboard und Session-Cache (issue #72, E-48)
+
+- Das **Dashboard ist die Startseite `/app`** (`App\App\DashboardController`,
+  `App\Service\Report\Dashboard`). Jahr per `?jahr=` (2000 … laufendes
+  Jahr). Jeder Block hat das Recht und den Scope der Seite, auf die er
+  verlinkt: Summen `report.view` (Buchungssicht über den `ReportService`),
+  Kontostände `bank.view` ohne Kostenstellen-Scope, Zählwerte das Recht
+  ihrer Liste („Offen“, Posteingang, Prüfen, Serien). Zählwerte zählen
+  Strukturfelder per SQL (`DocumentRepository::anzahlPosteingangOffen()/
+  anzahlImStatus()`, `BankTransactionRepository::anzahlOhneBeleg()`,
+  `RecurringSeriesRepository::anzahlUeberfaellig()`, `InvoiceRepository::
+  offen()`) und erscheinen ohne Tresor; Beträge nur mit entsperrtem Tresor.
+  Die Seite wird nie vom Browser gecacht (`Cache-Control: no-store`).
+- **Session-Cache für alle Auswertungsseiten:** `App\Service\Report\
+  AuswertungsCache` implementiert dieselbe Schnittstelle
+  `Auswertungsquelle` wie `Auswertungsdaten` und liegt davor; der
+  Bootstrap baut ihn (`$auswertungsquelleFor`) – #73/#74 nehmen ihn von
+  dort. Gecacht wird die Eingabe (`Auswertungsgrundlage`,
+  Kontobewegungen), nicht das Ergebnis. Ablage nur als Chiffrat in
+  `$_SESSION['auswertung_cache']`, Schlüssel je Session an den
+  Tresor-Public-Key versiegelt; je Eintrag Grundlage + Zeitraum +
+  Zugriffsbereich als ID. Gültig nur für dasselbe Konto, denselben Tresor,
+  höchstens 30 Minuten und solange der **Datenstand** gleich ist:
+  `App\Repository\AuswertungsStandRepository` bildet ihn vor dem Laden per
+  `CHECKSUM TABLE` über `document`, `invoice`, `allocation`,
+  `bank_transaction`, `bank_account`, `vault`. Neue Tabellen, aus denen
+  Berichtszeilen entstehen, gehören in diese Liste.
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
@@ -446,6 +474,12 @@ Report-Berechnungen (Summen je Kategorie/Lieferant/Monat, Belege vs.
 Buchungen, Vorjahresvergleich, Kostenstellen-Scope eines Verantwortlichen);
 umgesetzt (M11-1): `tests/Service/Report/` (`ReportServiceTest`,
 `ZeitraumTest`), `tests/Integration/AuswertungsdatenTest.php`;
+Dashboard und Session-Cache (M11-2): `tests/Integration/DashboardFlowTest.php`
+(Summen, Kontostände, Zählwerte, Jahreswahl, Kostenstellen- und
+Zeitraum-Scope, gesperrter Tresor, keine veraltete Zahl nach einer Änderung
+– auch nach dem Löschen einer Zuordnung), `tests/Service/Report/
+AuswertungsCacheTest.php` (Treffer, Datenstand/Konto/Tresor/Scope/Alter,
+nur Chiffrat in der Session, Manipulation, Grenzen);
 CSV-Format (BOM, Trennzeichen, Zahlenformat); ZIP-Pfadbildung (Muster-
 Platzhalter, verbotene Zeichen, Kollisionssuffix, `_Ohne Lieferant`);
 ZIP-Stream ist gültiges ZIP und enthält genau die gefilterten Belege +

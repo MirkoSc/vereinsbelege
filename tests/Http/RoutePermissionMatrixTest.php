@@ -840,6 +840,8 @@ final class RoutePermissionMatrixTest extends TestCase
             // Impressum/Datenschutz and their admin page (issue #80/M13-3), optional.
             rechtstexte: $stellvertreter,
             rechtstexteAdmin: $stellvertreter,
+            // The dashboard on /app (issue #72/M11-2), optional.
+            dashboard: $stellvertreter,
         );
 
         return $router;

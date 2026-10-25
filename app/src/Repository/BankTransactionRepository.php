@@ -235,6 +235,21 @@ final readonly class BankTransactionRepository
     }
 
     /**
+     * How many bookings need a receipt and have none or not enough (doc
+     * status `fehlt` or `teilweise`) within $bereich - the list "Buchungen
+     * ohne Beleg" counted in SQL (dashboard, issue #72). Bookings carry no
+     * cost center: a cost-center scope counts none.
+     */
+    public function anzahlOhneBeleg(Zugriffsbereich $bereich): int
+    {
+        [$bedingung, $parameter] = $bereich->sqlBedingung('t.booking_date', null);
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM bank_transaction t WHERE t.doc_status IN (?, ?) AND ' . $bedingung);
+        $stmt->execute([BankTransactionDocStatus::Fehlt->value, BankTransactionDocStatus::Teilweise->value, ...$parameter]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * The bookings a report counts on the booking basis (issue #71, E-44):
      * booking date in [$von, $bis], transfers between own accounts left out
      * (E-38), by date then id. Bookings carry no cost center: within a

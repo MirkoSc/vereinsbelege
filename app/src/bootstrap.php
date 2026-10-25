@@ -29,6 +29,7 @@ use App\Api\UploadController;
 use App\Api\WorkerApiController;
 use App\App\AccountController;
 use App\App\CsvFormatController;
+use App\App\DashboardController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
@@ -70,6 +71,7 @@ use App\Repository\AllocationRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
+use App\Repository\AuswertungsStandRepository;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
@@ -208,6 +210,10 @@ use App\Service\Migration\Migrator;
 use App\Service\Processing\KiAuslese\Auslesung;
 use App\Service\RateLimiter;
 use App\Service\Rechtstexte\Rechtstexte;
+use App\Service\Report\AuswertungsCache;
+use App\Service\Report\Auswertungsdaten;
+use App\Service\Report\Auswertungsquelle;
+use App\Service\Report\Dashboard;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -846,6 +852,42 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
         new Umbuchungen($pdo, new TransferRepository($pdo), $transaktionen, $konten, $auditFor($pdo), BelegStandard::fromSettings($settings)),
     );
 };
+
+// Report input (issue #71/#72): decrypted by Auswertungsdaten, kept
+// encrypted in the session by AuswertungsCache for the account it is built
+// for. Every report page takes it from here - the dashboard (#72), "Wohin
+// fließt das Geld" (#73), the Kassenprüfung (#74).
+$auswertungsquelleFor = static fn(\PDO $pdo, int $benutzerId): Auswertungsquelle => new AuswertungsCache(
+    new Auswertungsdaten(
+        new InvoiceRepository($pdo),
+        new BankTransactionRepository($pdo),
+        $zuordnungFor($pdo),
+        new BankAccountService($pdo, new BankAccountRepository($pdo)),
+        new SettingRepository($pdo),
+    ),
+    new AuswertungsStandRepository($pdo),
+    $benutzerId,
+);
+
+// The dashboard on /app (issue #72/M11-2): the controller itself needs no
+// database; the figures behind it open the connection when rendered.
+$dashboardSeite = static fn(): DashboardController => new DashboardController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $auswertungsquelleFor): Dashboard {
+        $pdo = $connections->pdo();
+
+        return new Dashboard(
+            // Behind the login guard: the session holds the account.
+            $auswertungsquelleFor($pdo, new Session()->userId() ?? 0),
+            new DocumentRepository($pdo),
+            new InvoiceRepository($pdo),
+            new BankTransactionRepository($pdo),
+            new RecurringSeriesRepository($pdo),
+        );
+    },
+);
 
 // Reimbursements for one booking (M10-3, issue #67): submissions, receipts
 // and bookings are vault data - only this page opens the connection.
@@ -1830,6 +1872,7 @@ $router = new Router();
     $integritaetSeite,
     $rechtstexteSeiten,
     $rechtstexteAdmin,
+    $dashboardSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

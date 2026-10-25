@@ -1261,3 +1261,58 @@ automatisch nach einer Frist gelöscht werden sollen (eigenes Issue); ob die
 Einwilligungs-Checkbox auf `/einreichen` bleiben soll, obwohl die
 Verarbeitung auf Art. 6 Abs. 1 lit. b/c DSGVO beruht (sie bestätigt jetzt
 „Hinweis gelesen“, keine Einwilligung).
+
+## E-48 ❓ Dashboard auf der Startseite, Session-Cache der Auswertungsdaten (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M11-2 (issue #72), 05 §1 „Stand M11-2“; der Cache ist Grundlage für M11-3/M11-4 (#73, #74)*
+
+- **Ort:** Das Dashboard ist die Startseite `/app` (Issue: „Startseite der
+  Anwenderseite“), nicht eine Unterseite von `/app/auswertung`; die
+  weiteren Ansichten (#73, #74) bekommen dort ihre eigenen Seiten. Die
+  Schnelllinks (Posteingang, Belege erfassen) bleiben oben.
+- **Jahr:** `?jahr=JJJJ` von 2000 bis zum laufenden Jahr, sonst das
+  Standardjahr – das laufende, für ein Konto mit Zeitraum-Scope, der vor
+  dem laufenden Jahr endet (externer Kassenprüfer), das Jahr, in dem er
+  endet. Umschalten über „‹ Vorjahr / Folgejahr ›“.
+- **Summen:** Einnahmen/Ausgaben/Saldo des Jahres in der **Buchungssicht**
+  (05 §1 Default, E-44), begrenzt auf den freigegebenen Teil des Jahres;
+  kein Vorjahresvergleich auf dem Dashboard (gehört zu #73).
+- **Kontostände:** am Ende des heutigen Tages im laufenden Jahr, sonst am
+  31.12.; nie nach dem Ende eines Zeitraum-Scopes; außerhalb davon
+  „außerhalb des freigegebenen Zeitraums“. Mit Kostenstellen-Scope kein
+  Block (Buchungen haben keine Kostenstelle, E-44). Summenzeile nur, wenn
+  alle Konten in EUR geführt werden.
+- **Zählwerte** gelten **heute**, unabhängig vom gewählten Jahr, und haben
+  das Recht und den Scope der Liste, auf die sie verlinken:
+  Posteingang offen (`inbox.view`, wie die Ansicht „Offen“);
+  **Belege in Prüfung = die Prüf-Warteschlange** `/app/belege/pruefen`
+  (alle prüfbaren Status, `document.edit`; mit nur `inbox.view` die Zahl
+  ohne Link); unbezahlte Rechnungen und offene Erstattungen (`report.view`,
+  wie „Offen“ – Altbestand vor dem Abgleich nicht mitgezählt, sondern als
+  Zusatz „dazu N aus der Zeit vor dem Abgleich“); Buchungen ohne Beleg
+  (`bank.view`, `fehlt`/`teilweise`, nicht bei Kostenstellen-Scope);
+  überfällige wiederkehrende Belege (`document.edit` ohne Scope, E-26).
+  Zählwerte sind Strukturfelder (SQL-`COUNT`) und erscheinen auch mit
+  gesperrtem Tresor; Beträge nur mit entsperrtem Tresor.
+- **Session-Cache** (`App\Service\Report\AuswertungsCache`, gleiche
+  Schnittstelle `Auswertungsquelle` wie `Auswertungsdaten`): gecacht wird
+  die **Eingabe** (Berichtszeilen, Kontobewegungen), nicht die Ergebnisse.
+  Ablage nur verschlüsselt in der PHP-Session – Schlüssel je Session, an
+  den Tresor-Public-Key versiegelt (wie der Suchindex, 03 §10). Schlüssel
+  eines Eintrags: Grundlage/Art + Zeitraum + Zugriffsbereich
+  (Kostenstellen sortiert, von, bis), als Hash; die ID steht zusätzlich im
+  Chiffrat. Höchstens 8 Einträge, 512 KiB Chiffrat, 30 Minuten.
+- **Invalidierung konservativ über `CHECKSUM TABLE`** auf `document`,
+  `invoice`, `allocation`, `bank_transaction`, `bank_account`, `vault`
+  (vor dem Laden gebildet): ändert sich bei jedem Insert/Update/Delete
+  einer Zeile, auch beim Löschen einer Zuordnung ohne `updated_at` und beim
+  Umschlüsseln. Bewusst **kein Generationszähler** (eine neue Schreibstelle
+  könnte das Erhöhen vergessen) und keine Migration. Kosten: ein Scan
+  dieser Tabellen je Abruf (Millisekunden bei Vereinsmengen). Folge: Jede
+  Änderung an Belegen (auch Status im Posteingang) verwirft den Cache –
+  lieber neu laden als eine veraltete Zahl zeigen.
+
+Offen für Mirko: ob das Dashboard einen Vorjahresvergleich zeigen soll;
+ob „Belege in Prüfung“ nur Status `in_pruefung` (statt der ganzen
+Prüf-Warteschlange) meinen soll; ob unbezahlte Rechnungen aus der Zeit
+vor dem Abgleich mitgezählt werden sollen; ob inaktive Konten in den
+Kontoständen erscheinen sollen (derzeit ja, markiert).
