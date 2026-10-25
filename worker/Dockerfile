@@ -38,20 +38,14 @@ RUN set -eux; \
 
 # PHP extensions: pcntl (SIGTERM gives the running job back - bin/worker.php
 # refuses to run without it), gd (PNG -> JPEG of the shared code) and the
-# rest of what composer.json requires. Build headers are removed again, the
-# runtime libraries stay (same pattern as the official image).
+# rest of what composer.json requires. The -dev packages stay installed:
+# removing them while keeping the runtime libraries is fragile across
+# Debian releases and architectures, and the few MB do not matter here.
 RUN set -eux; \
-    savedAptMark="$(apt-mark showmanual)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev; \
     docker-php-ext-configure gd --with-jpeg --with-webp; \
     docker-php-ext-install -j"$(nproc)" pcntl gd zip pdo_mysql; \
-    apt-mark auto '.*' > /dev/null; \
-    apt-mark manual $savedAptMark > /dev/null; \
-    find /usr/local -type f -executable -exec ldd '{}' ';' \
-        | awk '/=>/ { so = $(NF-1); if (index(so, "/usr/local/") == 1) { next }; gsub("^/(usr/)?", "", so); printf "*%s\n", so }' \
-        | sort -u | xargs -r dpkg-query --search | cut -d: -f1 | sort -u | xargs -r apt-mark manual; \
-    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
     rm -rf /var/lib/apt/lists/*
 
 COPY worker/php.ini /usr/local/etc/php/conf.d/zz-worker.ini
