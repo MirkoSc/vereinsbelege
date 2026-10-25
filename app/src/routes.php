@@ -966,6 +966,8 @@ return static function (
     // writes; the code is shown once and never stored in plaintext.
     $get('/admin/worker', $einstellungen, static fn(Request $r) => $workerAdmin()->page($r));
     $post('/admin/worker/koppeln', $einstellungen, static fn(Request $r) => $workerAdmin()->koppeln($r));
+    $post('/admin/worker/einstellungen', $einstellungen, static fn(Request $r) => $workerAdmin()->einstellungen($r));
+    $post('/admin/worker/ocr-nachholen', $einstellungen, static fn(Request $r) => $workerAdmin()->ocrNachholen($r));
     $post('/admin/worker/{id:\d+}/bestaetigen', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->bestaetigen($r, $params));
     $post('/admin/worker/{id:\d+}/entkoppeln', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->entkoppeln($r, $params));
 

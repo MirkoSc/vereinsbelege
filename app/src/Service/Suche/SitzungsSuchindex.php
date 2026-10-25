@@ -20,12 +20,13 @@ namespace App\Service\Suche;
  */
 final class SitzungsSuchindex
 {
-    public const int VERSION = 1;
+    // 2: `nachholen`, the reservations below the cursor (issue #53).
+    public const int VERSION = 2;
 
     private const string SESSION_KEY = 'suchindex';
 
     /**
-     * @return array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}|null
+     * @return array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>}|null
      *         null when there is none or it is not in a format this release writes
      */
     public function lies(): ?array
@@ -36,7 +37,9 @@ final class SitzungsSuchindex
         }
         if (!is_string($wert['id'] ?? null) || !is_string($wert['schluessel'] ?? null) || !is_string($wert['bereich'] ?? null)
             || !is_int($wert['benutzer'] ?? null) || !is_int($wert['cursor'] ?? null) || !is_int($wert['teile'] ?? null)
-            || !is_bool($wert['fertig'] ?? null) || !is_string($wert['mitglieder'] ?? null)) {
+            || !is_bool($wert['fertig'] ?? null) || !is_string($wert['mitglieder'] ?? null)
+            || !is_array($wert['nachholen'] ?? null) || !array_is_list($wert['nachholen'])
+            || array_filter($wert['nachholen'], is_int(...)) !== $wert['nachholen']) {
             return null;
         }
 
@@ -49,11 +52,12 @@ final class SitzungsSuchindex
             'teile' => $wert['teile'],
             'fertig' => $wert['fertig'],
             'mitglieder' => $wert['mitglieder'],
+            'nachholen' => $wert['nachholen'],
         ];
     }
 
     /**
-     * @param array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
+     * @param array{id: string, schluessel: string, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>} $zustand
      */
     public function schreibe(array $zustand): void
     {

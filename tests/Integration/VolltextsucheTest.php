@@ -307,6 +307,60 @@ final class VolltextsucheTest extends DatabaseTestCase
         self::assertSame([$ki], $this->gefunden($suche, 'heil textebene'), 'the other sources of a document still count');
     }
 
+    /**
+     * Review of #52 / issue #53: a worker upload gets its row id when it is
+     * announced and becomes visible on commit - after the cursor may have
+     * passed it. It is taken in all the same, and in a cost-center scope its
+     * commit alone does not throw the index away.
+     */
+    public function testAWorkerTextCommittedAfterTheCursorPassedItIsTakenIn(): void
+    {
+        $kostenstellen = new CostCenterRepository($this->pdo());
+        $jugend = $kostenstellen->create('Jugend');
+        foreach (['ahorn' => Zugriffsbereich::unbeschraenkt(), 'birke' => new Zugriffsbereich([$jugend])] as $wort => $bereich) {
+            $_SESSION = [];
+            $spaet = $this->dokument(kostenstelle: $jugend);
+            $repository = new DocumentArtifactRepository($this->pdo());
+            $schluessel = DataKey::generate();
+            $reserviert = $repository->reserviere($spaet, ArtifactKind::Text, 0, $this->tresor->sealDataKey($schluessel), ++$this->jobId, new \DateTimeImmutable());
+            self::assertNotNull($reserviert);
+            $frueh = $this->dokument(kostenstelle: $jugend);
+            $this->textlayer($frueh, ['Trikots Textebene']);
+
+            $suche = $this->suche();
+            self::assertTrue($suche->schritt(self::BENUTZER, $bereich, $this->tresor)->aktuell());
+            $teile = $this->teile();
+
+            // The worker commits now - its row id lies below the cursor.
+            self::assertTrue($repository->festschreiben($reserviert, ArtifactKind::Text, null, FieldCipher::encrypt(
+                $schluessel,
+                json_encode(['brauchbar' => true, 'seiten' => ['Trikots per OCR ' . $wort]], JSON_THROW_ON_ERROR),
+                new FieldContext('document_artifact', $reserviert, 'data_enc'),
+            )));
+            self::assertSame(1, $suche->stand(self::BENUTZER, $bereich, $this->tresor)->offen);
+            self::assertTrue($suche->nachziehen(self::BENUTZER, $bereich, $this->tresor)->aktuell());
+            self::assertSame($teile + 1, $this->teile(), 'one new part, not a rebuild');
+            self::assertSame([$spaet], $this->gefunden($suche, $wort, $bereich));
+            $suche->verwerfen();
+        }
+    }
+
+    public function testABrokenWorkerArtifactNeverStallsTheIndex(): void
+    {
+        $kaputt = $this->dokument();
+        $repository = new DocumentArtifactRepository($this->pdo());
+        $id = $repository->reserviere($kaputt, ArtifactKind::Text, 0, $this->tresor->sealDataKey(DataKey::generate()), ++$this->jobId, new \DateTimeImmutable());
+        self::assertNotNull($id);
+        // Does not open: wrong key, and garbage besides.
+        self::assertTrue($repository->festschreiben($id, ArtifactKind::Text, null, random_bytes(90)));
+        $heil = $this->dokument();
+        $this->textlayer($heil, ['Trikots heil']);
+
+        $suche = $this->suche();
+        self::assertTrue($suche->schritt(self::BENUTZER, Zugriffsbereich::unbeschraenkt(), $this->tresor)->aktuell());
+        self::assertSame([$heil], $this->gefunden($suche, 'trikots'));
+    }
+
     public function testDiscardingRemovesTheFilesAndTheSessionEntry(): void
     {
         $id = $this->dokument();

@@ -24,10 +24,13 @@ use App\Repository\WorkerRepository;
 use App\Service\Storage\BlobService;
 use App\Service\Worker\WorkerArtefaktFehler;
 use App\Service\Worker\WorkerArtefakte;
+use App\Service\Worker\WorkerFallback;
 use App\Service\Worker\WorkerFreigaben;
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Worker\WorkerProtokoll;
+use App\Service\Worker\WorkerRouting;
+use App\Service\Worker\WorkerUebernahme;
 
 /**
  * The web host's API for the optional worker, `/api/worker/*`
@@ -78,6 +81,9 @@ final readonly class WorkerApiController
         private VaultRepository $vaults,
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
+        // Issue #53: module switch, AI key release, fallback after failure.
+        private WorkerRouting $routing,
+        private WorkerFallback $fallback,
     ) {
     }
 
@@ -152,7 +158,9 @@ final readonly class WorkerApiController
         if ($aktiv) {
             // AI provider profiles incl. API keys, sealed to W_pub - anew
             // only when something changed (07 section 3 "KI-Zugangsdaten").
-            $worker = $this->konfiguration->aktualisieren($worker);
+            // The keys only with the module on and the `ai` capability just
+            // reported (review of #52) - else an empty list replaces them.
+            $worker = $this->konfiguration->aktualisieren($worker, $this->routing->kiSchluesselErlaubt($faehigkeiten));
         }
         $typen = WorkerFaehigkeit::jobTypenFuer($faehigkeiten);
         $bekannt = self::zahl($daten, 'config_version');
@@ -161,7 +169,7 @@ final readonly class WorkerApiController
             'status' => $worker->status->value,
             'server_zeit' => $now->getTimestamp(),
             'poll_sekunden' => self::POLL_SEKUNDEN,
-            'wartend' => $aktiv ? $this->jobs->zaehleBeanspruchbar(JobExecutor::Worker, $typen, $now) : 0,
+            'wartend' => $aktiv && $this->routing->modulAktiv() ? $this->jobs->zaehleBeanspruchbar(JobExecutor::Worker, $typen, $now, WorkerRouting::VORGAENGER) : 0,
             'config' => $aktiv && $worker->configSealed !== null && $worker->configVersion > $bekannt
                 ? ['version' => $worker->configVersion, 'versiegelt' => base64_encode($worker->configSealed)]
                 : null,
@@ -178,6 +186,12 @@ final readonly class WorkerApiController
             return self::fehler(400, 'body_ungueltig', 'Erwartet wird ein JSON-Objekt.');
         }
 
+        // Module switched off (issue #53): nothing to claim - what is
+        // still queued for the worker goes back with the next fallback run.
+        if (!$this->routing->modulAktiv()) {
+            return Response::json(['jobs' => []]);
+        }
+
         $max = max(1, min(self::zahl($daten, 'max', 1), self::MAX_CLAIM));
         $typen = $worker->jobTypen();
         $now = new \DateTimeImmutable();
@@ -186,13 +200,14 @@ final readonly class WorkerApiController
         // is closed here instead of handed out, and must not stall the rest.
         for ($runde = 0; $runde < $max * 2 && count($jobs) < $max && $typen !== []; ++$runde) {
             $lock = $worker->lockPraefix() . bin2hex(random_bytes(8));
-            $job = $this->jobs->claim(JobExecutor::Worker, $lock, self::SPERRE_SEKUNDEN, now: $now, typen: $typen);
+            $job = $this->jobs->claim(JobExecutor::Worker, $lock, self::SPERRE_SEKUNDEN, now: $now, typen: $typen, warteAuf: WorkerRouting::VORGAENGER);
             if ($job === null) {
                 break;
             }
             if ($job->attempts > self::MAX_VERSUCHE) {
                 $this->jobs->fail($job->id, 'WorkerVersucheErschoepft', $now, $lock);
                 $this->freigaben->nachJob($job);
+                $this->fallback->nachFehlschlag($job, $now);
 
                 continue;
             }
@@ -254,6 +269,9 @@ final readonly class WorkerApiController
             return self::sperreVerloren();
         }
         $this->freigaben->nachJob($job);
+        // Checking the results needs the vault: a session job takes them
+        // over (issue #53, App\Service\Worker\WorkerUebernahme).
+        WorkerUebernahme::einreihen($this->jobs, $job, new \DateTimeImmutable());
 
         return Response::json(['status' => JobStatus::Fertig->value]);
     }
@@ -285,6 +303,7 @@ final readonly class WorkerApiController
                 return self::sperreVerloren();
             }
             $this->freigaben->nachJob($job);
+            $this->fallback->nachFehlschlag($job, new \DateTimeImmutable());
 
             return Response::json(['status' => JobStatus::Fehler->value]);
         }
