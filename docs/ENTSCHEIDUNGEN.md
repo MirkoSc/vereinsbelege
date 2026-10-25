@@ -482,6 +482,44 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
 - **Auftraggeber-Name** frei eingebbar, vorbelegt mit dem Vereinsnamen aus
   den Mail-Einstellungen (kein eigenes Setting), Umlaute ausgeschrieben.
 
+## E-41 ✅ Abgleich-Oberfläche: verworfene Vorschläge speichern, Betrag/Suche nur per POST, Seiten-Integration über Links (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-4 (issue #68, Migration 042), 02 „Fachdaten“, 04 §5 „Stand M10-4“*
+
+- **„Verwerfen“ wird gespeichert, Vorschläge weiterhin nicht:** Tabelle
+  `match_rejection` (nur IDs, wer, wann). Ohne sie käme ein verworfener
+  Vorschlag beim nächsten „Abgleich berechnen“ wieder – E-35 („nichts
+  gespeichert“) bleibt für die Vorschläge selbst. Ein verworfenes Paar wird
+  nicht bewertet und zählt in der Abstandsprüfung nur mit der Obergrenze
+  nicht bewerteter Paare: Das „Nein“ des Nutzers kann also ein anderes
+  Paar **eindeutig** (automatisch) machen – gewollt, es ist dann der
+  einzige plausible Kandidat. Verwerfen sperrt nicht: von Hand zuordnen
+  geht weiter, „Wieder vorschlagen“ löscht die Zeile. Fremdschlüssel
+  `CASCADE` (nur ein Hinweis zum Paar). Verworfen: Verwerfen nur in der
+  Session (überlebt keine Anmeldung) und ein Ablaufdatum (unnötig).
+- **Betrag und Suche nur per POST** (wie die Volltextsuche, 03 §10): Sie
+  sind Vereinsdaten und gehören nicht in URLs/Server-Logs. Konto,
+  Zeitraum, gewählter Beleg und Seite bleiben GET (Struktur, verlinkbar).
+  Folge: Nach einer Aktion (Zuordnen, Lösen …) gelten wieder nur die
+  Struktur-Filter.
+- **Listen:** älteste zuerst (Arbeitsvorrat), 25 je Seite; „Buchungen ohne
+  Beleg“ = `fehlt`/`teilweise` (Einnahmen ohne Belegbedarf fluten die
+  Liste sonst mit Beiträgen) – ein Einnahme-Beleg findet seine Buchung
+  trotzdem, weil die Kandidaten des gewählten Belegs alle offenen
+  Buchungen seiner Richtung ab Fensterbeginn umfassen (bewertet, beste
+  20; ältere Buchungen nicht – Vorauszahlungen weit vor dem
+  Rechnungsdatum findet man so nicht, dafür wächst die Arbeit nicht mit
+  jedem Jahr).
+- **Von Hand** = Methode `manuell`, aber mit Punkten und `rule_trace` der
+  Bewertung, sofern bewertbar (nachvollziehbar, warum das Paar passte).
+- **Integration statt Verdopplung:** „kein Beleg nötig“, Regeln,
+  Umbuchung paaren (`bank.book`) und die Erstattungs-Kombination (M10-3)
+  bleiben auf ihren Seiten und sind aus der Buchungsliste verlinkt –
+  eigene Rechte, keine zweite Implementierung derselben Regeln.
+- **Offen für Mirko:** ob „kein Beleg nötig“ direkt in der Abgleich-Liste
+  schaltbar sein soll (braucht `bank.book` zusätzlich zu `matching.edit`);
+  ob die Belegliste auch Belege im Status „in Prüfung“ zeigen soll (heute
+  nur geprüfte, wie E-35); Seitengröße 25 und „älteste zuerst“.
+
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,

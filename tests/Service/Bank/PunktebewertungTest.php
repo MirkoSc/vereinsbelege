@@ -274,6 +274,25 @@ final class PunktebewertungTest extends TestCase
         self::assertCount(1, Punktebewertung::planen([$beleg], [$passend, $fremd], new Abgleichsparameter())->auto, 'with 15 for the name the ceiling is 25');
     }
 
+    public function testADiscardedPairIsNeitherSuggestedNorAllocatedAndCountsOnlyWithItsCeiling(): void
+    {
+        // M10-4 (E-41): the user said "no" to receipt 1 <-> booking 9.
+        $beleg = $this->beleg(id: 1, offen: 5000);
+        $verworfen = $this->buchung(id: 9, offen: 5000, iban: self::IBAN_LIEFERANT, name: 'Getränke Müller');   // 45 + 30 + 15 + 10 = 100
+        $andere = $this->buchung(id: 8, offen: 5000, iban: self::IBAN_LIEFERANT);                              // 45 + 30 + 10 = 85
+
+        $ohne = Punktebewertung::planen([$beleg], [$verworfen, $andere], new Abgleichsparameter());
+        self::assertSame([], $ohne->auto, '100 - 85 < 20');
+        self::assertSame([9, 8], array_map(static fn($b): int => $b->transactionId, $ohne->vorschlaege));
+
+        $mit = Punktebewertung::planen([$beleg], [$verworfen, $andere], new Abgleichsparameter(), ['1:9' => true]);
+        self::assertSame([8], array_map(static fn($b): int => $b->transactionId, $mit->auto), 'the discarded pair counts only with the ceiling of 25');
+        self::assertSame([], $mit->vorschlaege, 'and is never suggested');
+
+        $nurVerworfen = Punktebewertung::planen([$beleg], [$verworfen], new Abgleichsparameter(), ['1:9' => true]);
+        self::assertSame([[], []], [$nurVerworfen->auto, $nurVerworfen->vorschlaege]);
+    }
+
     public function testATooCommonAmountIsNoAnchorButCountsInTheCeiling(): void
     {
         $buchungen = [$this->buchung(id: 1000, offen: 5000, iban: self::IBAN_LIEFERANT)];

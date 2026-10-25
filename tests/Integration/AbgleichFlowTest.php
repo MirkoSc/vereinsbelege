@@ -9,6 +9,7 @@ use App\Domain\BankAccountKind;
 use App\Domain\BankTransactionDirection;
 use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionSource;
+use App\Domain\Differenzgrund;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
 use App\Domain\InvoiceData;
@@ -27,6 +28,7 @@ use App\Repository\BankTransactionRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\MatchRejectionRepository;
 use App\Repository\SettingRepository;
 use App\Repository\SupplierRepository;
 use App\Repository\UserRepository;
@@ -34,6 +36,7 @@ use App\Repository\VaultRepository;
 use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\Abgleich;
+use App\Service\Bank\AbgleichFilter;
 use App\Service\Bank\Abgleichsparameter;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\BankRuleViolation;
@@ -47,6 +50,8 @@ use App\Service\MasterData\SupplierService;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\ZuordnungFabrik;
+use App\View\Area;
+use App\View\View;
 
 /**
  * The matching run on the real schema and vault (M10-2, issue #66,
@@ -269,6 +274,203 @@ final class AbgleichFlowTest extends DatabaseTestCase
         self::assertSame('auto', $details['method']);
     }
 
+    // ------------------------------------------- matching page (M10-4)
+
+    public function testADiscardedSuggestionIsNeitherSuggestedNorAcceptedUntilTakenBack(): void
+    {
+        $eins = $this->beleg(5000, datum: '2026-03-10');
+        $zwei = $this->beleg(5000, datum: '2026-03-12');
+        $buchung = $this->buchung(-5000, 'Lieferung', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $alle = Zugriffsbereich::unbeschraenkt();
+
+        self::assertTrue($this->abgleich()->verwerfen($alle, $eins, $buchung, $this->userId, new \DateTimeImmutable()));
+        self::assertFalse($this->abgleich()->verwerfen($alle, $eins, $buchung, $this->userId, new \DateTimeImmutable()), 'already discarded');
+        // Without the discarded pair the booking has one candidate left: unambiguous now.
+        $plan = $this->abgleich()->planen($this->tresor, $alle)->plan;
+        self::assertSame([[$zwei, $buchung]], array_map(static fn($v): array => [$v->invoiceId, $v->transactionId], $plan->auto));
+        self::assertSame([], $plan->vorschlaege);
+        try {
+            $this->abgleich()->uebernehmen($this->tresor, $alle, $eins, $buchung, 5000, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('a discarded pair is no suggestion to accept');
+        } catch (BankRuleViolation) {
+        }
+
+        // The receipt's own view still shows the booking - marked, and allocatable by hand.
+        $detail = $this->abgleich()->detail($this->tresor, $alle, $eins, new AbgleichFilter()) ?? self::fail();
+        self::assertSame([[$buchung, true]], array_map(static fn($k): array => [$k->buchung->buchung->id, $k->verworfen], $detail->kandidaten));
+
+        self::assertTrue($this->abgleich()->wiederVorschlagen($alle, $eins, $buchung));
+        $plan = $this->abgleich()->planen($this->tresor, $alle)->plan;
+        self::assertSame([[], 2], [$plan->auto, count($plan->vorschlaege)], 'ambiguous again');
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM match_rejection')->fetchColumn());
+    }
+
+    public function testADiscardedUnambiguousPairIsNotAllocatedAutomatically(): void
+    {
+        $beleg = $this->beleg(11900, nummer: 'RE-2026-0815');
+        $buchung = $this->buchung(-11900, 'Rechnung RE-2026-0815', 'Getraenke Mueller', self::IBAN_LIEFERANT);
+        $this->abgleich()->verwerfen(Zugriffsbereich::unbeschraenkt(), $beleg, $buchung, $this->userId, new \DateTimeImmutable());
+
+        self::assertSame(['angelegt' => 0, 'uebersprungen' => 0], $this->abgleich()->automatischZuordnen($this->tresor, Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable()));
+        self::assertSame('offen', $this->spalte('invoice', $beleg, 'payment_status'));
+    }
+
+    public function testDiscardingNeedsBothSidesOpenAndInScope(): void
+    {
+        $beleg = $this->beleg(5000, datum: '2025-12-20');
+        $buchung = $this->buchung(-5000, '', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $nur2026 = new Zugriffsbereich(null, new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31'));
+
+        foreach ([[$nur2026, $beleg, $buchung], [new Zugriffsbereich([999]), $beleg, $buchung], [Zugriffsbereich::unbeschraenkt(), $beleg, 999999]] as [$bereich, $b, $t]) {
+            try {
+                $this->abgleich()->verwerfen($bereich, $b, $t, $this->userId, new \DateTimeImmutable());
+                self::fail('out of scope or gone');
+            } catch (BankRuleViolation) {
+            }
+        }
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM match_rejection')->fetchColumn());
+    }
+
+    public function testByHandWithPartAmountsThenDifferenceThenRelease(): void
+    {
+        $beleg = $this->beleg(10000, nummer: 'RE-9');
+        $rate = $this->buchung(-6000, 'Rate 1', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $rest = $this->buchung(-3700, 'Rate 2', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $einnahme = $this->buchung(3700, 'Beitrag', 'Mitglied', '');
+        $vorFenster = $this->buchung(-6000, 'Rate 0', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $this->pdo()->prepare('UPDATE bank_transaction SET booking_date = ? WHERE id = ?')->execute(['2026-03-08', $vorFenster]);   // receipt 03-14, window from 03-09
+        $alle = Zugriffsbereich::unbeschraenkt();
+
+        $detail = $this->abgleich()->detail($this->tresor, $alle, $beleg, new AbgleichFilter()) ?? self::fail();
+        self::assertTrue($detail->nimmtZuordnungAn);
+        self::assertSame([$rate, $rest], array_map(static fn($k): int => $k->buchung->buchung->id, $detail->kandidaten), 'outgoing only, from the window on, best first');
+        self::assertNotContains($einnahme, array_map(static fn($k): int => $k->buchung->buchung->id, $detail->kandidaten));
+        self::assertSame([6000, 3700], array_map(static fn($k): int => $k->betrag, $detail->kandidaten), 'min(open receipt, open booking)');
+
+        // Part of the first booking only - the booking stays "teilweise".
+        $id = $this->abgleich()->zuordnenVonHand($this->tresor, $alle, $beleg, $rate, 5000, $this->userId, self::IP, new \DateTimeImmutable());
+        $z = $this->zuordnung()->fuerBeleg($this->tresor, $beleg)[0];
+        self::assertSame([$id, ZuordnungMethode::Manuell, 5000], [$z->id, $z->method, $z->amount]);
+        self::assertNotNull($z->score, 'the points are kept for traceability');
+        self::assertSame(['teilbezahlt', 'teilweise'], [$this->spalte('invoice', $beleg, 'payment_status'), $this->spalte('bank_transaction', $rate, 'doc_status')]);
+
+        try {
+            $this->abgleich()->zuordnenVonHand($this->tresor, $alle, $beleg, $rest, 5001, $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('more than the booking has open');
+        } catch (BankRuleViolation $e) {
+            self::assertSame('betrag', $e->feld);
+        }
+        $this->abgleich()->zuordnenVonHand($this->tresor, $alle, $beleg, $rest, 3700, $this->userId, self::IP, new \DateTimeImmutable());
+
+        // 1300 left: closed as cash discount, then reopened.
+        $detail = $this->abgleich()->detail($this->tresor, $alle, $beleg, new AbgleichFilter()) ?? self::fail();
+        self::assertSame(1300, $detail->stand->offen());
+        self::assertCount(2, $detail->zuordnungen);
+        $this->abgleich()->differenz($this->tresor, $alle, $beleg, Differenzgrund::Skonto, $this->userId, self::IP, new \DateTimeImmutable());
+        self::assertSame('bezahlt', $this->spalte('invoice', $beleg, 'payment_status'));
+        self::assertFalse(($this->abgleich()->detail($this->tresor, $alle, $beleg, new AbgleichFilter()) ?? self::fail())->nimmtZuordnungAn);
+        $this->abgleich()->differenz($this->tresor, $alle, $beleg, null, $this->userId, self::IP, new \DateTimeImmutable());
+        self::assertSame('teilbezahlt', $this->spalte('invoice', $beleg, 'payment_status'));
+
+        // Release the first: the booking is missing its receipt again.
+        $this->abgleich()->loesen($this->tresor, $alle, $beleg, $id, $this->userId, self::IP, new \DateTimeImmutable());
+        self::assertSame('fehlt', $this->spalte('bank_transaction', $rate, 'doc_status'));
+        self::assertCount(1, $this->zuordnung()->fuerBeleg($this->tresor, $beleg));
+    }
+
+    public function testReleasingAndClosingStayWithinTheScope(): void
+    {
+        $beleg = $this->beleg(5000, datum: '2025-12-20');
+        $buchung = $this->buchung(-5000, '', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $id = $this->abgleich()->zuordnenVonHand($this->tresor, Zugriffsbereich::unbeschraenkt(), $beleg, $buchung, 2000, $this->userId, self::IP, new \DateTimeImmutable());
+        $nur2026 = new Zugriffsbereich(null, new \DateTimeImmutable('2026-01-01'), new \DateTimeImmutable('2026-12-31'));
+        $andererBeleg = $this->beleg(1000);
+
+        self::assertNull($this->abgleich()->detail($this->tresor, $nur2026, $beleg, new AbgleichFilter()));
+        $versuche = [
+            fn() => $this->abgleich()->loesen($this->tresor, $nur2026, $beleg, $id, $this->userId, self::IP, new \DateTimeImmutable()),
+            fn() => $this->abgleich()->loesen($this->tresor, Zugriffsbereich::unbeschraenkt(), $andererBeleg, $id, $this->userId, self::IP, new \DateTimeImmutable()),
+            fn() => $this->abgleich()->differenz($this->tresor, $nur2026, $beleg, Differenzgrund::Sonstiges, $this->userId, self::IP, new \DateTimeImmutable()),
+            fn() => $this->abgleich()->zuordnenVonHand($this->tresor, $nur2026, $beleg, $buchung, 1000, $this->userId, self::IP, new \DateTimeImmutable()),
+            fn() => $this->abgleich()->zuordnenVonHand($this->tresor, new Zugriffsbereich([999]), $andererBeleg, $buchung, 1000, $this->userId, self::IP, new \DateTimeImmutable()),
+        ];
+        foreach ($versuche as $versuch) {
+            try {
+                $versuch();
+                self::fail('out of scope');
+            } catch (BankRuleViolation) {
+            }
+        }
+        self::assertCount(1, $this->zuordnung()->fuerBeleg($this->tresor, $beleg));
+        self::assertSame('teilbezahlt', $this->spalte('invoice', $beleg, 'payment_status'));
+    }
+
+    public function testTheListsArePagedAndFiltered(): void
+    {
+        for ($i = 1; $i <= AbgleichFilter::SEITE + 1; $i++) {
+            $this->beleg(1000 + $i, nummer: 'L-' . $i, datum: sprintf('2026-02-%02d', min($i, 28)));
+        }
+        $fehlt = $this->buchung(-4321, 'Miete', 'Stadt Musterhausen', '');
+        $this->buchung(5000, 'Beitrag', 'Mitglied', '');   // income needs no receipt by default
+        $alle = Zugriffsbereich::unbeschraenkt();
+
+        $liste = $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter());
+        self::assertSame(AbgleichFilter::SEITE + 1, $liste->belegeGesamt);
+        self::assertCount(AbgleichFilter::SEITE, $liste->belege);
+        self::assertSame('L-1', $liste->belege[0]->daten->invoiceNumber, 'oldest first');
+        self::assertSame([$fehlt], array_map(static fn($b): int => $b->buchung->id, $liste->buchungen), 'only bookings missing a receipt');
+        self::assertCount(1, $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(seiteBelege: 2))->belege);
+        $hinter = $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(seiteBelege: 9));
+        self::assertSame([2, 1], [$hinter->seiteBelege, count($hinter->belege)], 'a page past the end shows the last one');
+
+        $gefiltert = $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(betrag: 1003));
+        self::assertSame(['L-3'], array_map(static fn($b): string => $b->daten->invoiceNumber, $gefiltert->belege));
+        self::assertSame(0, $gefiltert->buchungenGesamt);
+        self::assertSame([$fehlt], array_map(static fn($b): int => $b->buchung->id, $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(suche: 'musterhausen'))->buchungen));
+        self::assertSame(['L-26'], array_map(static fn($b): string => $b->daten->invoiceNumber, $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(von: new \DateTimeImmutable('2026-02-26'), bis: new \DateTimeImmutable('2026-02-27')))->belege));
+        self::assertSame(0, $this->abgleich()->liste($this->tresor, $alle, new AbgleichFilter(kontoId: $this->konto + 1))->buchungenGesamt);
+
+        $kostenstelle = $this->abgleich()->liste($this->tresor, new Zugriffsbereich([999]), new AbgleichFilter());
+        self::assertSame([0, 0], [$kostenstelle->belegeGesamt, $kostenstelle->buchungenGesamt], 'a cost-center scope sees no booking, and these receipts have none');
+    }
+
+    public function testThePageShowsListsAndTheSelectedReceiptWithoutAmountsInLinks(): void
+    {
+        $beleg = $this->beleg(11900, nummer: 'RE-4242');
+        $buchung = $this->buchung(-11900, 'Rechnung RE-4242', 'Getränke Müller', self::IBAN_LIEFERANT);
+        $alle = Zugriffsbereich::unbeschraenkt();
+        $filter = new AbgleichFilter(betrag: 11900, suche: 'Müller', belegId: $beleg);
+
+        $html = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test')->render('app/abgleich', [
+            'title' => 'Abgleich',
+            'flash' => null,
+            'csrf' => 'token',
+            'entsperrt' => true,
+            'filter' => $filter,
+            'konten' => $this->abgleich()->konten($this->tresor),
+            'liste' => $this->abgleich()->liste($this->tresor, $alle, $filter),
+            'detail' => $this->abgleich()->detail($this->tresor, $alle, $beleg, $filter),
+            'stand' => null,
+            'parameter' => new Abgleichsparameter(),
+            'fehler' => null,
+            'felder' => [],
+        ], Area::App);
+
+        self::assertStringContainsString('RE-4242', $html);
+        self::assertStringContainsString('Offene Belege (1)', $html);
+        self::assertStringContainsString('Buchungen ohne Beleg (1)', $html);
+        self::assertStringContainsString('action="/app/abgleich/zuordnen"', $html);
+        self::assertStringContainsString('name="buchung" value="' . $buchung . '"', $html);
+        self::assertStringContainsString('value="119,00"', $html);
+        self::assertStringContainsString('action="/app/abgleich/verwerfen"', $html);
+        self::assertStringContainsString('class="abgleich-spalten"', $html);
+        preg_match_all('/href="([^"]*)"/', $html, $links);
+        foreach ($links[1] as $link) {
+            self::assertStringNotContainsString('betrag', $link);
+            self::assertStringNotContainsString('M%C3%BCller', $link);
+        }
+    }
+
     // ------------------------------------------------------------ helpers
 
     private function abgleich(): Abgleich
@@ -281,6 +483,8 @@ final class AbgleichFlowTest extends DatabaseTestCase
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
             $this->zuordnung(),
             new SettingRepository($pdo),
+            new MatchRejectionRepository($pdo),
+            new BankAccountService($pdo, new BankAccountRepository($pdo)),
         );
     }
 
