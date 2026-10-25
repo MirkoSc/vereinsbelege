@@ -158,10 +158,9 @@ final readonly class MfaService
         }
 
         // Single use: a code that just unlocked the login must not work a
-        // second time even if it has not expired yet.
-        $this->emailCodes->delete($userId);
-
-        return true;
+        // second time even if it has not expired yet - and only the request
+        // that actually removed it counts (parallel logins, issue #78).
+        return $this->emailCodes->consume($userId, $stored->codeHash);
     }
 
     // -------------------------------------------------------- Backup-Codes
@@ -174,9 +173,7 @@ final readonly class MfaService
             return false;
         }
 
-        $this->backupCodes->markUsed($stored->id, $now);
-
-        return true;
+        return $this->backupCodes->markUsed($stored->id, $now);
     }
 
     // --------------------------------------------------------- Geräte merken

@@ -323,6 +323,26 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertStringContainsString('ungültig oder bereits verbraucht', $zweiterVersuch->body);
     }
 
+    /**
+     * Security review (issue #78): two parallel logins with the same code
+     * both found it unused and both passed. Only the request that actually
+     * marks (or deletes) the code wins now.
+     */
+    public function testEinCodeGewinntNurEinmalAuchBeiGleichzeitigenAnfragen(): void
+    {
+        $this->totpEinrichtenMitCodes();
+        $backup = new MfaBackupCodeRepository($this->pdo());
+        $id = (int) $this->pdo()->query('SELECT id FROM mfa_backup_code WHERE used_at IS NULL LIMIT 1')->fetchColumn();
+        self::assertTrue($backup->markUsed($id));
+        self::assertFalse($backup->markUsed($id), 'the second request finds it already used');
+
+        $email = new MfaEmailCodeRepository($this->pdo());
+        $email->put($this->userId, str_repeat("\x01", 32), new \DateTimeImmutable('+10 minutes'));
+        self::assertFalse($email->consume($this->userId, str_repeat("\x02", 32)), 'another code is not this one');
+        self::assertTrue($email->consume($this->userId, str_repeat("\x01", 32)));
+        self::assertFalse($email->consume($this->userId, str_repeat("\x01", 32)));
+    }
+
     // --------------------------------------------------------- Gerät merken
 
     public function testEinGemerktesGeraetUeberspringtDieAbfrage(): void
