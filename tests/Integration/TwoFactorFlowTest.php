@@ -391,11 +391,15 @@ final class TwoFactorFlowTest extends DatabaseTestCase
     {
         $this->totpEinrichten();
         $repo = new MfaTotpRepository($this->pdo());
+        // The setup already spent the step of its own code.
+        $eingerichtet = (int) $this->pdo()->query('SELECT last_step FROM mfa_totp WHERE user_id = ' . $this->userId)->fetchColumn();
+        self::assertGreaterThan(0, $eingerichtet);
 
-        self::assertTrue($repo->claimStep($this->userId, 100));
-        self::assertFalse($repo->claimStep($this->userId, 100), 'the same step once only');
-        self::assertFalse($repo->claimStep($this->userId, 99), 'nor an older one');
-        self::assertTrue($repo->claimStep($this->userId, 101));
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet), 'the setup code is spent');
+        self::assertTrue($repo->claimStep($this->userId, $eingerichtet + 1));
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet + 1), 'the same step once only');
+        self::assertFalse($repo->claimStep($this->userId, $eingerichtet), 'nor an older one');
+        self::assertTrue($repo->claimStep($this->userId, $eingerichtet + 2));
 
         $repo->put($this->userId, str_repeat("\x00", 61));
         self::assertFalse($repo->claimStep($this->userId, 5), 'an unconfirmed secret accepts nothing');
