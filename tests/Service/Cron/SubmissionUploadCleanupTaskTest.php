@@ -53,7 +53,7 @@ final class SubmissionUploadCleanupTaskTest extends DatabaseTestCase
         $liegengeblieben = $this->blob('a');
         $frisch = $this->blob('b');
 
-        $repository->record($liegengeblieben, str_repeat("\x01", 32), new \DateTimeImmutable('-25 hours'));
+        $repository->record($liegengeblieben, str_repeat("\x01", 32), self::hoursAgo(25));
         $repository->record($frisch, str_repeat("\x02", 32), new \DateTimeImmutable());
 
         self::assertSame(1, $this->task()->run(new \DateTimeImmutable()));
@@ -69,7 +69,7 @@ final class SubmissionUploadCleanupTaskTest extends DatabaseTestCase
     {
         $repository = new SubmissionUploadRepository($this->pdo());
         $blob = $this->blob('c');
-        $repository->record($blob, str_repeat("\x03", 32), new \DateTimeImmutable('-23 hours'));
+        $repository->record($blob, str_repeat("\x03", 32), self::hoursAgo(23));
 
         self::assertSame(0, $this->task()->run(new \DateTimeImmutable()));
         self::assertNotNull($this->blobs()->find($blob));
@@ -79,7 +79,7 @@ final class SubmissionUploadCleanupTaskTest extends DatabaseTestCase
     {
         $repository = new SubmissionUploadRepository($this->pdo());
         $blob = $this->blob('d');
-        $repository->record($blob, str_repeat("\x04", 32), new \DateTimeImmutable('-25 hours'));
+        $repository->record($blob, str_repeat("\x04", 32), self::hoursAgo(25));
 
         $aufgabe = $this->task();
         self::assertSame(1, $aufgabe->run(new \DateTimeImmutable()));
@@ -126,5 +126,11 @@ final class SubmissionUploadCleanupTaskTest extends DatabaseTestCase
         }
 
         rmdir($dir);
+    }
+
+    /** Real hours, not wall-clock hours - those differ across a clock change. */
+    private static function hoursAgo(int $stunden): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable()->setTimestamp(time() - $stunden * 3600);
     }
 }
