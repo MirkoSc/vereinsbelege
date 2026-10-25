@@ -351,20 +351,26 @@ final readonly class JobRepository
     }
 
     /**
-     * Gives a claimed job back WITHOUT using up an attempt (the worker's
-     * `/release` on SIGTERM, issue #248): `offen` again, `attempts` one
-     * lower - the cut-off run was not the job's fault. Only the holder may.
-     * `locked_by` stays (like abschliessen()), so a repeated release whose
-     * answer got lost is recognised; claim() overwrites it.
+     * Gives a claimed job back after a shutdown (the worker's `/release`,
+     * issue #248): `offen` again, with $versuchZurueck `attempts` one lower -
+     * the cut-off run was not the job's fault -, and $state (the release
+     * counter that caps this). Only the holder may. `locked_by` stays (like
+     * abschliessen()), so a repeated release whose answer got lost is
+     * recognised; claim() overwrites it.
+     *
+     * @param array<string, mixed> $state counters only, never business data
      */
-    public function zurueckgebenOhneVersuch(int $id, string $lockedBy, ?\DateTimeImmutable $now = null): bool
+    public function zurueckgebenOhneVersuch(int $id, string $lockedBy, array $state, bool $versuchZurueck, ?\DateTimeImmutable $now = null): bool
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE job SET status = ?, attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, locked_until = NULL, updated_at = ?
+            'UPDATE job SET status = ?, state = ?, attempts = CASE WHEN ? = 1 AND attempts > 0 THEN attempts - 1 ELSE attempts END,
+                locked_until = NULL, updated_at = ?
              WHERE id = ? AND status = ? AND locked_by = ?',
         );
         $stmt->execute([
             JobStatus::Offen->value,
+            json_encode($state, JSON_THROW_ON_ERROR),
+            (int) $versuchZurueck,
             ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
             $id,
             JobStatus::Laeuft->value,

@@ -304,7 +304,11 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - `POST /jobs/{id}/release` `{lock}` (signiert, Nonce, wie alle
     Worker-Routen): nur mit der eigenen Sperre; der Job geht zurück auf
     `offen`, `attempts` sinkt um eins (die abgebrochene Bearbeitung zählt
-    nicht als Versuch), die Grants bleiben. `locked_by` bleibt stehen –
+    nicht als Versuch), die Grants bleiben. Das gilt für höchstens **3**
+    Rückgaben je Job (`MAX_FREIGABEN`, Zähler `freigaben` in `job.state`);
+    danach behält der Job den Versuch, damit eine Neustart-Schleife (z. B.
+    ein Update-Timer kürzer als ein langer Lauf) trotzdem endet und
+    zurückfällt. `locked_by` bleibt stehen –
     eine Wiederholung derselben Rückgabe (Antwort verloren) wird mit 200
     beantwortet, solange niemand den Job neu beansprucht hat; eine fremde
     oder veraltete Sperre → 409, unbekannter Job → 404.
@@ -320,7 +324,11 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - **KI-Aufrufe des Workers im KI-Protokoll** (`ai_call_log`): Die
     Übernahme (`KiAuslesung::workerLaufUebernehmen()`) schreibt je
     wohlgeformtem Versuch eine Zeile wie die Session – Profil, Modell,
-    Prompt-Version, Status, Tokens, Dauer, nie die Rohantwort. Zeitpunkt
+    Prompt-Version, Status, Tokens, Dauer, nie die Rohantwort. Name und
+    Modell stammen aus dem eigenen Anbieter-Profil (unbekanntes Profil:
+    „Worker“, Modell nur als Kennung), Zahlen werden auf ihre Spalten
+    begrenzt – der Worker kann so keinen Text ins Klartext-Protokoll
+    schreiben. Zeitpunkt
     ist der der Übernahme (der Worker meldet keine Aufrufzeit). Eine
     wiederholte Übernahme protokolliert nicht doppelt (Marke im
     verschlüsselten Artefakt). Versuche abgebrochener oder endgültig

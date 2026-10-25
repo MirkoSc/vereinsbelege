@@ -126,7 +126,16 @@ final class WorkerUebernahmeTest extends WorkerTestCase
     {
         $doc = $this->dokument();
         [$id, $schluessel, $job] = $this->workerJob(KiAuslesung::JOB_TYP, $doc);
-        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(false));
+        // The first attempt as an odd worker might report it: text where an
+        // identifier belongs, numbers outside their columns.
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(false, aufruf: [
+            'anbieter_id' => 999,
+            'anbieter_name' => 'Rechnung RE-2026-0815 Müller',
+            'modell' => 'Sportartikel Müller GmbH',
+            'dauer_ms' => -5,
+            'http_status' => 70000,
+            'prompt_tokens' => 12,
+        ]));
         $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 1, $this->extraktion(true));
         $this->abschliessen($id, $schluessel, $job);
 
@@ -140,10 +149,16 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         $zeilen = $this->pdo()->query('SELECT * FROM ai_call_log ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
         self::assertCount(2, $zeilen, 'each worker call once, also after a repeated takeover');
         self::assertSame(['kein_json', 'gueltig'], array_column($zeilen, 'status'));
-        self::assertSame(['test', 'test'], array_column($zeilen, 'model'));
+        self::assertSame(['unbekannt', 'test'], array_column($zeilen, 'model'), 'no free text from the worker');
+        self::assertSame(['Worker', 'Worker'], array_column($zeilen, 'provider_name'), 'an unknown profile is not named by the worker');
         self::assertSame(['extract-v1', 'extract-v1'], array_column($zeilen, 'prompt_version'));
+        self::assertNull($zeilen[0]['duration_ms']);
+        self::assertNull($zeilen[0]['http_status']);
+        self::assertSame(12, (int) $zeilen[0]['prompt_tokens']);
         // Operating data only: no column carries what the AI read.
-        self::assertStringNotContainsString('RE-2026-0815', json_encode($zeilen, JSON_THROW_ON_ERROR));
+        $alles = json_encode($zeilen, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        self::assertStringNotContainsString('RE-2026-0815', $alles);
+        self::assertStringNotContainsString('Müller', $alles);
     }
 
     public function testTheExtractionIsRebuiltWithTheServersChecksNotTakenFromTheWorker(): void
@@ -341,12 +356,13 @@ final class WorkerUebernahmeTest extends WorkerTestCase
      *
      * @param array<string, mixed>|null $daten
      * @param array<string, mixed>|null $extraktion
+     * @param array<string, mixed> $aufruf overrides of the stored call
      */
-    private function extraktion(bool $gueltig, ?array $daten = null, ?array $extraktion = null): string
+    private function extraktion(bool $gueltig, ?array $daten = null, ?array $extraktion = null, array $aufruf = []): string
     {
         $antwort = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/llm/extract-v1/gueltig.json'), true, flags: JSON_THROW_ON_ERROR);
         $daten ??= json_decode($antwort['choices'][0]['message']['content'], true, flags: JSON_THROW_ON_ERROR);
-        $aufruf = [
+        $aufruf += [
             'anbieter_id' => 1,
             'anbieter_name' => 'Test',
             'modell' => 'test',

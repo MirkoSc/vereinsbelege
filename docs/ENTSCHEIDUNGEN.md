@@ -1839,10 +1839,11 @@ Getroffen ohne Rückfrage:
   der Worker gibt beim Beenden (SIGTERM) den Job zurück, `attempts` sinkt
   um eins – ohne Schemaänderung. `locked_by` bleibt am offenen Job stehen,
   damit eine Wiederholung (Antwort verloren) als dieselbe Rückgabe erkannt
-  wird (200); der nächste Claim überschreibt sie. Folge: Ein Worker, der
-  ständig neu gestartet wird, verbraucht nie Versuche – das ist gewollt
-  (der Abbruch liegt nicht am Beleg); ein festhängender Job bleibt über die
-  Sperrfrist und den Rückfall begrenzt. Ein Webhoster ohne die Route
+  wird (200); der nächste Claim überschreibt sie. Höchstens 3 solche
+  Rückgaben je Job (Zähler `freigaben` in `job.state`), danach zählt eine
+  Rückgabe wie ein Versuch – sonst liefe ein Job, der bei jedem Neustart
+  (z. B. einem Update-Timer) abgebrochen wird, endlos und fiele nie
+  zurück (Code-Review #248). Ein Webhoster ohne die Route
   (älteres Release) bekommt vom Worker weiter `fail` (`WorkerBeendet`).
 - **Abgebrochene Versuche räumen auf:** Bei `release`, `fail` ohne
   `endgueltig` und beim erneuten Claim werden offene Uploads **und schon
@@ -1859,7 +1860,8 @@ Getroffen ohne Rückfrage:
   `extraction`-Artefakten, nicht über einen neuen API-Endpunkt – der Worker
   bräuchte sonst einen Schreibzugang zu Betriebsdaten, und die Angaben
   stehen ohnehin im Artefakt. Zeitpunkt = Übernahme (der Worker meldet
-  keinen). Keine eigene Spalte „vom Worker“ (wäre eine Migration).
+  keinen). Name/Modell aus dem eigenen Anbieter-Profil, Zahlen begrenzt –
+  der Worker kann keinen Freitext ins Klartext-Protokoll bringen. Keine eigene Spalte „vom Worker“ (wäre eine Migration).
   Doppelte Einträge bei wiederholter Übernahme verhindert eine Marke im
   verschlüsselten Artefakt.
 - **„OCR nachholen“ je Beleg** in der Posteingangs-Ansicht (Recht

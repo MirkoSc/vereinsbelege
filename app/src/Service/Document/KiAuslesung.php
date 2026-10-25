@@ -31,6 +31,7 @@ use App\Service\Job\ExternerJobHandler;
 use App\Service\Job\JobSchrittErgebnis;
 use App\Service\Ki\KiAbfrage;
 use App\Service\Ki\KiAnbieter;
+use App\Service\Ki\KiAufruf;
 use App\Service\Ki\KiErgebnis;
 use App\Service\Ki\KiVersuch;
 use App\Service\MasterData\SupplierAufloesung;
@@ -323,6 +324,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
     public function workerLaufUebernehmen(Document $document, int $workerJobId, Vault $vault, \DateTimeImmutable $now): bool
     {
         $versuche = [];
+        $artefakte = [];
         foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
             if ($artefakt->jobId !== $workerJobId || $artefakt->producer !== JobExecutor::Worker) {
                 continue;
@@ -330,6 +332,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
             $versuch = $this->workerVersuch($artefakt, $vault);
             if ($versuch !== null) {
                 $versuche[$artefakt->seq] = $versuch;
+                $artefakte[$artefakt->seq] = $artefakt;
             }
         }
         if ($versuche === []) {
@@ -341,12 +344,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         // A repeated takeover (its request died after the store below) has
         // logged the calls already - the marker sits in the rewritten
         // artifact, nowhere in plaintext.
-        $schonProtokolliert = false;
-        foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
-            if ($artefakt->jobId === $workerJobId && $artefakt->seq === $n) {
-                $schonProtokolliert = ($this->daten($artefakt, $vault)['protokolliert'] ?? false) === true;
-            }
-        }
+        $schonProtokolliert = ($this->daten($artefakte[$n], $vault)['protokolliert'] ?? false) === true;
         $vorschlag = $letzter->gueltig() && $letzter->daten !== null
             ? $this->auslesung->auswerten($letzter->daten, $this->eingabe($document, $vault, null, mitBildern: false))
             : null;
@@ -364,12 +362,44 @@ final readonly class KiAuslesung implements ExternerJobHandler
         // takeover's - the worker does not report when it called.
         if (!$schonProtokolliert) {
             foreach ($versuche as $versuch) {
-                $this->protokoll->insert($versuch->aufruf, $now);
+                $this->protokoll->insert($this->workerAufruf($versuch->aufruf), $now);
             }
         }
         $this->abschliessen($document, $workerJobId, $letzter->gueltig(), $now);
 
         return true;
+    }
+
+    /**
+     * A worker's call as it goes into the plaintext call log (issue #248):
+     * the worker's word is not taken for any text - name and model come
+     * from the web host's own profile (an unknown one is named "Worker"),
+     * the model of an unknown profile and the prompt version only as plain
+     * identifiers - and the numbers are kept within their columns, so an
+     * odd value can neither smuggle content into plaintext nor make the
+     * insert fail.
+     */
+    private function workerAufruf(KiAufruf $aufruf): KiAufruf
+    {
+        $profil = $aufruf->anbieterId > 0 ? $this->anbieter->find($aufruf->anbieterId) : null;
+        $kennung = static fn(string $wert, int $laenge): string => preg_match('/^[A-Za-z0-9._:\/@+-]{1,' . $laenge . '}$/', $wert) === 1 ? $wert : 'unbekannt';
+        $zahl = static fn(?int $wert, int $min, int $max): ?int => $wert !== null && $wert >= $min && $wert <= $max ? $wert : null;
+
+        return new KiAufruf(
+            $profil->id ?? 0,
+            $profil->name ?? 'Worker',
+            $profil->model ?? $kennung($aufruf->modell, 100),
+            $kennung($aufruf->promptVersion, 40),
+            $aufruf->reparatur,
+            $aufruf->status,
+            $zahl($aufruf->promptTokens, 0, 2147483647),
+            $zahl($aufruf->antwortTokens, 0, 2147483647),
+            $zahl($aufruf->tokensGesamt, 0, 2147483647),
+            $zahl($aufruf->dauerMs, 0, 2147483647),
+            $zahl($aufruf->httpStatus, 100, 599),
+            null,
+            $aufruf->fallback,
+        );
     }
 
     /** Whether a run for $documentId is queued or running right now. */

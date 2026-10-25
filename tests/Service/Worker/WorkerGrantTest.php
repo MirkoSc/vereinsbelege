@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\Worker;
 
+use App\Api\WorkerApiController;
 use App\Domain\ArtifactKind;
 use App\Domain\BlobMeta;
 use App\Domain\DocumentSource;
@@ -252,6 +253,26 @@ final class WorkerGrantTest extends WorkerTestCase
         self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']])->status, 'The old lock is no longer the holder.');
         $this->blobHochladen($id, $schluessel, $neu, 'page_image', 0, random_bytes(5000));
         self::assertCount(1, $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+    }
+
+    public function testReleasesWithoutAttemptAreCappedSoARestartLoopStillEnds(): void
+    {
+        [$doc] = $this->dokumentMitBlob();
+        [$id, $schluessel] = $this->koppeln();
+        $this->heartbeat($id, $schluessel);
+        $this->freigaben->ausSession($this->eintrag($doc), $this->vault, new \DateTimeImmutable());
+        $jobId = $this->jobs->enqueue('ocr', JobExecutor::Worker, 'document', $doc);
+
+        for ($i = 0; $i < WorkerApiController::MAX_FREIGABEN; ++$i) {
+            $job = $this->claimen($id, $schluessel);
+            self::assertSame(200, $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']])->status);
+            self::assertSame(0, $this->jobs->find($jobId)?->attempts);
+        }
+        // One release too many: it counts like an attempt from now on.
+        $job = $this->claimen($id, $schluessel);
+        $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']]);
+        self::assertSame(1, $this->jobs->find($jobId)?->attempts);
+        self::assertSame(WorkerApiController::MAX_FREIGABEN + 1, $this->jobs->find($jobId)?->state['freigaben'] ?? null);
     }
 
     public function testResultsOfAnAbortedAttemptAreDroppedBeforeTheNextAttempt(): void
