@@ -440,6 +440,49 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
     3,8 s, Schritt im Median 0,09 s. Der Probelauf mit einem echten
     Jahresarchiv wird nur mit Zahlen (keine Namen) im Issue festgehalten.
 
+## 4. DATEV-Export (`/app/datev`, Recht `export.csv`, issue #93, E-49)
+
+Die Buchungen aller Konten und Kassen eines Zeitraums als
+DATEV-„Buchungsstapel“ für den Steuerberater. Abnahmekriterien und
+Begründungen: E-49.
+
+- **Seite** `/app/datev` (Anwenderseite – Steuerberater, Kassenprüfer und
+  Vorstand haben `export.csv`, aber keinen Admin-Bereich): Zeitraum
+  (Buchungsdatum, Default laufendes Jahr, höchstens ein Kalenderjahr),
+  Vorschau mit Anzahl, Saldo und allem, was fehlt. `POST /app/datev/datei`
+  (CSRF, entsperrter Tresor) liefert die Datei als Anhang
+  `EXTF_Buchungsstapel_<Zeitraum>.csv`, `Cache-Control: no-store`, Audit
+  `export.datev` (von, bis, Anzahl). Der Zeitraum-Scope externer Rollen
+  greift auf `bank_transaction.booking_date` in SQL
+  (`BankTransactionRepository::liste()`).
+- **Einstellungen** `/admin/datev` (`admin.settings`, Audit
+  `einstellung.datev` nur mit Anzahlen): Berater-/Mandantennummer,
+  Sachkontenlänge (4–8, Default 4), Kontenrahmen (zwei Ziffern, optional),
+  Klärungskonto (optional), Sachkonto je Kategorie und je Bankkonto/Kasse.
+  Setting `datev_einstellungen` (JSON, Klartext), gelesen von
+  `App\Service\Export\DatevEinstellungen`; Unpassendes wird beim Lesen
+  verworfen. Ohne Tresor zeigt die Seite Konten als „Bankkonto Nr. 3“.
+- **Zeilen** (`App\Service\Export\DatevExport`, nach Buchungsdatum, ID):
+  Konto = Sachkonto des Kontos, Gegenkonto = Sachkonto der Kategorie (ohne
+  Kategorie: Klärungskonto), Umsatz ohne Vorzeichen, „S“ bei Geldeingang,
+  „H“ bei Ausgang; Belegdatum TTMM; Belegfeld 1 = Rechnungsnummer des
+  ersten zugeordneten geprüften/festgeschriebenen Belegs im Scope;
+  Buchungstext = Kategoriename. Umbuchungen nur mit der abgehenden Hälfte
+  (Gegenkonto = empfangendes Konto). Keine Gegenseite, kein
+  Verwendungszweck in der Datei.
+- **Sperren:** Konto/Kategorie ohne Sachkonto, Buchung nicht in EUR, mehr
+  als 99 999 Zeilen oder fehlende Berater-/Mandantennummer → kein
+  Download. Buchungen über 0,00 € fehlen und werden genannt.
+- **Format** (`App\Service\Export\DatevBuchungsstapel`, rein): Kopfzeile
+  mit 31 Feldern (`EXTF`, 700, 21, Formatversion 13, Erzeugt am, Herkunft
+  `RE`, Exportiert von leer, WJ-Beginn 1.1., Festschreibung 0, `EUR`,
+  Sachkontenrahmen), Zeile 2 die 125 Spaltenüberschriften, Textfelder in
+  `"` (ein `"` im Text wird `'`, Steuerzeichen werden Leerzeichen),
+  Windows-1252 (nicht darstellbare Zeichen → `?`), CRLF.
+- **Kein Klartext auf dem Server:** die Datei entsteht im Speicher dieses
+  einen Requests; ein Vereinsjahr hat wenige Tausend Buchungen (§1:
+  etwa 0,04 ms je Zeile), daher keine Schrittkette.
+
 ## Pflicht-Tests
 
 Report-Berechnungen (Summen je Kategorie/Lieferant/Monat, Belege vs.
@@ -466,6 +509,13 @@ Für „nur noch nicht exportierte“ prüft er:
 - **Scope:** Die Option wirkt zusammen mit dem Zeitraum-Scope; fremde Läufe
   ergeben 404 für eingeschränkte Rollen.
 - **CSRF** ist auf allen Lauf-Routen Pflicht.
+
+DATEV-Export (issue #93): `tests/Service/Export/DatevBuchungsstapelTest.php`
+(Kopf, Spalten, Feldregeln, Betragsformat, Belegfeld 1, Windows-1252,
+CRLF), `DatevEinstellungenTest.php` (Formular, Zeitraum),
+`tests/Integration/DatevExportFlowTest.php` (Zeilen je Buchung, Umbuchung
+einmal, Belegnummer nur von geprüften Belegen, Lücken sperren, Scope,
+Seite, CSRF, Tresor, Audit, kein Klartext in Temp-Dateien, Einstellungen).
 Umgesetzt (issue #95, Nextcloud-Ablage): `tests/Integration/NextcloudAblageFlowTest.php`
 gegen einen nachgebauten WebDAV-Ordner (`tests/Support/FakeWebDav.php`):
 - **Gleiche Pfade wie das ZIP**, `index.csv` zuletzt, in mehreren kurzen
