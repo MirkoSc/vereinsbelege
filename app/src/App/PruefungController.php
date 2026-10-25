@@ -13,6 +13,7 @@ use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceType;
 use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
+use App\Domain\Sphere;
 use App\Domain\Supplier;
 use App\Domain\Zugriffsbereich;
 use App\Http\Cookie;
@@ -35,6 +36,7 @@ use App\Service\Invoice\InvoiceRuleViolation;
 use App\Service\Invoice\KategorieVorschlag;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\Merkmale;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\View\Area;
 use App\View\FlashArt;
 use App\View\View;
@@ -83,6 +85,7 @@ final readonly class PruefungController
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
         private Duplikatpruefung $duplikate,
+        private ?Sphaereneinstellung $sphaeren = null,
     ) {
     }
 
@@ -326,6 +329,12 @@ final readonly class PruefungController
         }
 
         $felder = self::felder($request);
+        // Only a form that showed the field sends it (issue #84, E-15) - a
+        // form opened before the switch was turned on keeps the stored sphere.
+        if ($this->sphaerenAktiv() && array_key_exists(Pruefung::FELD_SPHAERE, $request->post)) {
+            $wert = $request->post[Pruefung::FELD_SPHAERE];
+            $felder[Pruefung::FELD_SPHAERE] = is_string($wert) ? $wert : '';
+        }
         $geprueft = ($request->post['aktion'] ?? '') === 'geprueft';
         // The supplier the page offered to teach (issue #201/M7-6b).
         $fuer = $request->post['lieferant_lernen_fuer'] ?? '';
@@ -603,6 +612,10 @@ final readonly class PruefungController
     ): ResponseInterface {
         $document = $eintrag->document;
         $bearbeitbar = $tresor !== null && $document->status->pruefbar();
+        $sphaerenAktiv = $this->sphaerenAktiv();
+        if ($sphaerenAktiv && $tresor !== null && !array_key_exists(Pruefung::FELD_SPHAERE, $felder)) {
+            $felder[Pruefung::FELD_SPHAERE] = $this->pruefung->gespeicherteSphaere($document)?->value ?? '';
+        }
         $kiOffen = $bearbeitbar && in_array($document->status, [DocumentStatus::BereitZurAuswertung, DocumentStatus::KiFehler], true);
         $warteschlange = $this->pruefung->warteschlange($this->bereich());
         $ids = array_map(static fn(InboxItem $item): int => $item->document->id, $warteschlange);
@@ -626,6 +639,9 @@ final readonly class PruefungController
             'kategorien' => $this->kategorieAuswahl($felder['kategorie'] ?? ''),
             'lieferanten' => $tresor === null ? [] : $this->lieferantenAuswahl($tresor),
             'kostenstellen' => $this->kostenstellenAuswahl($felder['kostenstelle'] ?? ''),
+            // Tax spheres (issue #84): only with `sphaeren_aktiv` - null hides the field.
+            'sphaeren' => $sphaerenAktiv ? Sphere::cases() : null,
+            'sphaereVorgabe' => $sphaerenAktiv ? $this->sphaereDerKategorie($felder['kategorie'] ?? '') : null,
             'darfLieferantAnlegen' => $this->berechtigungen()->darf(Permission::SupplierManage),
             // The GiroCode page has the unpaid list's right and scope (issue #86).
             'girocodeLink' => $tresor !== null && $document->status !== DocumentStatus::Abgelehnt
@@ -677,6 +693,21 @@ final readonly class PruefungController
         }
 
         return $auswahl;
+    }
+
+    /** The default sphere of the chosen category, as its label - for the hint under the field. */
+    private function sphaereDerKategorie(string $kategorie): ?string
+    {
+        if ($kategorie === '' || !ctype_digit($kategorie)) {
+            return null;
+        }
+
+        return $this->kategorien->find((int) $kategorie)?->defaultSphere?->label();
+    }
+
+    private function sphaerenAktiv(): bool
+    {
+        return $this->sphaeren?->aktiv() ?? false;
     }
 
     /**

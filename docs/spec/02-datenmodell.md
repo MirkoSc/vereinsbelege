@@ -336,6 +336,27 @@ Enum `Sphere`: `ideell`, `vermoegensverwaltung`, `zweckbetrieb`,
 Mensch bestätigt. (Fachliche Richtigkeit mit Steuerberater klären – die Software
 liefert nur die Struktur.)
 
+**Umsetzung (issue #84, E-57), keine Migration:** Enum `App\Domain\Sphere`
+(Werte wie oben), Schalter `App\Service\MasterData\Sphaereneinstellung`
+(Setting `sphaeren_aktiv`, `'1'` = an) auf `/admin/kategorien`, Audit
+`einstellung.sphaeren`. Eingeschaltet:
+
+- `category.default_sphere` – Feld „Steuerliche Sphäre (Vorgabe)“ im
+  Kategorie-Formular, Spalte in der Liste.
+- `invoice.sphere` – Feld „Steuerliche Sphäre“ in der Prüfansicht
+  (`Pruefung::FELD_SPHAERE`, Teil von `InvoiceStructure`, im Audit als
+  Spaltenname `sphere`); „Wie Kategorie“ speichert NULL, dann gilt in der
+  Auswertung die Vorgabe der Kategorie (auch rückwirkend, auch für
+  festgeschriebene Belege ohne eigene Sphäre). Eine eigene Sphäre ist an
+  `locked_at` gebunden wie die übrigen Felder.
+- Auswertung je Sphäre: 05 §1 „Stand issue #84“.
+
+Ausgeschaltet zeigt keine Seite ein Sphären-Feld, und Speichern lässt
+gespeicherte Werte unverändert (das Formular schickt das Feld nicht,
+`Pruefung` behält dann den gespeicherten Wert). Noch nicht umgesetzt:
+KI-Vorschlag (Prompt `extract-v1` liefert weiter `sphere: null`),
+`supplier.default_sphere`, Sphären im DATEV-Export (#93).
+
 ## Kategorien – Startbestand (per Migration als Seed, editierbar)
 
 Kategorien haben eine Richtung (`ausgabe`/`einnahme`/`beide`).

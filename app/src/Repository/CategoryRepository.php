@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Domain\Category;
 use App\Domain\CategoryColor;
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 
 /**
  * The `category` table (migrations/017_category.sql, docs/spec/
@@ -88,10 +89,10 @@ final readonly class CategoryRepository
     }
 
     /** New rows sort last within their direction - 10 more than its current highest. */
-    public function create(string $name, CategoryDirection $direction, ?CategoryColor $color, string $aiHint): int
+    public function create(string $name, CategoryDirection $direction, ?CategoryColor $color, string $aiHint, ?Sphere $defaultSphere = null): int
     {
-        $stmt = $this->pdo->prepare('INSERT INTO category (name, direction, color, sort, active, ai_hint) VALUES (?, ?, ?, ?, 1, ?)');
-        $stmt->execute([$name, $direction->value, $color?->value, $this->nextSort($direction), $aiHint]);
+        $stmt = $this->pdo->prepare('INSERT INTO category (name, direction, color, sort, active, ai_hint, default_sphere) VALUES (?, ?, ?, ?, 1, ?, ?)');
+        $stmt->execute([$name, $direction->value, $color?->value, $this->nextSort($direction), $aiHint, $defaultSphere?->value]);
 
         return (int) $this->pdo->lastInsertId();
     }
@@ -113,6 +114,19 @@ final readonly class CategoryRepository
         $stmt->bindValue(5, $active, \PDO::PARAM_BOOL);
         $stmt->bindValue(6, $sort, \PDO::PARAM_INT);
         $stmt->bindValue(7, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
+     * The tax sphere a receipt of this category falls into unless it names
+     * its own (issue #84). Written only while `sphaeren_aktiv` is on - with
+     * the switch off nobody touches the column (E-15).
+     */
+    public function setDefaultSphere(int $id, ?Sphere $sphere): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE category SET default_sphere = ? WHERE id = ?');
+        $stmt->bindValue(1, $sphere?->value, $sphere === null ? \PDO::PARAM_NULL : \PDO::PARAM_STR);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
         $stmt->execute();
     }
 
@@ -190,6 +204,7 @@ final readonly class CategoryRepository
             sort: (int) $row['sort'],
             active: (bool) $row['active'],
             aiHint: (string) $row['ai_hint'],
+            defaultSphere: Sphere::ausWert(isset($row['default_sphere']) ? (string) $row['default_sphere'] : null),
         );
     }
 }

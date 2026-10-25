@@ -11,6 +11,8 @@ namespace App\Domain;
  * Plaintext by design, like cost centers: structural master data the club
  * maintains, not club data - SQL filters and groups by the id.
  * `parentId` is carried but not yet maintained (flat list since M6-1).
+ * `defaultSphere` is the tax sphere a receipt of this category falls into
+ * unless it names its own - only used with `sphaeren_aktiv` on (issue #84).
  */
 final readonly class Category
 {
@@ -23,6 +25,7 @@ final readonly class Category
         public int $sort,
         public bool $active,
         public string $aiHint,
+        public ?Sphere $defaultSphere = null,
     ) {
     }
 }
