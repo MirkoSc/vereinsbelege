@@ -27,6 +27,9 @@ final readonly class WorkerUebergabe
     /** The worker's OCR job type (section 2) - no browser/session counterpart. */
     public const string OCR = 'ocr';
 
+    /** "OCR nachholen": candidates looked at per call at most. */
+    private const int NACHHOLEN_PRUEFEN = 500;
+
     public function __construct(
         private WorkerRouting $routing,
         private WorkerFreigaben $freigaben,
@@ -79,10 +82,21 @@ final readonly class WorkerUebergabe
             return 0;
         }
         $anzahl = 0;
-        foreach ($this->documents->ocrNachholbar($max) as $documentId) {
-            // A document without a readable blob stays where it is.
-            if ($this->einreihen(self::OCR, null, $documentId, $vault, $now) === JobExecutor::Worker) {
-                ++$anzahl;
+        $nach = 0;
+        // A document that cannot go (no readable blob) stays eligible; the
+        // cursor walks past it so it does not block the newer ones. At most
+        // NACHHOLEN_PRUEFEN candidates per call.
+        for ($geprueft = 0; $anzahl < $max && $geprueft < self::NACHHOLEN_PRUEFEN;) {
+            $ids = $this->documents->ocrNachholbar($max, $nach);
+            if ($ids === []) {
+                break;
+            }
+            foreach ($ids as $documentId) {
+                ++$geprueft;
+                $nach = $documentId;
+                if ($this->einreihen(self::OCR, null, $documentId, $vault, $now) === JobExecutor::Worker && ++$anzahl >= $max) {
+                    break;
+                }
             }
         }
 

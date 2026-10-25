@@ -174,13 +174,14 @@ final readonly class Mailer
      * "Alarm-Mail, wenn der Worker > 24 h offline ist und Jobs warten").
      * Queued by the cron, sent with the next run. No receipt data.
      */
-    public function reiheWorkerAusfallEin(string $empfaenger, int $stunden, int $betroffen, ?\DateTimeImmutable $now = null): void
+    public function reiheWorkerAusfallEin(string $empfaenger, int $stunden, int $zurueck, int $wartend, ?\DateTimeImmutable $now = null): void
     {
         $settings = $this->settingsRepo->get();
         $body = $this->templates->render('worker-ausfall', [
             'vereinsname' => $settings->vereinsname,
             'stunden' => $stunden,
-            'betroffen' => $betroffen,
+            'zurueck' => $zurueck,
+            'wartend' => $wartend,
         ]);
         $this->queue->enqueue($empfaenger, 'Verarbeitungs-Worker offline', $body, $now ?? new \DateTimeImmutable());
     }

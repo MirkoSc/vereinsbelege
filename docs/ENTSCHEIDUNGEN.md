@@ -1030,16 +1030,17 @@ Getroffen ohne Rückfrage:
   Worker nicht mehr meldet, gehen sofort zurück. Ein Job, den der Worker
   mit gültiger Sperre hält, bleibt bei ihm. Modul ausschalten und
   Entkoppeln lösen den Rückfall sofort aus. Endgültiges `fail` oder
-  erschöpfte Versuche reihen den Browser-/Session-Gegenpart ein.
+  erschöpfte Versuche reihen den Browser-/Session-Gegenpart ein. In beiden
+  Fällen werden schon festgeschriebene Worker-Artefakte des Jobs verworfen
+  (Präfix `!`) – ungeprüft, und der umgeleitete Job behält seine ID.
 - **Übernahme der Ergebnisse als Session-Job** `worker_uebernahme`
   (eingereiht von `complete`): Die Worker-Artefakte sind an den Tresor
   versiegelt, prüfen kann sie nur eine Session. Jedes Artefakt des Laufs
   wird entschlüsselt und auf die Form der Session-Artefakte geprüft;
   unbrauchbare bekommen das Kind-Präfix `!`
   (`DocumentArtifactRepository::DEFEKT`, für Leser unsichtbar, im Admin
-  gezählt, „OCR nachholen“ wiederholt einen solchen Lauf nicht). Danach:
-  `ocr` – alle Texte brauchbar → `ocr_status = fertig`, ältere Textläufe
-  weg; `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
+  gezählt). Danach: `ocr` – alle Texte brauchbar und keiner defekt →
+  `ocr_status = fertig`, ältere Textläufe weg; `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
   die Session-Kette (`ausgewertet`/`ki_fehler`, dann Lieferanten-Auflösung),
   keiner → Session-`ai_extract`; `render_pages` – ein Lauf mit nur einer
   defekten Seite wird ganz verworfen und der Browser rendert. Blob-Artefakte

@@ -92,6 +92,22 @@ final readonly class DocumentArtifactRepository
         return $stmt->rowCount() === 1;
     }
 
+    /**
+     * Hides every committed worker artifact of job $jobId (DEFEKT) - for a
+     * worker job that fell back or failed: nobody checked them, and a job
+     * moved to the browser/session keeps its id, so its new run must not
+     * pick them up as its own. Returns how many.
+     */
+    public function workerLaufVerwerfen(int $jobId): int
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE document_artifact SET kind = CONCAT(?, kind) WHERE job_id = ? AND producer = ? AND kind NOT LIKE ? AND kind NOT LIKE ?',
+        );
+        $stmt->execute([self::DEFEKT, $jobId, JobExecutor::Worker->value, self::PENDING . '%', self::DEFEKT . '%']);
+
+        return $stmt->rowCount();
+    }
+
     /** How many worker artifacts are marked defective - for the admin page. */
     public function zaehleDefekte(): int
     {

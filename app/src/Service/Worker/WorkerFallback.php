@@ -7,6 +7,7 @@ namespace App\Service\Worker;
 use App\Domain\Job;
 use App\Domain\JobExecutor;
 use App\Domain\Worker;
+use App\Repository\DocumentArtifactRepository;
 use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
 use App\Repository\WorkerRepository;
@@ -51,6 +52,7 @@ final readonly class WorkerFallback
         private JobRepository $jobs,
         private WorkerFreigaben $freigaben,
         private SettingRepository $settings,
+        private DocumentArtifactRepository $artifacts,
         private ?WorkerAlarm $alarm = null,
     ) {
     }
@@ -79,8 +81,11 @@ final readonly class WorkerFallback
             }
             if ($this->jobs->vomWorkerUmleiten($job->id, self::ersatz($job->typ), self::GRUND, $now)) {
                 // Its unfinished uploads go, and the grants once no worker
-                // job of the document is left (issue #52).
+                // job of the document is left (issue #52). What it committed
+                // is unchecked - and the moved job keeps its id, so its new
+                // run must not take those rows for its own.
                 $this->freigaben->nachJob($job);
+                $this->artifacts->workerLaufVerwerfen($job->id);
                 ++$anzahl;
             }
         }
@@ -93,11 +98,14 @@ final readonly class WorkerFallback
     }
 
     /**
-     * A worker job that will not be retried: queue its step on the browser/
-     * session route, unless one is pending already.
+     * A worker job that will not be retried: its committed results are
+     * discarded and its step is queued on the browser/session route, unless
+     * one is pending already.
      */
     public function nachFehlschlag(Job $job, \DateTimeImmutable $now): void
     {
+        // What the failed run committed was never checked (issue #53).
+        $this->artifacts->workerLaufVerwerfen($job->id);
         $ziel = self::ersatz($job->typ);
         if ($ziel === null || $job->refType !== 'document' || $job->refId === null
             || $this->jobs->offenFuer([$job->typ], 'document', $job->refId)) {
@@ -111,7 +119,7 @@ final readonly class WorkerFallback
         if ($this->alarm === null || $worker === null || !$this->routing->modulAktiv() || !WorkerRouting::einsatzbereit($worker)) {
             return;
         }
-        $letzter = self::letzteMeldung($worker);
+        $letzter = WorkerRouting::letzteMeldung($worker);
         if ($now->getTimestamp() - $letzter->getTimestamp() < self::ALARM_STUNDEN * 3600) {
             return;
         }
@@ -119,14 +127,15 @@ final readonly class WorkerFallback
         if ($this->settings->get(self::SETTING_ALARM_FUER) === $kennung) {
             return;
         }
-        $betroffen = $this->ausfallJobs($kennung) + count($this->jobs->freieWorkerJobs($now));
-        if ($betroffen === 0) {
+        $zurueck = $this->ausfallJobs($kennung);
+        $wartend = $this->jobs->zaehleFreieWorkerJobs($now);
+        if ($zurueck + $wartend === 0) {
             // Nothing was due for the worker - no alarm (section 6: "und
             // Jobs warten").
             return;
         }
         $this->settings->set(self::SETTING_ALARM_FUER, $kennung);
-        $this->alarm->senden(intdiv($now->getTimestamp() - $letzter->getTimestamp(), 3600), $betroffen, $now);
+        $this->alarm->senden(intdiv($now->getTimestamp() - $letzter->getTimestamp(), 3600), $zurueck, $wartend, $now);
     }
 
     private function merkeAusfall(Worker $worker, int $anzahl): void
@@ -148,11 +157,6 @@ final readonly class WorkerFallback
     /** One outage = one worker and its last heartbeat before it went silent. */
     private static function kennung(Worker $worker): string
     {
-        return $worker->id . '@' . self::letzteMeldung($worker)->getTimestamp();
-    }
-
-    private static function letzteMeldung(Worker $worker): \DateTimeImmutable
-    {
-        return $worker->letzterHeartbeat ?? $worker->bestaetigtAm ?? $worker->gekoppeltAm;
+        return $worker->id . '@' . WorkerRouting::letzteMeldung($worker)->getTimestamp();
     }
 }

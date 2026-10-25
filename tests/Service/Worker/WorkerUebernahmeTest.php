@@ -92,6 +92,18 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         self::assertSame(0, $this->uebergabe->nachholbar(), 'A run that delivered something broken is not repeated as is.');
     }
 
+    public function testOneBrokenTextKeepsTheWholeRunFromBeingTakenOver(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(WorkerUebergabe::OCR, $doc);
+        $this->datenArtefakt($doc, ArtifactKind::Text, $job['id'], 0, json_encode(['brauchbar' => true, 'seiten' => ['Seite eins']], JSON_THROW_ON_ERROR));
+        $this->datenArtefakt($doc, ArtifactKind::Text, $job['id'], 1, 'kaputt', falscheZeile: true);
+        $this->abschliessen($id, $schluessel, $job);
+
+        $this->uebernehmen();
+        self::assertSame(OcrStatus::Uebersprungen, $this->documents->find($doc)?->ocrStatus, 'The good text alone does not cover every original.');
+    }
+
     public function testAValidWorkerExtractionEndsTheRun(): void
     {
         $doc = $this->dokument();

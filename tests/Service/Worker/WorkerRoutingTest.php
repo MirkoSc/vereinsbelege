@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\Worker;
 
+use App\Domain\ArtifactKind;
 use App\Domain\BlobMeta;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
@@ -133,6 +134,26 @@ final class WorkerRoutingTest extends WorkerTestCase
         self::assertSame([JobExecutor::Worker, JobStatus::Laeuft], $this->stand($job));
     }
 
+    public function testWhatAFallenBackJobCommittedIsNotTakenForTheNewRun(): void
+    {
+        [$doc] = $this->dokument();
+        [$id, $schluessel] = $this->onlineWorker();
+        $job = $this->viaWorker('ai_extract', $doc);
+        self::assertCount(1, self::daten($this->claim($id, $schluessel))['jobs']);
+        $zeile = $this->artifacts->reserviere($doc, ArtifactKind::Extraction, 0, $this->vault->sealDataKey(DataKey::generate()), $job, new \DateTimeImmutable());
+        self::assertNotNull($zeile);
+        self::assertTrue($this->artifacts->festschreiben($zeile, ArtifactKind::Extraction, null, 'unverschluesselt'));
+
+        // The worker died holding it: lock expired, period over.
+        $this->pdo()->prepare('UPDATE job SET locked_until = ? WHERE id = ?')->execute([new \DateTimeImmutable('-1 minute')->format('Y-m-d H:i:s'), $job]);
+        $this->workers->heartbeat($id, 1, '1.0.0', WorkerFaehigkeit::cases(), new \DateTimeImmutable('-2 hours'));
+        self::assertSame(1, $this->fallback->ausfuehren(new \DateTimeImmutable()));
+
+        self::assertSame([JobExecutor::Session, JobStatus::Offen], $this->stand($job));
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::Extraction), 'Hidden, not part of the session run.');
+        self::assertSame('!extraction', $this->artifacts->rohzeile($zeile)['kind'] ?? null);
+    }
+
     public function testJobsOfACapabilityTheWorkerDroppedFallBackRightAway(): void
     {
         [$doc] = $this->dokument();
@@ -198,6 +219,7 @@ final class WorkerRoutingTest extends WorkerTestCase
             $this->jobs,
             $this->freigaben,
             $this->settings,
+            $this->artifacts,
             new WorkerAlarm($mailer, $this->crypto, $users, new UserAccessRepository($this->pdo())),
         );
         $this->admin($users);

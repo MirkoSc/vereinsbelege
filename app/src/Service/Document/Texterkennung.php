@@ -202,12 +202,14 @@ final readonly class Texterkennung implements JobHandler
      * Takes over the worker's OCR text of run $jobId (issue #53): when every
      * text of the run is usable, the text layer reaches for the AI
      * (`ocr_status` `fertig`) and the older runs go. Returns whether it did.
+     * The caller does not call it for a run with a defective text - the
+     * remaining ones would not cover every original.
      */
     public function workerOcrUebernehmen(Document $document, int $jobId, Vault $vault): bool
     {
         $texte = array_filter(
             $this->artifacts->fuerDokument($document->id, ArtifactKind::Text),
-            static fn(DocumentArtifact $a): bool => $a->jobId === $jobId,
+            static fn(DocumentArtifact $a): bool => $a->jobId === $jobId && $a->producer === JobExecutor::Worker,
         );
         if ($texte === []) {
             return false;

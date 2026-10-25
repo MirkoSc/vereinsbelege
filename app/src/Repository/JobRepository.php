@@ -550,6 +550,17 @@ final readonly class JobRepository
         return array_map(Job::fromRow(...), $stmt->fetchAll());
     }
 
+    /** How many worker jobs are free (as freieWorkerJobs()) - for the alarm. */
+    public function zaehleFreieWorkerJobs(\DateTimeImmutable $now): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM job WHERE executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?)',
+        );
+        $stmt->execute([JobExecutor::Worker->value, JobStatus::Offen->value, JobStatus::Laeuft->value, $now->format(self::FORMAT)]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
     /**
      * Moves a free worker job to another executor, from its first step - or,
      * with $ziel null, ends it as `uebersprungen` (`ocr` has no browser/

@@ -27,7 +27,12 @@ final readonly class WorkerAlarm
     }
 
     /** @return int number of alarms queued */
-    public function senden(int $stunden, int $betroffen, \DateTimeImmutable $now): int
+    /**
+     * @param int $zurueck jobs that went back to the browser/session route
+     * @param int $wartend jobs still waiting for the worker (fallback period
+     *        longer than the alarm's day)
+     */
+    public function senden(int $stunden, int $zurueck, int $wartend, \DateTimeImmutable $now): int
     {
         $anzahl = 0;
         foreach ($this->users->all() as $user) {
@@ -40,7 +45,7 @@ final readonly class WorkerAlarm
             if ($email === null) {
                 continue;
             }
-            $this->mailer->reiheWorkerAusfallEin($email, $stunden, $betroffen, $now);
+            $this->mailer->reiheWorkerAusfallEin($email, $stunden, $zurueck, $wartend, $now);
             ++$anzahl;
         }
 

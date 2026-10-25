@@ -205,8 +205,11 @@ final readonly class Volltextsuche
         // them. Those the cursor passed while still reserved are taken in
         // here once visible (review of #52, issue #53); a document indexed
         // again gets a newer entry, and the newest entry counts.
-        $nachgeholt = $this->artifacts->sichtbarGeworden($zustand['nachholen'], $this->arten(), $bereich);
-        $zustand['nachholen'] = $this->artifacts->nochReserviert($zustand['nachholen']);
+        // Still reserved first: one committed between the two queries is
+        // then simply taken in next time, never lost in between.
+        $reserviert = $this->artifacts->nochReserviert($zustand['nachholen']);
+        $nachgeholt = $this->artifacts->sichtbarGeworden(array_values(array_diff($zustand['nachholen'], $reserviert)), $this->arten(), $bereich);
+        $zustand['nachholen'] = $reserviert;
 
         $ids = array_values(array_unique([...$nachgeholt, ...array_column($dokumente, 'document_id')]));
         if ($ids !== []) {

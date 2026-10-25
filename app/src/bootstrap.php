@@ -461,6 +461,7 @@ $workerFallbackFor = static fn(\PDO $pdo, ?WorkerAlarm $alarm = null): WorkerFal
     new JobRepository($pdo),
     $workerFreigabenFor($pdo),
     new SettingRepository($pdo),
+    new DocumentArtifactRepository($pdo),
     $alarm,
 );
 // Cron: like $updates, built only once the token was right.

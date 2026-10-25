@@ -113,13 +113,19 @@ final readonly class WorkerUebernahme implements JobHandler
 
     private function ocr(Document $document, int $workerJobId, Vault $vault): void
     {
+        $defekt = false;
         foreach ($this->lauf($document, ArtifactKind::Text, $workerJobId) as $artefakt) {
             if ($this->texterkennung->workerText($artefakt, $vault) === null) {
                 $this->artifacts->alsDefektMarkieren($artefakt->id);
+                $defekt = true;
             }
         }
         $this->pruefeBlobs($document, ArtifactKind::Pdfa, $workerJobId, $vault);
-        $this->texterkennung->workerOcrUebernehmen($document, $workerJobId, $vault);
+        // With one text broken the rest does not cover every original: the
+        // document stays on its page images and keeps its own text layer.
+        if (!$defekt) {
+            $this->texterkennung->workerOcrUebernehmen($document, $workerJobId, $vault);
+        }
     }
 
     private function kiAuslesen(Document $document, int $workerJobId, Vault $vault, \DateTimeImmutable $now): void

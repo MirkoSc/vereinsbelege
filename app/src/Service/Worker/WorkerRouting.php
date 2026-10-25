@@ -121,8 +121,12 @@ final readonly class WorkerRouting
         if (!$this->modulAktiv() || $worker === null || !self::einsatzbereit($worker)) {
             return true;
         }
-        $letzter = $worker->letzterHeartbeat ?? $worker->bestaetigtAm ?? $worker->gekoppeltAm;
+        return $now->getTimestamp() - self::letzteMeldung($worker)->getTimestamp() >= $this->fallbackMinuten() * 60;
+    }
 
-        return $now->getTimestamp() - $letzter->getTimestamp() >= $this->fallbackMinuten() * 60;
+    /** The worker's last sign of life: heartbeat, else confirmation, else pairing. */
+    public static function letzteMeldung(Worker $worker): \DateTimeImmutable
+    {
+        return $worker->letzterHeartbeat ?? $worker->bestaetigtAm ?? $worker->gekoppeltAm;
     }
 }

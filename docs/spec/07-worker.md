@@ -253,7 +253,8 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     (wie `extract_text`), `extraction` = `{versuch, meldung, extraktion,
     hinweise}` (wie `ai_extract`; `extraktion` genau dann ein Objekt, wenn
     der Versuch gültig ist), `page_image`/`pdfa` = vollständiger Blob mit
-    öffnendem DEK. Folgen: `ocr` mit durchweg brauchbarem Text →
+    öffnendem DEK. Folgen: `ocr` mit durchweg brauchbarem und keinem
+    defekten Text →
     `ocr_status = fertig`; `ai_extract` → Status `ausgewertet`/`ki_fehler`
     wie die Session-Kette, ohne brauchbaren Versuch Session-`ai_extract`;
     `render_pages` mit einer defekten Seite → ganzer Lauf verworfen,
@@ -316,11 +317,14 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     Fähigkeit er nicht mehr meldet, sofort. `render_pages` → `browser`,
     `ai_extract` → `session` (an Ort und Stelle, Schritt/Versuche
     zurückgesetzt), `ocr`/`image_cleanup` → `uebersprungen`
-    (`WorkerAusfall`). Grants gehen mit dem letzten Worker-Job.
+    (`WorkerAusfall`). Grants gehen mit dem letzten Worker-Job; was der
+    Job schon festgeschrieben hatte, wird verworfen (Präfix `!`), weil der
+    umgeleitete Job seine ID behält. Ebenso nach endgültigem `fail`.
   - „OCR nachholen“ (Admin, Sammelaktion, 50 je Klick, Tresor entsperrt):
     Belege mit `ocr_status = uebersprungen`, nicht festgeschrieben, ohne
-    wartenden/fertigen `ocr`-Job und ohne Worker-Text (auch keinen
-    defekten). Der Knopf je Beleg im Posteingang ist offen.
+    wartenden/fertigen `ocr`-Job und ohne übernommenen Worker-Text (ein
+    verworfener/defekter blockiert nicht). Der Knopf je Beleg im Posteingang
+    ist offen.
   - Admin-Seite: Modul-Schalter (Einschalten nur mit entsperrtem Tresor)
     und Wartezeit, online/offline, Warteschlange je Typ, erledigt in 24 h,
     verworfene Ergebnisse, letzte Fehler (Typ, Code, Zeit), „OCR

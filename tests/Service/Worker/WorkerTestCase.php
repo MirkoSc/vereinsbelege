@@ -125,7 +125,7 @@ abstract class WorkerTestCase extends DatabaseTestCase
         $this->settings->set(WorkerRouting::SETTING_AKTIV, '1');
         $this->routing = new WorkerRouting($this->workers, $this->settings);
         $this->uebergabe = new WorkerUebergabe($this->routing, $this->freigaben, $this->jobs, $this->documents);
-        $this->fallback = new WorkerFallback($this->routing, $this->workers, $this->jobs, $this->freigaben, $this->settings);
+        $this->fallback = new WorkerFallback($this->routing, $this->workers, $this->jobs, $this->freigaben, $this->settings, $this->artifacts);
         $this->kopplung = new WorkerKopplung(
             $this->workers,
             $this->jobs,

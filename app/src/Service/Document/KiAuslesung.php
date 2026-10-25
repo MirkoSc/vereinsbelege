@@ -317,7 +317,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         $letzter = null;
         $letzteNummer = -1;
         foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
-            if ($artefakt->jobId !== $workerJobId || $artefakt->seq <= $letzteNummer) {
+            if ($artefakt->jobId !== $workerJobId || $artefakt->producer !== JobExecutor::Worker || $artefakt->seq <= $letzteNummer) {
                 continue;
             }
             $versuch = $this->workerVersuch($artefakt, $vault);
