@@ -24,3 +24,6 @@ composer.phar
 
 .env
 *.local.php
+
+# Throwaway CA, certificates and shared/ of one worker end-to-end run
+/tests/e2e/worker/.lauf/
