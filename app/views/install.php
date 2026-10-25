@@ -5,7 +5,8 @@
  * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
  * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
  * @var ?string $cronUrl the cron URL with the token config.php just got (issue #244), on the finished page only
- * @var list<array{name: string, groesse: int, geaendert_am: string}> $serverBackups ZIPs in shared/var/backups/ (issue #244)
+ * @var list<array{name: string, groesse: int, geaendert_am: string}>|null $serverBackups ZIPs in shared/var/backups/, null until this session proved FTP access (issue #244)
+ * @var string $ftpFreigabeDatei the file that proves FTP access for this session (issue #244)
  */
 $schritt = $schritt ?? '';
 ?>
@@ -325,23 +326,27 @@ $schritt = $schritt ?? '';
                         (<code>upload_max_filesize</code>/<code>post_max_size</code>). Ein größeres Backup per FTP in
                         <code>shared/var/backups/</code> ablegen, diese Seite neu laden und unten auswählen.
                     </p>
-                    <?php $serverBackups = $serverBackups ?? []; ?>
-                    <label for="backup-server">… oder ein per FTP abgelegtes Backup aus <code>shared/var/backups/</code>
-                        <select id="backup-server" name="backup_server" <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
-                            <option value="">– keins, das hochgeladene ZIP verwenden –</option>
-                            <?php foreach ($serverBackups as $backup): ?>
-                                <option value="<?= e($backup['name']) ?>" <?= ($values['backup_server'] ?? '') === $backup['name'] ? 'selected' : '' ?>>
-                                    <?= e($backup['name']) ?> (<?= e(number_format($backup['groesse'] / 1048576, 1, ',', '.')) ?> MiB, <?= e($backup['geaendert_am']) ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
-                    <?php if ($serverBackups === []): ?>
-                        <p class="feld-hilfe">In <code>shared/var/backups/</code> liegt derzeit kein ZIP.</p>
-                    <?php else: ?>
+                    <?php $serverBackups = $serverBackups ?? null; ?>
+                    <?php if ($serverBackups === null): ?>
                         <p class="feld-hilfe">
-                            Ein ausgewähltes Backup hat Vorrang vor einem hochgeladenen. Es wird an Ort und Stelle
-                            gelesen und bleibt danach liegen.
+                            Für ein per FTP abgelegtes Backup zusätzlich die <strong>leere Datei
+                            <code><?= e($ftpFreigabeDatei ?? '') ?></code></strong> in <code>shared/var/backups/</code>
+                            anlegen und die Seite neu laden – das weist nach, dass hier jemand mit FTP-Zugang
+                            installiert. Erst dann erscheint die Auswahl.
+                        </p>
+                    <?php else: ?>
+                        <label for="backup-server">… oder ein per FTP abgelegtes Backup aus <code>shared/var/backups/</code>
+                            <select id="backup-server" name="backup_server" <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
+                                <option value="">– keins, das hochgeladene ZIP verwenden –</option>
+                                <?php foreach ($serverBackups as $backup): ?>
+                                    <option value="<?= e($backup['name']) ?>" <?= ($values['backup_server'] ?? '') === $backup['name'] ? 'selected' : '' ?>>
+                                        <?= e($backup['name']) ?> (<?= e(number_format($backup['groesse'] / 1048576, 1, ',', '.')) ?> MiB, <?= e($backup['geaendert_am']) ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <p class="feld-hilfe">
+                            <?= $serverBackups === [] ? 'In <code>shared/var/backups/</code> liegt derzeit kein ZIP.' : 'Das gewählte Backup wird an Ort und Stelle gelesen und bleibt danach liegen.' ?>
                         </p>
                     <?php endif; ?>
                     <p class="feld-hilfe">

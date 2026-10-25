@@ -176,6 +176,11 @@ final readonly class MysqlDumper
         $spaltenInfo = $this->columns($table);
         $binary = $spaltenInfo['binary'];
         $schluessel = in_array($table, self::TABLES_IN_PORTIONS, true) ? $this->primaryKey($table) : [];
+        if (array_intersect($schluessel, $spaltenInfo['generiert']) !== []) {
+            // The portions page by the key of the last row written, and a
+            // generated key column is not in the SELECT (columns()).
+            throw new \RuntimeException(sprintf('Tabelle %s: ein generierter Primärschlüssel lässt sich nicht in Portionen sichern.', $table));
+        }
 
         $nach = is_array($stand['nach']) ? $stand['nach'] : null;
         [$sql, $parameter] = $this->auswahl($table, $spaltenInfo['auswahl'], $schluessel, $binary, $nach);
@@ -335,16 +340,19 @@ final readonly class MysqlDumper
      * `DEFAULT_GENERATED` for a plain column with an expression default,
      * which must stay in the dump.
      *
-     * @return array{binary: array<string, true>, auswahl: string}
+     * @return array{binary: array<string, true>, auswahl: string, generiert: list<string>}
      */
     private function columns(string $table): array
     {
         $binary = [];
         $spalten = [];
+        $generiert = [];
         $columns = $this->pdo->query(sprintf('SHOW COLUMNS FROM `%s`', $table));
         while (($column = $columns->fetch(\PDO::FETCH_ASSOC)) !== false) {
             $name = (string) $column['Field'];
             if (self::isGenerated((string) ($column['Extra'] ?? ''))) {
+                $generiert[] = $name;
+
                 continue;
             }
             $spalten[] = '`' . str_replace('`', '``', $name) . '`';
@@ -359,6 +367,7 @@ final readonly class MysqlDumper
             // A table of generated columns only cannot exist, but SELECT *
             // is the harmless answer should SHOW COLUMNS ever come back empty.
             'auswahl' => $spalten === [] ? '*' : implode(', ', $spalten),
+            'generiert' => $generiert,
         ];
     }
 

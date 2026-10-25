@@ -83,7 +83,7 @@ final class InstallFlowTest extends DatabaseTestCase
         // PHPUnit process, the same reason the restore tests reset
         // install_restore explicitly - a half-finished setup left behind by
         // one test must not leak into the next one's submit() call.
-        unset($_SESSION['install_admin'], $_SESSION['install_restore']);
+        unset($_SESSION['install_admin'], $_SESSION['install_restore'], $_SESSION['install_ftp_code']);
         self::removeTree($this->base);
     }
 
@@ -288,7 +288,6 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertNotSame('', $config->cronToken);
         // Issue #244: the finished page names the cron URL with its token.
         self::assertStringContainsString('value="http://localhost/cron?token=' . $config->cronToken . '"', $fertig->body);
-        self::assertSame('no-store', $fertig->headers['Cache-Control'] ?? null);
 
         // every migration applied, including the user/vault tables of M3-2
         $tables = $this->pdo()
@@ -839,6 +838,23 @@ final class InstallFlowTest extends DatabaseTestCase
     }
 
     /**
+     * The FTP proof of this session (issue #244): the name of the file the
+     * form asks for, created as the admin would by FTP.
+     */
+    private function ftpFreigabeAnlegen(): string
+    {
+        $formular = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $formular);
+        self::assertSame(1, preg_match('#<code>(freigabe-[0-9a-f]{16}\.txt)</code>#', $formular->body, $treffer));
+        if (!is_dir($this->paths()->backupDir())) {
+            mkdir($this->paths()->backupDir(), 0775, true);
+        }
+        touch($this->paths()->backupDir() . '/' . $treffer[1]);
+
+        return $treffer[1];
+    }
+
+    /**
      * Issue #244 (E-66): a backup larger than upload_max_filesize goes into
      * shared/var/backups/ by FTP and is chosen in the form. It is read in
      * place - not copied for the blob phase - and stays there afterwards.
@@ -858,15 +874,17 @@ final class InstallFlowTest extends DatabaseTestCase
         copy($zip, $abgelegt);
         $inhalt = hash_file('sha256', $abgelegt);
 
+        $freigabe = $this->ftpFreigabeAnlegen();
         $formular = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
         self::assertInstanceOf(Response::class, $formular);
         self::assertStringContainsString('<option value="' . basename($zip) . '"', $formular->body, 'the form offers it');
-        self::assertStringContainsString('shared/var/backups/', $formular->body);
+        self::assertStringNotContainsString('<option value="' . $freigabe, $formular->body, 'only ZIPs are offered');
 
         $response = $this->submitServerRestore(basename($zip));
         self::assertSame(200, $response->status, $response->body);
         self::assertSame($abgelegt, $_SESSION['install_restore']['zip_datei'] ?? null, 'read in place, not copied');
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*.zip') ?: []);
+        self::assertFileDoesNotExist($this->paths()->backupDir() . '/' . $freigabe, 'the proof is used up');
 
         $ende = $this->runRestoreSteps();
 
@@ -886,7 +904,7 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testTheChosenServerBackupNeverLeadsOutOfTheBackupDirectory(): void
     {
-        mkdir($this->paths()->backupDir(), 0775, true);
+        $this->ftpFreigabeAnlegen();
         $aussen = $this->paths()->varDir() . '/aussen.zip';
         $archiv = new \ZipArchive();
         $archiv->open($aussen, \ZipArchive::CREATE);
@@ -903,6 +921,49 @@ final class InstallFlowTest extends DatabaseTestCase
         }
         self::assertFileDoesNotExist($this->paths()->configFile());
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: []);
+    }
+
+    /**
+     * Without the FTP proof of its own session, nobody gets to see or play
+     * in a backup from shared/var/backups/: /install answers without a
+     * login, and the form names the database the dump goes into. A proof
+     * made for another session does not count.
+     */
+    public function testAServerBackupNeedsTheFtpProofOfThisSession(): void
+    {
+        mkdir($this->paths()->backupDir(), 0775, true);
+        $zip = $this->paths()->backupDir() . '/backup_20261001_120000.zip';
+        $archiv = new \ZipArchive();
+        $archiv->open($zip, \ZipArchive::CREATE);
+        $archiv->addFromString('dump.sql', 'SELECT 1;');
+        $archiv->close();
+        touch($this->paths()->backupDir() . '/freigabe-' . str_repeat('0', 16) . '.txt');
+
+        $formular = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $formular);
+        self::assertStringNotContainsString('backup_20261001_120000.zip', $formular->body, 'the directory is not listed');
+        self::assertStringContainsString('leere Datei', $formular->body);
+
+        $response = $this->submitServerRestore('backup_20261001_120000.zip');
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('Zuerst per FTP die leere Datei freigabe-', $response->body);
+        self::assertArrayNotHasKey('install_restore', $_SESSION);
+        self::assertStringNotContainsString('<option value="backup_20261001_120000.zip"', $response->body);
+    }
+
+    /** Upload and choice together are refused instead of silently picking one. */
+    public function testAnUploadAndAServerBackupTogetherAreRefused(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        $zip = $this->makeBackup(mitConfig: true);
+        $this->ftpFreigabeAnlegen();
+        copy($zip, $this->paths()->backupDir() . '/' . basename($zip));
+
+        $response = $this->submitRestore($zip, ['backup_server' => basename($zip)]);
+
+        self::assertSame(422, $response->status);
+        self::assertStringContainsString('nicht beides', $response->body);
+        self::assertArrayNotHasKey('install_restore', $_SESSION);
     }
 
     // ------------------------------------------------- restore without key

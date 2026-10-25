@@ -35,8 +35,7 @@ use App\View\View;
  * shared/config.php (issue #244), so an admin can set up or repair the
  * hoster's cronjob without FTP - after a restore the token is a new one.
  * It is deliberately not one of the findings: those end up in the JSON that
- * is meant to be copied into an issue. Nothing logs it; the response is
- * not cached.
+ * is meant to be copied into an issue. Nothing logs it.
  */
 final readonly class SystemCheckController
 {
@@ -62,7 +61,9 @@ final readonly class SystemCheckController
             ? null
             : CronController::url($request->ownOrigin(), $this->cronToken);
 
-        $antwort = Response::html($this->view->render('admin/systemcheck', [
+        // Not cached although it carries the token: the session's cache
+        // limiter sends no-store on every admin page (Session::OPTIONEN).
+        return Response::html($this->view->render('admin/systemcheck', [
             'title' => 'Systemcheck',
             'cronUrl' => $cronUrl,
             // External file, never inline: script-src 'self' without
@@ -72,7 +73,5 @@ final readonly class SystemCheckController
             'gesamt' => SystemCheck::worstOf($ergebnisse),
             'json' => SystemCheck::toJson($ergebnisse),
         ], Area::Admin));
-
-        return new Response($antwort->status, [...$antwort->headers, 'Cache-Control' => 'no-store'], $antwort->body);
     }
 }

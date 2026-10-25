@@ -1844,6 +1844,12 @@ Entscheidungen dabei:
   Die FTP-Datei wird an Ort und Stelle gelesen (keine Kopie, die den
   Platzbedarf verdoppelt) und nie gelöscht. Nur einfache Dateinamen direkt
   im Verzeichnis, keine Symlinks.
+- **FTP-Nachweis je Sitzung:** Liste und Auswahl erst, wenn eine leere
+  Datei `freigabe-<Zufall>.txt` mit dem Namen aus dem Formular dieser
+  Sitzung in `shared/var/backups/` liegt. Sonst könnte ein Fremder, der
+  `/install` vor dem Admin aufruft, das abgelegte Vereins-Backup in seine
+  eigene Datenbank einspielen lassen. Ein zusätzlicher FTP-Handgriff für
+  den Admin, dafür kein neues Geheimnis.
 - **Cron-URL nach jedem Schreiben von `config.php` anzeigen** – nach dem
   Restore (alle drei Wege) und, weil derselbe Baustein, auch nach der
   frischen Installation. Sie steht nur in der Antwort an den Browser
@@ -1856,6 +1862,6 @@ Entscheidungen dabei:
   MySQL einspielbar, wo es keinen nachsichtigen Modus dafür gibt.
 
 Offen für Mirko: ob ein echter Chunk-Upload im Installer doch gewünscht
-ist; ob die Cron-URL auch nach der frischen Installation angezeigt werden
+ist; ob der FTP-Nachweis (leere Datei) als Handgriff zumutbar ist; ob die Cron-URL auch nach der frischen Installation angezeigt werden
 soll (derzeit ja); ob das Anzeigen der Cron-URL im Systemcheck einen
 Audit-Eintrag (ohne Token) bekommen soll.

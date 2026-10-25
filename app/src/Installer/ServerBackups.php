@@ -30,23 +30,29 @@ final readonly class ServerBackups
     }
 
     /**
-     * @return list<array{name: string, groesse: int, geaendert_am: string}> newest name first
+     * Same shape as BackupService::list(), but ordered by modification
+     * time: names of files put there by FTP follow no pattern.
+     *
+     * @return list<array{name: string, groesse: int, geaendert_am: string}> newest first
      */
     public function list(): array
     {
         $backups = [];
+        $zeiten = [];
         foreach (glob($this->backupDir . '/*.zip') ?: [] as $pfad) {
             $name = basename($pfad);
             if ($this->path($name) === null) {
                 continue;
             }
+            $zeit = (int) filemtime($pfad);
             $backups[] = [
                 'name' => $name,
                 'groesse' => (int) filesize($pfad),
-                'geaendert_am' => date('Y-m-d H:i', (int) filemtime($pfad)),
+                'geaendert_am' => date('Y-m-d H:i:s', $zeit),
             ];
+            $zeiten[] = $zeit;
         }
-        usort($backups, static fn(array $a, array $b): int => strnatcmp($b['name'], $a['name']));
+        array_multisort($zeiten, \SORT_DESC, array_column($backups, 'name'), \SORT_DESC, \SORT_NATURAL, $backups);
 
         return $backups;
     }

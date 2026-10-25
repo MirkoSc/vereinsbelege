@@ -32,10 +32,14 @@ final class ServerBackupsTest extends TestCase
         @rmdir($this->dir);
     }
 
-    public function testListsOnlyPlainZipFilesNewestNameFirst(): void
+    public function testListsOnlyPlainZipFilesNewestFirst(): void
     {
-        file_put_contents($this->dir . '/backup_20260101_120000.zip', 'a');
         file_put_contents($this->dir . '/backup_20261001_120000.zip', 'bb');
+        file_put_contents($this->dir . '/backup_20260101_120000.zip', 'a');
+        file_put_contents($this->dir . '/Vereinsbackup-alt.zip', 'ccc');
+        touch($this->dir . '/backup_20261001_120000.zip', 1_790_000_000);
+        touch($this->dir . '/backup_20260101_120000.zip', 1_780_000_000);
+        touch($this->dir . '/Vereinsbackup-alt.zip', 1_700_000_000);
         file_put_contents($this->dir . '/Verein Backup.zip', 'x');
         file_put_contents($this->dir . '/.versteckt.zip', 'x');
         file_put_contents($this->dir . '/erstellung_ab.zip.part', 'x');
@@ -46,10 +50,12 @@ final class ServerBackupsTest extends TestCase
         $liste = new ServerBackups($this->dir)->list();
 
         self::assertSame(
-            ['backup_20261001_120000.zip', 'backup_20260101_120000.zip'],
+            ['backup_20261001_120000.zip', 'backup_20260101_120000.zip', 'Vereinsbackup-alt.zip'],
             array_column($liste, 'name'),
+            'by modification time, not by name',
         );
         self::assertSame(2, $liste[0]['groesse']);
+        self::assertSame(date('Y-m-d H:i:s', 1_790_000_000), $liste[0]['geaendert_am']);
     }
 
     public function testPathRefusesEverythingButAPlainNameInTheDirectory(): void

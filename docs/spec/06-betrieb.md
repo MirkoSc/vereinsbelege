@@ -351,9 +351,18 @@ Generation, damit danach auch ein Rollback wieder geht.
 - *Backups größer als die Upload-Grenze* (#244, E-66 – vorläufig): Statt
   eines Chunk-Uploads legt der Admin das ZIP **per FTP in
   `shared/var/backups/`** ab und wählt es im Formular aus
-  (`backup_server`, Liste aus `App\Installer\ServerBackups`; ein gewähltes
-  hat Vorrang vor einem Upload). Das Formular nennt die Grenze (kleinerer
-  Wert von `upload_max_filesize`/`post_max_size`). Akzeptiert wird nur ein
+  (`backup_server`, Liste aus `App\Installer\ServerBackups`, neueste
+  zuerst; Upload und Auswahl zugleich → 422). Das Formular nennt die Grenze
+  (kleinerer Wert von `upload_max_filesize`/`post_max_size`,
+  `SystemCheck::formatBytes()`). **FTP-Nachweis:** Liste und Auswahl gibt es
+  erst, wenn die leere Datei `freigabe-<16 Hex>.txt` im selben Verzeichnis
+  liegt, deren Name das Formular dieser Sitzung nennt (Zufallswert in
+  `$_SESSION['install_ftp_code']`). Ohne ihn könnte jeder, der `/install`
+  vor dem Admin erreicht, ein dort abgelegtes Backup in eine Datenbank
+  seiner Wahl einspielen lassen (das Formular nennt den DB-Host) – beim
+  Upload bringt er nur sein eigenes ZIP mit. Ohne Nachweis nennt die Seite
+  auch keine Dateinamen. Ein erfolgreicher Start verbraucht den Nachweis
+  (Datei gelöscht, neuer Code). Akzeptiert wird nur ein
   einfacher Dateiname direkt in diesem Verzeichnis (`[A-Za-z0-9][A-Za-z0-9._-]*.zip`,
   kein `..`, keine versteckte Datei, kein Symlink) – der Installer antwortet
   ohne Anmeldung, der Name ist eine Behauptung des Clients. Das ZIP wird
@@ -413,7 +422,8 @@ Generation, damit danach auch ein Rollback wieder geht.
   sie als `cron_url` im JSON (nur wenn `config.php` geschrieben ist, nie in
   der Phase `zugang`), `install.js` zeigt sie nur als `http(s)`-Adresse; die
   Abschlussseiten von Weg 1/Weg 2 und der frischen Installation tragen sie im
-  HTML. Antworten mit Token tragen `Cache-Control: no-store`. Das Token
+  HTML. Nicht gecacht: alle diese Seiten haben eine Session, deren
+  `cache_limiter` `no-store` sendet (`Session::OPTIONEN`). Das Token
   steht in keinem Log, keiner Mail und keinem Link der Anwendung. Danach
   sehen Admins die URL im Systemcheck (§5).
 - *Blob-Namen aus dem ZIP:* nichts wird mit `extractTo()` entpackt.
@@ -576,12 +586,13 @@ samt Index und Ausdrucks-Default: INSERT ohne die generierten Spalten,
 nach dem Einspielen identisch); `MysqlDumperTest` (`Extra`-Werte inkl.
 `DEFAULT_GENERATED`); `InstallFlowTest` (Restore, Weg 1, Weg 2 und frische
 Installation zeigen die Cron-URL mit dem neuen Token, kein `cron_url` vor
-dem Zugangsschritt, `no-store`; Backup aus `shared/var/backups/` wird
+dem Zugangsschritt; Backup aus `shared/var/backups/` wird
 angeboten, an Ort und Stelle eingespielt – samt Blobs – und bleibt
-unverändert liegen; Traversal, Symlink, versteckte und fehlende Datei
-→ 422 ohne Restore-Stand); `ServerBackupsTest`; `ConfigWriterTest`
+unverändert liegen, Nachweis verbraucht; ohne FTP-Nachweis dieser Sitzung
+keine Liste und 422, Upload und Auswahl zugleich 422; Traversal, Symlink,
+versteckte und fehlende Datei → 422 ohne Restore-Stand); `ServerBackupsTest`; `ConfigWriterTest`
 (`write()` gibt das geschriebene Token zurück); `SystemCheckPageTest`
-(Cron-URL sichtbar, nicht im JSON, `no-store`).
+(Cron-URL sichtbar, nicht im JSON).
 
 ## 3. Mail
 
@@ -1033,8 +1044,8 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
   zeigt die Seite die Cron-URL mit dem `cron_token` aus `config.php`
   (aufklappbar, `<details>`), damit ein Admin den Cronjob nach einem Restore
   ohne FTP umstellen kann. Sie ist **kein** `CheckResult` – das JSON bleibt
-  frei von Geheimnissen. Recht wie die Seite (`admin.system`), Antwort mit
-  `Cache-Control: no-store`, kein Log- oder Audit-Eintrag mit dem Token.
+  frei von Geheimnissen. Recht wie die Seite (`admin.system`), nicht
+  gecacht (Session, `no-store`), kein Log- oder Audit-Eintrag mit dem Token.
 - Ausgabe: Gesamtstatus oben, darunter die Tabelle (unter 48 rem als Karten,
   ohne waagerechtes Scrollen) und das Ergebnis als JSON zum Kopieren in ein
   Issue (Knopf nur mit JavaScript, sonst bleibt das markierbare Textfeld).

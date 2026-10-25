@@ -337,8 +337,12 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
    384 MiB; das Formular nennt die Grenze).
    **Größeres Backup:** das ZIP per FTP nach `shared/var/backups/` laden
    (Ordner ggf. anlegen; Dateiname nur aus Buchstaben, Ziffern, `.`, `_`,
-   `-`, am besten unverändert `backup_….zip`), die Installer-Seite neu
-   laden und es unter „… oder ein per FTP abgelegtes Backup“ auswählen.
+   `-`, am besten unverändert `backup_….zip`). Der Installer nennt dann
+   unter „Backup einspielen“ den Namen einer **leeren Datei**
+   (`freigabe-….txt`), die ebenfalls per FTP in `shared/var/backups/`
+   angelegt wird – der Nachweis, dass hier jemand mit FTP-Zugang
+   installiert. Seite neu laden und das Backup unter „… oder ein per FTP
+   abgelegtes Backup“ auswählen.
    Es wird dort gelesen und bleibt danach liegen (bei `backup_….zip`
    erscheint es unter `/admin/backups` und fällt später unter die
    Rotation).
