@@ -661,7 +661,11 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `/api/worker/pair` = öffentlich (der Einmal-Kopplungscode ist das
   Geheimnis, Rate-Limit je IP und gesamt); alle übrigen `/api/worker/*` =
   `Zugriff::worker()` – keine Session, HMAC-Signatur des gekoppelten Workers
-  (`App\Service\Worker\WorkerAuth`, 07 §4, E-28).
+  (`App\Service\Worker\WorkerAuth`, 07 §4, E-28). Seit M7b-2 (issue #52,
+  E-39) zusätzlich `GET /api/worker/blobs/{id}` (nur mit Worker-Grant und
+  gehaltenem Job desselben Dokuments), `GET /api/worker/jobs/{id}/context`
+  und `POST /api/worker/jobs/{id}/artifacts[/…/chunks/{n}|/…/commit]` (nur
+  für den gehaltenen Job) – ebenfalls `Zugriff::worker()`.
 
 ## 5. Öffentliche Einreichung – Schutz
 

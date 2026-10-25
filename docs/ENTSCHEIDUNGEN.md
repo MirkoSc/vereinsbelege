@@ -947,3 +947,59 @@ Issue #90, Details in 01 §2 „Schlüsselrotation“. Getroffen ohne Rückfrage
 - **Unlesbare Zeilen** (DEK öffnet schon vor der Rotation nicht) halten den
   Abschluss nicht auf, werden gezählt und im Audit-Log genannt.
 - **Abschluss beendet alle Sitzungen** (auch weitere des rotierenden Admins).
+
+## E-39 ❓ Worker-Grants, Worker-Kontext und Artefakt-Upload (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #52/M7b-2, 07 §3 und §5, 02 „Betrieb“, Migration 041*
+
+Der Worker bekommt nie den Tresor-Private-Key, nur je Dokument versiegelte
+Daten-Schlüssel. Getroffen ohne Rückfrage:
+
+- **Grant je Blob, gebunden an Worker und Dokument, nicht an einen Job.**
+  `worker_grant` (worker_id, document_id, blob_id, sealed_dek an `W_pub`,
+  expires_at). Zugriff (`GET /blobs/{id}`) nur, wenn der Worker zusätzlich
+  **gerade einen laufenden, nicht abgelaufenen Job desselben Dokuments
+  hält** – eine SQL-Abfrage prüft beides zusammen. So reicht ein Grant für
+  mehrere Worker-Jobs eines Dokuments (`ocr`, dann `ai_extract`), und die
+  Spalte `job_id` aus der alten Tabellenbeschreibung entfällt.
+- **Löschen**: nach `complete`, nach endgültigem `fail` und wenn der Claim
+  einen Job mit erschöpften Versuchen beendet – sobald **kein** Worker-Job
+  des Dokuments mehr wartet oder läuft (ein Wiederholungsversuch behält die
+  Grants). Beim Entkoppeln alles des Workers. Der Cron löscht als Frist
+  Grants nach `expires_at` (3 Tage) und verwaiste (kein wartender
+  Worker-Job, älter als 15 min – z. B. nach Rückfall auf den Browser-Weg,
+  #53). Gleiches für `worker_context`.
+- **Zwei Wege zum Grant**: `WorkerFreigaben::ausSession()` („an den Worker
+  übergeben“: Session öffnet die DEKs mit dem Tresor, versiegelt an
+  `W_pub`) – verweigert während einer Tresor-Rotation (#90) und mit einem
+  Tresor, der nicht die aktuelle Generation ist; und `beiAnlage()`/
+  `kontextBeiAnlage()` für frisch erzeugte DEKs ohne Geheimnis. Das
+  Einhängen in Einreichung/Routing gehört zu #53; dort entscheidet sich, ob
+  ein Dokument zum Worker geht (Setting `worker_modul_aktiv`). Bis dahin
+  gilt „nur bei aktivem (bestätigtem) Worker“.
+- **Worker-Kontext** nur `{freitext, kostenstelle_hinweis}` – die
+  Signatur von `WorkerKrypto::kontextVersiegeln()` kann nichts anderes
+  tragen.
+- **Artefakt-Upload in drei Schritten** (anmelden → Chunks → festschreiben),
+  weil das AAD von `data_enc` die Zeilen-ID enthält, die der Worker vorher
+  nicht kennen kann: die Anmeldung legt die `document_artifact`-Zeile mit
+  Kind-Präfix `~` an (für Leser unsichtbar, weil jede Abfrage ein Kind
+  nennt) und gibt ihre ID samt AAD zurück; das Festschreiben setzt Inhalt
+  und Kind in **einer** Anweisung. Blobs (`page_image`, `pdfa`) kommen als
+  fertiges secretstream-Chiffrat mit Header und an `VK_pub` versiegeltem
+  DEK (`BlobService::storeCipher()`, ohne `meta_enc`, da dessen AAD die
+  Blob-ID enthält). Erlaubte Kinds je Job-Typ: `render_pages` →
+  `page_image`, `ocr` → `pdfa`+`text`, `image_cleanup` → `pdfa`,
+  `ai_extract` → `extraction`. Grenzen: Blob 64 MiB, `data_enc` 4 MiB,
+  10 offene Uploads je Worker, seq ≤ 9999. Der Webhoster prüft nur die Form
+  (Längen, Versionsbytes, aktuelle Tresor-Generation, SHA-256 des
+  Blob-Chiffrats) – den Inhalt kann er ohne Session nicht prüfen.
+- **Idempotenz**: ein bereits festgeschriebenes (Dokument, Kind, Job, seq)
+  wird als `vorhanden` gemeldet; eine wiederholte gleiche Anmeldung führt
+  den offenen Upload fort, eine abweichende oder die eines früheren
+  Versuchs ersetzt ihn. Uploads sind an Worker, Job und Versuch gebunden;
+  ein neuer Claim kann den Upload des alten nicht fortsetzen.
+- **KI-Zugangsdaten** werden nicht an jeder Admin-Aktion eingehängt,
+  sondern beim Heartbeat eines aktiven Workers neu versiegelt, wenn sich ein
+  HMAC (Schlüssel aus dem Server-Schlüssel, `worker.config_hash`) über die
+  aktiven Anbieter-Profile geändert hat. Eine Änderung erreicht den Worker
+  so binnen eines Polling-Intervalls; Klartext wird nie gespeichert.

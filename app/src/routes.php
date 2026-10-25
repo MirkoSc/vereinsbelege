@@ -417,6 +417,14 @@ return static function (
     $post('/api/worker/jobs/{id:\d+}/extend', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->extend($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/complete', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->complete($r, $p, $w));
     $post('/api/worker/jobs/{id:\d+}/fail', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->fail($r, $p, $w));
+    // Issue #52/M7b-2 (07 section 3): ciphertext plus a data key sealed to
+    // the worker, only with a grant and a running claim on the document;
+    // the job's context; results uploaded as ciphertext sealed to VK_pub.
+    $get('/api/worker/blobs/{id:\d+}', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->blob($r, $p, $w));
+    $get('/api/worker/jobs/{id:\d+}/context', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->context($r, $p, $w));
+    $post('/api/worker/jobs/{id:\d+}/artifacts', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktAnmelden($r, $p, $w));
+    $post('/api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/chunks/{index:\d+}', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktChunk($r, $p, $w));
+    $post('/api/worker/jobs/{id:\d+}/artifacts/{artefakt:\d+}/commit', $worker, static fn(Request $r, array $p, Worker $w) => $workerApi()->artefaktFestschreiben($r, $p, $w));
 
     // Chunk upload (03 section 4, issue #11). Files arrive in 2 MiB pieces so
     // that no request runs long and the hoster's upload limit stops mattering.

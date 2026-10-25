@@ -84,7 +84,9 @@ final class WorkerApiControllerTest extends WorkerTestCase
         self::assertSame(200, $antwort->status);
         self::assertSame('aktiv', self::daten($antwort)['status']);
         self::assertSame(1, self::daten($antwort)['wartend']);
-        self::assertNull(self::daten($antwort)['config']);
+        // Issue #52: an active worker gets its (here empty) AI configuration
+        // sealed to W_pub with the first heartbeat - see WorkerGrantTest.
+        self::assertSame(1, self::daten($antwort)['config']['version'] ?? null);
         $worker = $this->workers->find($id);
         self::assertSame('2.0.0', $worker?->appVersion);
         self::assertNotNull($worker->letzterHeartbeat);
