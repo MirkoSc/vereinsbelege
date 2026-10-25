@@ -107,9 +107,13 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    eintragen.
 7. Der **Wiederherstellungsschlüssel** wird **genau einmal** angezeigt:
    ausdrucken („Zum Aufbewahren drucken“) oder abschreiben, dann die
-   **letzte Gruppe** eintippen. Erst danach schreibt der Installer
-   `shared/config.php` und ist abgeschlossen. Siehe
+   **letzte Gruppe** eintippen. Siehe
    [Abschnitt 5](#5-wiederherstellungsschlüssel).
+7a. **Mail-Versand (optional):** SMTP-Zugang eintragen (Felder wie in
+   [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), mit „Speichern und Testmail
+   senden“ prüfen und dann „Speichern und Installation abschließen“ – oder
+   „Überspringen“ und später unter `/admin/mail` nachholen. Erst jetzt
+   schreibt der Installer `shared/config.php` und ist abgeschlossen.
 8. Der Installer löscht `setup.php`. Gelingt das nicht (Dateirechte beim
    FTP), sagt die Abschlussseite Bescheid – dann `web/setup.php` per FTP
    löschen.
@@ -117,7 +121,7 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    oder E-Mail-Code) eingerichtet.
 10. Unter „Admin“ nacheinander einrichten:
     - **Systemcheck** (`/admin/systemcheck`) – alles grün?
-    - **Mail** (`/admin/mail`), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
+    - **Mail** (`/admin/mail`, falls im Installer übersprungen), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
     - **Cron** beim Hoster, siehe [Abschnitt 3](#3-cron-einrichten)
     - **`config.php` sichern**: per FTP `shared/config.php` herunterladen
       und zum Wiederherstellungsschlüssel legen ([Abschnitt 6](#6-backups))
@@ -137,7 +141,8 @@ Technischer Ablauf: [06 §4](spec/06-betrieb.md#4-jobs-und-session-worker)
 („Cron“, „Stand M1-5“).
 
 Der Cron erledigt nur Hintergrundarbeit, die **keine** Belegdaten braucht:
-Mails aus der Warteschlange versenden (mit Wiederholungen), Aufräumen
+Mails aus der Warteschlange versenden (mit Wiederholungen), Erinnerungen
+an offene Belege (nur Anzahlen, siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), Aufräumen
 (abgebrochene Uploads, abgelaufene Codes und Tokens, alte Jobs, Suchindexe,
 nicht bestätigte Kontoauszug-Vorschauen) und – falls der Worker genutzt
 wird – den Rückfall auf den Browser, wenn der Worker zu lange schweigt.
@@ -146,8 +151,11 @@ dagegen im Browser eines angemeldeten Benutzers.
 
 **Einrichten:**
 
-1. Per FTP `shared/config.php` öffnen und den Wert von **`cron_token`**
-   ablesen (48 Zeichen). Die Datei nicht verändern.
+1. Die fertige Cron-URL steht nach der Installation bzw. dem Restore auf
+   der Abschlussseite und jederzeit unter **Admin → Systemcheck**
+   („Cron-URL anzeigen“, Recht `admin.system`). Alternativ per FTP
+   `shared/config.php` öffnen und den Wert von **`cron_token`** ablesen
+   (48 Zeichen). Die Datei nicht verändern.
 2. Im Kundenmenü des Hosters einen Cronjob als **URL-Aufruf** anlegen:
 
    ```
@@ -163,8 +171,10 @@ Die Antwort ist ein kurzes JSON (`"status": "ok"`). Ein falsches Token gibt
 holt nach.
 
 > **Achtung nach einer Wiederherstellung:** Der Installer erzeugt beim
-> Restore ein **neues** `cron_token`. Danach den Cronjob mit dem neuen Wert
-> aus `shared/config.php` aktualisieren, sonst gehen keine Mails mehr raus.
+> Restore ein **neues** `cron_token`. Die Abschlussseite zeigt die neue
+> Cron-URL („Cronjob aktualisieren“); danach den Cronjob beim Hoster auf
+> diese Adresse umstellen, sonst gehen keine Mails mehr raus. Später steht
+> sie auch unter Admin → Systemcheck.
 
 Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets
 kopieren. Wer es kennt, kann nur den Cron auslösen, aber keine Daten lesen.
@@ -191,7 +201,17 @@ Hinweise mit Link.
 | Antwort-an, Vereinsname | optional |
 | Adresse dieser Installation | `https://<ihre-domain>` – wird für Links in Mails gebraucht. Ohne diese Angabe gehen Mails mit Link nur raus, wenn die aufgerufene Domain zur Absenderdomain gehört |
 
-Danach eine **Testmail** schicken. Die Warteschlange unten auf der Seite
+Danach eine **Testmail** schicken. (Wer Mail schon im Installer eingerichtet
+hat, findet dieselben Werte hier wieder.)
+
+**Erinnerung an offene Belege:** Auf derselben Seite lässt sich wählen, ob
+alle, die Belege bearbeiten dürfen, **wöchentlich** (Standard), **täglich**
+oder **gar nicht** morgens (ab 7 Uhr, mit dem nächsten Cron-Lauf) eine Mail
+bekommen: „N Einreichungen warten im Posteingang, M Belege warten auf
+Prüfung“ – nur die Zahlen. Wer nichts offen hat, bekommt keine Mail. Die
+Einstellung gilt für alle Konten; einzeln abbestellen lässt sie sich nicht.
+
+Die Warteschlange unten auf der Seite
 zeigt, was noch aussteht oder gescheitert ist (Empfänger maskiert). Eine
 Mail, die sofort nicht rausgeht, versucht der [Cron](#3-cron-einrichten)
 noch bis zu viermal (Abstände 1 min, 5 min, 15 min, 1 h); danach steht sie
@@ -293,6 +313,9 @@ heruntergeladen und außerhalb des Hosters aufbewahrt werden.
 - Mit Belegdateien ist jedes Backup so groß wie der ganze Belegbestand –
   zehn Backups brauchen zehnmal so viel Platz. Speicherplatz beim Hoster
   im Blick behalten.
+  Ein Backup, das größer ist als die Upload-Grenze des Hosters, lässt sich
+  trotzdem einspielen: per FTP nach `shared/var/backups/` legen und im
+  Installer auswählen ([Abschnitt 7](#7-wiederherstellung-restore)).
 - Jedes **Update** legt automatisch ein Backup an – aber nur der Datenbank,
   ohne `config.php` und ohne die Belegdateien im Dateisystem. Das schützt
   vor einem missglückten Update, ersetzt aber kein vollständiges Backup.
@@ -326,7 +349,18 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
    Schritten mit Fortschrittsanzeige; den Tab offen lassen.
    Das ZIP wird in einem Stück hochgeladen – es darf nicht größer sein als
    `upload_max_filesize`/`post_max_size` des Hosters (bei all-inkl
-   384 MiB).
+   384 MiB; das Formular nennt die Grenze).
+   **Größeres Backup:** das ZIP per FTP nach `shared/var/backups/` laden
+   (Ordner ggf. anlegen; Dateiname nur aus Buchstaben, Ziffern, `.`, `_`,
+   `-`, am besten unverändert `backup_….zip`). Der Installer nennt dann
+   unter „Backup einspielen“ den Namen einer **leeren Datei**
+   (`freigabe-….txt`), die ebenfalls per FTP in `shared/var/backups/`
+   angelegt wird – der Nachweis, dass hier jemand mit FTP-Zugang
+   installiert. Seite neu laden und das Backup unter „… oder ein per FTP
+   abgelegtes Backup“ auswählen.
+   Es wird dort gelesen und bleibt danach liegen (bei `backup_….zip`
+   erscheint es unter `/admin/backups` und fällt später unter die
+   Rotation).
 3. Danach je nach Backup:
    - **Backup enthält `config.php`:** fertig. Alle Konten melden sich wie
      bisher an.
@@ -348,8 +382,8 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
         - SMTP-Passwort und API-Schlüssel der KI-Anbieter neu eintragen;
           nicht versendete Mails sind verloren.
 4. Nach dem Restore:
-   - [Cron-URL](#3-cron-einrichten) mit dem **neuen `cron_token`**
-     aktualisieren.
+   - [Cronjob](#3-cron-einrichten) auf die **neue Cron-URL** umstellen –
+     sie steht auf der Abschlussseite (und unter Admin → Systemcheck).
    - Neue `shared/config.php` per FTP herunterladen und sicher ablegen.
    - **Worker-Kopplungen prüfen** (`/admin/worker`): Ein älteres Backup
      bringt auch Worker zurück, die inzwischen entkoppelt waren – solche
@@ -484,7 +518,9 @@ prüft die Einstellungen, die der Hoster im Betrieb ändern könnte
 `shared/config.php` aus dem Internet abrufbar ist. Ein rotes Ergebnis bei
 „config.php abrufbar“ heißt: **sofort** die Domain-Einstellung beim Hoster
 prüfen (muss auf `web/` zeigen). Das Ergebnis lässt sich als JSON kopieren,
-z. B. für ein GitHub-Issue – es enthält keine Geheimnisse.
+z. B. für ein GitHub-Issue – es enthält keine Geheimnisse. Darunter, getrennt
+davon, lässt sich die **Cron-URL** aufklappen (enthält das Token – nicht in
+Issues kopieren).
 
 Wann ausführen: nach der Installation, nach jedem Update, nach
 Änderungen beim Hoster (PHP-Version, Tarif) und einmal im Quartal.

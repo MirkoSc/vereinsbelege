@@ -18,6 +18,7 @@ use App\Service\Crypto\ServerCrypto;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\MailTemplates;
+use App\Service\Mail\OffeneBelegeErinnerung;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -52,6 +53,7 @@ final class MailControllerTest extends DatabaseTestCase
             new Mailer($queue, $this->settings, new MailTemplates(dirname(__DIR__, 2) . '/app/views/mail')),
             $queue,
             new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $serverKey),
+            new SettingRepository($this->pdo()),
         );
     }
 
@@ -90,5 +92,35 @@ final class MailControllerTest extends DatabaseTestCase
         self::assertStringNotContainsString('geheim-1234', $antwort->body);
         // Nothing was saved.
         self::assertSame('', $this->settings->get()->host);
+    }
+
+    public function testTheReminderIntervalIsWeeklyByDefaultAndCanBeSwitchedOff(): void
+    {
+        $seite = $this->controller->page(new Request(HttpMethod::Get, '/admin/mail'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertMatchesRegularExpression('/name="intervall" value="7"\s+checked/', $seite->body);
+
+        $antwort = $this->controller->saveErinnerung(new Request(HttpMethod::Post, '/admin/mail/erinnerung', post: [
+            '_csrf' => new Session()->csrfToken(),
+            'intervall' => '0',
+        ]));
+        self::assertInstanceOf(Response::class, $antwort);
+        self::assertSame(302, $antwort->status);
+        self::assertSame(0, OffeneBelegeErinnerung::intervall(new SettingRepository($this->pdo())));
+        self::assertSame(1, (int) $this->pdo()->query("SELECT COUNT(*) FROM audit_log")->fetchColumn());
+    }
+
+    public function testAnUnknownReminderIntervalOrAMissingTokenChangesNothing(): void
+    {
+        foreach (['3', '-1', 'abc', ''] as $eingabe) {
+            $this->controller->saveErinnerung(new Request(HttpMethod::Post, '/admin/mail/erinnerung', post: [
+                '_csrf' => new Session()->csrfToken(),
+                'intervall' => $eingabe,
+            ]));
+        }
+        $this->controller->saveErinnerung(new Request(HttpMethod::Post, '/admin/mail/erinnerung', post: ['intervall' => '0']));
+
+        self::assertSame('', new SettingRepository($this->pdo())->get(OffeneBelegeErinnerung::SETTING_INTERVALL));
+        self::assertSame(OffeneBelegeErinnerung::STANDARD_TAGE, OffeneBelegeErinnerung::intervall(new SettingRepository($this->pdo())));
     }
 }

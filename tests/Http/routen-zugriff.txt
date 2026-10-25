@@ -236,6 +236,7 @@ POST /admin/speicher/schritt/{schritt:[a-z]+} -> admin.settings
 GET /admin/mail -> admin.settings
 POST /admin/mail/einstellungen -> admin.settings
 POST /admin/mail/testmail -> admin.settings
+POST /admin/mail/erinnerung -> admin.settings
 GET /admin/kostenstellen -> admin.settings
 GET /admin/kostenstellen/neu -> admin.settings
 POST /admin/kostenstellen -> admin.settings

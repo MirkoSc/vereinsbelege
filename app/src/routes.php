@@ -1026,6 +1026,7 @@ return static function (
     $get('/admin/mail', $einstellungen, static fn(Request $r) => $mail()->page($r));
     $post('/admin/mail/einstellungen', $einstellungen, static fn(Request $r) => $mail()->save($r));
     $post('/admin/mail/testmail', $einstellungen, static fn(Request $r) => $mail()->test($r));
+    $post('/admin/mail/erinnerung', $einstellungen, static fn(Request $r) => $mail()->saveErinnerung($r));
 
     // Cost centers (02 "Fachdaten", issue #23/M4-1): CRUD and reordering.
     // Permission: `admin.settings`, the same right as Kategorien - both are
