@@ -26,10 +26,26 @@ final class UploadBudgetTest extends DatabaseTestCase
 
     private float|false $frei = false;
 
+    private string $uploadDir;
+
     protected function setUp(): void
     {
         parent::setUp();
         new Migrator($this->pdo(), $this->migrationsDir())->migrate();
+        $this->uploadDir = sys_get_temp_dir() . '/vb_budget_uploads_' . uniqid('', true);
+        mkdir($this->uploadDir, 0775, true);
+    }
+
+    protected function tearDown(): void
+    {
+        foreach (glob($this->uploadDir . '/*/*') ?: [] as $datei) {
+            unlink($datei);
+        }
+        foreach (glob($this->uploadDir . '/*') ?: [] as $verzeichnis) {
+            rmdir($verzeichnis);
+        }
+        rmdir($this->uploadDir);
+        parent::tearDown();
     }
 
     public function testTheAddressBudgetStartsAgainInTheNextHour(): void
@@ -106,7 +122,7 @@ final class UploadBudgetTest extends DatabaseTestCase
     public function testTheCronGivesBackWhatWasAnnouncedButNeverSent(): void
     {
         $budget = $this->budget(new EinreichungsEinstellungen(maxDateiMb: 10, offenMbIp: 10));
-        $task = new UploadBudgetCleanupTask(new UploadBudgetRepository($this->pdo()));
+        $task = $this->cron();
         $angekuendigt = new \DateTimeImmutable('2026-10-20 10:15:00');
 
         self::assertNull($budget->reservieren('198.51.100.7', self::id(), 10 * self::MB, $angekuendigt));
@@ -139,7 +155,7 @@ final class UploadBudgetTest extends DatabaseTestCase
         $jetzt = new \DateTimeImmutable('2026-10-20 10:15:00');
         $budget->reservieren('198.51.100.1', self::id(), 8, $jetzt);
         $budget->verbuchen(8, $jetzt);
-        $task = new UploadBudgetCleanupTask(new UploadBudgetRepository($this->pdo()));
+        $task = $this->cron();
 
         self::assertSame(0, $task->run(new \DateTimeImmutable('2026-10-20 10:59:00')));
         self::assertSame(1, $task->run(new \DateTimeImmutable('2026-10-20 11:00:00')), 'the hour of the address');
@@ -159,7 +175,7 @@ final class UploadBudgetTest extends DatabaseTestCase
         $sommerzeit = new \DateTimeImmutable('2026-10-25 00:30:00', new \DateTimeZone('UTC'))->setTimezone($berlin);
         $winterzeit = new \DateTimeImmutable('2026-10-25 01:10:00', new \DateTimeZone('UTC'))->setTimezone($berlin);
         self::assertSame('02:30 02:10', $sommerzeit->format('H:i') . ' ' . $winterzeit->format('H:i'));
-        $task = new UploadBudgetCleanupTask(new UploadBudgetRepository($this->pdo()));
+        $task = $this->cron();
 
         self::assertNull($budget->reservieren('198.51.100.7', self::id(), self::MB, $sommerzeit));
         self::assertSame(0, $task->run($sommerzeit->modify('+29 minutes')), 'nothing swept inside the window');
@@ -183,6 +199,38 @@ final class UploadBudgetTest extends DatabaseTestCase
         self::assertSame('198.51.100.7', UploadBudget::ipBereich('198.51.100.7'));
         self::assertSame('198.51.100.7', UploadBudget::ipBereich('::ffff:198.51.100.7'), 'IPv4-mapped is the IPv4 address');
         self::assertSame('', UploadBudget::ipBereich(''));
+    }
+
+    /**
+     * The cron gives an open upload's reservation back only once the upload
+     * itself is gone - the same moment UploadCleanupTask gives up on it
+     * (24 h after its newest chunk), not 24 h after it was opened.
+     */
+    public function testAnUploadStillInVarTmpKeepsItsReservation(): void
+    {
+        $budget = $this->budget(new EinreichungsEinstellungen(maxDateiMb: 10, offenMbIp: 10));
+        $angekuendigt = new \DateTimeImmutable('2026-10-20 10:15:00');
+        $id = self::id();
+        self::assertNull($budget->reservieren('198.51.100.7', $id, 10 * self::MB, $angekuendigt));
+        $this->uploads()->create(10 * self::MB, $angekuendigt, $id);
+
+        $spaeter = $angekuendigt->modify('+30 hours');
+        $this->cron()->run($spaeter);
+        self::assertSame(EinreichungAbgelehnt::BudgetIp, $budget->reservieren('198.51.100.7', self::id(), 1, $spaeter), 'still in var/tmp');
+
+        $this->uploads()->discard($id);
+        $this->cron()->run($spaeter);
+        self::assertNull($budget->reservieren('198.51.100.7', self::id(), 10 * self::MB, $spaeter));
+    }
+
+    private function cron(): UploadBudgetCleanupTask
+    {
+        return new UploadBudgetCleanupTask(new UploadBudgetRepository($this->pdo()), $this->uploads());
+    }
+
+    private function uploads(): UploadService
+    {
+        return new UploadService($this->uploadDir);
     }
 
     private static function id(): string

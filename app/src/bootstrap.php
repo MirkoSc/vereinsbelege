@@ -603,7 +603,7 @@ $cron = static fn(): CronController => new CronController($config, static functi
             ),
             // Issue #242: byte budget counters of the public upload whose
             // window (an hour per address, a day overall) has ended.
-            new UploadBudgetCleanupTask(new UploadBudgetRepository($pdo)),
+            new UploadBudgetCleanupTask(new UploadBudgetRepository($pdo), new UploadService($paths->uploadDir())),
             // M3-4: remembered devices whose 30 days are over.
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
             // M3-5: password reset links whose 30 minutes are over.

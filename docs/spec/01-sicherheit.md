@@ -851,7 +851,7 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
     - **offen** je Adresse (Vorgabe 30 MB, `einreichung_offen_mb_ip`):
       `create()` reserviert die angekündigte Größe – mehr nimmt
       `UploadService` nie an –, Rückgabe bei Abschluss, Abbruch oder durch
-      den Cron, sobald auch das Upload-Aufräumen aufgibt (24 h). Begrenzt
+      den Cron, sobald das Upload-Aufräumen das Verzeichnis entfernt hat (24 h nach dem letzten Chunk). Begrenzt
       `var/tmp`.
     - je Adresse und **Stunde** (Vorgabe 100 MB,
       `einreichung_budget_ip_mb_stunde`): angekündigte Größe, ohne Rückgabe.

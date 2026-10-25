@@ -1867,7 +1867,7 @@ Settings mit konservativen Vorgaben. Selbst gesetzt:
   würde jede Seite abgelehnt.
 - **Drei Zähler** (nach Koordinator-Review umgebaut): *offen* je Adresse
   (Vorgabe 30 MB, angekündigte Größe, Rückgabe bei Abschluss/Abbruch/
-  Cron nach 24 h – begrenzt `var/tmp`), je Adresse und *Stunde*
+  Cron, sobald das Upload-Verzeichnis aufgeräumt ist – begrenzt `var/tmp`), je Adresse und *Stunde*
   (angekündigte Größe, ohne Rückgabe) und *je Tag* für alle – dieser nur
   mit **gespeicherten** Bytes. Ankündigen allein darf den Tag nicht
   verbrauchen, sonst sperren ~50 Anfragen ohne gesendetes Byte
