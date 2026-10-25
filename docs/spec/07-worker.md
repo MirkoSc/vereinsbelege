@@ -562,7 +562,14 @@ Markierung: Keywords `$Vereinsbelege` (+ `\Seen`) bzw.
 `\Seen` bzw. `\Seen \Flagged` und nur ungelesene Mails gelten als neu.
 Verschieben nur mit `MOVE` (RFC 6851), sonst bleibt die Mail markiert
 liegen. Eine Mail, an der der Worker dreimal scheitert, wird als abgelehnt
-markiert; eine Mail, die nur für sich scheitert (FETCH nicht beantwortbar,
+markiert. Vor dem Holen bekommt eine Mail das Keyword `$VereinsbelegeVersuch`
+(ohne eigene Keywords `\Flagged`), danach wird es entfernt; trägt eine offene
+Mail es beim nächsten Abruf noch, ist der Worker an ihr gestorben (z. B.
+Speicher) – sie wird als abgelehnt („unlesbar“) markiert statt erneut
+geholt. Der MIME-Leser arbeitet mit Byte-Offsets im einen Mailpuffer
+(höchstens 4 Ebenen, nur behaltene Anhänge werden dekodiert, Spitze unter
+dem Dreifachen der Mailgröße); das geholte Literal ist auf
+`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt. Eine Mail, die nur für sich scheitert (FETCH nicht beantwortbar,
 Webhoster lehnt einen Anhang mit 5xx ab), hält spätere nicht auf. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
 
 ## Pflicht-Tests
@@ -597,7 +604,8 @@ E-Mail-Eingang (#87):
 STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
 (selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
 STARTTLS-Injektion abgelehnt, Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
-Ablehnungen markiert statt gelöscht, Grenzen, keine Mailinhalte im Log;
+Ablehnungen markiert statt gelöscht, Grenzen, verschachtelte große Mail
+bleibt im Speicher begrenzt, Mail mit Versuchs-Marke wird nicht erneut geholt, keine Mailinhalte im Log;
 Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).

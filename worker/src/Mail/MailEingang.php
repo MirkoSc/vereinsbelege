@@ -84,6 +84,12 @@ final class MailEingang
 
     private int $heute = 0;
 
+    /** Set by ablehnen() - read after one mail. */
+    private bool $abgelehntGesetzt = false;
+
+    /** The attempt mark of the current mail is already gone. */
+    private bool $markeEntfernt = false;
+
     /** @var array<string, int> "ordner|uid" => failures */
     private array $fehlversuche = [];
 
@@ -134,6 +140,14 @@ final class MailEingang
             $postfach = ($this->verbinden)($zugang);
             $keywords = $postfach->auswaehlen($zugang->ordner);
             $alle = $postfach->offene($keywords, $zugang->seit);
+            // Still marked from an attempt: the worker died on that mail
+            // (out of memory, killed). It is not fetched again - else it
+            // would kill every restart - but set aside for a person.
+            $angefangen = array_values(array_intersect($postfach->inArbeit($keywords, $zugang->seit), $alle));
+            foreach ($angefangen as $uid) {
+                $this->ablehnen($postfach, $keywords, $uid, 'unlesbar');
+            }
+            $alle = array_values(array_diff($alle, $angefangen));
             $neu = count($alle);
             $uids = array_slice($alle, 0, min(self::MAX_JE_ABRUF, $this->restHeute()));
             $this->mehr = false;
@@ -193,8 +207,36 @@ final class MailEingang
 
             return;
         }
+        // The attempt mark lives in the mailbox, so it survives a crash.
+        $marke = $keywords ? [ImapClient::KEYWORD_VERSUCH] : ['\\Flagged'];
+        $postfach->markieren($uid, $marke);
+        $this->abgelehntGesetzt = false;
+        $this->markeEntfernt = false;
         try {
-            $roh = $postfach->holen($uid);
+            $this->bearbeiten($postfach, $zugang, $keywords, $uid, $marke);
+        } finally {
+            // Without own keywords a refusal is \Seen \Flagged - leave that.
+            if (!$this->markeEntfernt && ($keywords || !$this->abgelehntGesetzt)) {
+                try {
+                    $postfach->entmarkieren($uid, $marke);
+                } catch (ImapFehler) {
+                    // Connection gone: the mark stays and the mail is set
+                    // aside next time - a person sees it, nothing is lost.
+                }
+            }
+        }
+    }
+
+    /**
+     * @throws ImapFehler|ApiFehler|HttpFehler|Abgebrochen
+     */
+    /**
+     * @param list<string> $marke the attempt mark, removed before a move
+     */
+    private function bearbeiten(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, array $marke): void
+    {
+        try {
+            $roh = $postfach->holen($uid, $zugang->maxMailBytes());
             $nachricht = MimeNachricht::lesen($roh);
             $schluessel = hash('sha256', $nachricht->messageId !== null ? 'mid|' . $nachricht->messageId : 'roh|' . $roh);
             unset($roh);
@@ -231,6 +273,9 @@ final class MailEingang
         }
 
         $postfach->markieren($uid, $keywords ? [ImapClient::KEYWORD_ERLEDIGT, '\\Seen'] : ['\\Seen']);
+        // Off before the move: the mark must not travel to the target folder.
+        $postfach->entmarkieren($uid, $marke);
+        $this->markeEntfernt = true;
         unset($this->fehlversuche[$zugang->ordner . '|' . $uid]);
         if ($zugang->zielOrdner !== '' && !$postfach->verschieben($uid, $zugang->zielOrdner)) {
             $this->log->ereignis('mail_nicht_verschoben', ['uid' => $uid]);
@@ -375,6 +420,7 @@ final class MailEingang
 
     private function ablehnen(Postfach $postfach, bool $keywords, int $uid, string $grund): void
     {
+        $this->abgelehntGesetzt = true;
         $postfach->markieren($uid, $keywords ? [ImapClient::KEYWORD_ABGELEHNT] : ['\\Seen', '\\Flagged']);
         ++$this->abgelehnt;
         $this->log->ereignis('mail_abgelehnt', ['uid' => $uid, 'grund' => $grund]);

@@ -23,17 +23,28 @@ interface Postfach
     public function offene(bool $mitKeywords, ?string $seit = null): array;
 
     /**
+     * UIDs among the open ones that still carry the attempt mark - the
+     * worker died while handling them.
+     *
+     * @return list<int>
+     */
+    public function inArbeit(bool $mitKeywords, ?string $seit = null): array;
+
+    /**
      * @param list<int> $uids
      *
      * @return array<int, int> uid => size in bytes (RFC822.SIZE)
      */
     public function groessen(array $uids): array;
 
-    /** The whole mail, without setting \Seen. */
-    public function holen(int $uid): string;
+    /** The whole mail, without setting \Seen; refused when larger than $maxBytes. */
+    public function holen(int $uid, int $maxBytes): string;
 
     /** @param list<string> $flags */
     public function markieren(int $uid, array $flags): void;
+
+    /** @param list<string> $flags */
+    public function entmarkieren(int $uid, array $flags): void;
 
     /** Moves the mail; false when the server cannot (no MOVE) or refused. */
     public function verschieben(int $uid, string $ordner): bool;

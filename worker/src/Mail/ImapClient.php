@@ -28,8 +28,17 @@ final class ImapClient implements Postfach
 
     public const string KEYWORD_ABGELEHNT = '$VereinsbelegeAbgelehnt';
 
-    /** Largest literal accepted (a whole mail). */
+    /**
+     * Set before a mail is fetched and removed after it was handled: a mail
+     * that still carries it crashed the worker (review of #87) and is set
+     * aside instead of being fetched again on every start.
+     */
+    public const string KEYWORD_VERSUCH = '$VereinsbelegeVersuch';
+
+    /** Largest literal accepted unless a command sets a smaller one. */
     private const int MAX_LITERAL = 96 * 1024 * 1024;
+
+    private int $maxLiteral = self::MAX_LITERAL;
 
     private int $tag = 0;
 
@@ -76,7 +85,7 @@ final class ImapClient implements Postfach
                 $flags = preg_split('/\s+/', trim($t[1])) ?: [];
 
                 return in_array('\\*', $flags, true)
-                    || (in_array(self::KEYWORD_ERLEDIGT, $flags, true) && in_array(self::KEYWORD_ABGELEHNT, $flags, true));
+                    || (in_array(self::KEYWORD_ERLEDIGT, $flags, true) && in_array(self::KEYWORD_ABGELEHNT, $flags, true) && in_array(self::KEYWORD_VERSUCH, $flags, true));
             }
         }
 
@@ -87,9 +96,14 @@ final class ImapClient implements Postfach
 
     public function offene(bool $mitKeywords, ?string $seit = null): array
     {
-        $kriterien = $mitKeywords
+        return $this->suchen($mitKeywords
             ? 'UNKEYWORD ' . self::KEYWORD_ERLEDIGT . ' UNKEYWORD ' . self::KEYWORD_ABGELEHNT . ' UNDELETED'
-            : 'UNSEEN UNDELETED';
+            : 'UNSEEN UNDELETED', $seit);
+    }
+
+    /** @return list<int> */
+    private function suchen(string $kriterien, ?string $seit): array
+    {
         $tag = $seit === null ? false : \DateTimeImmutable::createFromFormat('!Y-m-d', $seit);
         if ($tag !== false) {
             // IMAP dates: day-Mon-year with English month names.
@@ -112,6 +126,15 @@ final class ImapClient implements Postfach
         return $uids;
     }
 
+    public function inArbeit(bool $mitKeywords, ?string $seit = null): array
+    {
+        $kriterien = $mitKeywords
+            ? 'KEYWORD ' . self::KEYWORD_VERSUCH . ' UNKEYWORD ' . self::KEYWORD_ERLEDIGT . ' UNKEYWORD ' . self::KEYWORD_ABGELEHNT . ' UNDELETED'
+            : 'UNSEEN FLAGGED UNDELETED';
+
+        return $this->suchen($kriterien, $seit);
+    }
+
     public function groessen(array $uids): array
     {
         if ($uids === []) {
@@ -128,9 +151,15 @@ final class ImapClient implements Postfach
         return $groessen;
     }
 
-    public function holen(int $uid): string
+    public function holen(int $uid, int $maxBytes): string
     {
-        [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[])');
+        // A server announcing more than the size limit gets no buffer for it.
+        $this->maxLiteral = max(1, min(self::MAX_LITERAL, $maxBytes));
+        try {
+            [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[])');
+        } finally {
+            $this->maxLiteral = self::MAX_LITERAL;
+        }
         foreach ($antworten as [$text, $literale]) {
             if ($literale !== [] && preg_match('/\bUID ' . $uid . '\b/i', $text) === 1 && preg_match('/BODY\[\] \{\d+\+?\}/i', $text) === 1) {
                 return $literale[0];
@@ -154,6 +183,16 @@ final class ImapClient implements Postfach
             }
         }
         $this->befehlOk('UID STORE ' . $uid . ' +FLAGS.SILENT (' . implode(' ', $flags) . ')');
+    }
+
+    public function entmarkieren(int $uid, array $flags): void
+    {
+        foreach ($flags as $flag) {
+            if (preg_match('/^\\\\?\$?[A-Za-z][A-Za-z0-9]*$/', $flag) !== 1) {
+                throw new \InvalidArgumentException('Invalid flag.');
+            }
+        }
+        $this->befehlOk('UID STORE ' . $uid . ' -FLAGS.SILENT (' . implode(' ', $flags) . ')');
     }
 
     public function verschieben(int $uid, string $ordner): bool
@@ -378,7 +417,7 @@ final class ImapClient implements Postfach
         $zeile = $this->strom->zeile();
         while (preg_match('/\{(\d+)\+?\}\r?\n$/', $zeile, $t) === 1) {
             $laenge = (int) $t[1];
-            if ($laenge > self::MAX_LITERAL) {
+            if ($laenge > $this->maxLiteral) {
                 throw new ImapFehler('imap_protokoll', 'Die Antwort des IMAP-Servers ist zu groß.');
             }
             $text .= rtrim($zeile, "\r\n");

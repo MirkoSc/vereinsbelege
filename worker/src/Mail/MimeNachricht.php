@@ -16,7 +16,11 @@ namespace App\Worker\Mail;
  */
 final readonly class MimeNachricht
 {
-    private const int MAX_TIEFE = 8;
+    /** Nesting levels; real mail rarely needs more than three. */
+    private const int MAX_TIEFE = 4;
+
+    /** Longest header block read. */
+    private const int MAX_KOPF = 256 * 1024;
 
     private const int MAX_TEILE = 200;
 
@@ -35,8 +39,8 @@ final readonly class MimeNachricht
 
     public static function lesen(string $roh): self
     {
-        [$kopf, $rumpf] = self::trennen($roh);
-        $felder = self::felder($kopf);
+        $ende = strlen($roh);
+        [$felder, $rumpfStart] = self::kopf($roh, 0, $ende);
         [$name, $adresse] = self::absender($felder['from'][0] ?? '');
         $messageId = null;
         if (preg_match('/<([^<>\s]{1,995})>/', $felder['message-id'][0] ?? '', $t) === 1) {
@@ -45,7 +49,7 @@ final readonly class MimeNachricht
 
         $anhaenge = [];
         $zaehler = 0;
-        self::teil($felder, $rumpf, 0, $anhaenge, $zaehler);
+        self::teil($roh, $felder, $rumpfStart, $ende, 0, $anhaenge, $zaehler);
 
         return new self(
             absenderName: $name,
@@ -58,34 +62,49 @@ final readonly class MimeNachricht
     }
 
     /**
+     * One MIME entity whose body is $roh[$start, $ende). Works on offsets
+     * into the one buffer: a nesting level costs no copy of the mail, only
+     * the leaves that may be attachments are cut out and decoded (review
+     * of #87 - a crafted, deeply nested mail must not exhaust the memory).
+     *
      * @param array<string, list<string>> $felder
      * @param list<MimeAnhang> $anhaenge
      */
-    private static function teil(array $felder, string $rumpf, int $tiefe, array &$anhaenge, int &$zaehler): void
+    private static function teil(string $roh, array $felder, int $start, int $ende, int $tiefe, array &$anhaenge, int &$zaehler): void
     {
         if (++$zaehler > self::MAX_TEILE || $tiefe > self::MAX_TIEFE) {
             return;
         }
         [$typ, $parameter] = self::wertMitParametern($felder['content-type'][0] ?? 'text/plain');
         $typ = strtolower($typ);
+        $kodierung = strtolower(trim($felder['content-transfer-encoding'][0] ?? ''));
 
         if (str_starts_with($typ, 'multipart/')) {
             $grenze = $parameter['boundary'] ?? '';
-            if ($grenze === '') {
+            if ($grenze === '' || strlen($grenze) > 200) {
                 return;
             }
-            foreach (self::teile($rumpf, $grenze) as $roh) {
-                [$k, $r] = self::trennen($roh);
-                self::teil(self::felder($k), $r, $tiefe + 1, $anhaenge, $zaehler);
+            foreach (self::teile($roh, $start, $ende, $grenze) as [$s, $e]) {
+                [$k, $r] = self::kopf($roh, $s, $e);
+                self::teil($roh, $k, $r, $e, $tiefe + 1, $anhaenge, $zaehler);
+                if ($zaehler > self::MAX_TEILE) {
+                    return;
+                }
             }
 
             return;
         }
 
-        $inhalt = self::dekodieren($rumpf, strtolower(trim($felder['content-transfer-encoding'][0] ?? '')));
         if ($typ === 'message/rfc822') {
-            [$k, $r] = self::trennen($inhalt);
-            self::teil(self::felder($k), $r, $tiefe + 1, $anhaenge, $zaehler);
+            if (in_array($kodierung, ['base64', 'quoted-printable'], true)) {
+                // Encoded forwarded mail (rare): one decoded copy, its own buffer.
+                $innen = self::dekodieren(substr($roh, $start, $ende - $start), $kodierung);
+                [$k, $r] = self::kopf($innen, 0, strlen($innen));
+                self::teil($innen, $k, $r, strlen($innen), $tiefe + 1, $anhaenge, $zaehler);
+            } else {
+                [$k, $r] = self::kopf($roh, $start, $ende);
+                self::teil($roh, $k, $r, $ende, $tiefe + 1, $anhaenge, $zaehler);
+            }
 
             return;
         }
@@ -93,30 +112,44 @@ final readonly class MimeNachricht
         [$disposition, $dispParameter] = self::wertMitParametern($felder['content-disposition'][0] ?? '');
         $disposition = strtolower($disposition);
         $name = $dispParameter['filename'] ?? $parameter['name'] ?? '';
-        // The text of the mail itself is no attachment.
+        // The text of the mail itself is no attachment - and not decoded.
         if (str_starts_with($typ, 'text/') && $name === '' && $disposition !== 'attachment') {
             return;
         }
         $anhaenge[] = new MimeAnhang(
             name: self::dateiname($name),
-            inhalt: $inhalt,
+            inhalt: self::dekodieren(substr($roh, $start, $ende - $start), $kodierung),
             typ: $typ,
             inline: $disposition !== 'attachment' && isset($felder['content-id']),
         );
     }
 
-    /** @return array{0: string, 1: string} header block and body */
-    private static function trennen(string $roh): array
+    /**
+     * The header fields of the entity starting at $start and where its
+     * body begins. Header blocks are short; a giant one is cut off.
+     *
+     * @return array{0: array<string, list<string>>, 1: int}
+     */
+    private static function kopf(string $roh, int $start, int $ende): array
     {
-        $roh = ltrim($roh, "\r\n");
+        while ($start < $ende && ($roh[$start] === "\r" || $roh[$start] === "\n")) {
+            ++$start;
+        }
+        $fenster = min($ende - $start, self::MAX_KOPF);
+        $treffer = [];
         foreach (["\r\n\r\n", "\n\n"] as $trenner) {
-            $pos = strpos($roh, $trenner);
+            $pos = $fenster > 0 ? strpos(substr($roh, $start, $fenster), $trenner) : false;
             if ($pos !== false) {
-                return [substr($roh, 0, $pos), substr($roh, $pos + strlen($trenner))];
+                $treffer[] = [$pos, strlen($trenner)];
             }
         }
+        if ($treffer === []) {
+            return [self::felder(substr($roh, $start, $fenster)), $ende];
+        }
+        usort($treffer, static fn(array $a, array $b): int => $a[0] <=> $b[0]);
+        [$pos, $laenge] = $treffer[0];
 
-        return [$roh, ''];
+        return [self::felder(substr($roh, $start, $pos)), $start + $pos + $laenge];
     }
 
     /**
@@ -140,44 +173,63 @@ final readonly class MimeNachricht
     }
 
     /**
-     * @return list<string> the raw parts between the boundaries
+     * The [start, end) offsets of the parts between the boundaries of
+     * $roh[$start, $ende) - found with strpos, nothing copied.
+     *
+     * @return list<array{0: int, 1: int}>
      */
-    private static function teile(string $rumpf, string $grenze): array
+    private static function teile(string $roh, int $start, int $ende, string $grenze): array
     {
+        $trenner = '--' . $grenze;
         $teile = [];
-        $aktuell = null;
-        foreach (preg_split('/(?<=\n)/', $rumpf) ?: [] as $zeile) {
-            $ohne = rtrim($zeile, "\r\n");
-            if ($ohne === '--' . $grenze || rtrim($ohne) === '--' . $grenze) {
-                if ($aktuell !== null) {
-                    $teile[] = $aktuell;
-                }
-                $aktuell = '';
-                continue;
-            }
-            if (rtrim($ohne) === '--' . $grenze . '--') {
-                if ($aktuell !== null) {
-                    $teile[] = $aktuell;
-                }
-                $aktuell = null;
+        $teilStart = null;
+        $pos = $start;
+        while ($pos < $ende && count($teile) < self::MAX_TEILE) {
+            $fund = strpos($roh, $trenner, $pos);
+            if ($fund === false || $fund >= $ende) {
                 break;
             }
-            if ($aktuell !== null) {
-                $aktuell .= $zeile;
+            // Only at the start of a line.
+            if ($fund !== $start && $roh[$fund - 1] !== "\n") {
+                $pos = $fund + 1;
+                continue;
             }
+            $nachher = $fund + strlen($trenner);
+            $schluss = substr($roh, $nachher, 2) === '--';
+            if ($teilStart !== null) {
+                // The line break before a boundary belongs to the boundary.
+                $teilEnde = $fund;
+                if ($teilEnde > $teilStart && $roh[$teilEnde - 1] === "\n") {
+                    --$teilEnde;
+                    if ($teilEnde > $teilStart && $roh[$teilEnde - 1] === "\r") {
+                        --$teilEnde;
+                    }
+                }
+                $teile[] = [$teilStart, $teilEnde];
+            }
+            if ($schluss) {
+                return $teile;
+            }
+            $zeilenEnde = strpos($roh, "\n", $nachher);
+            if ($zeilenEnde === false || $zeilenEnde >= $ende) {
+                return $teile;
+            }
+            $teilStart = $zeilenEnde + 1;
+            $pos = $teilStart;
         }
-        if ($aktuell !== null && $aktuell !== '') {
-            $teile[] = $aktuell;
+        if ($teilStart !== null && $teilStart < $ende && count($teile) < self::MAX_TEILE) {
+            $teile[] = [$teilStart, $ende];
         }
 
-        // The CRLF before a boundary belongs to the boundary.
-        return array_map(static fn(string $t): string => preg_replace('/\r?\n$/', '', $t) ?? $t, array_slice($teile, 0, self::MAX_TEILE));
+        return $teile;
     }
 
     private static function dekodieren(string $inhalt, string $kodierung): string
     {
         return match ($kodierung) {
-            'base64' => (string) base64_decode(preg_replace('/[^A-Za-z0-9+\/=]/', '', $inhalt) ?? '', false),
+            // Non-strict base64_decode skips line breaks and other foreign
+            // bytes itself - no cleaned copy of a large part.
+            'base64' => (string) base64_decode($inhalt, false),
             'quoted-printable' => quoted_printable_decode($inhalt),
             default => $inhalt,
         };

@@ -148,7 +148,7 @@ final class ImapClientTest extends TestCase
         self::assertTrue($client->auswaehlen('Belege/Eingang'));
         self::assertSame([7, 12], $client->offene(true));
         self::assertSame([7 => 120, 12 => 4000], $client->groessen([7, 12]));
-        self::assertSame($mail, $client->holen(7));
+        self::assertSame($mail, $client->holen(7, 1024));
         $client->markieren(7, [ImapClient::KEYWORD_ERLEDIGT, '\\Seen']);
         self::assertTrue($client->verschieben(7, 'Erledigt'));
         $client->abmelden();
@@ -161,6 +161,23 @@ final class ImapClientTest extends TestCase
         self::assertStringNotContainsString('EXPUNGE', $strom->gesendet);
         self::assertStringNotContainsString('\Deleted', $strom->gesendet);
         self::assertTrue($strom->geschlossen);
+    }
+
+    public function testAMailLargerThanAnnouncedIsNotRead(): void
+    {
+        $strom = new SkriptStrom(
+            self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
+            . "* 1 FETCH (UID 7 BODY[] {5000000}\r\n",
+            tls: true,
+        );
+        $client = ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p');
+
+        try {
+            $client->holen(7, 1000);
+            self::fail('expected a refusal');
+        } catch (ImapFehler $e) {
+            self::assertSame('imap_protokoll', $e->fehlercode, 'no 5 MB buffer for a mail allowed 1000 bytes');
+        }
     }
 
     public function testWithoutKeywordsUnseenMailCounts(): void

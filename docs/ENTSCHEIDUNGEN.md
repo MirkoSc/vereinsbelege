@@ -1656,6 +1656,12 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
   `MOVE` bleibt die Mail markiert liegen (kein Kopieren und Löschen).
   Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
   ist empfohlen.
+- **Absturzschutz im Postfach:** Der Worker speichert nichts dauerhaft, also
+  liegt die Versuchs-Marke als Keyword (`$VereinsbelegeVersuch`, sonst
+  `\Flagged`) an der Mail selbst. Eine Mail, an der der Worker gestorben ist,
+  wird beim nächsten Abruf als „unlesbar“ markiert statt erneut geholt –
+  auch dann, wenn der Abbruch nur ein Verbindungsabriss mitten in der Mail
+  war (dann bleibt sie markiert im Postfach für einen Menschen).
 - **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
   Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
   nutzt den Archiv-Import oder lädt sie einzeln hoch.

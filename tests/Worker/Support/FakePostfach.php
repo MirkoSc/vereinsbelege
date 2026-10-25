@@ -90,8 +90,25 @@ final class FakePostfach implements Postfach
         return $g;
     }
 
-    public function holen(int $uid): string
+    /** @var array<int, list<string>> the flags of each mail at the moment it was fetched */
+    public array $flagsBeimHolen = [];
+
+    public function inArbeit(bool $mitKeywords, ?string $seit = null): array
     {
+        return array_values(array_filter(
+            $this->offene($mitKeywords, $seit),
+            fn(int $uid): bool => in_array($mitKeywords ? '$VereinsbelegeVersuch' : '\\Flagged', $this->flags[$uid], true),
+        ));
+    }
+
+    public function entmarkieren(int $uid, array $flags): void
+    {
+        $this->flags[$uid] = array_values(array_diff($this->flags[$uid], $flags));
+    }
+
+    public function holen(int $uid, int $maxBytes): string
+    {
+        $this->flagsBeimHolen[$uid] = $this->flags[$uid];
         if (in_array($uid, $this->kaputt, true)) {
             throw new ImapFehler('imap_protokoll');
         }
@@ -119,3 +136,4 @@ final class FakePostfach implements Postfach
         $this->abgemeldet = true;
     }
 }
+

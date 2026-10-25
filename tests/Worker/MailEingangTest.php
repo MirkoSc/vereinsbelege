@@ -204,6 +204,24 @@ final class MailEingangTest extends WorkerTestCase
         self::assertStringContainsString('"grund":"unlesbar"', $this->log);
     }
 
+    public function testAMailTheWorkerDiedOnIsSetAsideNotFetchedAgain(): void
+    {
+        $gut = $this->postfach->hinzufuegen($this->rechnungsMail());
+        // Left over from a run that died while reading this mail (out of
+        // memory, killed): the attempt mark is still on it.
+        $tot = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-9@', $this->rechnungsMail()));
+        $this->postfach->flags[$tot] = ['$VereinsbelegeVersuch'];
+
+        $this->schleife->runde();
+
+        self::assertArrayNotHasKey($tot, $this->postfach->flagsBeimHolen, 'not fetched again');
+        self::assertContains('$VereinsbelegeAbgelehnt', $this->postfach->flags[$tot]);
+        self::assertStringContainsString('"grund":"unlesbar"', $this->log);
+        // The good one carried the mark while it was read, and lost it after.
+        self::assertContains('$VereinsbelegeVersuch', $this->postfach->flagsBeimHolen[$gut]);
+        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$gut]);
+    }
+
     public function testRefusedMailsAreMarkedAndStay(): void
     {
         $spam = $this->postfach->hinzufuegen(MimeNachrichtTest::mail("From: x@spam.example\nX-Spam-Flag: YES\nContent-Type: multipart/mixed; boundary=b", self::anhang('b', MimeNachrichtTest::PDF)));
@@ -239,7 +257,7 @@ final class MailEingangTest extends WorkerTestCase
         $this->schleife->runde();
 
         self::assertSame(['\\Seen'], $this->postfach->flags[$gut]);
-        self::assertSame(['\\Seen', '\\Flagged'], $this->postfach->flags[$schlecht]);
+        self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$schlecht]);
         self::assertStringContainsString('mail_nicht_verschoben', $this->log);
     }
 

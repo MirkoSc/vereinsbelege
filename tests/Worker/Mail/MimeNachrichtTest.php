@@ -93,4 +93,35 @@ final class MimeNachrichtTest extends TestCase
         self::assertSame('Quittung Grillfest', $n->betreff);
         self::assertSame('<?xml version="1.0"?>', $n->anhaenge[0]->inhalt);
     }
+
+    /**
+     * Review of #87: a crafted, deeply nested mail near the size limit must
+     * not multiply in memory (the worker would die of it on every start).
+     */
+    public function testANestedLargeMailStaysWithinASmallMultipleOfItsSize(): void
+    {
+        $pdf = self::PDF . str_repeat('A', 6 * 1024 * 1024);
+        foreach ([4, 8] as $ebenen) {
+            $rumpf = "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=r.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($pdf), 76, "\r\n");
+            for ($i = $ebenen; $i >= 1; --$i) {
+                $rumpf = "Content-Type: multipart/mixed; boundary=g{$i}\r\n\r\n--g{$i}\r\n" . $rumpf . "\r\n--g{$i}--\r\n";
+            }
+            $roh = "From: x@y.de\r\nSubject: gross\r\n" . $rumpf;
+
+            gc_collect_cycles();
+            memory_reset_peak_usage();
+            $vorher = memory_get_usage();
+            $n = MimeNachricht::lesen($roh);
+            $spitze = memory_get_peak_usage() - $vorher;
+
+            self::assertLessThan(3 * strlen($roh), $spitze, $ebenen . ' levels: ' . intdiv($spitze, 1024 * 1024) . ' MiB for ' . intdiv(strlen($roh), 1024 * 1024) . ' MiB');
+            if ($ebenen === 4) {
+                self::assertCount(1, $n->anhaenge);
+                self::assertSame(strlen($pdf), strlen($n->anhaenge[0]->inhalt));
+            } else {
+                self::assertSame([], $n->anhaenge, 'deeper than four levels is not opened');
+            }
+            unset($n, $roh, $rumpf);
+        }
+    }
 }
