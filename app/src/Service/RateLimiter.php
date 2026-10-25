@@ -18,8 +18,17 @@ use App\Repository\RateLimitRepository;
  *     5) - one counter with a namespace instead of three tables.
  *
  * Only failures are counted; a success resets the counter (see
- * App\Service\Account\LoginService). Checking is read-only, so asking
- * "is this blocked?" before an attempt never itself uses up an attempt.
+ * App\Service\Account\LoginService). isBlocked() is read-only, so asking
+ * "is this blocked?" for display never itself uses up an attempt.
+ *
+ * Guarding a check (a password, a code, a key) uses versuch() instead
+ * (security review N-09, issue #246): it counts the attempt BEFORE the check
+ * and answers from the counter as it stands after its own increment, in one
+ * atomic database step. "isBlocked(), then check, then registerFailure()"
+ * let any number of parallel requests pass the read before the first
+ * failure was written. A success then resets the counter (or, where the
+ * counter is shared with others, hands its one count back via erstatten()),
+ * so the rule "only failures count" still holds.
  *
  * The value never reaches the database: the row is keyed on
  * SHA-256("purpose:value"). For an IP address that is what
@@ -81,8 +90,43 @@ final readonly class RateLimiter
     }
 
     /**
-     * Records one failed attempt. A window that has run out is replaced
-     * rather than extended, so the table keeps one row per key.
+     * Counts this attempt and says whether it is still within the limit -
+     * one atomic step, so parallel attempts cannot overshoot it (N-09). Call
+     * it BEFORE checking the secret; on success reset() or erstatten().
+     * An attempt that is turned away still counts: the door stays shut
+     * for the rest of the window, which is what it is there for.
+     *
+     * @return bool true when the attempt may go ahead
+     */
+    public function versuch(string $purpose, string $value, int $limit, ?\DateTimeImmutable $now = null): bool
+    {
+        if ($value === '') {
+            return true;
+        }
+
+        $row = $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()));
+
+        return $row === null || $row['count'] <= $limit;
+    }
+
+    /**
+     * Hands back the count versuch() took for an attempt that succeeded,
+     * where a success must not wipe the whole counter (a counter per IP
+     * shared by several accounts or workers). Inside the same window only.
+     */
+    public function erstatten(string $purpose, string $value, ?\DateTimeImmutable $now = null): void
+    {
+        if ($value === '') {
+            return;
+        }
+
+        $this->rows->decrement($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()));
+    }
+
+    /**
+     * Records one failed attempt (atomically, like versuch()). A window that
+     * has run out is replaced rather than extended, so the table keeps one
+     * row per key.
      */
     public function registerFailure(string $purpose, string $value, ?\DateTimeImmutable $now = null): void
     {
@@ -90,17 +134,7 @@ final readonly class RateLimiter
             return;
         }
 
-        $key = $this->keyHash($purpose, $value);
-        $window = $this->windowStart($now ?? new \DateTimeImmutable());
-        $row = $this->rows->find($key);
-
-        if ($row === null || $row['windowStart'] !== $window) {
-            $this->rows->startWindow($key, $window);
-
-            return;
-        }
-
-        $this->rows->increment($key);
+        $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()));
     }
 
     /**

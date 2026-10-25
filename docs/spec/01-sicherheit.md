@@ -505,7 +505,28 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
     wird trotzdem abgeschlossen (der Tresor öffnet sich), aber
     `App\Http\LoginGuard` leitet jede Seite unter `/app` und `/admin`
     – außer `/app/sicherheit/*` selbst – auf `/app/sicherheit/einrichten`
-    um, bis eine Methode bestätigt ist.
+    um, bis eine Methode bestätigt ist. Seit #246 (N-10) gilt das auch für
+    die JSON-Routen (`/api/*` mit Sitzung): sie antworten 403 mit
+    `{"fehler": …, "weiter": "/app/sicherheit/einrichten"}`; die Poller
+    (`jobs.js`, `rasterung.js`) halten bei 403 an, die Einrichtung selbst
+    läuft ohne JSON-Route und bricht nicht.
+  - **Zweiten Faktor ändern nur nach erneuter Anmeldung** (issue #246, N-08,
+    ASVS 3.7.1): eine andere Methode, eine neue Authenticator-App oder neue
+    Backup-Codes verlangen – sobald schon ein Faktor eingerichtet ist –
+    zuerst Passwort **und** aktuellen Faktor (TOTP-, E-Mail- oder
+    Backup-Code) auf `/app/sicherheit/bestaetigen`
+    (`App\Service\Account\Neuanmeldung`). Die Bestätigung gilt
+    10 Minuten (`Neuanmeldung::GUELTIG_SEKUNDEN`, in der Session) und wird
+    von der Änderung verbraucht; ein neuer Login beginnt ohne sie. Gezählt
+    wird gegen die bestehenden Limits (Passwort wie beim Passwortwechsel,
+    Code wie beim zweiten Faktor); der Code wird erst nach richtigem
+    Passwort geprüft. Die **erste** Einrichtung fragt nicht nach. Ein neues
+    TOTP-Geheimnis liegt bis zur Bestätigung nur in der Session (Chiffrat
+    des Server-Schlüssels) und ersetzt erst dann das gespeicherte in einem
+    Schritt (`MfaTotpRepository::putConfirmed()`) – eine abgebrochene
+    Neueinrichtung lässt die bisherige App gültig. Der Wechsel auf
+    E-Mail-Code löscht ein vorhandenes TOTP-Geheimnis, weil die Anmeldung
+    TOTP-Codes unabhängig von der Methode annimmt. Entscheidung E-68.
   - **Session über den 2FA-Schritt hinweg**: `App\Service\Account\PendingLogin`
     ist das Gegenstück zu `SessionVault` für die Zwischenzeit –
     `$_SESSION['mfa_pending']` trägt Benutzer-ID, `VaultAccess`, gewählte
@@ -529,6 +550,13 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   genau dafür da ist, Erraten unpraktikabel zu machen. Der E-Mail-Code trägt
   zusätzlich sein eigenes Fünf-Versuche-Limit in der eigenen Zeile
   (`mfa_email_code.attempts`).
+  **Atomar** (issue #246, N-09): jede Prüfung eines Geheimnisses (Passwort,
+  Code, Wiederherstellungsschlüssel, Kopplungscode) zählt ihren Versuch
+  **vor** der Prüfung mit `RateLimiter::versuch()` – ein einziges
+  `INSERT … ON DUPLICATE KEY UPDATE`, danach wird der Zähler gelesen. So
+  kommen auch parallele Anfragen höchstens bis zum Limit; „nur Fehlversuche
+  zählen" bleibt, weil ein Erfolg den Zähler zurücksetzt (bzw. bei geteilten
+  Zählern seine eine Zählung mit `erstatten()` zurückgibt).
 - **Passwort-Reset**: Token 32 Byte, nur Hash gespeichert, 30 min,
   einmalig; beendet alle Sessions des Nutzers. Umgesetzt mit M3-5
   (issue #18, Tabelle `auth_token`, Typ `reset`): Token hex-kodiert im
@@ -558,6 +586,19 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
   entsperrt" mit M3-9 – geht an jeden Admin mit `admin.vault_grant` und
   eigener Freigabe, das handelnde Konto eingeschlossen.
 - Session-ID-Regeneration bei Login und Rechtewechsel.
+- **Session-Cookie** (issue #246, N-14): über HTTPS heißt es `__Host-sid`
+  (`Secure`, `Path=/`, keine `Domain`, `httponly`, `samesite=Lax`) – weder
+  eine Nachbar-Subdomain noch eine HTTP-Antwort kann es setzen oder
+  überschreiben. Über HTTP (nur Docker-Entwicklung) bleibt `PHPSESSID`. Ein
+  altes `PHPSESSID` wird über HTTPS nicht übernommen, sondern gelöscht: nach
+  dem Update meldet sich jeder einmal neu an. `use_strict_mode` bleibt aus
+  (Regenerations-Race mit den Pollern, #78).
+- **CSRF zentral** (issue #246, N-15): `app/src/routes.php` legt um jede
+  POST-Route `App\Http\CsrfSchutz` (hinter dem Login-Guard; ohne gültiges
+  Token 403, HTML bzw. JSON). Einzige Ausnahmen, festgeschrieben in
+  `CsrfSchutz::AUSNAHMEN`: `/einreichen*` (keine Session, Formular-Token,
+  §5) und `/api/worker/*` (HMAC-Signatur, 07). Die Prüfungen in den
+  Controllern bleiben zusätzlich.
 - **Bootstrap**: Wie im Vereinskalender legt der Installer den ersten Admin
   an – hier direkt mit E-Mail/Passwort, Tresor-Erzeugung und
   Wiederherstellungsschlüssel im selben Flow. Umgesetzt mit M3-2 (06 §1);
@@ -960,6 +1001,14 @@ E-Mail-Code (Ablauf, Versuchslimit, genau ein Versand beim Login nur bei
 E-Mail-Methode), Reset-Token (einmalig, Ablauf);
 Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);
+Härtung #246: jede POST-Route mit Session ohne gültiges CSRF-Token → 403,
+Ausnahmen genau `/einreichen*` und `/api/worker/*`; 2FA-Einrichtungspflicht
+auch für JSON-Routen; 2FA ändern/Backup-Codes neu nur nach Neuanmeldung
+(Passwort + aktueller Faktor, 10 min, verbraucht), abgebrochene
+TOTP-Neueinrichtung lässt die alte App gültig; `RateLimiter::versuch()`
+lässt auch über parallele Verbindungen höchstens das Limit durch;
+Session-Cookie `__Host-sid` über HTTPS, altes `PHPSESSID` ignoriert und
+gelöscht;
 Kostenstellen-Scope; Zeitraum-Scope und Ablauf externer Konten
 (Kassenprüfer/Steuerberater); Audit-Hash-Kette inkl.
 Manipulationserkennung; CSP-Compliance (übernommen). Öffentliche

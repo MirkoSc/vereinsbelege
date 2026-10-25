@@ -11,6 +11,7 @@ declare(strict_types=1);
 // has an existing id to regenerate - like the login form before the POST.
 
 use App\Http\Cookie;
+use App\Http\Request;
 use App\Http\Response;
 use App\Http\Session;
 
@@ -23,10 +24,15 @@ if (!is_string($sessionDir) || $sessionDir === '') {
 }
 session_save_path($sessionDir);
 
+// Issue #246 (N-14): the HTTPS case, which `php -S` cannot serve itself.
+if (($_SERVER['HTTP_X_TEST_HTTPS'] ?? '') === '1') {
+    $_SERVER['HTTPS'] = 'on';
+}
+
 $session = new Session();
 $session->start();
 
-if (($_SERVER['REQUEST_URI'] ?? '') !== '/anmelden') {
+if (parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH) !== '/anmelden') {
     new Response(200, [], 'form')->send();
 
     return;
@@ -34,6 +40,6 @@ if (($_SERVER['REQUEST_URI'] ?? '') !== '/anmelden') {
 
 $session->login(42);
 Response::redirect('/app')
-    ->withCookie(Cookie::vaultKey('vault-key', secure: false))
-    ->withCookie(Cookie::trustedDevice('device-token', secure: false, days: 30))
+    ->withCookie(Cookie::vaultKey('vault-key', secure: Request::httpsFromGlobals()))
+    ->withCookie(Cookie::trustedDevice('device-token', secure: Request::httpsFromGlobals(), days: 30))
     ->send();

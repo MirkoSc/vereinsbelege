@@ -52,7 +52,9 @@ final readonly class VaultRecovery
 
         // A live session is not a licence to guess: someone at an unlocked
         // computer could otherwise try recovery keys here without limit.
-        if ($this->limits->isBlocked(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
+        // Counted before the check, atomically (N-09, issue #246); a
+        // correct key resets the counter below.
+        if (!$this->limits->versuch(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
             return VaultRecoveryResult::fehler(
                 'Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.',
                 'rate_limit',
@@ -63,8 +65,6 @@ final readonly class VaultRecovery
         if ($aktuell === null) {
             // Cannot happen once the installer has run, but a null current()
             // must not become a false-shaped call into openVault() below.
-            $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
-
             return VaultRecoveryResult::fehler('Es ist noch kein Tresor eingerichtet.', 'kein_tresor');
         }
 
@@ -80,7 +80,6 @@ final readonly class VaultRecovery
             }
             $tresor = $schluessel->openVault($aktuell->publicKey(), $aktuell->version);
         } catch (RecoveryKeyException $e) {
-            $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
             $problem = self::problemFuer($e, $eingabe, $this->vaults);
 
             return VaultRecoveryResult::fehler(self::meldungFuer($problem), $problem->value);

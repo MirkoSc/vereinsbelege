@@ -172,10 +172,21 @@ final readonly class LoginGuard
         // is closed until setup finishes, the same way an expired session
         // closes them, except the account stays logged in and the vault
         // stays whatever it already was. Exempt: the setup pages themselves
-        // (or nobody could ever reach them) and the JSON API, which answers
-        // its own way when something is missing rather than redirecting.
-        if (!$api && $benutzer->user->mfaRequired && !$benutzer->user->mfaEingerichtet() && !str_starts_with($request->path, '/app/sicherheit')) {
-            return Response::redirect('/app/sicherheit/einrichten');
+        // (or nobody could ever reach them).
+        // Since issue #246 (security review N-10) the JSON routes are closed
+        // as well - before, an account that never set a factor up could
+        // still upload and run job steps from fetch(). They answer 403 with
+        // where to go instead of a redirect; the pollers (public/js/jobs.js,
+        // rasterung.js) treat a 403 as "stop", so the setup page they also
+        // run on is not disturbed, and the next page after setup starts them
+        // again.
+        if ($benutzer->user->mfaRequired && !$benutzer->user->mfaEingerichtet() && !self::istEinrichtung($request->path)) {
+            return $api
+                ? Response::json([
+                    'fehler' => 'Bitte richten Sie zuerst die Zwei-Faktor-Anmeldung ein.',
+                    'weiter' => self::EINRICHTUNG . '/einrichten',
+                ], 403)
+                : Response::redirect(self::EINRICHTUNG . '/einrichten');
         }
 
         if (!$this->darf($request, $zugriff, $benutzer->berechtigungen)) {
@@ -203,6 +214,17 @@ final readonly class LoginGuard
         '/admin/wartung',
         '/admin/backups',
     ];
+
+    /**
+     * The account's own security pages - the one place an account without
+     * a second factor can still reach (setup, and everything it needs).
+     */
+    public const string EINRICHTUNG = '/app/sicherheit';
+
+    private static function istEinrichtung(string $pfad): bool
+    {
+        return $pfad === self::EINRICHTUNG || str_starts_with($pfad, self::EINRICHTUNG . '/');
+    }
 
     private static function waehrendRotationOffen(string $pfad): bool
     {

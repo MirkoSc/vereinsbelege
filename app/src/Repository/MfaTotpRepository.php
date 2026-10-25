@@ -21,9 +21,9 @@ final readonly class MfaTotpRepository
     }
 
     /**
-     * Overwrites any previous secret: starting TOTP setup again before
-     * confirming replaces the unconfirmed attempt rather than accumulating
-     * rows (App\Service\Account\MfaEnrollment).
+     * Overwrites any previous secret with an unconfirmed one. The setup no
+     * longer goes through here (putConfirmed(), issue #246) - it stays for
+     * tests and tooling that need a secret in place.
      */
     public function put(int $userId, string $secretEnc, ?\DateTimeImmutable $now = null): void
     {
@@ -34,6 +34,29 @@ final readonly class MfaTotpRepository
         $stmt->bindValue(1, $userId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $secretEnc, \PDO::PARAM_LOB);
         $stmt->bindValue(3, ($now ?? new \DateTimeImmutable())->format(self::FORMAT));
+        $stmt->execute();
+    }
+
+    /**
+     * Replaces the account's secret with one whose first code was just
+     * confirmed - confirmed and with that code's step spent, in ONE
+     * statement (issue #246, N-08). Until this runs, the previous secret
+     * stays exactly as it was: a setup that is started and abandoned never
+     * touches it (App\Service\Account\MfaEnrollment).
+     */
+    public function putConfirmed(int $userId, string $secretEnc, int $step, ?\DateTimeImmutable $now = null): void
+    {
+        $zeit = ($now ?? new \DateTimeImmutable())->format(self::FORMAT);
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO mfa_totp (user_id, secret_enc, confirmed_at, last_step, created_at) VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE secret_enc = VALUES(secret_enc), confirmed_at = VALUES(confirmed_at),
+                 last_step = VALUES(last_step), created_at = VALUES(created_at)',
+        );
+        $stmt->bindValue(1, $userId, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $secretEnc, \PDO::PARAM_LOB);
+        $stmt->bindValue(3, $zeit);
+        $stmt->bindValue(4, $step, \PDO::PARAM_INT);
+        $stmt->bindValue(5, $zeit);
         $stmt->execute();
     }
 

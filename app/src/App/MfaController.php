@@ -78,7 +78,7 @@ final readonly class MfaController
         $tools = ($this->tools)();
         $ip = $request->ip;
 
-        if ($tools->mfa->isBlocked($ip, $pending->userId)) {
+        if (!$tools->mfa->versuch($ip, $pending->userId)) {
             return $this->seite(
                 $pending->mfaMethod,
                 fehler: 'Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.',
@@ -90,7 +90,6 @@ final readonly class MfaController
             || $tools->mfa->verifyEmailCode($pending->userId, $code);
 
         if (!$verified) {
-            $tools->mfa->registerFailure($ip, $pending->userId);
             $tools->audit->record(AuditAction::ZweiterFaktorFehlgeschlagen, null, $ip, $pending->userId, ['art' => 'code']);
 
             return $this->seite($pending->mfaMethod, fehler: 'Der Code ist ungültig oder abgelaufen.');
@@ -158,7 +157,7 @@ final readonly class MfaController
         $tools = ($this->tools)();
         $ip = $request->ip;
 
-        if ($tools->mfa->isBlocked($ip, $pending->userId)) {
+        if (!$tools->mfa->versuch($ip, $pending->userId)) {
             return $this->seite(
                 $pending->mfaMethod,
                 fehler: 'Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.',
@@ -167,7 +166,6 @@ final readonly class MfaController
 
         $code = (string) ($request->post['code'] ?? '');
         if (!$tools->mfa->verifyBackupCode($pending->userId, $code)) {
-            $tools->mfa->registerFailure($ip, $pending->userId);
             $tools->audit->record(AuditAction::ZweiterFaktorFehlgeschlagen, null, $ip, $pending->userId, ['art' => 'backup_code']);
 
             return $this->seite($pending->mfaMethod, fehler: 'Dieser Backup-Code ist ungültig oder bereits verbraucht.');

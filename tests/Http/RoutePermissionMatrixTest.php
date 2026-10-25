@@ -10,6 +10,7 @@ use App\Domain\Role;
 use App\Domain\SystemRole;
 use App\Domain\User;
 use App\Domain\UserStatus;
+use App\Http\CsrfSchutz;
 use App\Http\HttpMethod;
 use App\Http\LoginGuard;
 use App\Http\MatchType;
@@ -192,11 +193,12 @@ final class RoutePermissionMatrixTest extends TestCase
         $vorher = (int) $_SESSION['last_seen_at'] - 600;
 
         $_SESSION['last_seen_at'] = $vorher;
-        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step', headers: [LoginGuard::HINTERGRUND_HEADER => '1']), $treffer->params);
+        $token = new Session()->csrfToken();
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step', headers: [LoginGuard::HINTERGRUND_HEADER => '1', 'x-csrf-token' => $token]), $treffer->params);
         self::assertTrue($this->erreicht($antwort));
         self::assertSame($vorher, $_SESSION['last_seen_at'], 'a background poll is no activity');
 
-        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step'), $treffer->params);
+        $antwort = ($treffer->handler)(new Request(HttpMethod::Post, '/api/jobs/step', headers: ['x-csrf-token' => $token]), $treffer->params);
         self::assertTrue($this->erreicht($antwort));
         self::assertGreaterThan($vorher, $_SESSION['last_seen_at'], 'a request of the user is');
     }
@@ -751,6 +753,130 @@ final class RoutePermissionMatrixTest extends TestCase
         self::assertSame(403, $this->aufrufen($router, HttpMethod::Post, '/api/upload')->status);
     }
 
+    /**
+     * Security review N-15 (issue #246): every writing route that has a
+     * session answers 403 without a valid CSRF token - checked centrally
+     * (App\Http\CsrfSchutz, wired in app/src/routes.php), so the handler
+     * is never reached. Run as an account with every right, so the 403 can
+     * only come from the token, and as anonymous visitor for the public
+     * session routes (login, 2FA, password reset, invitation).
+     */
+    public function testEveryWritingRouteWantsACsrfToken(): void
+    {
+        $router = $this->router();
+        $alleRechte = new Berechtigungen([new Role(1, 'Alles', null, false, Permission::cases())]);
+        $geprueft = 0;
+
+        foreach ($router->routes() as $route) {
+            if ($route->method !== HttpMethod::Post || CsrfSchutz::ausgenommen($route->pattern)) {
+                continue;
+            }
+            $pfad = self::beispielPfad($route->pattern);
+
+            if ($route->zugriff->brauchtAnmeldung()) {
+                $this->anmelden($alleRechte);
+            } else {
+                $this->angemeldet = null;
+                $_SESSION = [];
+            }
+            $_SESSION['csrf'] = bin2hex(random_bytes(32));
+
+            foreach ([null, 'falsch'] as $token) {
+                $kopf = $token === null ? [] : ['x-csrf-token' => $token];
+                $antwort = ($router->match(HttpMethod::Post, $pfad)->handler ?? self::fail($pfad))(
+                    new Request(HttpMethod::Post, $pfad, headers: $kopf),
+                    $router->match(HttpMethod::Post, $pfad)->params,
+                );
+                self::assertInstanceOf(Response::class, $antwort);
+                self::assertSame(403, $antwort->status, 'POST ' . $route->pattern . ' without a valid token');
+                self::assertNotSame(self::ERREICHT, $antwort->body, 'POST ' . $route->pattern . ' reached its handler');
+                if ($route->zugriff->api) {
+                    self::assertStringStartsWith('application/json', $antwort->headers['Content-Type'] ?? '', $route->pattern);
+                }
+            }
+            ++$geprueft;
+        }
+
+        self::assertGreaterThan(150, $geprueft, 'the route table was read');
+    }
+
+    /**
+     * The exceptions are exactly the routes without a session: the public
+     * submission (form token) and the worker API (HMAC). Nothing else may
+     * be added there without changing this list in the same PR.
+     */
+    public function testTheCsrfExceptionsAreExactlyTheRoutesWithoutASession(): void
+    {
+        self::assertSame(['/einreichen', '/api/worker'], array_keys(CsrfSchutz::AUSNAHMEN));
+
+        foreach ($this->router()->routes() as $route) {
+            if ($route->method !== HttpMethod::Post || !CsrfSchutz::ausgenommen($route->pattern)) {
+                continue;
+            }
+            if (str_starts_with($route->pattern, '/einreichen')) {
+                self::assertSame(ZugriffArt::Oeffentlich, $route->zugriff->art, $route->pattern);
+            } else {
+                self::assertTrue(
+                    $route->zugriff->art === ZugriffArt::Worker || $route->pattern === '/api/worker/pair',
+                    $route->pattern . ' is excepted from the CSRF check but not signed',
+                );
+            }
+        }
+        self::assertFalse(CsrfSchutz::ausgenommen('/einreichenx'));
+        self::assertFalse(CsrfSchutz::ausgenommen('/api/workers'));
+        self::assertFalse(CsrfSchutz::ausgenommen('/app/einreichen'));
+    }
+
+    /** The anonymous visitor of a protected route still gets the login first, not a 403. */
+    public function testTheLoginComesBeforeTheToken(): void
+    {
+        $this->angemeldet = null;
+        $_SESSION = [];
+        $router = $this->router();
+
+        self::assertSame(401, $this->aufrufen($router, HttpMethod::Post, '/api/jobs/step', mitToken: false)->status);
+        $antwort = $this->aufrufen($router, HttpMethod::Post, '/app/sicherheit/backup-codes/neu', mitToken: false);
+        self::assertSame(302, $antwort->status);
+        self::assertStringStartsWith('/anmelden', $antwort->headers['Location'] ?? '');
+    }
+
+    /**
+     * Security review N-10 (issue #246): an account that must set up a
+     * second factor and has not is held at the setup - the JSON routes
+     * included, with a 403 that says where to go. The setup pages
+     * themselves stay reachable, or the setup could never finish.
+     */
+    public function testWithoutASecondFactorOnlyTheSetupIsOpenAlsoForJson(): void
+    {
+        $router = $this->router();
+        $this->anmelden(self::berechtigungen(SystemRole::Admin), ohneZweitenFaktor: true);
+
+        foreach ($router->routes() as $route) {
+            if (!$route->zugriff->brauchtAnmeldung() || $route->zugriff->art === ZugriffArt::Worker) {
+                continue;
+            }
+            $pfad = self::beispielPfad($route->pattern);
+            $antwort = $this->aufrufen($router, $route->method, $pfad);
+            assert($antwort instanceof Response);
+
+            if (str_starts_with($route->pattern, '/app/sicherheit')) {
+                self::assertSame(self::ERREICHT, $antwort->body, $route->pattern . ' belongs to the setup');
+
+                continue;
+            }
+            self::assertNotSame(self::ERREICHT, $antwort->body, $route->method->value . ' ' . $route->pattern);
+            if ($route->zugriff->api) {
+                self::assertSame(403, $antwort->status, $route->pattern);
+                $daten = json_decode($antwort->body, true);
+                self::assertIsArray($daten);
+                self::assertSame('/app/sicherheit/einrichten', $daten['weiter'] ?? null, $route->pattern);
+            } else {
+                self::assertSame(302, $antwort->status, $route->pattern);
+                self::assertSame('/app/sicherheit/einrichten', $antwort->headers['Location'] ?? null, $route->pattern);
+            }
+        }
+    }
+
     // ----------------------------------------------------------- scaffolding
 
     private static function erwartet(Route $route, string $pfad, Berechtigungen $berechtigungen): bool
@@ -772,13 +898,13 @@ final class RoutePermissionMatrixTest extends TestCase
         return new Berechtigungen([new Role(1, $rolle->bezeichnung(), $rolle, $rolle->istExtern(), $rolle->standardRechte())]);
     }
 
-    private function anmelden(Berechtigungen $berechtigungen): void
+    private function anmelden(Berechtigungen $berechtigungen, bool $ohneZweitenFaktor = false): void
     {
         // Started first: session_start() would replace what is set here.
         new Session()->start();
         $jetzt = new \DateTimeImmutable();
         $this->angemeldet = new SessionUser(
-            new User(7, 'x', 'x', 'x', UserStatus::Aktiv, null, false, null, $jetzt, null),
+            new User(7, 'x', 'x', 'x', UserStatus::Aktiv, null, $ohneZweitenFaktor, null, $jetzt, null),
             'Test',
             $berechtigungen,
         );
@@ -790,13 +916,20 @@ final class RoutePermissionMatrixTest extends TestCase
         ];
     }
 
-    private function aufrufen(Router $router, HttpMethod $methode, string $pfad): ResponseInterface
+    /**
+     * With a valid CSRF token unless told otherwise - what this matrix is
+     * about is the declaration; testEveryWritingRouteWantsACsrfToken() is
+     * about the token.
+     */
+    private function aufrufen(Router $router, HttpMethod $methode, string $pfad, bool $mitToken = true): ResponseInterface
     {
         $treffer = $router->match($methode, $pfad);
         self::assertSame(MatchType::Matched, $treffer->type, $methode->value . ' ' . $pfad);
         assert($treffer->handler !== null);
 
-        return ($treffer->handler)(new Request($methode, $pfad), $treffer->params);
+        $kopf = $mitToken ? ['x-csrf-token' => new Session()->csrfToken()] : [];
+
+        return ($treffer->handler)(new Request($methode, $pfad, headers: $kopf), $treffer->params);
     }
 
     /**

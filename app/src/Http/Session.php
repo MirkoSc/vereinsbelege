@@ -51,9 +51,44 @@ final class Session
         'cache_limiter' => 'nocache',
     ];
 
+    /**
+     * The session cookie's name over HTTPS (security review N-14, issue
+     * #246). The `__Host-` prefix makes the browser refuse the cookie unless
+     * it is Secure, has Path=/ and no Domain - so neither a sibling
+     * subdomain nor a plain-HTTP response can plant or overwrite it (the
+     * session-fixation route a bare PHPSESSID leaves open).
+     */
+    public const string NAME_HTTPS = '__Host-sid';
+
+    /**
+     * Over plain HTTP (only the docker dev setup) a `__Host-` cookie would
+     * never be stored; PHP's default name stays, as before.
+     */
+    public const string NAME_HTTP = 'PHPSESSID';
+
+    /** Keys of the re-authentication state (N-08, issue #246). */
+    private const string NEUANMELDUNG = 'neuanmeldung_at';
+
+    private const string TOTP_EINRICHTUNG = 'totp_einrichtung';
+
     public function start(): void
     {
         if (session_status() === PHP_SESSION_NONE) {
+            $https = Request::httpsFromGlobals();
+            session_name($https ? self::NAME_HTTPS : self::NAME_HTTP);
+            // The switch from PHPSESSID (N-14): a cookie of that name is
+            // ignored over HTTPS - the session behind it is not taken over,
+            // so the update costs one fresh login and nothing else - and
+            // deleted, so it does not linger next to the new one.
+            if ($https && isset($_COOKIE[self::NAME_HTTP]) && !headers_sent()) {
+                setcookie(self::NAME_HTTP, '', [
+                    'expires' => 1,
+                    'path' => '/',
+                    'secure' => true,
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
+            }
             session_set_cookie_params([
                 'httponly' => true,
                 // HTTPS is an installation requirement, so in production this
@@ -64,9 +99,13 @@ final class Session
                 // Derived from the request instead of hardcoded because the
                 // docker dev setup serves http://localhost:8080, where a
                 // secure cookie would silently never be stored.
-                'secure' => Request::httpsFromGlobals(),
+                'secure' => $https,
                 'samesite' => 'Lax',
                 'path' => '/',
+                // Pinned empty: `__Host-` forbids a Domain attribute, and a
+                // host-wide session.cookie_domain must not turn the cookie
+                // into one the browser throws away.
+                'domain' => '',
             ]);
             session_start(self::OPTIONEN);
         }
@@ -113,7 +152,7 @@ final class Session
             session_regenerate_id(true);
         }
 
-        unset($_SESSION['csrf']);
+        unset($_SESSION['csrf'], $_SESSION[self::NEUANMELDUNG], $_SESSION[self::TOTP_EINRICHTUNG]);
         $zeit = ($now ?? new \DateTimeImmutable())->getTimestamp();
         $_SESSION['user_id'] = $userId;
         $_SESSION['login_at'] = $zeit;
@@ -185,6 +224,58 @@ final class Session
         $jetzt = ($now ?? new \DateTimeImmutable())->getTimestamp();
 
         return $jetzt - $lastSeen >= $idleSeconds || $jetzt - $loginAt >= $absoluteSeconds;
+    }
+
+    /**
+     * Marks that this session just proved password and current second
+     * factor again (security review N-08, issue #246, ASVS 3.7.1): changing
+     * the second factor or its backup codes asks for that, not only a live
+     * session. App\App\SecurityController reads it with
+     * neuanmeldungGueltig() and drops it once the change is made.
+     */
+    public function bestaetigeNeuanmeldung(?\DateTimeImmutable $now = null): void
+    {
+        $_SESSION[self::NEUANMELDUNG] = ($now ?? new \DateTimeImmutable())->getTimestamp();
+    }
+
+    public function neuanmeldungGueltig(int $sekunden, ?\DateTimeImmutable $now = null): bool
+    {
+        $zeit = $_SESSION[self::NEUANMELDUNG] ?? null;
+        if (!is_int($zeit)) {
+            return false;
+        }
+        $alter = ($now ?? new \DateTimeImmutable())->getTimestamp() - $zeit;
+
+        return $alter >= 0 && $alter < $sekunden;
+    }
+
+    public function verwirfNeuanmeldung(): void
+    {
+        unset($_SESSION[self::NEUANMELDUNG]);
+    }
+
+    /**
+     * A TOTP secret that is being set up but not confirmed yet - server-key
+     * ciphertext (App\Service\Crypto\ServerCrypto), the same protection the
+     * stored secret has. It lives here instead of in `mfa_totp` so that a
+     * setup started and then abandoned leaves the account's current
+     * authenticator working (N-08, issue #246).
+     */
+    public function merkeTotpEinrichtung(string $secretEnc): void
+    {
+        $_SESSION[self::TOTP_EINRICHTUNG] = $secretEnc;
+    }
+
+    public function totpEinrichtung(): ?string
+    {
+        $wert = $_SESSION[self::TOTP_EINRICHTUNG] ?? null;
+
+        return is_string($wert) && $wert !== '' ? $wert : null;
+    }
+
+    public function verwirfTotpEinrichtung(): void
+    {
+        unset($_SESSION[self::TOTP_EINRICHTUNG]);
     }
 
     public function csrfToken(): string

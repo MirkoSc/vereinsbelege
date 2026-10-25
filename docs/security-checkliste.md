@@ -31,9 +31,11 @@ eine in diesem PR behobene Zeile.
 
 | Test | Prüft |
 |---|---|
-| `tests/Http/RoutePermissionMatrixTest` | jede Route × anonym × sechs Systemrollen gegen ihre Deklaration; Stichproben gegen die Rechte-Tabelle; Allowlist öffentlicher Routen; `/admin` nur mit `admin.*`; **jede** Deklaration gegen `routen-zugriff.txt` (#78) |
+| `tests/Http/RoutePermissionMatrixTest` | jede Route × anonym × sechs Systemrollen gegen ihre Deklaration; Stichproben gegen die Rechte-Tabelle; Allowlist öffentlicher Routen; `/admin` nur mit `admin.*`; **jede** Deklaration gegen `routen-zugriff.txt` (#78); **jede** POST-Route ohne gültiges CSRF-Token → 403, Ausnahmen festgeschrieben; 2FA-Einrichtungspflicht auch für JSON (#246) |
 | `tests/Http/CspComplianceTest` | CSP ohne `unsafe-inline`/`unsafe-eval`, kein externer Host, kein Inline-JS/`on*`/`hx-on` in Views, Security-Header vollständig (#78: XFO, Permissions-Policy, COOP) |
 | `tests/Http/SessionOptionsTest` | `cache_limiter=nocache`, kein `use_strict_mode` (#78) |
+| `tests/Http/ResponseSendTest` | Session-Cookie über HTTPS `__Host-sid` mit Secure, Path=/, ohne Domain; altes `PHPSESSID` ignoriert und gelöscht (#246) |
+| `tests/Integration/RateLimiterTest` | `versuch()` lässt auch über parallele Verbindungen höchstens das Limit durch (#246) |
 | `tests/Http/KernelErrorLogTest`, `ExceptionArgsTest` | Fehlerseite ohne Trace, Log ohne Argumente |
 | `tests/Support/NoShellExecutionTest` | kein `exec` & Co. außerhalb von `worker/src/Prozess.php` |
 | `tests/Service/Account/PasswordHasherTest` | Dummy-Hash so teuer wie ein echter (#78) |
@@ -47,7 +49,7 @@ eine in diesem PR behobene Zeile.
 | A-02 | Passwortregel ≥ 12 Zeichen + Liste häufiger Passwörter, keine Zusammensetzungsregeln | ✓ | `PasswordPolicy`, `app/data/haeufige-passwoerter.txt` |
 | A-03 | Wortgleiche Meldung für unbekannt/falsch/gesperrt/abgelaufen | ✓ | `LoginService`, `App/AuthController` |
 | A-04 | Keine User-Enumeration über die Laufzeit (Schein-`password_verify`) | ✓ (#78) | `PasswordHasher::DUMMY_*` – vorher je Request neu gehasht = doppelte Laufzeit |
-| A-05 | Rate-Limit je IP (20) und Konto (10), 15 min, nur Fehlversuche | ✓ / ✗ parallel | `RateLimiter`; Prüfen und Zählen nicht atomar → Befund N-09 |
+| A-05 | Rate-Limit je IP (20) und Konto (10), 15 min, nur Fehlversuche | ✓ (#246) | `RateLimiter::versuch()`: zählt vor der Prüfung, atomar (`INSERT … ON DUPLICATE KEY UPDATE`); Erfolg setzt zurück – vorher N-09 |
 | A-06 | Status und Ablaufdatum bei Login **und** jedem Request | ✓ | `User::mayLogIn()`, `LoginGuard` |
 | A-07 | Kein Open Redirect über `weiter` | ✓ | `AuthController` (nur relative Pfade) |
 | A-08 | Tresor erst nach dem zweiten Faktor (PendingLogin, `__Host-2fa`) | ✓ | `PendingLogin`, `Http/Cookie` |
@@ -57,8 +59,8 @@ eine in diesem PR behobene Zeile.
 | A-12 | Backup-Codes: 10, gehasht, einmalig, atomar verbraucht | ✓ (#78) | `MfaBackupCodeRepository::markUsed()` (`AND used_at IS NULL`, `rowCount`) |
 | A-13 | 2FA-Rate-Limit (20 je IP, 8 je Konto) | ✓ | `MfaService::isBlocked()` |
 | A-14 | „Gerät merken": 32 Byte, nur Hash, Ablauf, widerrufbar | ✓ | `MfaService`, `TrustedDeviceRepository`, `/app/sicherheit` |
-| A-15 | Erzwungene 2FA-Einrichtung für alle Seiten unter `/app`, `/admin` | ✗ niedrig | `LoginGuard`: JSON-Routen ausgenommen → N-10 |
-| A-16 | Zweiten Faktor ändern / Backup-Codes neu nur nach erneuter Anmeldung (ASVS 3.7.1) | ✗ niedrig | `App/SecurityController` → N-08 |
+| A-15 | Erzwungene 2FA-Einrichtung für alle Seiten unter `/app`, `/admin` | ✓ (#246) | `LoginGuard`: auch JSON-Routen (403 mit `weiter`), nur `/app/sicherheit/*` offen – vorher N-10 |
+| A-16 | Zweiten Faktor ändern / Backup-Codes neu nur nach erneuter Anmeldung (ASVS 3.7.1) | ✓ (#246) | `Account/Neuanmeldung` (Passwort + aktueller Faktor, 10 min), `App/SecurityController`; neues TOTP-Geheimnis bis zur Bestätigung nur in der Session – vorher N-08 |
 | A-17 | Reset-Token 32 Byte, nur HMAC, 30 min, einmalig, ersetzt alte | ✓ | `PasswordReset`, `AuthTokenRepository` |
 | A-18 | Reset beendet alle Sitzungen (Epoche) | ✓ | `PasswordReset::complete()` |
 | A-19 | Reset/Einladung: gleiche Antwort für alle Fälle, Rate-Limit 10/IP, 3/Adresse | ✓ | `PasswordController`, `Invitation` |
@@ -73,13 +75,13 @@ eine in diesem PR behobene Zeile.
 | B-01 | Session-Cookie `httponly`, `samesite=Lax`, `secure` aus dem Schema | ✓ | `Http/Session::start()` |
 | B-02 | Kein Cache für Sitzungsseiten; `use_strict_mode` bewusst aus (Regenerations-Race mit Pollern) | ✓ (#78) | `Session::OPTIONEN` |
 | B-03 | Tresor-, 2FA-, Geräte-Cookie mit `__Host-`-Präfix | ✓ | `Http/Cookie` |
-| B-04 | Session-Cookie mit `__Host-`-Namen | ✗ Härtung | heißt `PHPSESSID` → N-14 |
+| B-04 | Session-Cookie mit `__Host-`-Namen | ✓ (#246) | `Session::NAME_HTTPS` = `__Host-sid` über HTTPS; altes `PHPSESSID` wird ignoriert und gelöscht (einmal neu anmelden) – vorher N-14 |
 | B-05 | Neue Session-ID bei Login, Rechte-/Passwortwechsel; CSRF-Token verworfen | ✓ | `Session::login()`, `adoptEpoch()` |
 | B-06 | Idle 30 min / absolut 12 h, Settings mit sicherem Rückfall | ✓ | `SessionTimeouts`, `Session::isExpired()` |
 | B-07 | Idle-Timeout greift auch bei offenem Tab (Hintergrund-Polling verlängert nicht) | ✓ (#78) | `LoginGuard::HINTERGRUND_HEADER`, `public/js/jobs.js`, `rasterung.js` – Folge: eine lange Job-Kette ohne Klick endet nach 30 min, weiter nach erneuter Anmeldung |
 | B-08 | Sperren/Ablauf/Reset beenden laufende Sitzungen sofort | ✓ | `LoginGuard` (Epoche) |
 | B-09 | Logout nur per POST + CSRF, löscht Sitzung und Tresor-Cookie | ✓ | `AuthController::logout()` |
-| B-10 | CSRF-Token auf allen schreibenden Session-Routen | ✓ | je Controller `checkCsrf()`; Ausnahmen gewollt: `/einreichen*` (Formular-Token), `/api/worker/*` (HMAC). Ein zentraler Test über alle POST-Routen fehlt → N-15 |
+| B-10 | CSRF-Token auf allen schreibenden Session-Routen | ✓ (#246) | zentral `Http/CsrfSchutz` im Routen-Wrapper (403) plus je Controller `checkCsrf()`; Ausnahmen gewollt und festgeschrieben: `/einreichen*` (Formular-Token), `/api/worker/*` (HMAC); `RoutePermissionMatrixTest::testEveryWritingRouteWantsACsrfToken` – vorher N-15 |
 | B-11 | Nur HTTPS (Umleitung HTTP → HTTPS) | ✗ niedrig | keine Umleitung in `.htaccess`/Shim → N-11; HSTS vorhanden |
 | B-12 | Tresor-Schlüssel nur geteilt (Session-Chiffrat + Cookie-Schlüssel) | ✓ | `SessionVault` |
 
@@ -236,14 +238,14 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-05 | niedrig | `/install` ohne Token, solange `config.php` fehlt |
 | N-06 | niedrig | Audit-Log ohne Zeitraum-Scope |
 | N-07 | niedrig | Budget schreiben/löschen ohne Scope |
-| N-08 | niedrig | 2FA ändern ohne erneute Anmeldung; abgebrochene Neueinrichtung entwertet TOTP |
-| N-09 | niedrig | Rate-Limiter: Prüfen und Zählen nicht atomar |
-| N-10 | niedrig | 2FA-Einrichtungspflicht nicht für JSON-Routen |
+| N-08 | niedrig | ✓ behoben (#246): 2FA ändern ohne erneute Anmeldung; abgebrochene Neueinrichtung entwertet TOTP |
+| N-09 | niedrig | ✓ behoben (#246): Rate-Limiter: Prüfen und Zählen nicht atomar |
+| N-10 | niedrig | ✓ behoben (#246): 2FA-Einrichtungspflicht nicht für JSON-Routen |
 | N-11 | niedrig | keine HTTP→HTTPS-Umleitung |
 | N-12 | niedrig | DATEV-Belegfeld mit führendem `+`/`-` |
 | N-13 | niedrig | TOCTOU Magic Bytes ↔ Speichern beim Upload |
-| N-14 | Härtung | Session-Cookie `PHPSESSID` statt `__Host-` |
-| N-15 | Härtung | kein zentraler CSRF-Test über alle POST-Routen |
+| N-14 | Härtung | ✓ behoben (#246): Session-Cookie `PHPSESSID` statt `__Host-` |
+| N-15 | Härtung | ✓ behoben (#246): kein zentraler CSRF-Test über alle POST-Routen |
 | N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails |
 | N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze |
 | N-18 | Härtung | Update-Download-URLs nicht auf github.com beschränkt |

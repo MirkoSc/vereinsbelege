@@ -69,7 +69,11 @@ final readonly class LoginService
         $now ??= new \DateTimeImmutable();
         $email = trim($email);
 
-        if ($this->limits->isBlocked(self::LIMIT_IP, $ip, RateLimiter::LOGIN_LIMIT_PER_IP, $now)) {
+        // Counted before the password is checked, atomically (security
+        // review N-09, issue #246): parallel guesses cannot all slip past a
+        // read that happens before the first failure is written. A correct
+        // password resets both counters below, so only failures stay counted.
+        if (!$this->limits->versuch(self::LIMIT_IP, $ip, RateLimiter::LOGIN_LIMIT_PER_IP, $now)) {
             return LoginResult::fehler(LoginFailure::ZuVieleVersuche);
         }
 
@@ -79,7 +83,7 @@ final readonly class LoginService
         $emailBi = $this->crypto->blindIndex()->forValue('user.email', $email);
         $konto = bin2hex($emailBi);
 
-        if ($this->limits->isBlocked(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
+        if (!$this->limits->versuch(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
             return LoginResult::fehler(LoginFailure::ZuVieleVersuche);
         }
 
@@ -90,11 +94,11 @@ final readonly class LoginService
         if ($user === null || !$user->mayLogIn($now)) {
             $this->passwords->verifyDummy($password);
 
-            return $this->fehlversuch($ip, $konto, $now);
+            return $this->fehlversuch();
         }
 
         if (!$this->passwords->verify($password, $user->passwordHash)) {
-            return $this->fehlversuch($ip, $konto, $now);
+            return $this->fehlversuch();
         }
 
         // From here on the credentials are right. The second factor of M3-4
@@ -236,11 +240,12 @@ final readonly class LoginService
         }
     }
 
-    private function fehlversuch(string $ip, string $konto, \DateTimeImmutable $now): LoginResult
+    /**
+     * Both counters already hold this attempt (versuch() above) - a failure
+     * simply leaves it there.
+     */
+    private function fehlversuch(): LoginResult
     {
-        $this->limits->registerFailure(self::LIMIT_IP, $ip, $now);
-        $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
-
         return LoginResult::fehler(LoginFailure::Zugangsdaten);
     }
 }

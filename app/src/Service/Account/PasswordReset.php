@@ -86,14 +86,15 @@ final readonly class PasswordReset
         $emailBi = $this->crypto->blindIndex()->forValue('user.email', $email);
         $konto = bin2hex($emailBi);
 
+        // Every request counts - checked and counted in one atomic step per
+        // counter (N-09, issue #246), so parallel requests cannot send more
+        // mails than the limit allows.
         if (
-            $this->limits->isBlocked(self::LIMIT_IP, $ip, self::LIMIT_PER_IP, $now)
-            || $this->limits->isBlocked(self::LIMIT_ACCOUNT, $konto, self::LIMIT_PER_ACCOUNT, $now)
+            !$this->limits->versuch(self::LIMIT_IP, $ip, self::LIMIT_PER_IP, $now)
+            || !$this->limits->versuch(self::LIMIT_ACCOUNT, $konto, self::LIMIT_PER_ACCOUNT, $now)
         ) {
             return PasswordResetAnfrage::gesperrt();
         }
-        $this->limits->registerFailure(self::LIMIT_IP, $ip, $now);
-        $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
 
         $user = $email === '' ? null : $this->users->findByEmailBlindIndex($emailBi);
         if ($user === null || !$user->mayLogIn($now)) {

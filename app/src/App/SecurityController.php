@@ -12,6 +12,8 @@ use App\Http\Session;
 use App\Repository\UserRepository;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\Neuanmeldung;
+use App\Service\Account\NeuanmeldungErgebnis;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\Totp;
 use App\Service\Audit\AuditLog;
@@ -41,6 +43,14 @@ use App\View\View;
  * (a closed tab, a reload) is not a state worth resuming: starting over is
  * one click, and a secret nobody has scanned yet is not worth keeping
  * (App\Service\Account\MfaEnrollment::startTotp()).
+ *
+ * Changing a second factor that is already in place - another method, a
+ * new authenticator, new backup codes - first asks for the password and
+ * the current factor again (security review N-08, issue #246, ASVS 3.7.1;
+ * App\Service\Account\Neuanmeldung, `/app/sicherheit/bestaetigen`), valid
+ * for Neuanmeldung::GUELTIG_SEKUNDEN and spent by the change it allowed.
+ * The very first setup does not: there is no factor yet to ask for, and
+ * the login has just checked the password.
  */
 final readonly class SecurityController
 {
@@ -54,6 +64,7 @@ final readonly class SecurityController
         private ServerCrypto $crypto,
         private PasswordChange $passwordChange,
         private AuditLog $audit,
+        private Neuanmeldung $neuanmeldung,
     ) {
     }
 
@@ -75,9 +86,82 @@ final readonly class SecurityController
     public function einrichten(Request $request): ResponseInterface
     {
         $this->session->start();
-        $this->requireUserId();
+        $userId = $this->requireUserId();
 
-        return $this->seite('waehlen');
+        return $this->ohneNeuanmeldung($userId, self::EINRICHTEN) ?? $this->seite('waehlen');
+    }
+
+    /**
+     * The re-authentication form (N-08): password plus the current factor.
+     * `weiter` is where the confirmed change continues - only one of the
+     * account's own security pages (WEITER_ERLAUBT), never a URL from
+     * outside.
+     */
+    public function bestaetigen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        $userId = $this->requireUserId();
+
+        return $this->bestaetigenSeite($userId, self::weiter($request->query['weiter'] ?? null));
+    }
+
+    public function bestaetigenPruefen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        $userId = $this->requireUserId();
+        $weiter = self::weiter($request->post['weiter'] ?? null);
+        if (!$this->session->checkCsrf($request)) {
+            return $this->bestaetigenSeite($userId, $weiter, fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
+        }
+
+        $ergebnis = $this->neuanmeldung->pruefe(
+            $userId,
+            (string) ($request->post['passwort'] ?? ''),
+            (string) ($request->post['code'] ?? ''),
+            $request->ip,
+        );
+        if ($ergebnis !== NeuanmeldungErgebnis::Bestaetigt) {
+            if ($ergebnis === NeuanmeldungErgebnis::CodeFalsch) {
+                $this->audit->record(AuditAction::ZweiterFaktorFehlgeschlagen, $userId, $request->ip, $userId, ['art' => 'neuanmeldung']);
+            }
+
+            return $this->bestaetigenSeite($userId, $weiter, fehler: $ergebnis->meldung());
+        }
+
+        $this->session->bestaetigeNeuanmeldung();
+        if ($weiter === self::UEBERSICHT) {
+            $this->session->flash('Bestätigt – Sie können die Backup-Codes jetzt neu erzeugen.', FlashArt::Info);
+        }
+
+        return Response::redirect($weiter);
+    }
+
+    /** The e-mail code for the re-authentication - for either method, as on the login page. */
+    public function bestaetigenCodeSenden(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        $userId = $this->requireUserId();
+        $weiter = self::weiter($request->post['weiter'] ?? null);
+        if (!$this->session->checkCsrf($request)) {
+            return $this->bestaetigenSeite($userId, $weiter, fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
+        }
+        if ($this->mfa->isBlocked($request->ip, $userId)) {
+            return $this->bestaetigenSeite($userId, $weiter, fehler: NeuanmeldungErgebnis::ZuVieleVersuche->meldung());
+        }
+
+        $user = $this->users->findById($userId);
+        if ($user === null) {
+            return $this->bestaetigenSeite($userId, $weiter);
+        }
+        $ergebnis = $this->mailer->sendeMfaCode(
+            $this->crypto->decrypt($user->emailEnc),
+            $this->mfa->requestEmailCode($userId),
+            intdiv(MfaService::EMAIL_CODE_TTL_SECONDS, 60),
+        );
+
+        return $this->bestaetigenSeite($userId, $weiter, hinweis: $ergebnis->erfolg
+            ? 'Ein Code wurde per E-Mail versendet.'
+            : 'Der Code konnte nicht versendet werden. Bitte versuchen Sie es erneut.');
     }
 
     public function totpStarten(Request $request): ResponseInterface
@@ -87,12 +171,15 @@ final readonly class SecurityController
             return $this->seite('waehlen', fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
         $userId = $this->requireUserId();
+        $umweg = $this->ohneNeuanmeldung($userId, self::EINRICHTEN);
+        if ($umweg !== null) {
+            return $umweg;
+        }
 
-        $secret = $this->enrollment->startTotp($userId);
-        $user = $this->users->findById($userId);
-        $email = $user === null ? '' : $this->crypto->decrypt($user->emailEnc);
+        $secret = $this->enrollment->startTotp();
+        $this->session->merkeTotpEinrichtung($this->crypto->encrypt($secret));
 
-        return $this->seite('totp', totpSecretBase32: Totp::base32Encode($secret), totpUri: Totp::uri($secret, $email, 'Vereinsbelege'));
+        return $this->totpSeite($userId, $secret);
     }
 
     public function totpBestaetigen(Request $request): ResponseInterface
@@ -102,14 +189,26 @@ final readonly class SecurityController
             return $this->seite('waehlen', fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
         $userId = $this->requireUserId();
-
-        $code = trim((string) ($request->post['code'] ?? ''));
-        $codes = $this->enrollment->confirmTotp($userId, $code);
-
-        if ($codes === null) {
-            return $this->seite('totp', fehler: 'Der Code stimmt nicht. Bitte erneut versuchen.');
+        $umweg = $this->ohneNeuanmeldung($userId, self::EINRICHTEN);
+        if ($umweg !== null) {
+            return $umweg;
         }
 
+        $secretEnc = $this->session->totpEinrichtung();
+        if ($secretEnc === null) {
+            return $this->seite('waehlen', fehler: 'Die Einrichtung ist abgelaufen – bitte erneut starten.');
+        }
+        $secret = $this->crypto->decrypt($secretEnc);
+
+        $code = trim((string) ($request->post['code'] ?? ''));
+        $codes = $this->enrollment->confirmTotp($userId, $secret, $code);
+
+        if ($codes === null) {
+            return $this->totpSeite($userId, $secret, fehler: 'Der Code stimmt nicht. Bitte erneut versuchen.');
+        }
+
+        $this->session->verwirfTotpEinrichtung();
+        $this->session->verwirfNeuanmeldung();
         $this->audit->record(AuditAction::TotpEingerichtet, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Anmeldung mit Authenticator-App (TOTP) wurde eingerichtet.');
 
@@ -123,6 +222,10 @@ final readonly class SecurityController
             return $this->seite('waehlen', fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
         $userId = $this->requireUserId();
+        $umweg = $this->ohneNeuanmeldung($userId, self::EINRICHTEN);
+        if ($umweg !== null) {
+            return $umweg;
+        }
         $user = $this->users->findById($userId);
         if ($user === null) {
             return $this->seite('waehlen');
@@ -147,6 +250,10 @@ final readonly class SecurityController
             return $this->seite('waehlen', fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
         $userId = $this->requireUserId();
+        $umweg = $this->ohneNeuanmeldung($userId, self::EINRICHTEN);
+        if ($umweg !== null) {
+            return $umweg;
+        }
 
         $code = trim((string) ($request->post['code'] ?? ''));
         if (!$this->mfa->verifyEmailCode($userId, $code)) {
@@ -154,6 +261,8 @@ final readonly class SecurityController
         }
 
         $codes = $this->enrollment->commitEmailMethod($userId);
+        $this->session->verwirfTotpEinrichtung();
+        $this->session->verwirfNeuanmeldung();
         $this->audit->record(AuditAction::EmailCodeEingerichtet, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Anmeldung mit Code per E-Mail wurde eingerichtet.');
 
@@ -167,8 +276,13 @@ final readonly class SecurityController
             return Response::redirect('/app/sicherheit');
         }
         $userId = $this->requireUserId();
+        $umweg = $this->ohneNeuanmeldung($userId, self::UEBERSICHT);
+        if ($umweg !== null) {
+            return $umweg;
+        }
 
         $codes = $this->enrollment->regenerateBackupCodes($userId);
+        $this->session->verwirfNeuanmeldung();
         $this->audit->record(AuditAction::BackupCodesNeu, $userId, $request->ip, $userId);
         $this->hinweisSenden($userId, 'Die Backup-Codes wurden neu erzeugt; die vorherigen zehn gelten nicht mehr.');
 
@@ -236,6 +350,58 @@ final readonly class SecurityController
         $this->session->flash('Ihr Passwort wurde geändert. Andere angemeldete Sitzungen wurden beendet.', FlashArt::Ok);
 
         return Response::redirect('/app/sicherheit');
+    }
+
+    private const string UEBERSICHT = '/app/sicherheit';
+
+    private const string EINRICHTEN = '/app/sicherheit/einrichten';
+
+    /** Where a confirmed re-authentication may continue. */
+    private const array WEITER_ERLAUBT = [self::UEBERSICHT, self::EINRICHTEN];
+
+    private static function weiter(mixed $wert): string
+    {
+        return is_string($wert) && in_array($wert, self::WEITER_ERLAUBT, true) ? $wert : self::EINRICHTEN;
+    }
+
+    /**
+     * The detour to the re-authentication, or null when none is needed: no
+     * factor set up yet (the first setup), or one confirmed within
+     * Neuanmeldung::GUELTIG_SEKUNDEN.
+     */
+    private function ohneNeuanmeldung(int $userId, string $weiter): ?ResponseInterface
+    {
+        if ($this->users->findById($userId)?->mfaMethod === null
+            || $this->session->neuanmeldungGueltig(Neuanmeldung::GUELTIG_SEKUNDEN)) {
+            return null;
+        }
+
+        return Response::redirect('/app/sicherheit/bestaetigen?' . http_build_query(['weiter' => $weiter]));
+    }
+
+    private function bestaetigenSeite(int $userId, string $weiter, ?string $fehler = null, ?string $hinweis = null): ResponseInterface
+    {
+        return Response::html($this->view->render('app/sicherheit-bestaetigen', [
+            'title' => 'Mit zweitem Faktor bestätigen',
+            'csrf' => $this->session->csrfToken(),
+            'weiter' => $weiter,
+            'mfaMethod' => $this->users->findById($userId)?->mfaMethod,
+            'fehler' => $fehler,
+            'hinweis' => $hinweis,
+        ], Area::App));
+    }
+
+    private function totpSeite(int $userId, #[\SensitiveParameter] string $secret, ?string $fehler = null): ResponseInterface
+    {
+        $user = $this->users->findById($userId);
+        $email = $user === null ? '' : $this->crypto->decrypt($user->emailEnc);
+
+        return $this->seite(
+            'totp',
+            fehler: $fehler,
+            totpSecretBase32: Totp::base32Encode($secret),
+            totpUri: Totp::uri($secret, $email, 'Vereinsbelege'),
+        );
     }
 
     /**

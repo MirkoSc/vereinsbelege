@@ -79,10 +79,18 @@ final readonly class MfaService
             || $this->limits->isBlocked(self::LIMIT_ACCOUNT, (string) $userId, self::LIMIT_PER_ACCOUNT, $now);
     }
 
-    public function registerFailure(string $ip, int $userId, ?\DateTimeImmutable $now = null): void
+    /**
+     * Counts one attempt at a code on both counters and says whether it may
+     * go ahead - before the code is checked, in one atomic step per counter
+     * (security review N-09, issue #246). A correct code then calls
+     * resetLimit(); a wrong one leaves the count where it is.
+     */
+    public function versuch(string $ip, int $userId, ?\DateTimeImmutable $now = null): bool
     {
-        $this->limits->registerFailure(self::LIMIT_IP, $ip, $now);
-        $this->limits->registerFailure(self::LIMIT_ACCOUNT, (string) $userId, $now);
+        $now ??= new \DateTimeImmutable();
+
+        return $this->limits->versuch(self::LIMIT_IP, $ip, self::LIMIT_PER_IP, $now)
+            && $this->limits->versuch(self::LIMIT_ACCOUNT, (string) $userId, self::LIMIT_PER_ACCOUNT, $now);
     }
 
     public function resetLimit(string $ip, int $userId): void

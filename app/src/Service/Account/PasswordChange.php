@@ -58,16 +58,19 @@ final readonly class PasswordChange
 
         // A live session is not a licence to guess: somebody at an unlocked
         // computer could otherwise try old passwords here without limit.
-        if ($this->limits->isBlocked(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
+        // Counted before the check, atomically (N-09, issue #246).
+        if (!$this->limits->versuch(self::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT, $now)) {
             return PasswordResult::fehler('Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.');
         }
 
         $user = $this->users->findById($userId);
         if ($user === null || !$this->passwords->verify($altesPasswort, $user->passwordHash)) {
-            $this->limits->registerFailure(self::LIMIT_ACCOUNT, $konto, $now);
-
             return PasswordResult::fehler('Das bisherige Passwort ist falsch.');
         }
+
+        // The old password is right: this was no guess, whatever the new
+        // one looks like.
+        $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
 
         $fehler = self::pruefeNeu($this->policy, $neuesPasswort, $wiederholung);
         if ($fehler === [] && hash_equals($altesPasswort, $neuesPasswort)) {
@@ -76,8 +79,6 @@ final readonly class PasswordChange
         if ($fehler !== []) {
             return PasswordResult::fehler(...$fehler);
         }
-
-        $this->limits->reset(self::LIMIT_ACCOUNT, $konto);
 
         $userKey = $this->userKeys->forUser($userId);
         $neuerSchluessel = null;

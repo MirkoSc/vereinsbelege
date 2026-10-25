@@ -49,6 +49,7 @@ use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaMethod;
 use App\Service\Account\MfaService;
+use App\Service\Account\Neuanmeldung;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
 use App\Service\Account\PasswordPolicy;
@@ -1058,6 +1059,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $crypto,
             new PasswordChange($pdo, new PasswordHasher(), $this->policy(), $this->limiter()),
             $audit,
+            new Neuanmeldung(new UserRepository($pdo), new PasswordHasher(), $mfaService, $this->limiter()),
         );
         $passwort = fn(): PasswordController => new PasswordController(
             $view,
