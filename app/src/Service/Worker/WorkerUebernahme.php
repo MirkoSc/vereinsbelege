@@ -40,7 +40,6 @@ use App\Service\Processing\ProcessingException;
  *     session's chain would; none -> the session run is queued (fallback).
  *   - `render_pages`: a run with any defective page is dropped entirely and
  *     the browser renders the pages (fallback).
- *   - `image_cleanup`: the PDF/A is checked, nothing else follows.
  * The readers themselves treat a worker artifact that does not open as
  * missing (App\Service\Document\ArtefaktJson) - so a defect never breaks
  * the AI or the full-text index, even before this job ran.
@@ -104,7 +103,6 @@ final readonly class WorkerUebernahme implements JobHandler
             WorkerUebergabe::OCR => $this->ocr($document, $workerJobId, $vault),
             KiAuslesung::JOB_TYP => $this->kiAuslesen($document, $workerJobId, $vault, $now),
             PdfRasterung::JOB_TYP => $this->seitenbilder($document, $workerJobId, $vault, $now),
-            'image_cleanup' => $this->pruefeBlobs($document, ArtifactKind::Pdfa, $workerJobId, $vault),
             default => throw new ProcessingException('Unbekannter Worker-Job-Typ.'),
         };
 

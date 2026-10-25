@@ -351,6 +351,30 @@ final readonly class JobRepository
     }
 
     /**
+     * Gives a claimed job back WITHOUT using up an attempt (the worker's
+     * `/release` on SIGTERM, issue #248): `offen` again, `attempts` one
+     * lower - the cut-off run was not the job's fault. Only the holder may.
+     * `locked_by` stays (like abschliessen()), so a repeated release whose
+     * answer got lost is recognised; claim() overwrites it.
+     */
+    public function zurueckgebenOhneVersuch(int $id, string $lockedBy, ?\DateTimeImmutable $now = null): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE job SET status = ?, attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, locked_until = NULL, updated_at = ?
+             WHERE id = ? AND status = ? AND locked_by = ?',
+        );
+        $stmt->execute([
+            JobStatus::Offen->value,
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $id,
+            JobStatus::Laeuft->value,
+            $lockedBy,
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
      * Gives back every job whose lock starts with this prefix - all claims
      * of one worker when it is unpaired (issue #51/M7b-1,
      * App\Domain\Worker::lockPraefix()). The prefix is the worker's own

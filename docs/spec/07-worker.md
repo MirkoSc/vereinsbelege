@@ -26,7 +26,6 @@ Session-Verarbeitung wie in 03 und 06 beschrieben). Der Worker ist ein
 |---|---|---|
 | `render_pages` (PDF → Seitenbilder) | Browser (pdf.js) | Poppler/Ghostscript |
 | `ocr` (Textebene, PDF/A) | **entfällt** | OCRmyPDF (Tesseract `deu`+`eng`), Drehung/Schräglage korrigiert, PDF/A-2b |
-| `image_cleanup` für Belege ohne Browser-Aufbereitung | GD-Fallback | OCRmyPDF `--clean`/`--deskew` (unpaper) |
 | `extract_text` (digitale PDFs, E-Rechnung) | Server (Webhoster) | bleibt auf dem Webhoster (schnell, braucht keinen Worker) |
 | `ai_extract` | Session-Schritt | Worker, **ohne Zeitlimit, rund um die Uhr**, mit OCR-Text + Bildern |
 | `resolve_supplier`, `classify`, `detect_*`, `match_transactions` | Session | **bleibt Session** (braucht Tresor) |
@@ -36,6 +35,10 @@ Zusätzlich (kein Job, eigene Fähigkeit `mail`): **Beleg-Eingang per E-Mail**
 öffentliche Einreichung in den Posteingang ein (§9, issue #87, E-54).
 Die Nachverarbeitung des Bestandsarchivs mit OCR ist umgesetzt
 (§6 „Stand #88“).
+
+Kein eigener Job `image_cleanup` (#248, E-70): Belege ohne
+Browser-Aufbereitung bereinigt der GD-Fallback des Webhosters (03 §2); Drehung
+und Schräglage korrigiert der `ocr`-Job ohnehin in seinem PDF/A.
 
 ## 3. Verschlüsselung – Minimalrechte
 
@@ -168,6 +171,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 | `GET /jobs/{id}/context` | Worker-Kontext + nicht-sensible Stammdaten für den Prompt (Kategorien mit `ai_hint`, Kostenstellen, Settings) |
 | `POST /jobs/{id}/artifacts` (+ `…/{a}/chunks/{n}`, `…/{a}/commit`) | Ergebnis-Upload (Chunk-Upload wie 03 §4), bereits an `VK_pub` verschlüsselt |
 | `POST /jobs/{id}/complete` / `/fail` | Abschluss bzw. Fehler mit Meldung (ohne Klartext-Inhalte) |
+| `POST /jobs/{id}/release` | Rückgabe beim Beenden, ohne einen Versuch zu verbrauchen (#248) |
 
 - Polling-Intervall: 60 s ohne Arbeit, sofort weiter, solange Jobs warten.
 - **Protokollversion**: Webhoster lehnt inkompatible Worker mit klarer
@@ -194,7 +198,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     ausgewertet.
   - `jobs/claim` `{max ≤ 5}` → `{jobs: [{id, typ, ref_type, ref_id, step,
     versuch, lock, gesperrt_bis}]}`, nur `executor = worker` und nur Typen
-    der gemeldeten Fähigkeiten (`ocr` → `ocr`/`image_cleanup`, `render` →
+    der gemeldeten Fähigkeiten (`ocr` → `ocr`, `render` →
     `render_pages`, `ai` → `ai_extract`); Sperre 30 min, je Job ein eigenes
     `lock` (`w<id>-<zufall>`); ein Job über 3 Versuche wird beim Claim
     beendet statt ausgegeben. `versuch` (= `attempts`) ist die
@@ -234,7 +238,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
        Kind-Präfix `~` an (für Leser unsichtbar) und `worker_upload`.
        Geprüft: Sperre, `versuch` = aktuelle `attempts`, Kind je Job-Typ
        (`render_pages` → `page_image`; `ocr` → `pdfa`, `text`;
-       `image_cleanup` → `pdfa`; `ai_extract` → `extraction`),
+       `ai_extract` → `extraction`),
        `dek_sealed` = 81 Byte mit Versionsbyte der aktuellen
        Tresor-Generation, Header-Format, Größe (Blob ≤ 64 MiB, `data_enc`
        ≤ 4 MiB), höchstens 10 offene Uploads je Worker.
@@ -281,8 +285,8 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     Heartbeat `wartend = 0`; die KI-Profile samt API-Keys gehen nur an einen
     Worker, der bei aktivem Modul `ai` meldet – sonst eine leere Liste.
   - Ein Worker-`ai_extract` wird erst beansprucht, wenn für dasselbe
-    Dokument kein `pdf_erzeugen`, `extract_text`, `render_pages`, `ocr`,
-    `image_cleanup` mehr wartet.
+    Dokument kein `pdf_erzeugen`, `extract_text`, `render_pages` oder `ocr`
+    mehr wartet.
 
 - **Vorgaben für `bin/worker.php` (#54)** aus den Reviews von #52/#53:
   - Jeder Versuch einer Anfrage – auch die Wiederholung nach Timeout oder
@@ -295,6 +299,32 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - Eine neue Konfiguration mit leerer `ki_anbieter`-Liste ersetzt die alte
     vollständig – zuvor erhaltene API-Keys verwirft der Worker.
   - Ergebnisformate wie oben; `text` je Original eine Zeile.
+
+- **Stand #248 (E-70):**
+  - `POST /jobs/{id}/release` `{lock}` (signiert, Nonce, wie alle
+    Worker-Routen): nur mit der eigenen Sperre; der Job geht zurück auf
+    `offen`, `attempts` sinkt um eins (die abgebrochene Bearbeitung zählt
+    nicht als Versuch), die Grants bleiben. `locked_by` bleibt stehen –
+    eine Wiederholung derselben Rückgabe (Antwort verloren) wird mit 200
+    beantwortet, solange niemand den Job neu beansprucht hat; eine fremde
+    oder veraltete Sperre → 409, unbekannter Job → 404.
+  - **Artefakte abgebrochener Versuche** werden verworfen – offene Uploads
+    und schon festgeschriebene Ergebnisse samt Blobs
+    (`WorkerArtefakte::abgebrochenenVersuchVerwerfen()`): bei `release`,
+    bei `fail` ohne `endgueltig` und beim erneuten Claim (ein abgestürzter
+    Worker lässt die Sperre ablaufen). Damit findet `vorhanden` beim
+    Anmelden nur Ergebnisse des laufenden Versuchs, nie einen halben Lauf
+    eines früheren – und die nach `release` wiederverwendete Versuchsnummer
+    ist unschädlich. Als defekt markierte (`!`) bleiben für die Zählung im
+    Admin.
+  - **KI-Aufrufe des Workers im KI-Protokoll** (`ai_call_log`): Die
+    Übernahme (`KiAuslesung::workerLaufUebernehmen()`) schreibt je
+    wohlgeformtem Versuch eine Zeile wie die Session – Profil, Modell,
+    Prompt-Version, Status, Tokens, Dauer, nie die Rohantwort. Zeitpunkt
+    ist der der Übernahme (der Worker meldet keine Aufrufzeit). Eine
+    wiederholte Übernahme protokolliert nicht doppelt (Marke im
+    verschlüsselten Artefakt). Versuche abgebrochener oder endgültig
+    gescheiterter Läufe erscheinen nicht.
 
 ## 6. Routing auf dem Webhoster
 
@@ -327,15 +357,17 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     er seit `worker_fallback_minuten` schweigt; Jobs eines Typs, dessen
     Fähigkeit er nicht mehr meldet, sofort. `render_pages` → `browser`,
     `ai_extract` → `session` (an Ort und Stelle, Schritt/Versuche
-    zurückgesetzt), `ocr`/`image_cleanup` → `uebersprungen`
+    zurückgesetzt), `ocr` → `uebersprungen`
     (`WorkerAusfall`). Grants gehen mit dem letzten Worker-Job; was der
     Job schon festgeschrieben hatte, wird verworfen (Präfix `!`), weil der
     umgeleitete Job seine ID behält. Ebenso nach endgültigem `fail`.
   - „OCR nachholen“ (Admin, Sammelaktion, 50 je Klick, Tresor entsperrt):
     Belege mit `ocr_status = uebersprungen`, nicht festgeschrieben, ohne
     wartenden/fertigen `ocr`-Job und ohne übernommenen Worker-Text (ein
-    verworfener/defekter blockiert nicht). Der Knopf je Beleg im Posteingang
-    ist offen.
+    verworfener/defekter blockiert nicht). Seit #248 auch **je Beleg** in
+    der Posteingangs-Ansicht (`POST /app/posteingang/{id}/ocr-nachholen`,
+    `document.edit`, Tresor entsperrt, dieselbe Regel; der Knopf erscheint
+    nur, wenn der Beleg nachholbar ist und der Worker OCR annimmt).
   - Admin-Seite: Modul-Schalter (Einschalten nur mit entsperrtem Tresor)
     und Wartezeit, online/offline, Warteschlange je Typ, erledigt in 24 h,
     verworfene Ergebnisse, letzte Fehler (Typ, Code, Zeit), „OCR
@@ -412,7 +444,12 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   wartet sonst nur 10 s), schreibgeschütztes Root-Dateisystem, keine
   Capabilities.
 - Updates: `docker compose pull && docker compose up -d` (Doku), optional
-  automatisch per systemd-Timer; der Admin zeigt „Worker-Version veraltet".
+  automatisch per systemd-Timer; der Admin zeigt „Worker-Version veraltet",
+  sobald die beim Heartbeat gemeldete Version älter als die des Webhosters
+  ist (`WorkerProtokoll::versionVeraltet()`, `version_compare` auf
+  `X.Y.Z[-…]`; Entwicklungsstände `-dev` und Unlesbares nie) – nur ein
+  Hinweis, der Worker arbeitet weiter. Abgelehnt wird er erst bei einer
+  nicht unterstützten Protokollversion („Worker-Update nötig“, #248).
 - End-to-End-Test: `tests/e2e/worker/run.sh` (CI-Job `worker-e2e` und vor
   jedem Image-Push) startet Webhoster-Container (Dev-Image + Apache-TLS +
   MariaDB) und Worker-Container mit den Einstellungen der Vorlage. Eine
@@ -490,7 +527,7 @@ Repository oder Datenbank (`ProcessingArchitectureTest`).
     (Standardprofil, Reparatur oder Ausweichprofil + Reparatur, höchstens
     drei Aufrufe), jeder Versuch ein `extraction`-Artefakt
     `{versuch, meldung, extraktion, hinweise}` (`seq` = Nummer).
-  - Unbekannter Typ (z. B. `image_cleanup`) → endgültig.
+  - Unbekannter Typ → endgültig (`JobTypNichtUnterstuetzt`).
 - **Prozess-Grenze** (CLAUDE.md §1, E-50): Programme startet nur
   `worker/src/Prozess.php` (`proc_open()` mit Argumentliste, keine Shell,
   reduzierte Umgebung, Zeitlimit, SIGTERM → SIGKILL), aufgerufen nur über
@@ -499,9 +536,11 @@ Repository oder Datenbank (`ProcessingArchitectureTest`).
   Verzeichnis (0700), im `finally` gelöscht; Reste räumt der Start weg.
   `HOME`/`TMPDIR` der Werkzeuge zeigen hinein.
 - **Beenden:** SIGTERM/SIGINT → kein neuer Claim; ein laufendes Werkzeug
-  wird beendet, eine laufende Übertragung abgebrochen, der Job mit `fail`
-  ohne `endgueltig` (`WorkerBeendet`) zurückgegeben (ein Versuch, kurzes
-  Zeitlimit); KI-Schlüssel werden verworfen.
+  wird beendet, eine laufende Übertragung abgebrochen, der Job mit
+  `release` zurückgegeben (kein Versuch verbraucht, kurzes Zeitlimit, #248);
+  kennt der Webhoster die Route nicht (älteres Release: 404/405 ohne
+  `job_unbekannt`), wie früher `fail` ohne `endgueltig` (`WorkerBeendet`).
+  KI-Schlüssel werden verworfen.
 - **Log:** JSON-Zeilen auf stderr, nur Ereignis, IDs, Zähler, Dauer,
   HTTP-Status und Fehlercodes; alles andere verwirft `App\Worker\Log`.
 
@@ -623,7 +662,11 @@ Abhängigkeit zu Http/Session/Repository (Architekturtest); Worker-Programm
 (#54): jeder Wiederholungsversuch mit neuem Nonce/Zeitstempel, http://
 abgelehnt (localhost nur mit Testoption), leere Profilliste verwirft die
 Schlüssel, Backoff, Arbeitsverzeichnis nur auf tmpfs und nach jedem Job
-leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
+leer, SIGTERM gibt den laufenden Job per `release` ohne Versuchsverlust
+zurück (#248: signiert, idempotent, Ergebnisse des abgebrochenen Versuchs
+verworfen, auch nach abgelaufener Sperre beim neuen Claim), Worker-KI-Aufrufe
+einmal im KI-Protokoll, „OCR nachholen“ je Beleg, „Worker-Version
+veraltet“, `render_pages`/`ocr`/
 `ai_extract` gegen den echten Controller und die echte Übernahme,
 Prozess-Aufrufe nur in `worker/src/Prozess.php`; Bestandsarchiv (#88):
 Auswahl nach Import-Lauf, festgeschriebene eingeschlossen und unverändert,

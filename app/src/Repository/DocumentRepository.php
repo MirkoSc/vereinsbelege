@@ -182,6 +182,18 @@ final readonly class DocumentRepository
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
     }
 
+    /**
+     * Whether this one document is eligible for "OCR nachholen" (the same
+     * rule as ocrNachholbar()) - the inbox's button per receipt (issue #248).
+     */
+    public function istOcrNachholbar(int $documentId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM document d WHERE ' . self::OCR_NACHHOLBAR . ' AND d.id = ?');
+        $stmt->execute([...self::ocrNachholbarParameter(), $documentId]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function zaehleOcrNachholbar(): int
     {
         $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . self::OCR_NACHHOLBAR);

@@ -338,6 +338,15 @@ final readonly class KiAuslesung implements ExternerJobHandler
         ksort($versuche);
         $n = (int) array_key_last($versuche);
         $letzter = $versuche[$n];
+        // A repeated takeover (its request died after the store below) has
+        // logged the calls already - the marker sits in the rewritten
+        // artifact, nowhere in plaintext.
+        $schonProtokolliert = false;
+        foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
+            if ($artefakt->jobId === $workerJobId && $artefakt->seq === $n) {
+                $schonProtokolliert = ($this->daten($artefakt, $vault)['protokolliert'] ?? false) === true;
+            }
+        }
         $vorschlag = $letzter->gueltig() && $letzter->daten !== null
             ? $this->auslesung->auswerten($letzter->daten, $this->eingabe($document, $vault, null, mitBildern: false))
             : null;
@@ -346,7 +355,18 @@ final readonly class KiAuslesung implements ExternerJobHandler
             'meldung' => new KiErgebnis(array_values($versuche))->meldung(),
             'extraktion' => $vorschlag?->extraktion,
             'hinweise' => $vorschlag->hinweise ?? [],
+            'protokolliert' => true,
         ]);
+        // The worker's calls in the call log like the session's (issue
+        // #248): profile, model, prompt version, status, tokens, duration -
+        // never the raw answer. After the store, as in nachAufruf(): a
+        // request dying in between logs nothing twice. Their time is the
+        // takeover's - the worker does not report when it called.
+        if (!$schonProtokolliert) {
+            foreach ($versuche as $versuch) {
+                $this->protokoll->insert($versuch->aufruf, $now);
+            }
+        }
         $this->abschliessen($document, $workerJobId, $letzter->gueltig(), $now);
 
         return true;

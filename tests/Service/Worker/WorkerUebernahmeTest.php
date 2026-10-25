@@ -122,6 +122,30 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         self::assertSame('RE-2026-0815', $auszug->extraktion['invoice_number'] ?? null);
     }
 
+    public function testTheWorkersAiCallsAppearInTheCallLogOnceWithoutContent(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(KiAuslesung::JOB_TYP, $doc);
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(false));
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 1, $this->extraktion(true));
+        $this->abschliessen($id, $schluessel, $job);
+
+        $uebernahme = $this->jobs->claim(JobExecutor::Session, 'sitzung', 60, WorkerUebernahme::JOB_TYP);
+        self::assertNotNull($uebernahme);
+        $this->uebernahme->schritt($uebernahme, $this->vault, new \DateTimeImmutable());
+        // The same step again (its request died before it was marked done).
+        $ergebnis = $this->uebernahme->schritt($uebernahme, $this->vault, new \DateTimeImmutable());
+        $this->jobs->schrittErledigt($uebernahme->id, 'sitzung', $ergebnis);
+
+        $zeilen = $this->pdo()->query('SELECT * FROM ai_call_log ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
+        self::assertCount(2, $zeilen, 'each worker call once, also after a repeated takeover');
+        self::assertSame(['kein_json', 'gueltig'], array_column($zeilen, 'status'));
+        self::assertSame(['test', 'test'], array_column($zeilen, 'model'));
+        self::assertSame(['extract-v1', 'extract-v1'], array_column($zeilen, 'prompt_version'));
+        // Operating data only: no column carries what the AI read.
+        self::assertStringNotContainsString('RE-2026-0815', json_encode($zeilen, JSON_THROW_ON_ERROR));
+    }
+
     public function testTheExtractionIsRebuiltWithTheServersChecksNotTakenFromTheWorker(): void
     {
         $doc = $this->dokument();

@@ -196,6 +196,95 @@ final class WorkerGrantTest extends WorkerTestCase
         self::assertSame([], $this->grants->blobIdsFuer($id, $doc, new \DateTimeImmutable()));
     }
 
+    public function testReleaseGivesTheJobBackWithoutUsingUpAnAttemptAndDropsItsResults(): void
+    {
+        [$doc] = $this->dokumentMitBlob();
+        [$id, $schluessel] = $this->koppeln();
+        $this->heartbeat($id, $schluessel);
+        $this->freigaben->ausSession($this->eintrag($doc), $this->vault, new \DateTimeImmutable());
+        $jobId = $this->jobs->enqueue('render_pages', JobExecutor::Worker, 'document', $doc);
+        $blobsVorher = $this->blobAnzahl();
+
+        $job = $this->claimen($id, $schluessel);
+        self::assertSame(1, $job['versuch']);
+        $this->blobHochladen($id, $schluessel, $job, 'page_image', 0, random_bytes(5000));
+        // A second page only announced, not committed.
+        $dek = DataKey::generate();
+        $writer = BlobCipher::writer($dek);
+        $chiffrat = $writer->write('Seite 2') . $writer->finish();
+        self::assertSame(201, $this->anmelden($id, $schluessel, $job, [
+            'kind' => 'page_image',
+            'seq' => 1,
+            'dek_sealed' => base64_encode(WorkerKrypto::fuerTresorVersiegeln($dek, $this->vault->publicKey(), $this->vault->version)),
+            'header' => base64_encode($writer->header()),
+            'groesse' => strlen($chiffrat),
+            'sha256' => hash('sha256', $chiffrat),
+        ])->status);
+        self::assertSame($blobsVorher + 1, $this->blobAnzahl());
+
+        // Only the holder's lock.
+        self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock'] . 'x'])->status);
+        self::assertSame(404, $this->abschluss($id, $schluessel, $jobId + 99, 'release', ['lock' => $job['lock']])->status);
+
+        $antwort = $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']]);
+        self::assertSame(200, $antwort->status, $antwort->body);
+        self::assertSame('offen', self::daten($antwort)['status']);
+        $nachher = $this->jobs->find($jobId);
+        self::assertSame(JobStatus::Offen, $nachher?->status);
+        self::assertSame(0, $nachher->attempts, 'A release does not use up an attempt.');
+        self::assertNull($nachher->lockedUntil);
+        // Results of the cut-off attempt are gone - committed and announced -,
+        // the grants stay for the next one.
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM worker_upload')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM document_artifact WHERE kind LIKE '~%'")->fetchColumn());
+        self::assertSame($blobsVorher, $this->blobAnzahl());
+        self::assertNotSame([], $this->grants->blobIdsFuer($id, $doc, new \DateTimeImmutable()));
+
+        // Idempotent: the same release again (its answer got lost).
+        $wieder = $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']]);
+        self::assertSame(200, $wieder->status, $wieder->body);
+        self::assertSame(0, $this->jobs->find($jobId)?->attempts);
+
+        // The next claim counts the same attempt again and starts clean.
+        $neu = $this->claimen($id, $schluessel);
+        self::assertSame(1, $neu['versuch']);
+        self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']])->status, 'The old lock is no longer the holder.');
+        $this->blobHochladen($id, $schluessel, $neu, 'page_image', 0, random_bytes(5000));
+        self::assertCount(1, $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+    }
+
+    public function testResultsOfAnAbortedAttemptAreDroppedBeforeTheNextAttempt(): void
+    {
+        [$doc] = $this->dokumentMitBlob();
+        [$id, $schluessel] = $this->koppeln();
+        $this->heartbeat($id, $schluessel);
+        $this->freigaben->ausSession($this->eintrag($doc), $this->vault, new \DateTimeImmutable());
+        $jobId = $this->jobs->enqueue('render_pages', JobExecutor::Worker, 'document', $doc);
+        $blobsVorher = $this->blobAnzahl();
+
+        // Attempt 1 commits a page, then gives up for now.
+        $job = $this->claimen($id, $schluessel);
+        $this->blobHochladen($id, $schluessel, $job, 'page_image', 0, random_bytes(4000));
+        $this->abschluss($id, $schluessel, $jobId, 'fail', ['lock' => $job['lock'], 'fehler' => 'Netz']);
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+        self::assertSame($blobsVorher, $this->blobAnzahl());
+
+        // Attempt 2 commits a page and dies: its lock runs out.
+        $job = $this->claimen($id, $schluessel);
+        self::assertSame(2, $job['versuch']);
+        $this->blobHochladen($id, $schluessel, $job, 'page_image', 0, random_bytes(4000));
+        $this->pdo()->prepare('UPDATE job SET locked_until = ? WHERE id = ?')->execute(['2000-01-01 00:00:00', $jobId]);
+
+        // Attempt 3 does not find page 0 "vorhanden" - it starts clean.
+        $job = $this->claimen($id, $schluessel);
+        self::assertSame(3, $job['versuch']);
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+        self::assertSame($blobsVorher, $this->blobAnzahl());
+        $this->blobHochladen($id, $schluessel, $job, 'page_image', 0, random_bytes(4000));
+        self::assertCount(1, $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+    }
+
     public function testGrantsStayWhileAnotherWorkerJobOfTheDocumentWaits(): void
     {
         [$doc] = $this->dokumentMitBlob();
@@ -543,7 +632,11 @@ final class WorkerGrantTest extends WorkerTestCase
 
         return $this->aufruf(
             $this->signiert($id, $schluessel, $pfad, json_encode($daten, JSON_THROW_ON_ERROR)),
-            fn(Request $r, array $p, Worker $w): Response => $aktion === 'complete' ? $this->api->complete($r, $p, $w) : $this->api->fail($r, $p, $w),
+            fn(Request $r, array $p, Worker $w): Response => match ($aktion) {
+                'complete' => $this->api->complete($r, $p, $w),
+                'release' => $this->api->release($r, $p, $w),
+                default => $this->api->fail($r, $p, $w),
+            },
             ['id' => (string) $jobId],
         );
     }

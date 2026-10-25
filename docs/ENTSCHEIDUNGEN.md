@@ -1202,9 +1202,9 @@ Getroffen ohne Rückfrage:
   defekten Seite wird ganz verworfen und der Browser rendert. Blob-Artefakte
   werden nur auf Vollständigkeit und öffnenden DEK geprüft, nicht ganz
   entschlüsselt (Größe); der secretstream erkennt Beschädigung beim Lesen.
-  Worker-KI-Aufrufe erscheinen (noch) nicht im KI-Protokoll
-  (`ai_call_log`); Modell, Prompt-Version und Rohantwort stehen
-  verschlüsselt im Artefakt.
+  Worker-KI-Aufrufe erscheinen seit #248 bei der Übernahme im KI-Protokoll
+  (`ai_call_log`, E-70); Modell, Prompt-Version und Rohantwort stehen
+  zusätzlich verschlüsselt im Artefakt.
 - **Leser sind robust gegen Worker-Artefakte** (Review #52):
   `ArtefaktJson::lesen()` behandelt ein Worker-Artefakt, das nicht
   entschlüsselt oder kein JSON ist, als fehlend (Texterkennung,
@@ -1439,11 +1439,12 @@ Getroffen ohne Rückfrage:
   vollständige Läufe, OCR entfällt dann für diesen Beleg.
 - **`image_cleanup`** wird nirgends eingereiht und ist im Worker nicht
   umgesetzt: ein solcher Job wird endgültig zurückgegeben
-  (`JobTypNichtUnterstuetzt`).
+  (`JobTypNichtUnterstuetzt`). Seit #248 ganz entfernt (E-70).
 - **Beenden (SIGTERM/SIGINT):** laufendes Werkzeug wird beendet, laufende
   Übertragung abgebrochen, der Job mit `fail` ohne `endgueltig`
   (`WorkerBeendet`) zurückgegeben. Das verbraucht einen der drei Versuche –
-  eine Rückgabe ohne Versuchszählung gibt die API nicht her (offen).
+  eine Rückgabe ohne Versuchszählung gibt die API nicht her (offen; seit
+  #248 per `release`, E-70).
 - **Arbeitsverzeichnis nur im RAM:** Der Worker startet nicht, wenn das
   Arbeitsverzeichnis laut `/proc/self/mounts` nicht auf `tmpfs`/`ramfs`
   liegt – ohne Schalter zum Abschalten. Je Job ein eigenes Verzeichnis
@@ -1828,3 +1829,51 @@ Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
 richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
 dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
 zeigen soll.
+
+## E-70 ❓ Worker abrunden: Rückgabe ohne Versuchsverlust, Aufräumen abgebrochener Versuche, KI-Protokoll, kein `image_cleanup` (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #248, 07 §2, §5, §6, §7, §8; 02 `ai_call_log`; keine Migration*
+
+Getroffen ohne Rückfrage:
+
+- **`POST /api/worker/jobs/{id}/release`** (signiert wie alle Worker-Routen):
+  der Worker gibt beim Beenden (SIGTERM) den Job zurück, `attempts` sinkt
+  um eins – ohne Schemaänderung. `locked_by` bleibt am offenen Job stehen,
+  damit eine Wiederholung (Antwort verloren) als dieselbe Rückgabe erkannt
+  wird (200); der nächste Claim überschreibt sie. Folge: Ein Worker, der
+  ständig neu gestartet wird, verbraucht nie Versuche – das ist gewollt
+  (der Abbruch liegt nicht am Beleg); ein festhängender Job bleibt über die
+  Sperrfrist und den Rückfall begrenzt. Ein Webhoster ohne die Route
+  (älteres Release) bekommt vom Worker weiter `fail` (`WorkerBeendet`).
+- **Abgebrochene Versuche räumen auf:** Bei `release`, `fail` ohne
+  `endgueltig` und beim erneuten Claim werden offene Uploads **und schon
+  festgeschriebene** Worker-Artefakte des Jobs gelöscht (Blobs mit). Bisher
+  blieben festgeschriebene Teilergebnisse stehen, und der nächste Versuch
+  bekam für dieselbe `seq` „vorhanden“ – ein Lauf hätte aus zwei Versuchen
+  bestehen können. Statt eine Versuchsspalte am Artefakt einzuführen
+  (Migration), gilt: Am Job hängen nur Ergebnisse des laufenden Versuchs.
+  Gelöscht statt als defekt markiert, weil sie nicht defekt sind, sondern
+  unvollständig – die Admin-Zahl „verworfene Ergebnisse“ bleibt für echte
+  Defekte. Auch KI-Versuche eines abgebrochenen Laufs fallen damit weg.
+- **KI-Aufrufe des Workers im `ai_call_log`:** eingetragen bei der
+  Übernahme (Session, Tresor offen) aus den wohlgeformten
+  `extraction`-Artefakten, nicht über einen neuen API-Endpunkt – der Worker
+  bräuchte sonst einen Schreibzugang zu Betriebsdaten, und die Angaben
+  stehen ohnehin im Artefakt. Zeitpunkt = Übernahme (der Worker meldet
+  keinen). Keine eigene Spalte „vom Worker“ (wäre eine Migration).
+  Doppelte Einträge bei wiederholter Übernahme verhindert eine Marke im
+  verschlüsselten Artefakt.
+- **„OCR nachholen“ je Beleg** in der Posteingangs-Ansicht (Recht
+  `document.edit` wie die übrigen Entscheidungen dort, Tresor entsperrt),
+  gleiche Auswahlregel wie die Admin-Sammelaktion (Archiv-Belege bleiben
+  bei der Bestands-Nachverarbeitung, E-55). Nicht zusätzlich auf der
+  Prüfseite – die Posteingangs-Ansicht erreicht jeden Beleg.
+- **„Worker-Version veraltet“** als Hinweis im Admin, sobald die gemeldete
+  Version älter als die des Webhosters ist (`version_compare`);
+  Entwicklungsstände (`-dev`) nie. Kein Sperren – nur die Protokollversion
+  sperrt.
+- **Kein `image_cleanup`:** Die Spec nannte den Job, eingereiht wurde er nie.
+  Belege ohne Browser-Aufbereitung bereinigt der GD-Fallback (03 §2);
+  Drehung/Schräglage korrigiert `ocr` in seinem PDF/A. Ein eigener Job
+  hätte ein drittes Ergebnis (bereinigtes Bild) neben Original und
+  Browser-Fassung gebraucht. Entfernt aus Fähigkeiten, Artefakt-Kinds,
+  Vorgänger-Regel, Übernahme, Admin-Anzeige und Spec.

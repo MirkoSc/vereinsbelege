@@ -228,6 +228,10 @@ final readonly class WorkerApiController
 
                 continue;
             }
+            // An earlier attempt that died (lock ran out) may have
+            // committed part of its results: this attempt starts clean
+            // (issue #248).
+            $this->artefakte->abgebrochenenVersuchVerwerfen($job);
             $jobs[] = self::jobDaten($job, $lock);
         }
 
@@ -328,8 +332,40 @@ final readonly class WorkerApiController
         if (!$this->jobs->zurueckgebenMitFehler($job->id, $lock, $code)) {
             return self::sperreVerloren();
         }
-        // The grants stay for the next attempt; this attempt's unfinished
-        // uploads cannot be committed any more (the attempt changes).
+        // The grants stay for the next attempt; this attempt's uploads and
+        // what it already committed go (issue #248) - the next attempt
+        // delivers a complete run of its own.
+        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
+        $this->freigaben->nachJob($job);
+
+        return Response::json(['status' => JobStatus::Offen->value]);
+    }
+
+    /**
+     * `POST /api/worker/jobs/{id}/release` `{lock}` (issue #248): the worker
+     * was told to stop (SIGTERM) and gives the job back WITHOUT using up an
+     * attempt - unlike `fail`, the cut-off run says nothing about the job.
+     * What the attempt uploaded or committed is dropped; the grants stay.
+     * Idempotent: a repeat by the same holder (its answer got lost) is
+     * answered 200 again as long as nobody claimed the job since.
+     *
+     * @param array<string, string> $params
+     */
+    public function release(Request $request, array $params, Worker $worker): Response
+    {
+        $geprueft = $this->eigenerJob($request, $params, $worker);
+        if ($geprueft instanceof Response) {
+            return $geprueft;
+        }
+        [$job, $lock] = $geprueft;
+        // A repeat: the release kept `locked_by`, so the job is still "ours".
+        if ($job->status === JobStatus::Offen) {
+            return Response::json(['status' => JobStatus::Offen->value]);
+        }
+        if ($job->status !== JobStatus::Laeuft || !$this->jobs->zurueckgebenOhneVersuch($job->id, $lock)) {
+            return self::sperreVerloren();
+        }
+        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
         $this->freigaben->nachJob($job);
 
         return Response::json(['status' => JobStatus::Offen->value]);

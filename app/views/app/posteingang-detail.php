@@ -33,6 +33,7 @@
  * @var array<int, string> $kostenstellen active ones, plus the document's own
  * @var array<int, string> $alleKostenstellen
  * @var bool $entsperrt
+ * @var bool $ocrNachholbar the worker could catch up the skipped OCR (issue #248)
  * @var \DateTimeImmutable $heute
  * @var string $csrf
  * @var list<string> $scripts
@@ -145,6 +146,19 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
                 <?php endforeach; ?>
             </ul>
         <?php endif; ?>
+    <?php endif; ?>
+
+    <?php if ($ocrNachholbar ?? false): ?>
+        <form method="post" action="<?= e($basis) ?>/ocr-nachholen" class="formular">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <p class="gedaempft">
+                Die Texterkennung wurde für diesen Beleg übersprungen (Worker damals nicht bereit).
+                Der Worker kann sie jetzt nachholen; der Text dient dann KI und Suche.
+            </p>
+            <p class="knopfreihe">
+                <button type="submit" class="knopf">OCR nachholen</button>
+            </p>
+        </form>
     <?php endif; ?>
 
     <?php if ($darfEntscheiden && $document->status->pruefbar()): ?>

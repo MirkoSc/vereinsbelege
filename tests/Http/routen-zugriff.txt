@@ -38,6 +38,7 @@ POST /api/worker/jobs/claim -> worker-signatur (api)
 POST /api/worker/jobs/{id:\d+}/extend -> worker-signatur (api)
 POST /api/worker/jobs/{id:\d+}/complete -> worker-signatur (api)
 POST /api/worker/jobs/{id:\d+}/fail -> worker-signatur (api)
+POST /api/worker/jobs/{id:\d+}/release -> worker-signatur (api)
 GET /api/worker/blobs/{id:\d+} -> worker-signatur (api)
 GET /api/worker/jobs/{id:\d+}/context -> worker-signatur (api)
 POST /api/worker/jobs/{id:\d+}/artifacts -> worker-signatur (api)
@@ -77,6 +78,7 @@ POST /app/posteingang/{id:\d+}/annehmen -> document.edit
 POST /app/posteingang/{id:\d+}/ablehnen -> document.edit
 POST /app/posteingang/{id:\d+}/wiedervorlage -> document.edit
 POST /app/posteingang/{id:\d+}/kostenstelle -> document.edit
+POST /app/posteingang/{id:\d+}/ocr-nachholen -> document.edit
 POST /app/posteingang/{id:\d+}/duplikat-verwerfen -> document.edit
 POST /app/posteingang/{id:\d+}/duplikat-behalten -> document.edit
 GET /app/suche -> inbox.view
