@@ -37,6 +37,8 @@ use App\Service\Mail\MailTemplates;
 use App\Service\Mail\Mailer;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
+use App\Service\Rechtstexte\Rechtstext;
+use App\Service\Rechtstexte\Rechtstexte;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -115,6 +117,31 @@ final class PublicSubmissionTest extends DatabaseTestCase
 
         self::assertSame(200, $seite->status);
         self::assertStringContainsString('Beleg einreichen', $seite->body);
+    }
+
+    /**
+     * Issue #80/M13-3: the club's notice stands above the consent checkbox,
+     * escaped, with the links to Datenschutzerklärung and Impressum - and
+     * without a template the shipped one is shown.
+     */
+    public function testTheFormShowsTheMaintainedPrivacyNotice(): void
+    {
+        $vorlage = $this->einreichung()->formular(new Request(HttpMethod::Get, '/einreichen'));
+        self::assertStringContainsString('Auftragsverarbeitung', $vorlage->body);
+        self::assertStringContainsString('noch nicht vollständig ausgefüllt', $vorlage->body);
+        // Leaving the form would lose the pages: the notice's link opens a new tab.
+        self::assertStringContainsString('href="/datenschutz" target="_blank" rel="noopener"', $vorlage->body);
+
+        new Rechtstexte(new SettingRepository($this->pdo()), dirname(__DIR__, 2) . '/app/data')
+            ->speichern(Rechtstext::EinreichungHinweis, "Wir nutzen **KI-Dienst X**.\n\n<script>alert(1)</script>");
+        $seite = $this->einreichung()->formular(new Request(HttpMethod::Get, '/einreichen'));
+
+        self::assertStringContainsString('<strong>KI-Dienst X</strong>', $seite->body);
+        self::assertStringNotContainsString('noch nicht vollständig ausgefüllt', $seite->body);
+        self::assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $seite->body);
+        self::assertStringNotContainsString('<script>alert(1)', $seite->body);
+        self::assertStringContainsString('href="/datenschutz"', $seite->body);
+        self::assertStringContainsString('href="/impressum"', $seite->body);
     }
 
     #[DataProvider('backends')]
@@ -670,6 +697,7 @@ final class PublicSubmissionTest extends DatabaseTestCase
             $this->spamschutz(),
             $einstellungen,
             new MailSettingsRepository(new SettingRepository($pdo), $this->serverKey),
+            new Rechtstexte(new SettingRepository($pdo), dirname(__DIR__, 2) . '/app/data'),
         );
     }
 

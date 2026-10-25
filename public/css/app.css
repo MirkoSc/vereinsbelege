@@ -386,6 +386,16 @@ main.inhalt {
     border-top: 1px solid var(--farbe-rand);
 }
 
+.fuss-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--abstand-4);
+}
+
+.fuss a {
+    color: inherit;
+}
+
 /* Inhaltsspalten, die nicht breiter als angenehm lesbar werden sollen. */
 .schmal {
     max-width: 36rem;

@@ -18,7 +18,7 @@ use App\Domain\Permission;
  */
 enum Area: string
 {
-    /** Reachable without an account: submission page, start page, errors. */
+    /** Reachable without an account: submission page, start page, Impressum/Datenschutz, errors. */
     case Oeffentlich = 'oeffentlich';
 
     /** Everything behind the login (/app/...). */
@@ -97,6 +97,7 @@ enum Area: string
                 new NavItem('Worker', '/admin/worker', recht: Permission::AdminSettings),
                 new NavItem('Kostenstellen', '/admin/kostenstellen', recht: Permission::AdminSettings),
                 new NavItem('Einreichung', '/admin/einreichung', recht: Permission::AdminSettings),
+                new NavItem('Rechtstexte', '/admin/rechtstexte', recht: Permission::AdminSettings),
                 new NavItem('Export', '/admin/export', recht: Permission::AdminSettings),
                 new NavItem('DATEV', '/admin/datev', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),

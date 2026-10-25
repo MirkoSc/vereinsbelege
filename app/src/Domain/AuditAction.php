@@ -167,6 +167,8 @@ enum AuditAction: string
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
     /** Issue #66/M10-2: points and thresholds of the matching (field names only). */
     case EinstellungAbgleich = 'einstellung.abgleich';
+    /** Issue #80/M13-3: Impressum/Datenschutz/notice changed (names of the texts only). */
+    case EinstellungRechtstexte = 'einstellung.rechtstexte';
     /** Issue #93: DATEV export settings (counts of mapped accounts only). */
     case EinstellungDatev = 'einstellung.datev';
 
@@ -280,6 +282,7 @@ enum AuditAction: string
             self::ZahllaufVerworfen => 'SEPA-Zahllauf verworfen',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
+            self::EinstellungRechtstexte => 'Rechtstexte geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
             self::AbgleichVorschlagVerworfen => 'Abgleich-Vorschlag verworfen',
             self::AbgleichVorschlagZurueckgenommen => 'Verworfenen Abgleich-Vorschlag wieder zugelassen',
@@ -377,7 +380,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
-            self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
+            self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,

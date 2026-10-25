@@ -10,6 +10,7 @@ use App\Admin\DatevSettingsController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\NextcloudSettingsController;
+use App\Admin\RechtstexteController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -61,6 +62,7 @@ use App\Http\Router;
 use App\Http\Zugriff;
 use App\Http\ZugriffArt;
 use App\PublicPages\EinreichungController;
+use App\PublicPages\RechtstextController;
 use App\Service\Worker\WorkerAuth;
 use App\View\Area;
 use App\View\ScannerSkripte;
@@ -210,6 +212,11 @@ use App\View\View;
  * @param (\Closure(): CodeIntegritaetController)|null $integritaet built
  *        lazily (issue #79/M13-2): only the integrity check writes the audit
  *        log. Optional like $nextcloudAdmin.
+ * @param (\Closure(): RechtstextController)|null $rechtstexte built lazily,
+ *        same reason as $mail: /impressum and /datenschutz read their text
+ *        from the settings (issue #80/M13-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): RechtstexteController)|null $rechtstexteAdmin built
+ *        lazily, same reason (issue #80/M13-3). Optional like $nextcloudAdmin.
  * @param (\Closure(): DatevController)|null $datev built lazily, same
  *        reason as $mail: only the DATEV export needs the database (issue
  *        #93). Optional like $nextcloudAdmin.
@@ -270,6 +277,8 @@ return static function (
     ?\Closure $erstattungen = null,
     ?\Closure $zahllaeufe = null,
     ?\Closure $integritaet = null,
+    ?\Closure $rechtstexte = null,
+    ?\Closure $rechtstexteAdmin = null,
     ?\Closure $datev = null,
     ?\Closure $datevAdmin = null,
 ): void {
@@ -287,6 +296,8 @@ return static function (
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
     $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
     $zahllaeufe ??= static fn(): never => throw new \LogicException('The payment runs are not wired into this route table.');
+    $rechtstexte ??= static fn(): never => throw new \LogicException('The legal pages are not wired into this route table.');
+    $rechtstexteAdmin ??= static fn(): never => throw new \LogicException('The legal texts admin page is not wired into this route table.');
     $datev ??= static fn(): never => throw new \LogicException('The DATEV export is not wired into this route table.');
     $datevAdmin ??= static fn(): never => throw new \LogicException('The DATEV settings are not wired into this route table.');
 
@@ -318,6 +329,11 @@ return static function (
     $get('/', $oeffentlich, static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
     ));
+
+    // Permission: public - Impressum and Datenschutzerklärung (issue
+    // #80/M13-3), no session, like /einreichen.
+    $get('/impressum', $oeffentlich, static fn(Request $r) => $rechtstexte()->impressum($r));
+    $get('/datenschutz', $oeffentlich, static fn(Request $r) => $rechtstexte()->datenschutz($r));
 
     // Login and logout (M3-3, docs/spec/01-sicherheit.md section 3).
     // Permission: public - these are the way in. They are the only public
@@ -1000,6 +1016,11 @@ return static function (
     $post('/admin/einreichung', $einstellungen, static fn(Request $r) => $einreichungAdmin()->save($r));
     $post('/admin/einreichung/pausieren', $einstellungen, static fn(Request $r) => $einreichungAdmin()->pausieren($r));
     $post('/admin/einreichung/fortsetzen', $einstellungen, static fn(Request $r) => $einreichungAdmin()->fortsetzen($r));
+
+    // Impressum, Datenschutzerklärung, notice on /einreichen (issue #80/M13-3).
+    // Permission: admin.settings, like the submission settings above.
+    $get('/admin/rechtstexte', $einstellungen, static fn(Request $r) => $rechtstexteAdmin()->page($r));
+    $post('/admin/rechtstexte', $einstellungen, static fn(Request $r) => $rechtstexteAdmin()->save($r));
 
     // ZIP export path pattern (05 §2, issue #75/M12-1): folders and file
     // names of the export. Permission: `admin.settings`, same right as
