@@ -98,11 +98,11 @@ schritt "Schema, Tresor, Worker-Modul; Kopplungscode"
 code="$(treiber vorbereiten)"
 
 schritt "Worker koppeln (über TLS mit Prüfung gegen die Test-CA)"
-dc run --rm -T worker pair https://webhoster "$code" E2E
+dc run --rm --no-deps -T worker pair https://webhoster "$code" E2E
 
 schritt "Fingerabdruck vergleichen und bestätigen"
 fp_webhoster="$(treiber bestaetigen)"
-fp_worker="$(dc run --rm -T worker status | sed -n 's/^Fingerabdruck: //p')"
+fp_worker="$(dc run --rm --no-deps -T worker status | sed -n 's/^Fingerabdruck: //p')"
 echo "Webhoster: $fp_webhoster"
 echo "Worker:    $fp_worker"
 if [ -z "$fp_webhoster" ] || [ "$fp_webhoster" != "$fp_worker" ]; then

@@ -17,9 +17,9 @@ declare(strict_types=1);
  *   pruefen       waits for the worker's result, takes it over like a
  *                 session does and checks it: OCR text and PDF/A in the inbox
  *
- * The vault's private key lives between the phases in a file in the web
- * container's /tmp - throwaway test data, the container is removed after
- * the run. The scan is synthetic (tests/fixtures/worker/scan-e2e.jpg).
+ * The vault's private key lives between the phases in a file in shared/var
+ * (a directory of the run that run.sh removes afterwards) - throwaway test
+ * data, and it survives the web host container being recreated. The scan is synthetic (tests/fixtures/worker/scan-e2e.jpg).
  */
 
 use App\Config\Config;
@@ -74,15 +74,17 @@ if (PHP_SAPI !== 'cli') {
 error_reporting(E_ALL);
 ini_set('display_errors', 'stderr');
 date_default_timezone_set('Europe/Berlin');
-set_error_handler(static function (int $nr, string $text, string $datei, int $zeile): never {
+set_error_handler(static function (int $nr, string $text, string $datei, int $zeile): bool {
+    // An @-silenced call (a phase's file not there yet) ends in fehler() below.
+    if ((error_reporting() & $nr) === 0) {
+        return false;
+    }
     throw new ErrorException($text, 0, $nr, $datei, $zeile);
 });
 
 $root = dirname(__DIR__, 3);
 require $root . '/vendor/autoload.php';
 
-const TRESOR_DATEI = '/tmp/vb-e2e-tresor.json';
-const DOKUMENT_DATEI = '/tmp/vb-e2e-dokument.json';
 /** What the fixture scan says - Tesseract has to find it in the image. */
 const ERWARTET = ['Testrechnung', '4711', 'Gesamtbetrag'];
 
@@ -110,6 +112,8 @@ function warten(string $was, int $sekunden, \Closure $bedingung): void
 }
 
 $paths = new Paths($root);
+define('TRESOR_DATEI', $paths->varDir() . '/e2e-tresor.json');
+define('DOKUMENT_DATEI', $paths->varDir() . '/e2e-dokument.json');
 $config = Config::fromFile($paths->configFile());
 $pdo = ConnectionFactory::create($config);
 $crypto = new ServerCrypto($config->serverKey);
