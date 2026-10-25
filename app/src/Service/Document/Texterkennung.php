@@ -28,6 +28,7 @@ use App\Service\Processing\Pdf\PdfTextlayer;
 use App\Service\Processing\ProcessingException;
 use App\Service\Processing\Textlayer;
 use App\Service\Storage\BlobService;
+use App\Service\Worker\WorkerUebergabe;
 use App\Service\Upload\MagicBytes;
 
 /**
@@ -81,6 +82,9 @@ final readonly class Texterkennung implements JobHandler
         private DocumentRepository $documents,
         private DocumentArtifactRepository $artifacts,
         private BlobService $blobs,
+        // Issue #53: a document that needs its page images goes to the
+        // worker's OCR when the module routes `ocr` there.
+        private ?WorkerUebergabe $uebergabe = null,
     ) {
     }
 
@@ -98,7 +102,7 @@ final readonly class Texterkennung implements JobHandler
     public function schritt(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
     {
         return match ($job->step) {
-            '' => $this->pruefen($job, $vault),
+            '' => $this->pruefen($job, $vault, $now),
             self::SCHRITT_QUELLE => $this->quelle($job, $vault, $now),
             default => throw new ProcessingException(sprintf('Unbekannter Schritt "%s".', $job->step)),
         };
@@ -182,7 +186,61 @@ final readonly class Texterkennung implements JobHandler
         return $seiten;
     }
 
-    private function pruefen(Job $job, Vault $vault): JobSchrittErgebnis
+    /**
+     * The content of a worker OCR text artifact (issue #53), or null when it
+     * does not open or lacks the shape `extract_text` stores - the same
+     * `{brauchbar, seiten}`, so every reader treats both alike.
+     *
+     * @return array{brauchbar: bool, seiten: list<string>}|null
+     */
+    public function workerText(DocumentArtifact $artefakt, Vault $vault): ?array
+    {
+        return $this->inhalt($artefakt, $vault);
+    }
+
+    /**
+     * Takes over the worker's OCR text of run $jobId (issue #53, review of
+     * #222). Exactly one text per original is expected (07 section 5): seq
+     * 0 .. n-1, n = number of originals, each with at least one page that
+     * is not empty.
+     *   - true: complete and every text usable - the text layer reaches for
+     *     the AI (`ocr_status` `fertig`) and the older runs go;
+     *   - false: complete, but a text is not usable - nothing changes, the
+     *     text still serves the full-text search;
+     *   - null: incomplete or malformed (count, seq, empty pages) - the
+     *     caller marks the run defective, `ocr_status` stays.
+     * The caller does not call it for a run with a text that did not open.
+     */
+    public function workerOcrUebernehmen(Document $document, int $jobId, Vault $vault): ?bool
+    {
+        $texte = array_values(array_filter(
+            $this->artifacts->fuerDokument($document->id, ArtifactKind::Text),
+            static fn(DocumentArtifact $a): bool => $a->jobId === $jobId && $a->producer === JobExecutor::Worker,
+        ));
+        $anzahl = count($document->originalBlobIds);
+        $seqs = array_map(static fn(DocumentArtifact $a): int => $a->seq, $texte);
+        sort($seqs);
+        if ($anzahl === 0 || $seqs !== range(0, $anzahl - 1)) {
+            return null;
+        }
+        $brauchbar = true;
+        foreach ($texte as $artefakt) {
+            $inhalt = $this->inhalt($artefakt, $vault);
+            if ($inhalt === null || array_filter($inhalt['seiten'], static fn(string $s): bool => trim($s) !== '') === []) {
+                return null;
+            }
+            $brauchbar = $brauchbar && $inhalt['brauchbar'];
+        }
+        if (!$brauchbar) {
+            return false;
+        }
+        $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Text, $jobId);
+        $this->documents->setzeOcrStatus($document->id, OcrStatus::Fertig);
+
+        return true;
+    }
+
+    private function pruefen(Job $job, Vault $vault, \DateTimeImmutable $now): JobSchrittErgebnis
     {
         $document = $this->dokument($job);
         if ($document->ocrStatus === OcrStatus::Fertig || $document->ocrStatus === OcrStatus::Uebersprungen) {
@@ -198,6 +256,7 @@ final readonly class Texterkennung implements JobHandler
 
         if ($quellen === []) {
             $this->documents->setzeOcrStatus($document->id, OcrStatus::Uebersprungen);
+            $this->ocrAnstossen($document->id, $vault, $now);
 
             return JobSchrittErgebnis::uebersprungen();
         }
@@ -224,10 +283,11 @@ final readonly class Texterkennung implements JobHandler
         $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Text, $job->id);
         $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::ERechnung, $job->id);
         $keineBilder = count($quellen) === count($document->originalBlobIds);
-        $this->documents->setzeOcrStatus(
-            $document->id,
-            $keineBilder && !in_array(false, $brauchbar, true) ? OcrStatus::Fertig : OcrStatus::Uebersprungen,
-        );
+        $fertig = $keineBilder && !in_array(false, $brauchbar, true);
+        $this->documents->setzeOcrStatus($document->id, $fertig ? OcrStatus::Fertig : OcrStatus::Uebersprungen);
+        if (!$fertig) {
+            $this->ocrAnstossen($document->id, $vault, $now);
+        }
 
         return JobSchrittErgebnis::fertig();
     }
@@ -374,17 +434,19 @@ final readonly class Texterkennung implements JobHandler
      */
     private function daten(DocumentArtifact $artefakt, Vault $vault): ?array
     {
-        if ($artefakt->dataEnc === null) {
-            return null;
-        }
-        $json = FieldCipher::decrypt(
-            $vault->openDataKey($artefakt->dekSealed),
-            $artefakt->dataEnc,
-            new FieldContext(self::TABELLE, $artefakt->id, self::SPALTE),
-        );
-        $daten = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        // A worker artifact that does not open counts as missing (issue #53).
+        return ArtefaktJson::lesen($artefakt, $vault);
+    }
 
-        return is_array($daten) ? $daten : null;
+    /**
+     * The page images are needed: with the worker module routing `ocr` to
+     * an online worker, the worker recognises the text (07-worker.md
+     * sections 2 and 6). Without it OCR is skipped - "OCR nachholen" on the
+     * admin page catches up later.
+     */
+    private function ocrAnstossen(int $documentId, Vault $vault, \DateTimeImmutable $now): void
+    {
+        $this->uebergabe?->einreihen(WorkerUebergabe::OCR, null, $documentId, $vault, $now);
     }
 
     private function mimeType(int $blobId, Vault $vault): string

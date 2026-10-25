@@ -170,6 +170,23 @@ final readonly class Mailer
     }
 
     /**
+     * "Worker offline" for the admins (issue #53, 07-worker.md section 6:
+     * "Alarm-Mail, wenn der Worker > 24 h offline ist und Jobs warten").
+     * Queued by the cron, sent with the next run. No receipt data.
+     */
+    public function reiheWorkerAusfallEin(string $empfaenger, int $stunden, int $zurueck, int $wartend, ?\DateTimeImmutable $now = null): void
+    {
+        $settings = $this->settingsRepo->get();
+        $body = $this->templates->render('worker-ausfall', [
+            'vereinsname' => $settings->vereinsname,
+            'stunden' => $stunden,
+            'zurueck' => $zurueck,
+            'wartend' => $wartend,
+        ]);
+        $this->queue->enqueue($empfaenger, 'Verarbeitungs-Worker offline', $body, $now ?? new \DateTimeImmutable());
+    }
+
+    /**
      * "Sicherheits-Mails an den Nutzer: neues Gerät, Passwort geändert, 2FA
      * geändert, Tresor-Freigabe erteilt/entzogen" (docs/spec/01-sicherheit.md
      * section 3). $ereignis is one sentence from a fixed list the caller
