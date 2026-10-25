@@ -14,6 +14,7 @@ composer.phar
 /docker/shared/release_checksums.txt
 /docker/shared/vault_anchor.flag
 /docker/shared/setup_kanal.txt
+/docker/shared/install_token.txt
 # written by the installer/updater (issue #101), like on a real host
 /docker/shared/.htaccess
 

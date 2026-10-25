@@ -2022,6 +2022,36 @@ Offen für Mirko: ob wöchentlich der richtige Standard ist; ob ein Schalter
 je Benutzer gebraucht wird; ob weitere Zähler (unbezahlte Rechnungen,
 offene Erstattungen) in die Erinnerung gehören.
 
+## E-69 ❓ Installations-Token, HTTPS-Umleitung im Shim, Budget-Scope (#247) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+Nacharbeit zum Security-Review (N-05, N-11; `docs/security-checkliste.md`).
+
+- **`/install` nur mit Installations-Token** statt einer per FTP
+  anzulegenden Freigabedatei: `setup.php` schreibt das Token nach
+  `shared/install_token.txt` und gibt es in der Weiterleitung mit – für
+  Laien ändert sich nichts. Nur wer die Weiterleitung verliert, liest die
+  Datei per FTP ab. Restrisiko: `setup.php` selbst bleibt ohne Token (es
+  läuft, bevor es ein `shared/` gibt); wer es vor dem Verein aufruft, hat
+  das Token. Abhilfe ist die Anleitung „direkt nach dem Hochladen
+  ausführen“; eine zusätzliche FTP-Freigabedatei wäre sicherer, aber für
+  jede Installation ein Schritt mehr.
+- **HTTPS-Umleitung im Shim**, nicht in der `.htaccess`: der Shim wird bei
+  jedem Update aktualisiert, eine angepasste `.htaccess` nicht; und PHP
+  kann `/cron`, POST und `localhost` einfach ausnehmen. `/cron` bleibt
+  ohne Umleitung, weil nicht bestätigt ist, dass der Cron des Hosters
+  HTTPS-URLs aufruft. `X-Forwarded-Proto: https` schaltet nur die
+  Umleitung ab (gegen eine Schleife hinter einem TLS-Proxy); die
+  Anwendung vertraut dem Header weiterhin nicht. Notschalter
+  `shared/https_umleitung_aus.flag`.
+- **Budget-Scope beim Pflegen** (N-07): wirksam ist die Schnittmenge der
+  Kostenstellen-Scopes von `bank.book` (Schreibrecht) und `report.view`
+  (die Seite); nur Kostenstellen, kein Zeitraum (ein Jahr ist kein Datum,
+  wie beim Lesen).
+
+Offen für Mirko: ob die FTP-Freigabedatei zusätzlich verlangt werden soll;
+ob der Cron bei all-inkl über HTTPS läuft (dann könnte `/cron` mit
+umgeleitet bzw. HTTP für `/cron` abgewiesen werden).
+
 ## E-63 ❓ Release-Signatur, erlaubte Download-Hosts, Prüfsummenliste je Release (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #241 (N-02, N-03, N-18, N-19 aus #78, Folge-Idee aus #79), 06 §1, 01 §8, `docs/betrieb.md` §13*
 

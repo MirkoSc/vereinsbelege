@@ -245,7 +245,7 @@ final class Testdatensatz
         $anzahl = 0;
         foreach ($this->jahre as $jahr) {
             $speichern = function (?int $kategorie, ?int $kostenstelle, int $cent) use ($budgets, $jahr, $jetzt, $euro, &$anzahl): void {
-                $budgets->speichern($this->tresor, $jahr, ['kategorie' => (string) $kategorie, 'kostenstelle' => (string) $kostenstelle, 'betrag' => $euro($cent)], $this->userId, $jetzt);
+                $budgets->speichern($this->tresor, $jahr, ['kategorie' => (string) $kategorie, 'kostenstelle' => (string) $kostenstelle, 'betrag' => $euro($cent)], Zugriffsbereich::unbeschraenkt(), $this->userId, $jetzt);
                 ++$anzahl;
             };
             foreach ($this->kategorien['ausgabe'] as $rang => $kategorie) {

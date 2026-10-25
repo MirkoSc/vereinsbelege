@@ -178,13 +178,16 @@ final class DatevBuchungsstapel
 
     /**
      * Belegfeld 1 keeps only what DATEV allows there; of a longer value the
-     * end is kept, where invoice numbers usually differ.
+     * end is kept, where invoice numbers usually differ. A leading `+` or `-`
+     * is dropped after shortening, so a spreadsheet opening the file never
+     * reads the field as a formula (N-12; `=` and `@` are not allowed at all).
      */
     public static function belegfeld(string $wert): string
     {
         $erlaubt = (string) preg_replace('~[^A-Za-z0-9$&%*+\-/]~', '', $wert);
+        $gekuerzt = strlen($erlaubt) > self::BELEGFELD_MAX ? substr($erlaubt, -self::BELEGFELD_MAX) : $erlaubt;
 
-        return strlen($erlaubt) > self::BELEGFELD_MAX ? substr($erlaubt, -self::BELEGFELD_MAX) : $erlaubt;
+        return ltrim($gekuerzt, '+-');
     }
 
     /** A text for a quoted field: no quote, no control character, at most $max characters. */

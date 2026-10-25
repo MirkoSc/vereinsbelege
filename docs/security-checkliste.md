@@ -80,7 +80,7 @@ eine in diesem PR behobene Zeile.
 | B-08 | Sperren/Ablauf/Reset beenden laufende Sitzungen sofort | ✓ | `LoginGuard` (Epoche) |
 | B-09 | Logout nur per POST + CSRF, löscht Sitzung und Tresor-Cookie | ✓ | `AuthController::logout()` |
 | B-10 | CSRF-Token auf allen schreibenden Session-Routen | ✓ | je Controller `checkCsrf()`; Ausnahmen gewollt: `/einreichen*` (Formular-Token), `/api/worker/*` (HMAC). Ein zentraler Test über alle POST-Routen fehlt → N-15 |
-| B-11 | Nur HTTPS (Umleitung HTTP → HTTPS) | ✗ niedrig | keine Umleitung in `.htaccess`/Shim → N-11; HSTS vorhanden |
+| B-11 | Nur HTTPS (Umleitung HTTP → HTTPS) | ✓ (#247) | Shim `ReleaseSwitcher::SHIM`: GET/HEAD über HTTP → 302 auf HTTPS; ausgenommen `/cron`, POST, `localhost`, IP-Adressen, andere Ports als 80; Proxy-Erkennung nur zum Abschalten der Umleitung, Notschalter `shared/https_umleitung_aus.flag` (N-11); HSTS vorhanden |
 | B-12 | Tresor-Schlüssel nur geteilt (Session-Chiffrat + Cookie-Schlüssel) | ✓ | `SessionVault` |
 
 ## C – Zugriffskontrolle (ASVS V4)
@@ -100,7 +100,7 @@ eine in diesem PR behobene Zeile.
 | C-11 | Volltext-Session-Index an Benutzer + Scope, Treffer neu gefiltert | ✓ | `Suche/Volltextsuche` |
 | C-12 | ZIP-, DATEV-, Kassenprüfungs-, Budget-Export im Scope | ✓ | `InvoiceRepository`, `DatevExport`, `Report/Kassenpruefung`, `BudgetController::csv()` |
 | C-13 | Budget lesen: Kostenstellen-Scope für Soll und Ist | ✓ | `BudgetRepository::forYear()`, `Report/Budgets::vergleich()` |
-| C-14 | Budget schreiben/löschen nur im eigenen Scope | ✗ niedrig | `Report/Budgets::speichern()/loeschen()` ohne Zugriffsbereich → N-07 |
+| C-14 | Budget schreiben/löschen nur im eigenen Scope | ✓ (#247) | `Report/Budgets::speichern()/loeschen()` mit Kostenstellen-Scope von `bank.book` ∩ `report.view`; Löschen per SQL (`BudgetRepository::delete()`), fremde ID = 404 (N-07); `BudgetFlowTest` |
 | C-15 | Zeitraum-Scope gilt für alle Rechte, auch `audit.view` | ✗ niedrig | `AuditController` ohne Zugriffsbereich → N-06 |
 | C-16 | Kein Mass Assignment (Kostenstelle, Status) | ✓ | `Posteingang`, `InterneErfassung` |
 | C-17 | `/api/jobs/step`: Recht je Job-Typ | ✓ | `Job/JobRunner` |
@@ -135,7 +135,7 @@ eine in diesem PR behobene Zeile.
 | E-03 | Kein DOM-XSS im eigenen JS | ✓ | nur `innerHTML = ''` |
 | E-04 | Rechtstexte: alles vor dem Markdown escaped, Links nur http(s)/mailto/tel/eigene Pfade | ✓ | `View/EinfachesMarkdown` |
 | E-05 | CSV-Formelschutz für Textzellen (`= + - @ TAB CR`) | ✓ | `Export/Csv::text()` – Kassenprüfung, `index.csv`, Budget |
-| E-06 | DATEV: Belegfeld 1 ohne Formel | ✗ niedrig | `DatevBuchungsstapel::belegfeld()` lässt führendes `+`/`-` durch → N-12 |
+| E-06 | DATEV: Belegfeld 1 ohne Formel | ✓ (#247) | `DatevBuchungsstapel::belegfeld()` entfernt führendes `+`/`-` nach dem Kürzen; `=`/`@` sind ohnehin nicht erlaubt (N-12) |
 | E-07 | `Content-Disposition`-Dateinamen ohne Fremddaten | ✓ | alle Download-Controller |
 | E-08 | Mail: CR/LF abgewiesen, RFC 2047, Anzeigename korrekt gequotet | ✓ (#78) | `Mail/MailMessage::displayName()` |
 | E-09 | ZIP-Export/Nextcloud: kein Zip-Slip über Daten in Pfaden | ✓ | `Export/Dateiname`, `PfadMuster`, `NextcloudZiel` |
@@ -191,7 +191,7 @@ eine in diesem PR behobene Zeile.
 | H-08 | Download-URLs/Redirect-Protokolle auf github.com/https beschränkt | ✓ (#241) | `ReleaseDownloader::pruefeUrl()`/`folgeWeiterleitungen()` – jeder Sprung |
 | H-09 | Wartungs-Flag, `rename()`-Umschaltung, Shim = Konstante | ✓ | `ReleaseSwitcher` |
 | H-10 | `setup.php` sperrt sich nach der Installation | ✓ | `bin/setup.template.php` |
-| H-11 | `/install` gegen Übernahme durch Fremde geschützt | ✗ niedrig | → N-05 |
+| H-11 | `/install` gegen Übernahme durch Fremde geschützt | ✓ (#247) | Installations-Token `shared/install_token.txt` (`Installer/InstallToken`), von `setup.php` in der Weiterleitung übergeben oder per FTP abzulesen; jeder Schritt verlangt die Freigabe (N-05); `InstallFlowTest` |
 | H-12 | Integritätscheck: alle Dateien von `current/`, Zusatzdateien erkannt | ✓ | `Integritaet/CodeIntegritaet` |
 | H-13 | Integritätscheck deckt `web/` (Shim, `.htaccess`, `.user.ini`, Fremddateien) und `config.php` ab | ✓ (#241) | `CodeIntegritaet` Phase `umgebung` |
 | H-14 | Prüfsummenliste nicht vom selben FTP-Angreifer änderbar | ✓ (#241) | Liste je Release, signiert; `CodeIntegritaet::echtheitsfehler()` – wirksam ab gesetztem `PUBLIC_KEY` |
@@ -233,14 +233,14 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-02 | mittel | ✓ (#241) Updater prüft nur Integrität, keine Signatur der Releases – Signaturprüfung eingebaut, scharf mit `PUBLIC_KEY` |
 | N-03 | mittel | ✓ (#241) Integritätscheck übersieht `web/` und `config.php` |
 | N-04 | mittel | ✓ behoben (#242) – Platte/DB über öffentliche Uploads füllbar |
-| N-05 | niedrig | `/install` ohne Token, solange `config.php` fehlt |
+| N-05 | niedrig | `/install` ohne Token, solange `config.php` fehlt – ✓ behoben (#247) |
 | N-06 | niedrig | Audit-Log ohne Zeitraum-Scope |
-| N-07 | niedrig | Budget schreiben/löschen ohne Scope |
+| N-07 | niedrig | Budget schreiben/löschen ohne Scope – ✓ behoben (#247) |
 | N-08 | niedrig | 2FA ändern ohne erneute Anmeldung; abgebrochene Neueinrichtung entwertet TOTP |
 | N-09 | niedrig | Rate-Limiter: Prüfen und Zählen nicht atomar |
 | N-10 | niedrig | 2FA-Einrichtungspflicht nicht für JSON-Routen |
-| N-11 | niedrig | keine HTTP→HTTPS-Umleitung |
-| N-12 | niedrig | DATEV-Belegfeld mit führendem `+`/`-` |
+| N-11 | niedrig | keine HTTP→HTTPS-Umleitung – ✓ behoben (#247) |
+| N-12 | niedrig | DATEV-Belegfeld mit führendem `+`/`-` – ✓ behoben (#247) |
 | N-13 | niedrig | ✓ behoben (#242) – TOCTOU Magic Bytes ↔ Speichern beim Upload |
 | N-14 | Härtung | Session-Cookie `PHPSESSID` statt `__Host-` |
 | N-15 | Härtung | kein zentraler CSRF-Test über alle POST-Routen |

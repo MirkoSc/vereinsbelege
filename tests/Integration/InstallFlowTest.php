@@ -13,6 +13,7 @@ use App\Http\Session;
 use App\Domain\AuditAction;
 use App\Installer\ConfigWriter;
 use App\Installer\InstallController;
+use App\Installer\InstallToken;
 use App\Repository\AuditLogRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaTotpRepository;
@@ -84,6 +85,14 @@ final class InstallFlowTest extends DatabaseTestCase
         }
 
         file_put_contents($this->base . '/web/setup.php', '<?php // bootstrap installer');
+
+        // What setup.php leaves behind and hands over (N-05): the token in
+        // shared/ and a session released for it. The tests of the token
+        // itself start from a session without the release.
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $token->ensure();
+        new Session()->start();
+        $token->release();
     }
 
     protected function tearDown(): void
@@ -93,7 +102,7 @@ final class InstallFlowTest extends DatabaseTestCase
         // PHPUnit process, the same reason the restore tests reset
         // install_restore explicitly - a half-finished setup left behind by
         // one test must not leak into the next one's submit() call.
-        unset($_SESSION['install_admin'], $_SESSION['install_restore'], $_SESSION['install_ftp_code']);
+        unset($_SESSION['install_admin'], $_SESSION['install_restore'], $_SESSION['install_ftp_code'], $_SESSION[InstallToken::SESSION_KEY]);
         self::removeTree($this->base);
     }
 
@@ -268,13 +277,142 @@ final class InstallFlowTest extends DatabaseTestCase
     }
 
     /**
+     * Security review N-05: without the installation token nobody gets past
+     * the first page - not even with a valid form and a CSRF token of his
+     * own session.
+     */
+    public function testWithoutTheTokenNoStepIsReachable(): void
+    {
+        unset($_SESSION[InstallToken::SESSION_KEY]);
+
+        $seite = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertSame(200, $seite->status);
+        self::assertStringContainsString('Installation freigeben', $seite->body);
+        self::assertStringContainsString('shared/install_token.txt', $seite->body);
+        self::assertStringNotContainsString('Datenbankname', $seite->body);
+
+        $antwort = $this->submit($this->validPost());
+        self::assertSame(403, $antwort->status);
+        self::assertStringContainsString('Installation freigeben', $antwort->body);
+        self::assertArrayNotHasKey('install_admin', $_SESSION, 'no vault, no admin created');
+        self::assertFileDoesNotExist($this->paths()->configFile());
+
+        foreach (['confirmKey' => '/install/schluessel', 'mail' => '/install/mail', 'restart' => '/install/neu', 'serverKey' => '/install/serverschluessel', 'access' => '/install/zugang', 'restoreStep' => '/install/wiederherstellen'] as $schritt => $pfad) {
+            $session = new Session();
+            $session->start();
+            $antwort = $this->controller()->{$schritt}(new Request(HttpMethod::Post, $pfad, post: ['_csrf' => $session->csrfToken()]));
+            self::assertInstanceOf(Response::class, $antwort);
+            self::assertSame(403, $antwort->status, $schritt);
+        }
+    }
+
+    public function testSetupHandsTheTokenOverInItsRedirect(): void
+    {
+        unset($_SESSION[InstallToken::SESSION_KEY]);
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $wert = $token->current();
+        self::assertNotNull($wert);
+
+        $falsch = $this->controller()->form(new Request(HttpMethod::Get, '/install', query: ['token' => str_repeat('0', 32)]));
+        self::assertInstanceOf(Response::class, $falsch);
+        self::assertStringContainsString('Dieses Installations-Token stimmt nicht.', $falsch->body);
+        self::assertFalse($token->isReleased());
+
+        $weiter = $this->controller()->form(new Request(HttpMethod::Get, '/install', query: ['token' => $wert]));
+        self::assertInstanceOf(Response::class, $weiter);
+        self::assertSame('/install', $weiter->headers['Location'] ?? null, 'the token leaves the address bar at once');
+        self::assertTrue($token->isReleased());
+        $seite = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertStringContainsString('Datenbankname', $seite->body);
+    }
+
+    public function testTheTokenCanBeTypedInFromTheFile(): void
+    {
+        unset($_SESSION[InstallToken::SESSION_KEY]);
+        // An install without setup.php: the first visit creates the file.
+        unlink($this->paths()->installTokenFile());
+        $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $wert = $token->current();
+        self::assertNotNull($wert);
+        self::assertSame(0600, fileperms($this->paths()->installTokenFile()) & 0777);
+
+        $session = new Session();
+        $session->start();
+        $freigabe = function (string $eingabe, bool $mitCsrf = true) use ($session): Response {
+            $post = ['token' => $eingabe, ...($mitCsrf ? ['_csrf' => $session->csrfToken()] : [])];
+            $antwort = $this->controller()->release(new Request(HttpMethod::Post, '/install/freigabe', post: $post));
+            self::assertInstanceOf(Response::class, $antwort);
+
+            return $antwort;
+        };
+
+        self::assertSame(403, $freigabe($wert, false)->status);
+        self::assertFalse($token->isReleased());
+        $falsch = $freigabe('nicht-das-token');
+        self::assertSame(422, $falsch->status);
+        self::assertFalse($token->isReleased());
+
+        // Copied with spaces and in capitals from an editor: still accepted.
+        $richtig = $freigabe(' ' . strtoupper(substr($wert, 0, 16)) . ' ' . substr($wert, 16) . "\n");
+        self::assertSame(302, $richtig->status);
+        self::assertTrue($token->isReleased());
+
+        // A new token (setup.php run again) makes the old release worthless.
+        unlink($this->paths()->installTokenFile());
+        $token->ensure();
+        self::assertNotSame($wert, $token->current());
+        self::assertFalse($token->isReleased());
+    }
+
+    /**
+     * The way back when the token is lost or the generated file cannot be
+     * read by FTP (PHP running as another user): delete the file and upload
+     * one with a token of one's own - or let /install create a new one.
+     * Running setup.php again does not help, it only redirects once
+     * current/ exists.
+     */
+    public function testALostTokenIsReplacedByDeletingOrUploadingTheFile(): void
+    {
+        unset($_SESSION[InstallToken::SESSION_KEY]);
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $alt = $token->current();
+        self::assertNotNull($alt);
+
+        // An own token uploaded by FTP (with the line break of an editor) is
+        // kept by the next visit and accepted in any case.
+        unlink($this->paths()->installTokenFile());
+        file_put_contents($this->paths()->installTokenFile(), "Vereinskasse2026Neu\r\n");
+        $seite = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertStringContainsString('Installation freigeben', $seite->body);
+        self::assertSame("Vereinskasse2026Neu\r\n", file_get_contents($this->paths()->installTokenFile()), 'not overwritten');
+        self::assertFalse($token->matches($alt));
+        self::assertTrue($token->matches('vereinskasse2026neu'));
+
+        // Too short is no token: the next visit replaces it with a random one.
+        file_put_contents($this->paths()->installTokenFile(), 'kurz');
+        self::assertNull($token->current());
+        $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', (string) $token->current());
+
+        // Deleted: /install creates a new one, the old one is worthless.
+        $vorher = $token->current();
+        unlink($this->paths()->installTokenFile());
+        $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertNotNull($token->current());
+        self::assertNotSame($vorher, $token->current());
+    }
+
+    /**
      * Issue #101: the installer repeats what setup.php did - a deny-all
      * .htaccess in shared/, releases/ and current/ - and stays quiet when it
      * worked.
      */
     public function testTheInstallerLocksSharedAndReleases(): void
     {
-        mkdir($this->base . '/shared', 0775, true);
         mkdir($this->base . '/releases', 0775, true);
 
         $response = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
@@ -311,7 +449,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testTheChannelChosenInSetupIsPreselected(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         file_put_contents($this->paths()->setupChannelFile(), 'beta');
 
         $response = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
@@ -329,7 +466,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testAFreshInstallCreatesSchemaConfigAndSetting(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         file_put_contents($this->paths()->setupChannelFile(), 'beta');
 
         $response = $this->submit($this->validPost());
@@ -370,11 +506,11 @@ final class InstallFlowTest extends DatabaseTestCase
         // setup.php is a second, unauthenticated entry point and has to go
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
         self::assertFileDoesNotExist($this->paths()->setupChannelFile());
+        self::assertFileDoesNotExist($this->paths()->installTokenFile(), 'the token goes with setup.php');
     }
 
     public function testTheMailStepFollowsTheKeyAndCanBeSkipped(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
 
         $mail = $this->confirmKey($gruppen[6], mailSchritt: true);
@@ -400,7 +536,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testTheMailStepSavesTheSettingsSendsATestMailAndFinishes(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
         $this->confirmKey($gruppen[6], mailSchritt: true);
 
@@ -435,7 +570,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testSkippingAfterASuccessfulTestKeepsTheSettingsAndSaysSo(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
         $this->confirmKey($gruppen[6], mailSchritt: true);
         $this->mailStep(self::mailPost('testen'), new FakeMailTransport([true]));
@@ -448,7 +582,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAStaleRestartAfterTheConfirmationRemovesNothing(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
         $this->confirmKey($gruppen[6], mailSchritt: true);
 
@@ -460,7 +593,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAFailedTestMailIsShownAndTheStepStaysOpen(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
         $this->confirmKey($gruppen[6], mailSchritt: true);
 
@@ -472,7 +604,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAnInvalidMailStepKeepsTheInputButNeverThePassword(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
         $this->confirmKey($gruppen[6], mailSchritt: true);
 
@@ -494,7 +625,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testTheMailStepNeedsCsrfAndAConfirmedKey(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
 
         self::assertSame(409, $this->mailStep(['aktion' => 'ueberspringen'])->status, 'no setup at all');
 
@@ -508,7 +638,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testTheRecoveryKeyPageShowsSevenGroupsOfEightCharacters(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
 
         $response = $this->submit($this->validPost());
         $gruppen = $this->extractGroups($response->body);
@@ -526,7 +655,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testTheAdminRowIsEncryptedWithTheServerKeyAndSearchableByItsBlindIndex(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
 
         $response = $this->submit($post);
@@ -560,7 +688,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testTheVaultGrantUnwrapsWithThePasswordAndMatchesTheStoredVault(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
 
         $response = $this->submit($post);
@@ -584,7 +711,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAWrongPasswordCannotUnwrapTheAdminsKey(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $response = $this->submit($this->validPost());
         $this->confirmKey($this->extractGroups($response->body)[6]);
 
@@ -605,7 +731,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testTheRecoveryKeyOpensTheSameVaultAndIsStoredNowhere(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $response = $this->submit($this->validPost());
         $gruppen = $this->extractGroups($response->body);
         $letzteGruppe = $gruppen[6];
@@ -632,7 +757,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAWrongLastGroupIsRejectedAndTheKeyIsNotShownAgain(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $response = $this->submit($this->validPost());
         $gruppen = $this->extractGroups($response->body);
 
@@ -654,7 +778,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     public function testResubmittingWhilePendingDoesNotCreateASecondAdmin(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $this->submit($this->validPost());
         self::assertSame(1, $this->userCount());
 
@@ -666,7 +789,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testRestartRemovesTheHalfFinishedAdminAndAllowsARetry(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $this->submit($this->validPost());
         self::assertSame(1, $this->userCount());
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM vault')->fetchColumn());
@@ -731,7 +853,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAnInvalidEmailIsRejectedAndNothingIsWritten(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
         $post['admin_email'] = 'keine-email-adresse';
 
@@ -746,7 +867,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testATooShortPasswordIsRejected(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
         $post['admin_password'] = 'kurz1234567';
         $post['admin_password_wiederholung'] = 'kurz1234567';
@@ -760,7 +880,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testACommonPasswordIsRejectedEvenIfLongEnough(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
         // 12 characters, and in app/data/haeufige-passwoerter.txt.
         $post['admin_password'] = 'passwort1234';
@@ -775,7 +894,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testMismatchedPasswordRepetitionIsRejected(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $post = $this->validPost();
         $post['admin_password_wiederholung'] = 'ein-ganz-anderes-testpasswort';
 
@@ -919,7 +1037,6 @@ final class InstallFlowTest extends DatabaseTestCase
         $alterSchluessel = (require $this->base . '/quelle_config.php')['server_key'];
 
         $this->wipeDatabase();
-        mkdir($this->paths()->sharedDir(), 0775, true);
         file_put_contents($this->paths()->setupChannelFile(), 'beta');
 
         $response = $this->submitRestore($zip);
@@ -946,6 +1063,7 @@ final class InstallFlowTest extends DatabaseTestCase
 
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary dump removed');
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
+        self::assertFileDoesNotExist($this->paths()->installTokenFile());
     }
 
     /**
@@ -1181,7 +1299,6 @@ final class InstallFlowTest extends DatabaseTestCase
      */
     private function installationOhneSchluesselGesichert(?\Closure $vorDemBackup = null, bool $mitConfig = false): array
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $response = $this->submit($this->validPost());
         $gruppen = $this->extractGroups($response->body);
         $this->confirmKey($gruppen[6]);
@@ -1206,6 +1323,10 @@ final class InstallFlowTest extends DatabaseTestCase
         unlink($this->paths()->configFile());
         // The fresh install removed setup.php; the new server has one again.
         file_put_contents($this->base . '/web/setup.php', '<?php // bootstrap installer');
+        // ... and the token with it; setup.php writes a new one.
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $token->ensure();
+        $token->release();
 
         return ['zip' => $zip, 'gruppen' => $gruppen, 'alterSchluessel' => $alterSchluessel, 'userId' => $userId];
     }
@@ -1630,7 +1751,6 @@ final class InstallFlowTest extends DatabaseTestCase
 
     public function testAFreshInstallAnchorsTheVaultKeyWithItsServerKey(): void
     {
-        mkdir($this->paths()->sharedDir(), 0775, true);
         $this->confirmKey($this->extractGroups($this->submit($this->validPost())->body)[6]);
 
         $schluessel = (string) (require $this->paths()->configFile())['server_key'];
