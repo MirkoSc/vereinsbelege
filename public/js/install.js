@@ -55,6 +55,19 @@ function zielNachAbschluss(antwort) {
     return antwort.weiter.startsWith('/') && !antwort.weiter.startsWith('//') ? antwort.weiter : null;
 }
 
+/**
+ * The cron URL a finished restore answers with (issue #244): config.php got
+ * a new cron token, so the hoster's cronjob needs the new address. Only an
+ * http(s) URL is shown; anything else means there is none to show.
+ */
+function cronUrlAusAntwort(antwort) {
+    if (!antwort || !antwort.fertig || typeof antwort.cron_url !== 'string') {
+        return null;
+    }
+
+    return /^https?:\/\/[^\s]+$/.test(antwort.cron_url) ? antwort.cron_url : null;
+}
+
 async function restoreStep(csrf) {
     const antwort = await fetch('/install/wiederherstellen', {
         method: 'POST',
@@ -102,6 +115,13 @@ async function initRestore() {
             window.location.assign(ziel);
             return;
         }
+        const cronUrl = cronUrlAusAntwort(antwort);
+        const cron = wurzel.querySelector('#wiederherstellung-cron');
+        const cronFeld = wurzel.querySelector('#wiederherstellung-cron-url');
+        if (cronUrl !== null && cron !== null && cronFeld !== null) {
+            cronFeld.value = cronUrl;
+            cron.hidden = false;
+        }
         fertig.hidden = false;
     } catch (problem) {
         status.textContent = 'Abgebrochen.';
@@ -127,7 +147,7 @@ function schalteFeldgruppe(element, verdeckt) {
         return;
     }
     element.hidden = verdeckt;
-    element.querySelectorAll('input').forEach((feld) => {
+    element.querySelectorAll('input, select').forEach((feld) => {
         feld.disabled = verdeckt;
     });
 }
@@ -172,5 +192,5 @@ if (typeof document !== 'undefined') {
 // Node (tests/js) loads the same file for the pure helpers above; browsers
 // ignore this block because `module` does not exist there.
 if (typeof module === 'object' && module.exports) {
-    module.exports = { fortschrittProzent, statusText, feldgruppenFuer, zielNachAbschluss };
+    module.exports = { fortschrittProzent, statusText, feldgruppenFuer, zielNachAbschluss, cronUrlAusAntwort };
 }

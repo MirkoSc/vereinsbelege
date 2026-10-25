@@ -168,6 +168,51 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
     }
 
     /**
+     * Issue #244: generated columns are computed by the server and refused
+     * in an INSERT (MariaDB 1906, MySQL 3105). The dump leaves them out of
+     * its INSERTs - the CREATE TABLE brings their definition back, so the
+     * restored rows carry the same values - while a column with a mere
+     * expression default (MySQL: Extra `DEFAULT_GENERATED`) stays in.
+     */
+    public function testGeneratedColumnsSurviveBackupAndRestore(): void
+    {
+        $this->pdo()->exec('CREATE TABLE probe_generiert (
+            id INT NOT NULL PRIMARY KEY,
+            netto BIGINT NOT NULL,
+            brutto BIGINT AS (netto * 119 DIV 100) VIRTUAL,
+            text_feld VARCHAR(100) NULL,
+            text_klein VARCHAR(100) AS (LOWER(text_feld)) STORED,
+            angelegt_am DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_text_klein (text_klein)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+        $insert = $this->pdo()->prepare(
+            'INSERT INTO probe_generiert (id, netto, text_feld, angelegt_am) VALUES (?, ?, ?, ?)',
+        );
+        for ($i = 1; $i <= 150; $i++) {
+            $insert->execute([$i, $i * 1000, $i % 4 === 0 ? null : 'Zeile ÄÖÜ ' . $i, '2026-03-04 05:06:07']);
+        }
+        $vorher = $this->dumpTable('probe_generiert');
+        self::assertSame(1190, (int) $vorher[0]['brutto'], 'the generated column is filled');
+
+        $name = $this->service()->create();
+
+        $zip = new \ZipArchive();
+        self::assertTrue($zip->open($this->backupDir . '/' . $name));
+        $dump = (string) $zip->getFromName('dump.sql');
+        $zip->close();
+        self::assertStringContainsString(
+            'INSERT INTO `probe_generiert` (`id`, `netto`, `text_feld`, `angelegt_am`) VALUES',
+            $dump,
+            'generated columns stay out of the INSERT, the default one stays in',
+        );
+
+        $this->wipeDatabase();
+        $this->restoreDump(new RestoreService(), $this->backupDir . '/' . $name);
+
+        self::assertSame($vorher, $this->dumpTable('probe_generiert'));
+    }
+
+    /**
      * Issue #92: the `budget` table (keys for its UNIQUE index, a CHECK,
      * NULL foreign keys) comes back from a backup unchanged - a restore must
      * not trip over any of its columns.

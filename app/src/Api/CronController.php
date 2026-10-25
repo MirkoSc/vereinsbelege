@@ -31,6 +31,17 @@ final readonly class CronController
     ) {
     }
 
+    /**
+     * The URL the hoster's cronjob calls - shown to an admin after the
+     * installer wrote a new token and on the system check page (issue
+     * #244). It carries the token, so it goes into a page for an admin and
+     * nowhere else: never into a log, a mail or a link of the application.
+     */
+    public static function url(string $origin, #[\SensitiveParameter] string $token): string
+    {
+        return rtrim($origin, '/') . '/cron?token=' . rawurlencode($token);
+    }
+
     public function run(Request $request): Response
     {
         $token = $request->query['token'] ?? '';

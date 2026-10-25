@@ -251,6 +251,15 @@ Generation, damit danach auch ein Rollback wieder geht.
   ungepuffert gelesen und ein INSERT zusätzlich nach Byte-Budget
   abgeschlossen, damit weder der Speicher noch `max_allowed_packet` an der
   Chunk-Tabelle scheitert.
+- *Generierte Spalten* (`… AS (Ausdruck) VIRTUAL|STORED`, #244): Der Dump
+  lässt sie aus SELECT und INSERT weg – erkannt an `Extra` von
+  `SHOW COLUMNS` (`VIRTUAL GENERATED`/`STORED GENERATED`, ältere MariaDB
+  `VIRTUAL`/`PERSISTENT`; MySQLs `DEFAULT_GENERATED` für einen bloßen
+  Ausdrucks-Default bleibt drin, `MysqlDumper::isGenerated()`). Ein INSERT
+  mit Wert für eine generierte Spalte scheitert beim Einspielen (MariaDB
+  1906, MySQL 3105); die Definition steht im `CREATE TABLE`, der Server
+  berechnet die Werte neu. Derzeit hat das Schema keine solche Spalte – die
+  Regel gilt für künftige Migrationen.
 - *Erstellen:* `BackupService::create(mitConfig, mitBlobs)`; ohne Angabe
   **ohne** `config.php` und **mit** Blobs. Von Hand:
   `php bin/backup.php [--mit-config] [--ohne-blobs]`; `--help` zeigt die
@@ -372,10 +381,33 @@ Generation, damit danach auch ein Rollback wieder geht.
   Rotation 10 heißt dann zehnmal so viel. Die Admin-Seite weist darauf
   hin.
 - *Einspielen:* Installer-Schritt 6, „Backup einspielen“ mit hochgeladenem
-  ZIP, in zwei Phasen (ein Request je Block, Stand in der Session,
+  ZIP **oder einem per FTP abgelegten** (nächster Punkt), in zwei Phasen (ein Request je Block, Stand in der Session,
   `public/js/install.js`): erst der Dump in Blöcken zu 200 Anweisungen bzw.
   8 MiB, dann die Blob-Dateien in Portionen (200 Dateien bzw. 8 MiB je
   Request).
+- *Backups größer als die Upload-Grenze* (#244, E-66 – vorläufig): Statt
+  eines Chunk-Uploads legt der Admin das ZIP **per FTP in
+  `shared/var/backups/`** ab und wählt es im Formular aus
+  (`backup_server`, Liste aus `App\Installer\ServerBackups`, neueste
+  zuerst; Upload und Auswahl zugleich → 422). Das Formular nennt die Grenze
+  (kleinerer Wert von `upload_max_filesize`/`post_max_size`,
+  `SystemCheck::formatBytes()`). **FTP-Nachweis:** Liste und Auswahl gibt es
+  erst, wenn die leere Datei `freigabe-<16 Hex>.txt` im selben Verzeichnis
+  liegt, deren Name das Formular dieser Sitzung nennt (Zufallswert in
+  `$_SESSION['install_ftp_code']`). Ohne ihn könnte jeder, der `/install`
+  vor dem Admin erreicht, ein dort abgelegtes Backup in eine Datenbank
+  seiner Wahl einspielen lassen (das Formular nennt den DB-Host) – beim
+  Upload bringt er nur sein eigenes ZIP mit. Ohne Nachweis nennt die Seite
+  auch keine Dateinamen. Ein erfolgreicher Start verbraucht den Nachweis
+  (Datei gelöscht, neuer Code). Akzeptiert wird nur ein
+  einfacher Dateiname direkt in diesem Verzeichnis (`[A-Za-z0-9][A-Za-z0-9._-]*.zip`,
+  kein `..`, keine versteckte Datei, kein Symlink) – der Installer antwortet
+  ohne Anmeldung, der Name ist eine Behauptung des Clients. Das ZIP wird
+  **an Ort und Stelle** gelesen: keine Kopie für die Blob-Phase
+  (`install_restore.zip_behalten`), und es wird nie gelöscht; trägt es den
+  Namen `backup_…zip`, steht es danach in der Liste von `/admin/backups`
+  (und zählt zur Rotation). Offen bleibt der erste Request: er entpackt
+  `dump.sql` aus dem ZIP am Stück (wie beim Upload).
 - *Dump strömend (#120, E-31):* der Stand der Dump-Phase ist ein
   **Byte-Offset** in `dump.sql` (`install_restore.dump_offset`, dazu der
   Zähler `anweisungen`), immer direkt hinter dem `;` einer Anweisung – dort
@@ -414,10 +446,23 @@ Generation, damit danach auch ein Rollback wieder geht.
   alphabetisch spätere Tabelle.)
   Migrationen und `config.php` kommen **zuletzt**, damit ein Abbruch in der
   Blob-Phase den Installer offen lässt statt eine halb gefüllte Installation
-  für fertig zu erklären. Trägt das ZIP Blobs, liegt es bis zum Ende als
-  `shared/var/install_restore_<id>.zip` (0600) – der Upload überlebt den
-  Request nicht. DB-Zugangsdaten kommen aus dem Formular, der Kanal
-  ebenfalls; der `cron_token` wird neu erzeugt.
+  für fertig zu erklären. Trägt das hochgeladene ZIP Blobs, liegt es bis zum
+  Ende als `shared/var/install_restore_<id>.zip` (0600) – der Upload
+  überlebt den Request nicht. DB-Zugangsdaten kommen aus dem Formular, der
+  Kanal ebenfalls; der `cron_token` wird neu erzeugt.
+- *Neue Cron-URL* (#244): Jedes Schreiben von `config.php` erzeugt ein neues
+  `cron_token` (`ConfigWriter::write()` gibt es zurück) – der Cronjob beim
+  Hoster ruft danach ins Leere. Der Abschluss-Schritt zeigt deshalb die
+  vollständige Cron-URL (`<Schema>://<Host>/cron?token=…`,
+  `CronController::url()`, Host aus `Request::ownOrigin()`) deutlich als
+  Hinweis „Cronjob aktualisieren“ an: der letzte Einspiel-Schritt liefert
+  sie als `cron_url` im JSON (nur wenn `config.php` geschrieben ist, nie in
+  der Phase `zugang`), `install.js` zeigt sie nur als `http(s)`-Adresse; die
+  Abschlussseiten von Weg 1/Weg 2 und der frischen Installation tragen sie im
+  HTML. Nicht gecacht: alle diese Seiten haben eine Session, deren
+  `cache_limiter` `no-store` sendet (`Session::OPTIONEN`). Das Token
+  steht in keinem Log, keiner Mail und keinem Link der Anwendung. Danach
+  sehen Admins die URL im Systemcheck (§5).
 - *Blob-Namen aus dem ZIP:* nichts wird mit `extractTo()` entpackt.
   Geschrieben wird nur, was `blobs/<2 Hex>/<32 Hex>` ist und dessen
   Unterverzeichnis zum Namen passt; alles andere (`..`, absoluter Pfad,
@@ -571,7 +616,20 @@ bei laufender Erstellung, Audit); `tests/js/backups.test.js`; `UserManagementFlo
 neu gesetzt samt TOTP-Reset bei unlesbarem Geheimnis, lesbares Geheimnis
 bleibt, Anmeldung danach möglich, lesbare Adresse nicht änderbar);
 `tests/js/install.test.js` (Fortschritt, Statuszeile beider Phasen,
-Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
+Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts, Cron-URL
+nur als `http(s)`-Adresse nach dem Abschluss). Seit #244 zusätzlich:
+`BackupRestoreRoundtripTest` (Tabelle mit `VIRTUAL`- und `STORED`-Spalte
+samt Index und Ausdrucks-Default: INSERT ohne die generierten Spalten,
+nach dem Einspielen identisch); `MysqlDumperTest` (`Extra`-Werte inkl.
+`DEFAULT_GENERATED`); `InstallFlowTest` (Restore, Weg 1, Weg 2 und frische
+Installation zeigen die Cron-URL mit dem neuen Token, kein `cron_url` vor
+dem Zugangsschritt; Backup aus `shared/var/backups/` wird
+angeboten, an Ort und Stelle eingespielt – samt Blobs – und bleibt
+unverändert liegen, Nachweis verbraucht; ohne FTP-Nachweis dieser Sitzung
+keine Liste und 422, Upload und Auswahl zugleich 422; Traversal, Symlink,
+versteckte und fehlende Datei → 422 ohne Restore-Stand); `ServerBackupsTest`; `ConfigWriterTest`
+(`write()` gibt das geschriebene Token zurück); `SystemCheckPageTest`
+(Cron-URL sichtbar, nicht im JSON).
 
 ## 3. Mail
 
@@ -1019,6 +1077,12 @@ ausplaudert oder ein Jobschritt mitten im Schreiben stirbt.
   Textfelder, das JSON entsteht ausschließlich daraus; Zugangsdaten, Token und
   Schlüssel aus `config.php` kommen nie in die Nähe, und auch der Pfad von
   `shared/var/` bleibt draußen.
+- **Cron-URL** (#244): Unter der Tabelle, getrennt vom kopierbaren JSON,
+  zeigt die Seite die Cron-URL mit dem `cron_token` aus `config.php`
+  (aufklappbar, `<details>`), damit ein Admin den Cronjob nach einem Restore
+  ohne FTP umstellen kann. Sie ist **kein** `CheckResult` – das JSON bleibt
+  frei von Geheimnissen. Recht wie die Seite (`admin.system`), nicht
+  gecacht (Session, `no-store`), kein Log- oder Audit-Eintrag mit dem Token.
 - Ausgabe: Gesamtstatus oben, darunter die Tabelle (unter 48 rem als Karten,
   ohne waagerechtes Scrollen) und das Ergebnis als JSON zum Kopieren in ein
   Issue (Knopf nur mit JavaScript, sonst bleibt das markierbare Textfeld).
