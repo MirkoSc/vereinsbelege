@@ -21,6 +21,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRotationController;
 use App\Admin\VaultRecoveryController;
+use App\Admin\VereinskennungenController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
 use App\Api\JobController;
@@ -85,6 +86,7 @@ use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
@@ -221,6 +223,7 @@ use App\Service\MasterData\CostCenterService;
 use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierAufloesung;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\Vereinskennungen;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\Processing\KiAuslese\Auslesung;
@@ -1194,6 +1197,19 @@ $datevAdmin = static function () use ($connections, $view, $auditFor): DatevSett
     );
 };
 
+// The club's own VAT id and tax number (issue #245, E-67): vault data.
+$vereinskennungenAdmin = static function () use ($connections, $view, $auditFor): VereinskennungenController {
+    $pdo = $connections->pdo();
+
+    return new VereinskennungenController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Vereinskennungen(new ClubIdentityRepository($pdo)),
+        $auditFor($pdo),
+    );
+};
+
 // The archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
 // export.md section 3): the ZIP arrives through the chunk upload with a
 // larger limit and is read in place; the import writes documents with the
@@ -2121,6 +2137,7 @@ $router = new Router();
     geldfluss: $geldflussSeite,
     workerMail: $workerMail,
     budgets: $budgetSeite,
+    vereinskennungenAdmin: $vereinskennungenAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

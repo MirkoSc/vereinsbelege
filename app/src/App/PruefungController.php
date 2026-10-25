@@ -339,7 +339,9 @@ final readonly class PruefungController
         // The supplier the page offered to teach (issue #201/M7-6b).
         $fuer = $request->post['lieferant_lernen_fuer'] ?? '';
         $lernenFuer = is_string($fuer) && ctype_digit($fuer) ? (int) $fuer : null;
-        $lernenAn = ($request->post['lieferant_lernen'] ?? '') === '1';
+        // 'konflikt': nothing was offered to tick, only conflicts to mark (#245).
+        $lernenWert = $request->post['lieferant_lernen'] ?? '';
+        $lernenAn = in_array($lernenWert, ['1', 'konflikt'], true);
         $stand = $request->post['lieferant_lernen_stand'] ?? '';
         try {
             $ergebnis = $this->pruefung->speichern(
@@ -374,7 +376,11 @@ final readonly class PruefungController
             $meldung .= ' Beim Lieferanten ergänzt: ' . implode(', ', $ergebnis->gelernt) . '.';
         }
         $warnungen = $ergebnis->warnungen;
-        if ($ergebnis->nichtGelernt) {
+        if ($ergebnis->konflikte !== []) {
+            $warnungen[] = 'Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: ' . implode(', ', $ergebnis->konflikte) . ' – bitte unter „Lieferanten“ prüfen und ggf. zusammenführen.';
+        }
+        // Nothing was offered when only conflicts were shown - no learning lost.
+        if ($ergebnis->nichtGelernt && $lernenWert !== 'konflikt') {
             $warnungen[] = 'Die neuen Merkmale wurden nicht beim Lieferanten ergänzt – sie haben sich seit dem Anzeigen geändert. Bitte unter „Lieferanten“ prüfen.';
         }
         // After "Geprüft, nächster" the page with the duplicate notice is

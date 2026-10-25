@@ -288,7 +288,9 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   keine hat (eine abweichende wird gemeldet, nicht ersetzt), Mandatsreferenz
   nur mit dieser Gläubiger-ID. **Nicht** USt-ID/Steuernummer (finden den
   Lieferanten schon in Stufe 1, wenn vorhanden; eine abweichende wäre eher ein
-  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …).
+  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …). *Seit #245
+  (E-67) wird die USt-ID gelernt, wenn der Lieferant keine hat und die
+  Vereinskennungen gepflegt sind.*
 - **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten, oder ein Name,
   der Name/Alias eines anderen ist → nicht lernen, die Seite nennt ihn; volle
   Listen (20) → nicht lernen, Hinweis. Der Beleg wird immer gespeichert; das
@@ -1870,6 +1872,56 @@ Offen für Mirko: ob ein echter Chunk-Upload im Installer doch gewünscht
 ist; ob der FTP-Nachweis (leere Datei) als Handgriff zumutbar ist; ob die Cron-URL auch nach der frischen Installation angezeigt werden
 soll (derzeit ja); ob das Anzeigen der Cron-URL im Systemcheck einen
 Audit-Eintrag (ohne Token) bekommen soll.
+
+
+## E-67 ❓ Lieferanten lernen die USt-ID; Vereinskennungen; Konflikte im Audit markiert (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Issue #245, 03 §7 „Stand #245“; ergänzt E-29 und E-23*
+
+- **USt-ID** wird – anders als bisher in E-29 – gelernt, aber **nur, wenn der
+  Lieferant noch keine hat** (wie die Gläubiger-ID). Das Issue nennt die
+  USt-ID ausdrücklich; ab dem nächsten Beleg findet Stufe 1 den Lieferanten.
+  Eine **abweichende** wird nur gemeldet, nicht ersetzt – zwei verschiedene
+  USt-IDs eines Lieferanten sind eher ein Lesefehler der KI als eine zweite
+  Kennung.
+- **Steuernummer weiterhin nicht** (wie E-29): dieselbe Nummer erscheint lokal
+  („FF/BBB/UUUUP“) oder 13-stellig (ELSTER, mit Länderkennziffer); ohne
+  Umrechnung je Bundesland ließe sich weder die des Vereins noch die eines
+  anderen Lieferanten sicher wiedererkennen.
+- **Vereinskennungen** (Blocker aus dem Koordinator-Review): die eigene USt-ID
+  und Steuernummer des Vereins stehen auf vielen Rechnungen („Ihre
+  USt-IdNr.“, Reverse Charge) und würden, gelernt oder bei der KI-Neuanlage
+  übernommen, in Stufe 1 jede solche Rechnung einem Lieferanten zuordnen.
+  Eine Admin-Seite `/admin/vereinskennungen` (`admin.settings`) hält sie im
+  Tresor (Tabelle `club_identity`); sie werden nie gelernt, bei der
+  KI-Neuanlage weggelassen und bei Auflösung, Vorbelegung und KI-Vorauswahl
+  übergangen. **Konservativ:** solange die Seite nie gespeichert wurde, lernt
+  kein Lieferant eine USt-ID, und die KI-Neuanlage (Stufe 6, E-23) übernimmt
+  **keine** USt-ID und Steuernummer mehr – das ändert E-23 bis zur Pflege;
+  zwei leere Felder speichern bestätigt „der Verein hat keine“.
+- **Im Tresor statt als Blind Index:** ein Blind Index unter dem
+  Tresor-Schlüssel ließe sich nach einer Schlüsselrotation (#90) nicht neu
+  berechnen (der Klartext liegt nirgends); verschlüsselt mit eigenem DEK
+  versiegelt die Rotation die Zeile wie jede andere, verglichen wird nach dem
+  Entschlüsseln in der Sitzung. Der Server-Schlüssel wäre für Daten, die
+  ohne Anmeldung gebraucht werden – hier nicht nötig.
+- **Konflikt = markieren, nicht überschreiben:** gehört ein Wert schon einem
+  anderen Lieferanten, wird er nicht übernommen (wie E-29), zusätzlich aber
+  dauerhaft festgehalten: Audit `lieferant.merkmal_konflikt` am bestätigten
+  Lieferanten mit Feldnamen, ID des anderen und Beleg-ID (kein Klartext) und
+  eine Warnung nach dem Speichern – im Audit je Lieferant, Feld und anderem
+  Lieferanten nur einmal, die Warnung jedes Mal. Kein eigenes Datenbankfeld,
+  keine Konfliktliste und kein `needs_review` – „Neue Lieferanten prüfen“
+  bleibt für KI-Neuanlagen; aufgelöst wird über Zusammenführen.
+- Markiert wird beim ersten Speichern, wenn die Person „Neue Merkmale …
+  ergänzen“ angekreuzt lässt (ohne Haken wollte sie bewusst nichts
+  übernehmen); gibt es nur Konflikte und nichts zu lernen, zeigt die Seite
+  kein Ankreuzfeld und markiert beim Speichern immer.
+
+Offen für Mirko: ob die Vereinskennungen besser zu den Konten (eigene IBANs)
+als unter „Admin“ passen; ob die KI-Neuanlage ohne gepflegte Vereinskennungen
+USt-IDs wirklich weglassen soll (sicherer, aber Stufe 1 greift für neue
+Lieferanten erst nach der Pflege); ob Konflikte als eigene Liste „Mögliche
+Doppelte“ unter „Lieferanten“ erscheinen sollen.
 
 ## E-71 ❓ Erinnerungs-Mails und Mail-Schritt im Installer (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *issue #249*

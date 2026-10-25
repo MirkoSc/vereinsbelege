@@ -577,6 +577,11 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Admin, HttpMethod::Post, '/admin/datev', true],
             [SystemRole::Finanzen, HttpMethod::Get, '/admin/datev', false],
             [SystemRole::Steuerberater, HttpMethod::Post, '/admin/datev', false],
+            // The club's own VAT id and tax number (issue #245): admin.settings.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/vereinskennungen', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/vereinskennungen', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/admin/vereinskennungen', false],
+            [SystemRole::Vorstand, HttpMethod::Post, '/admin/vereinskennungen', false],
             // Archive import (M12-3): archive.import - Admin and Finanzen
             // only; the board and the auditors read, they do not import.
             [SystemRole::Admin, HttpMethod::Get, '/app/archiv-import', true],
@@ -963,6 +968,8 @@ final class RoutePermissionMatrixTest extends TestCase
             workerMail: $stellvertreter,
             // Budgets with Soll/Ist (issue #92), optional.
             budgets: $stellvertreter,
+            // The club's own VAT id and tax number (issue #245), optional.
+            vereinskennungenAdmin: $stellvertreter,
         );
 
         return $router;
