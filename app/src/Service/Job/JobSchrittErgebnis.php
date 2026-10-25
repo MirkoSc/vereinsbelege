@@ -54,9 +54,14 @@ final readonly class JobSchrittErgebnis
         return new self(JobStatus::Offen, $schritt, $state, $sekunden);
     }
 
-    public static function fertig(): self
+    /**
+     * @param array<string, mixed> $state kept on the finished job - for a
+     *        job whose final counts are still shown afterwards (issue #88:
+     *        the archive OCR backfill); empty for every other job
+     */
+    public static function fertig(array $state = []): self
     {
-        return new self(JobStatus::Fertig, '', []);
+        return new self(JobStatus::Fertig, '', $state);
     }
 
     /**

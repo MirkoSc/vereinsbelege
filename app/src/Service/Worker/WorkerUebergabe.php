@@ -103,6 +103,16 @@ final readonly class WorkerUebergabe
         return $anzahl;
     }
 
+    /**
+     * Whether grants can be made from this session right now (vault
+     * unlocked, current generation, no rotation) - false for every document
+     * alike, unlike a refusal for one document (issue #88).
+     */
+    public function freigabeMoeglich(Vault $vault): bool
+    {
+        return $this->freigaben->sitzungTauglich($vault);
+    }
+
     public function nachholbar(): int
     {
         return $this->documents->zaehleOcrNachholbar();
