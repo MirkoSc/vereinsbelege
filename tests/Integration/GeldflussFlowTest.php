@@ -132,7 +132,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
             ['Testkat Platzpflege', '300,00 €', '68,2 %', '1'],
             ['Testkat Reisekosten', '140,00 €', '31,8 %', '2'],
         ], $kategorien);
-        self::assertMatchesRegularExpression('#geldfluss-kategorie.*?Summe</th>.*?<strong>440,00 €</strong>#s', $seite->body);
+        self::assertMatchesRegularExpression('#geldfluss-kategorie.*?Summe</th>\s*<td class="zahl" data-label="Betrag"><strong>440,00 €</strong>#s', $seite->body);
 
         self::assertSame([
             ['Testkst Jugend', '300,00 €', '68,2 %', '1'],
@@ -193,13 +193,13 @@ final class GeldflussFlowTest extends DatabaseTestCase
         self::assertStringContainsString('<h2>Testkat Reisekosten</h2>', $seite->body);
         self::assertStringContainsString('2 Posten vom 01.01.2025 bis 31.12.2025', $seite->body);
         // The receipt part: supplier, number, its cost center, both links.
-        self::assertMatchesRegularExpression('#10\.05\.2025</td>\s*<td>\s*Bahn Testreisen\s*<br><span class="klein gedaempft">Nr\. B-7 · Fahrt Auswärtsspiel</span>\s*</td>\s*<td>Testkst Herren</td>\s*<td class="zahl">100,00 €</td>#', $seite->body);
+        self::assertMatchesRegularExpression('#10\.05\.2025</th>\s*<td data-label="Beleg / Buchung">\s*Bahn Testreisen\s*<br><span class="klein gedaempft">Nr\. B-7 · Fahrt Auswärtsspiel</span>\s*</td>\s*<td data-label="Kostenstelle">Testkst Herren</td>\s*<td class="zahl" data-label="Betrag">100,00 €</td>#', $seite->body);
         self::assertStringContainsString('href="/app/belege/pruefen/' . $this->dokumentVon($this->belegReise) . '">Beleg</a>', $seite->body);
         self::assertStringContainsString('href="/app/buchungen/' . $this->buchungReise . '">Buchung</a>', $seite->body);
         // The booking without a receipt: its counterparty and purpose (Finanzen has bank.view).
-        self::assertMatchesRegularExpression('#01\.06\.2025</td>\s*<td>\s*Gegenseite\s*<br><span class="klein gedaempft">Zweck</span>\s*</td>\s*<td>ohne Kostenstelle</td>\s*<td class="zahl">40,00 €</td>#', $seite->body);
+        self::assertMatchesRegularExpression('#01\.06\.2025</th>\s*<td data-label="Beleg / Buchung">\s*Gegenseite\s*<br><span class="klein gedaempft">Zweck</span>\s*</td>\s*<td data-label="Kostenstelle">ohne Kostenstelle</td>\s*<td class="zahl" data-label="Betrag">40,00 €</td>#', $seite->body);
         self::assertStringContainsString('href="/app/buchungen/' . $this->buchungOhneBeleg . '">Buchung</a>', $seite->body);
-        self::assertMatchesRegularExpression('#Summe</th>\s*<td class="zahl"><strong>140,00 €</strong>#', $seite->body);
+        self::assertMatchesRegularExpression('#Summe</th>\s*<td class="zahl" data-label="Betrag"><strong>140,00 €</strong>#', $seite->body);
         // Back to the overview with the same filter.
         self::assertStringContainsString('href="/app/auswertung/geldfluss?zeitraum=jahr&amp;jahr=2025&amp;grundlage=buchungen&amp;seite=ausgaben"', $seite->body);
 
@@ -349,7 +349,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
     private function tabelle(string $html, string $dimension): array
     {
         self::assertSame(1, preg_match('#<section aria-labelledby="geldfluss-' . $dimension . '">(.*?)</section>#s', $html, $abschnitt), $dimension);
-        preg_match_all('#<tr>\s*<td><a href="[^"]*">([^<]*)</a></td>.*?<td class="zahl">([^<]*)</td>\s*<td class="zahl">([^<]*)</td>\s*<td class="zahl">(\d+)</td>#s', $abschnitt[1], $treffer, PREG_SET_ORDER);
+        preg_match_all('#<tr>\s*<th scope="row"><a href="[^"]*">([^<]*)</a></th>.*?<td class="zahl" data-label="Betrag">([^<]*)</td>\s*<td class="zahl" data-label="Anteil">([^<]*)</td>\s*<td class="zahl" data-label="Posten">(\d+)</td>#s', $abschnitt[1], $treffer, PREG_SET_ORDER);
 
         return array_map(static fn(array $t): array => array_map(html_entity_decode(...), array_slice($t, 1)), $treffer);
     }

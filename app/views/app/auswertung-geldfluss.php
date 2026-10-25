@@ -64,7 +64,7 @@ $aktiv = '/app/auswertung/geldfluss';
     <div class="leer">Dieser Zeitraum liegt außerhalb des für Sie freigegebenen Zeitraums.</div>
 <?php elseif ($ergebnis !== null && $ergebnis->sichtbar !== null): ?>
     <p class="gedaempft">
-        <?= e($seitenwort) ?> nach <?= e($grundlage->label()) ?>
+        <?= e($seitenwort) ?>, Grundlage <?= e($grundlage->label()) ?>,
         vom <?= e($ergebnis->sichtbar->von->format('d.m.Y')) ?> bis <?= e($ergebnis->sichtbar->bis->format('d.m.Y')) ?><?= $grundlage === Grundlage::Buchungen ? ', ohne Umbuchungen zwischen eigenen Konten' : ', nur geprüfte Belege' ?>.
         Gutschriften und Erstattungen mindern ihre Gruppe.
     </p>
@@ -86,7 +86,7 @@ $aktiv = '/app/auswertung/geldfluss';
                 <div class="leer">Keine <?= e($seitenwort) ?> in diesem Zeitraum.</div>
             <?php else: ?>
                 <div class="tabelle-rahmen">
-                    <table class="tabelle geldfluss">
+                    <table class="tabelle tabelle-karten geldfluss">
                         <thead>
                             <tr>
                                 <th scope="col"><?= e($nach) ?></th>
@@ -100,23 +100,21 @@ $aktiv = '/app/auswertung/geldfluss';
                             <?php foreach ($tabelle->zeilen as $zeile): ?>
                                 <?php $link = '/app/auswertung/geldfluss/posten?' . http_build_query([...$parameter, 'nach' => $tabelle->dimension->value, 'schluessel' => $zeile->schluesselParameter()]); ?>
                                 <tr>
-                                    <td><a href="<?= e($link) ?>"><?= e($zeile->name) ?></a></td>
+                                    <th scope="row"><a href="<?= e($link) ?>"><?= e($zeile->name) ?></a></th>
                                     <td class="geldfluss-balken-spalte">
                                         <svg class="balken" viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect class="balken-wert" width="<?= e((string) $zeile->balkenPromille) ?>" height="10"/></svg>
                                     </td>
-                                    <td class="zahl"><?= e($geld($zeile->betrag)) ?></td>
-                                    <td class="zahl"><?= e($prozent($zeile->anteilPromille)) ?></td>
-                                    <td class="zahl"><?= e((string) $zeile->anzahl) ?></td>
+                                    <td class="zahl" data-label="Betrag"><?= e($geld($zeile->betrag)) ?></td>
+                                    <td class="zahl" data-label="Anteil"><?= e($prozent($zeile->anteilPromille)) ?></td>
+                                    <td class="zahl" data-label="Posten"><?= e((string) $zeile->anzahl) ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                         <tfoot>
                             <tr>
-                                <th scope="row">Summe</th>
-                                <td class="geldfluss-balken-spalte"></td>
-                                <td class="zahl"><strong><?= e($geld($tabelle->summe)) ?></strong></td>
-                                <td class="zahl"></td>
-                                <td class="zahl"></td>
+                                <th scope="row" colspan="2">Summe</th>
+                                <td class="zahl" data-label="Betrag"><strong><?= e($geld($tabelle->summe)) ?></strong></td>
+                                <td colspan="2"></td>
                             </tr>
                         </tfoot>
                     </table>

@@ -50,7 +50,7 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
         <div class="leer">Keine Posten in diesem Zeitraum.</div>
     <?php else: ?>
         <div class="tabelle-rahmen">
-            <table class="tabelle">
+            <table class="tabelle tabelle-karten geldfluss">
                 <caption><?= e(sprintf('%d Posten vom %s bis %s', count($drilldown->posten), $drilldown->sichtbar->von->format('d.m.Y'), $drilldown->sichtbar->bis->format('d.m.Y'))) ?></caption>
                 <thead>
                     <tr>
@@ -64,16 +64,16 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
                 <tbody>
                     <?php foreach ($drilldown->posten as $p): ?>
                         <tr>
-                            <td><?= e($p->datum->format('d.m.Y')) ?></td>
-                            <td>
+                            <th scope="row"><?= e($p->datum->format('d.m.Y')) ?></th>
+                            <td data-label="Beleg / Buchung">
                                 <?= e($p->bezeichnung) ?>
                                 <?php if ($p->detail !== ''): ?>
                                     <br><span class="klein gedaempft"><?= e($p->detail) ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td><?= e($dimension === Dimension::Kostenstelle ? $p->kategorie : $p->kostenstelle) ?></td>
-                            <td class="zahl"><?= e($geld($p->betrag)) ?></td>
-                            <td>
+                            <td data-label="<?= e($dimension === Dimension::Kostenstelle ? 'Kategorie' : 'Kostenstelle') ?>"><?= e($dimension === Dimension::Kostenstelle ? $p->kategorie : $p->kostenstelle) ?></td>
+                            <td class="zahl" data-label="Betrag"><?= e($geld($p->betrag)) ?></td>
+                            <td data-label="Öffnen">
                                 <?php if ($p->dokumentId !== null && $belegPfad !== null): ?>
                                     <a href="<?= e($belegPfad . $p->dokumentId) ?>">Beleg</a>
                                 <?php endif; ?>
@@ -87,7 +87,7 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
                 <tfoot>
                     <tr>
                         <th scope="row" colspan="3">Summe</th>
-                        <td class="zahl"><strong><?= e($geld($drilldown->summe)) ?></strong></td>
+                        <td class="zahl" data-label="Betrag"><strong><?= e($geld($drilldown->summe)) ?></strong></td>
                         <td></td>
                     </tr>
                 </tfoot>

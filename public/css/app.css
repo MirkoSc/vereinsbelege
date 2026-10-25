@@ -1597,14 +1597,9 @@ body.bereich-app:has(.pruefansicht) {
 
 /* Balken als SVG: die Länge steht im width-Attribut des <rect> (kein
    Inline-Style, den die CSP verwerfen würde). Der Wert steht immer als Text
-   daneben; der Balken wiederholt ihn nur. Unter 30rem (Handy, 360 px) fällt
-   die Balkenspalte weg, damit Name, Betrag und Anteil ohne waagerechtes
-   Scrollen passen. */
-.geldfluss-balken-spalte {
-    width: 30%;
-    min-width: 5rem;
-}
-
+   daneben; der Balken wiederholt ihn nur. Die Tabellen sind .tabelle-karten:
+   auf dem Handy (360 px) eine Karte je Zeile, der Balken unter dem Namen;
+   leere Summenzellen fallen dort weg. */
 .balken {
     display: block;
     width: 100%;
@@ -1617,8 +1612,17 @@ body.bereich-app:has(.pruefansicht) {
     fill: var(--farbe-akzent);
 }
 
-@media (max-width: 30rem) {
+.geldfluss td:empty {
+    display: none;
+}
+
+@media (min-width: 48rem) {
+    .geldfluss td:empty {
+        display: table-cell;
+    }
+
     .geldfluss .geldfluss-balken-spalte {
-        display: none;
+        width: 30%;
+        min-width: 5rem;
     }
 }

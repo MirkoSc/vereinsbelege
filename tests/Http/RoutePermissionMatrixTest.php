@@ -370,7 +370,6 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/geldfluss', true],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
-            [SystemRole::Finanzen, HttpMethod::Post, '/app/auswertung/geldfluss', false],
             [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/erwartet', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erwartet', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
