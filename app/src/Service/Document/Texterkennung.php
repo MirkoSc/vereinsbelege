@@ -7,6 +7,7 @@ namespace App\Service\Document;
 use App\Domain\ArtifactKind;
 use App\Domain\Document;
 use App\Domain\DocumentArtifact;
+use App\Domain\DocumentSource;
 use App\Domain\Job;
 use App\Domain\JobExecutor;
 use App\Domain\OcrStatus;
@@ -256,7 +257,7 @@ final readonly class Texterkennung implements JobHandler
 
         if ($quellen === []) {
             $this->documents->setzeOcrStatus($document->id, OcrStatus::Uebersprungen);
-            $this->ocrAnstossen($document->id, $vault, $now);
+            $this->ocrAnstossen($document, $vault, $now);
 
             return JobSchrittErgebnis::uebersprungen();
         }
@@ -286,7 +287,7 @@ final readonly class Texterkennung implements JobHandler
         $fertig = $keineBilder && !in_array(false, $brauchbar, true);
         $this->documents->setzeOcrStatus($document->id, $fertig ? OcrStatus::Fertig : OcrStatus::Uebersprungen);
         if (!$fertig) {
-            $this->ocrAnstossen($document->id, $vault, $now);
+            $this->ocrAnstossen($document, $vault, $now);
         }
 
         return JobSchrittErgebnis::fertig();
@@ -442,11 +443,17 @@ final readonly class Texterkennung implements JobHandler
      * The page images are needed: with the worker module routing `ocr` to
      * an online worker, the worker recognises the text (07-worker.md
      * sections 2 and 6). Without it OCR is skipped - "OCR nachholen" on the
-     * admin page catches up later.
+     * admin page catches up later. Archive documents never go one by one
+     * (issue #88, E-55): a whole year of scans would hold up every new
+     * receipt - the throttled backfill (App\Service\Worker\BestandsOcr)
+     * takes them.
      */
-    private function ocrAnstossen(int $documentId, Vault $vault, \DateTimeImmutable $now): void
+    private function ocrAnstossen(Document $document, Vault $vault, \DateTimeImmutable $now): void
     {
-        $this->uebergabe?->einreihen(WorkerUebergabe::OCR, null, $documentId, $vault, $now);
+        if ($document->source === DocumentSource::Archiv) {
+            return;
+        }
+        $this->uebergabe?->einreihen(WorkerUebergabe::OCR, null, $document->id, $vault, $now);
     }
 
     private function mimeType(int $blobId, Vault $vault): string
