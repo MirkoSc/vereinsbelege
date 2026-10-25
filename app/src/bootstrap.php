@@ -177,6 +177,8 @@ use App\Service\Worker\WorkerFreigaben;
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Cron\WorkerFallbackTask;
+use App\Service\Cron\ErinnerungTask;
+use App\Service\Mail\OffeneBelegeErinnerung;
 use App\Service\Mail\WorkerAlarm;
 use App\Service\Worker\WorkerUebernahme;
 use App\Service\Worker\WorkerFallback;
@@ -318,6 +320,7 @@ if (!is_file($configFile)) {
     $router->post('/install/freigabe', $offen, $installer->release(...));
     $router->post('/install', $offen, $installer->submit(...));
     $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
+    $router->post('/install/mail', $offen, $installer->mail(...));
     $router->post('/install/neu', $offen, $installer->restart(...));
     $router->post('/install/wiederherstellen', $offen, $installer->restoreStep(...));
     // The access step after a restore without server key (issue #154).
@@ -508,7 +511,7 @@ $workerFallbackFor = static fn(\PDO $pdo, ?WorkerAlarm $alarm = null): WorkerFal
     $alarm,
 );
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $workerFreigabenFor, $workerFallbackFor, $serverCrypto): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $mailSettingsFor, $workerFreigabenFor, $workerFallbackFor, $serverCrypto): CronRunner {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -518,6 +521,17 @@ $cron = static fn(): CronController => new CronController($config, static functi
         // The mail queue (M3-1): nothing that decrypts, ever (CLAUDE.md
         // section 4) - Mailer reads and writes only server-key ciphertext.
         jedesMal: [
+            // Issue #249: "N Belege warten auf Prüfung" - counts only, ahead
+            // of the queue so a reminder goes out in the same call.
+            new ErinnerungTask(new OffeneBelegeErinnerung(
+                $mailerFor($pdo),
+                $mailSettingsFor($pdo),
+                new SettingRepository($pdo),
+                $serverCrypto,
+                new UserRepository($pdo),
+                new UserAccessRepository($pdo),
+                new DocumentRepository($pdo),
+            )),
             new MailQueueTask($mailerFor($pdo)),
             // M7b-3: worker jobs of a silent worker back to the browser/
             // session route, and the alarm mail after a day.
@@ -650,6 +664,7 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
         $mailerFor($pdo),
         $mailQueueFor($pdo),
         $auditFor($pdo),
+        new SettingRepository($pdo),
     );
 };
 

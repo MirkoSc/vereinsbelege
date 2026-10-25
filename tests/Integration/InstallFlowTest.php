@@ -33,6 +33,7 @@ use App\Service\Migration\SqlSplitter;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\FakeMailTransport;
 use App\View\View;
 
 /**
@@ -74,6 +75,12 @@ final class InstallFlowTest extends DatabaseTestCase
             $this->base . '/current/app/data/haeufige-passwoerter.txt',
         );
 
+        // The mail step's test mail renders a template (issue #249).
+        mkdir($this->base . '/current/app/views/mail', 0775, true);
+        foreach (glob(dirname(__DIR__, 2) . '/app/views/mail/*.php') ?: [] as $vorlage) {
+            copy($vorlage, $this->base . '/current/app/views/mail/' . basename($vorlage));
+        }
+
         file_put_contents($this->base . '/web/setup.php', '<?php // bootstrap installer');
 
         // What setup.php leaves behind and hands over (N-05): the token in
@@ -105,13 +112,14 @@ final class InstallFlowTest extends DatabaseTestCase
      * @param bool $echterUploadTest keep PHP's own is_uploaded_file(), which
      *        refuses everything that did not come in through a real upload
      */
-    private function controller(bool $echterUploadTest = false): InstallController
+    private function controller(bool $echterUploadTest = false, ?FakeMailTransport $mail = null): InstallController
     {
         return new InstallController(
             new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test'),
             $this->paths(),
             new Session(),
             $echterUploadTest ? null : static fn(string $pfad): bool => is_file($pfad),
+            $mail ?? new FakeMailTransport([]),
         );
     }
 
@@ -170,7 +178,11 @@ final class InstallFlowTest extends DatabaseTestCase
         return $treffer[1];
     }
 
-    private function confirmKey(string $letzteGruppe): Response
+    /**
+     * Confirms the key and - unless $mailSchritt - skips the mail step that
+     * follows (issue #249), so the result is the finished page.
+     */
+    private function confirmKey(string $letzteGruppe, bool $mailSchritt = false): Response
     {
         $session = new Session();
         $session->start();
@@ -182,7 +194,54 @@ final class InstallFlowTest extends DatabaseTestCase
         ));
         self::assertInstanceOf(Response::class, $response);
 
+        if ($mailSchritt || $response->status !== 200) {
+            return $response;
+        }
+        self::assertStringContainsString('Mail-Versand (optional)', $response->body);
+        self::assertFileDoesNotExist($this->paths()->configFile(), 'config.php waits for the mail step');
+
+        return $this->mailStep(['aktion' => 'ueberspringen']);
+    }
+
+    /**
+     * @param array<string, string> $post
+     */
+    private function mailStep(array $post, ?FakeMailTransport $transport = null, bool $mitToken = true): Response
+    {
+        $session = new Session();
+        $session->start();
+        if ($mitToken) {
+            $post['_csrf'] = $session->csrfToken();
+        }
+
+        $response = $this->controller(mail: $transport)->mail(new Request(
+            method: HttpMethod::Post,
+            path: '/install/mail',
+            post: $post,
+        ));
+        self::assertInstanceOf(Response::class, $response);
+
         return $response;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function mailPost(string $aktion): array
+    {
+        return [
+            'aktion' => $aktion,
+            'transport' => 'smtp',
+            'host' => 'mail.example.test',
+            'port' => '465',
+            'sicherheit' => 'implizit',
+            'benutzer' => 'versand@example.test',
+            'passwort' => 'smtp-geheim-4711',
+            'absender' => 'versand@example.test',
+            'vereinsname' => 'Beispielverein',
+            'oeffentliche_url' => 'https://belege.example.test',
+            'empfaenger' => 'kassierer@example.test',
+        ];
     }
 
     private function restart(): Response
@@ -236,7 +295,7 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertArrayNotHasKey('install_admin', $_SESSION, 'no vault, no admin created');
         self::assertFileDoesNotExist($this->paths()->configFile());
 
-        foreach (['confirmKey' => '/install/schluessel', 'restart' => '/install/neu', 'serverKey' => '/install/serverschluessel', 'access' => '/install/zugang', 'restoreStep' => '/install/wiederherstellen'] as $schritt => $pfad) {
+        foreach (['confirmKey' => '/install/schluessel', 'mail' => '/install/mail', 'restart' => '/install/neu', 'serverKey' => '/install/serverschluessel', 'access' => '/install/zugang', 'restoreStep' => '/install/wiederherstellen'] as $schritt => $pfad) {
             $session = new Session();
             $session->start();
             $antwort = $this->controller()->{$schritt}(new Request(HttpMethod::Post, $pfad, post: ['_csrf' => $session->csrfToken()]));
@@ -406,6 +465,133 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
         self::assertFileDoesNotExist($this->paths()->setupChannelFile());
         self::assertFileDoesNotExist($this->paths()->installTokenFile(), 'the token goes with setup.php');
+    }
+
+    public function testTheMailStepFollowsTheKeyAndCanBeSkipped(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+
+        $mail = $this->confirmKey($gruppen[6], mailSchritt: true);
+        self::assertSame(200, $mail->status);
+        self::assertStringContainsString('action="/install/mail"', $mail->body);
+        self::assertStringContainsString('value="' . $this->validPost()['admin_email'] . '"', $mail->body, 'the admin address is the suggested sender');
+        self::assertFileDoesNotExist($this->paths()->configFile());
+
+        // Reloading the page or confirming again lands on the mail step, not
+        // on the key confirmation.
+        $neuGeladen = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $neuGeladen);
+        self::assertStringContainsString('Mail-Versand (optional)', $neuGeladen->body);
+        self::assertStringContainsString('Mail-Versand (optional)', $this->confirmKey('AAAAAAAA', mailSchritt: true)->body);
+
+        $fertig = $this->mailStep(['aktion' => 'ueberspringen']);
+        self::assertSame(200, $fertig->status);
+        self::assertStringContainsString('Installation abgeschlossen', $fertig->body);
+        self::assertStringContainsString('Mail ist noch nicht eingerichtet', $fertig->body);
+        self::assertFileExists($this->paths()->configFile());
+        self::assertSame('', new SettingRepository($this->pdo())->get('mail_smtp_host'));
+    }
+
+    public function testTheMailStepSavesTheSettingsSendsATestMailAndFinishes(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+
+        $transport = new FakeMailTransport([true]);
+        $test = $this->mailStep(self::mailPost('testen'), $transport);
+        self::assertSame(200, $test->status);
+        self::assertStringContainsString('Testmail wurde versendet', $test->body);
+        self::assertCount(1, $transport->gesendete);
+        self::assertSame('kassierer@example.test', $transport->gesendete[0]->to);
+        self::assertStringNotContainsString('smtp-geheim-4711', $test->body);
+        self::assertStringContainsString('Ein Passwort ist gespeichert', $test->body);
+        self::assertFileDoesNotExist($this->paths()->configFile(), 'a test mail does not finish the installation');
+        self::assertStringNotContainsString('smtp-geheim-4711', serialize($_SESSION), 'the SMTP password never enters the session');
+
+        $gespeichert = new SettingRepository($this->pdo())->get('mail_smtp_passwort_enc');
+        self::assertNotSame('', $gespeichert);
+        self::assertStringNotContainsString('smtp-geheim-4711', $gespeichert);
+
+        // Finishing with a blank password field keeps the saved one.
+        $fertig = $this->mailStep([...self::mailPost('abschliessen'), 'passwort' => '  ']);
+        self::assertSame(200, $fertig->status);
+        self::assertStringContainsString('Installation abgeschlossen', $fertig->body);
+        self::assertStringNotContainsString('Mail ist noch nicht eingerichtet', $fertig->body);
+
+        // The password opens with the server key config.php got.
+        $serverKey = new ServerCrypto((string) base64_decode((string) (require $this->paths()->configFile())['server_key'], true));
+        $settings = new SettingRepository($this->pdo());
+        self::assertSame('smtp-geheim-4711', $serverKey->decrypt((string) base64_decode($settings->get('mail_smtp_passwort_enc'), true)));
+        self::assertSame('mail.example.test', $settings->get('mail_smtp_host'));
+        self::assertSame('https://belege.example.test', $settings->get('oeffentliche_url'));
+    }
+
+    public function testSkippingAfterASuccessfulTestKeepsTheSettingsAndSaysSo(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+        $this->mailStep(self::mailPost('testen'), new FakeMailTransport([true]));
+
+        $fertig = $this->mailStep(['aktion' => 'ueberspringen']);
+        self::assertStringContainsString('Installation abgeschlossen', $fertig->body);
+        self::assertStringNotContainsString('Mail ist noch nicht eingerichtet', $fertig->body);
+        self::assertSame('mail.example.test', new SettingRepository($this->pdo())->get('mail_smtp_host'));
+    }
+
+    public function testAStaleRestartAfterTheConfirmationRemovesNothing(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+
+        $antwort = $this->restart();
+        self::assertStringContainsString('Mail-Versand (optional)', $antwort->body);
+        self::assertSame(1, $this->userCount());
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM vault')->fetchColumn());
+    }
+
+    public function testAFailedTestMailIsShownAndTheStepStaysOpen(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+
+        $test = $this->mailStep(self::mailPost('testen'), new FakeMailTransport([false]));
+        self::assertSame(200, $test->status);
+        self::assertStringContainsString('Testmail konnte nicht versendet werden', $test->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    public function testAnInvalidMailStepKeepsTheInputButNeverThePassword(): void
+    {
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+
+        $falsch = $this->mailStep([...self::mailPost('abschliessen'), 'absender' => 'keine-adresse']);
+        self::assertSame(422, $falsch->status);
+        self::assertStringContainsString('gültige Absenderadresse', $falsch->body);
+        self::assertStringContainsString('value="mail.example.test"', $falsch->body);
+        self::assertStringNotContainsString('smtp-geheim-4711', $falsch->body);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+        self::assertSame('', new SettingRepository($this->pdo())->get('mail_smtp_host'), 'nothing was saved');
+
+        $ohneEmpfaenger = $this->mailStep([...self::mailPost('testen'), 'empfaenger' => '']);
+        self::assertSame(422, $ohneEmpfaenger->status);
+
+        $unbekannt = $this->mailStep(['aktion' => 'irgendwas']);
+        self::assertSame(422, $unbekannt->status);
+        self::assertFileDoesNotExist($this->paths()->configFile());
+    }
+
+    public function testTheMailStepNeedsCsrfAndAConfirmedKey(): void
+    {
+
+        self::assertSame(409, $this->mailStep(['aktion' => 'ueberspringen'])->status, 'no setup at all');
+
+        // Submitted, but the key is not confirmed yet: skipping the mail
+        // step must not skip the confirmation.
+        $this->submit($this->validPost());
+        self::assertSame(409, $this->mailStep(['aktion' => 'ueberspringen'])->status);
+        self::assertSame(403, $this->mailStep(['aktion' => 'ueberspringen'], mitToken: false)->status);
+        self::assertFileDoesNotExist($this->paths()->configFile());
     }
 
     public function testTheRecoveryKeyPageShowsSevenGroupsOfEightCharacters(): void
