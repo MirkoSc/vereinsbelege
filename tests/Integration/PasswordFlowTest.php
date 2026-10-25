@@ -431,6 +431,8 @@ final class PasswordFlowTest extends DatabaseTestCase
 
         self::assertSame(200, $seite->status);
         self::assertSame('no-referrer', $seite->headers['Referrer-Policy'] ?? null);
+        // The header alone does not survive Apache's `Header always set` (#78).
+        self::assertStringContainsString('<meta name="referrer" content="no-referrer">', $seite->body);
         self::assertStringContainsString('erneut freigibt', $seite->body, 'Die Folgen stehen vor dem Absenden da.');
     }
 

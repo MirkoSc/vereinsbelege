@@ -199,6 +199,7 @@ final readonly class PasswordController
     private function neuSeite(string $token, array $fehler = [], bool $ungueltig = false): ResponseInterface
     {
         $seite = Response::html($this->view->render('passwort-neu', [
+            'keinReferrer' => true,
             'title' => 'Neues Passwort festlegen',
             'csrf' => $this->session->csrfToken(),
             'token' => $token,

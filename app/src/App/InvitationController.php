@@ -96,6 +96,7 @@ final readonly class InvitationController
     private function seite(string $token, array $fehler = [], bool $ungueltig = false): ResponseInterface
     {
         $seite = Response::html($this->view->render('einladung', [
+            'keinReferrer' => true,
             'title' => 'Einladung annehmen',
             'csrf' => $this->session->csrfToken(),
             'token' => $token,

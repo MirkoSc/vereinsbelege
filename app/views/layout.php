@@ -33,6 +33,14 @@ $csrfToken = ($bereich !== \App\View\Area::Oeffentlich && ($csrf ?? '') !== '') 
              selfRequestsOnly: an htmx attribute that ever pointed at a
              foreign host would be a receipt leaving the installation. */ ?>
     <meta name="htmx-config" content='{"includeIndicatorStyles":false,"selfRequestsOnly":true}'>
+    <?php /* Pages with a token in their URL (password reset, invitation):
+             the meta element holds even where the web server overwrites the
+             Referrer-Policy header PHP sent (`Header always set` in the
+             docroot .htaccess wins over FastCGI responses - security review,
+             issue #78). */ ?>
+    <?php if (($keinReferrer ?? false) === true): ?>
+    <meta name="referrer" content="no-referrer">
+    <?php endif; ?>
     <link rel="stylesheet" href="/css/app.css?v=<?= e($version) ?>">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <?php /* Only external files: script-src 'self' without 'unsafe-inline'

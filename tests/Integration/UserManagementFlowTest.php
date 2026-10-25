@@ -215,6 +215,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
         $seite = $this->dispatch($this->get('/anmelden/einladung?token=' . $token));
         self::assertSame(200, $seite->status);
         self::assertSame('no-referrer', $seite->headers['Referrer-Policy'] ?? null);
+        self::assertStringContainsString('<meta name="referrer" content="no-referrer">', $seite->body);
         self::assertStringContainsString('für den Tresor freigegeben', $seite->body, 'Die Folge steht vor dem Absenden da.');
 
         $antwort = $this->annehmen($token, self::NEU_PW);
