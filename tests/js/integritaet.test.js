@@ -20,6 +20,7 @@ test('the status line names the progress and the phase', () => {
         'Dateien geprüft: 500 von 2400 …',
     );
     assert.equal(statusText({ phase: 'zusaetzlich', fertig: false, geprueft: 2400, gesamt: 2400 }), 'Suche nach zusätzlichen Dateien …');
+    assert.equal(statusText({ phase: 'umgebung', fertig: false, geprueft: 2400, gesamt: 2400 }), 'Prüfe Web-Verzeichnis und Konfiguration …');
     assert.equal(statusText({ phase: 'fertig', fertig: true }), 'Prüfung abgeschlossen.');
     assert.equal(statusText({ phase: 'dateien', fertig: false, geprueft: 0, gesamt: 0 }), 'Prüfung läuft …');
     assert.equal(statusText(null), '');

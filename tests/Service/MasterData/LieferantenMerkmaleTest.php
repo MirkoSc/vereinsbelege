@@ -134,7 +134,58 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertNull($merkmale->creditorId);
         self::assertNull($merkmale->mandateRef);
         self::assertSame(['vergeben'], $merkmale->hinweise);
-        self::assertTrue($merkmale->konflikt);
+        self::assertSame([], $merkmale->konflikte, 'no supplier named, no conflict');
+    }
+
+    public function testAValueOfAnotherSupplierIsMarkedAsAConflict(): void
+    {
+        $merkmale = new Merkmale(iban: self::IBAN_2, alias: 'SH', vatId: 'DE123456789')
+            ->ohne('iban', 'vergeben', 7)
+            ->ohne('vat_id', 'vergeben', 9);
+
+        self::assertSame(['iban' => 7, 'vat_id' => 9], $merkmale->konflikte, 'field => the other supplier');
+        self::assertSame(['IBAN', 'USt-ID'], $merkmale->konfliktBezeichnungen());
+        self::assertSame(['aliases'], $merkmale->felder(), 'only the rest is learnt');
+        self::assertNull($merkmale->vatId);
+    }
+
+    public function testAMissingVatIdIsLearntButNoTaxNumber(): void
+    {
+        $merkmale = LieferantenMerkmale::neue(
+            new SupplierData(name: 'Sporthaus Beispiel'),
+            ['name' => 'Sporthaus Beispiel', 'vat_id' => 'de 123 456 789', 'tax_number' => '12/345/67890'],
+            '',
+        );
+
+        self::assertSame('DE123456789', $merkmale->vatId, 'normalised like the form');
+        self::assertSame(['vat_id'], $merkmale->felder(), 'a tax number has two forms - never learnt (E-67)');
+        self::assertSame(['USt-ID'], $merkmale->bezeichnungen());
+        self::assertSame(['USt-ID DE123456789'], $merkmale->beschreibung());
+
+        $nachher = $merkmale->anwenden(new SupplierData(name: 'Sporthaus Beispiel', taxNumber: '99/999/99999'));
+        self::assertSame('DE123456789', $nachher->vatId);
+        self::assertSame('99/999/99999', $nachher->taxNumber, 'kept');
+    }
+
+    public function testAKnownOrDifferentVatIdIsNotReplaced(): void
+    {
+        $lieferant = new SupplierData(name: 'Sporthaus Beispiel', vatId: 'DE123456789');
+
+        $gleich = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE 123456789'], '');
+        self::assertTrue($gleich->leer(), 'the same id, written differently');
+        self::assertSame([], $gleich->hinweise);
+
+        $anders = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE999999999'], '');
+        self::assertTrue($anders->leer(), 'a different id is reported, not replaced');
+        self::assertSame(['Der Beleg nennt die USt-ID DE999999999, beim Lieferanten steht DE123456789 – nicht übernommen.'], $anders->hinweise);
+    }
+
+    public function testAnInvalidVatIdIsNotLearnt(): void
+    {
+        $merkmale = LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['vat_id' => '123456789'], '');
+
+        self::assertNull($merkmale->vatId, 'no country code');
+        self::assertTrue($merkmale->leer());
     }
 
     public function testTooLongValuesAreLeftOutAndSaySo(): void

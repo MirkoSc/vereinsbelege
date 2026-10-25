@@ -75,11 +75,16 @@ final readonly class SupplierAufloesung
         $wert = static fn(string $schluessel): string => is_string($partner[$schluessel] ?? null) ? trim($partner[$schluessel]) : '';
         $richtung = InvoiceDirection::tryFrom(is_string($extraktion['direction'] ?? null) ? $extraktion['direction'] : '') ?? InvoiceDirection::Ausgabe;
         $iban = Iban::normalisieren($wert('iban'));
+        // The club's own ids name no supplier: its VAT id / tax number on a
+        // B2B invoice (#245, E-67), its account on a direct debit or an income.
+        $eigen = fn(SupplierKeyKind $art, string $kennung): string => $this->service->istVereinsKennung($vault, $art, $kennung) ? '' : $kennung;
 
         $stufen = [
-            1 => [[SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))], [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))]],
-            // The club's own account names no supplier (a direct debit, an income).
-            2 => [[SupplierKeyKind::Iban, Iban::istGueltig($iban) && !$this->service->istVereinsIban($vault, $iban) ? $iban : '']],
+            1 => [
+                [SupplierKeyKind::VatId, $eigen(SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id')))],
+                [SupplierKeyKind::TaxNumber, $eigen(SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number')))],
+            ],
+            2 => [[SupplierKeyKind::Iban, Iban::istGueltig($iban) ? $eigen(SupplierKeyKind::Iban, $iban) : '']],
             3 => [[SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))]],
             4 => [[SupplierKeyKind::Name, SupplierKeys::name($wert('name'))]],
         ];
@@ -189,6 +194,13 @@ final readonly class SupplierAufloesung
         ];
         foreach ($texte as $text) {
             array_push($schluessel, ...LieferantenKandidaten::aus($text));
+        }
+        // The club's own VAT id and tax number name no supplier (#245, E-67):
+        // printed as "Ihre USt-IdNr." they would put one in front every time.
+        $mitKennung = array_filter($schluessel, static fn(array $s): bool => in_array($s[0], [SupplierKeyKind::VatId, SupplierKeyKind::TaxNumber], true) && $s[1] !== '');
+        if ($mitKennung !== []) {
+            $verein = $this->service->vereinskennung($vault) ?? new Vereinskennung();
+            $schluessel = array_filter($schluessel, fn(array $s): bool => $s[0] === SupplierKeyKind::Iban || !$this->service->istVereinsKennung($vault, $s[0], $s[1], $verein));
         }
 
         $index = $vault->blindIndex();
