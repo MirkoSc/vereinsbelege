@@ -187,14 +187,14 @@ eine in diesem PR behobene Zeile.
 | H-04 | Restore nur im Installer, kein Zip-Slip, `config.php` nie per `include` | ✓ | `Installer/RestoreService` |
 | H-05 | Backup-Echtheit (MAC/Signatur) | ✗ | Weg zu N-01 |
 | H-06 | Update: feste Quelle, HTTPS, Prüfsumme, kein Downgrade, Zip-Slip | ✓ | `Update/ReleaseDownloader`, `UpdateService` |
-| H-07 | Update: Echtheit (Signatur) statt nur Integrität | ✗ mittel | → N-02 |
-| H-08 | Download-URLs/Redirect-Protokolle auf github.com/https beschränkt | ✗ Härtung | → N-18 |
+| H-07 | Update: Echtheit (Signatur) statt nur Integrität | ✓ (#241) | `Update/ReleaseSignatur`, `UpdateService::download()`/`extract()`, `setup.php`; scharf, sobald `PUBLIC_KEY` gesetzt ist (Maintainer, `docs/betrieb.md` §13) – bis dahin Hinweis |
+| H-08 | Download-URLs/Redirect-Protokolle auf github.com/https beschränkt | ✓ (#241) | `ReleaseDownloader::pruefeUrl()`/`folgeWeiterleitungen()` – jeder Sprung |
 | H-09 | Wartungs-Flag, `rename()`-Umschaltung, Shim = Konstante | ✓ | `ReleaseSwitcher` |
 | H-10 | `setup.php` sperrt sich nach der Installation | ✓ | `bin/setup.template.php` |
 | H-11 | `/install` gegen Übernahme durch Fremde geschützt | ✓ (#247) | Installations-Token `shared/install_token.txt` (`Installer/InstallToken`), von `setup.php` in der Weiterleitung übergeben oder per FTP abzulesen; jeder Schritt verlangt die Freigabe (N-05); `InstallFlowTest` |
 | H-12 | Integritätscheck: alle Dateien von `current/`, Zusatzdateien erkannt | ✓ | `Integritaet/CodeIntegritaet` |
-| H-13 | Integritätscheck deckt `web/` (Shim, `.htaccess`, `.user.ini`, Fremddateien) und `config.php` ab | ✗ mittel | → N-03 |
-| H-14 | Prüfsummenliste nicht vom selben FTP-Angreifer änderbar | ⚠ | 01 §8 räumt es ein → N-19 |
+| H-13 | Integritätscheck deckt `web/` (Shim, `.htaccess`, `.user.ini`, Fremddateien) und `config.php` ab | ✓ (#241) | `CodeIntegritaet` Phase `umgebung` |
+| H-14 | Prüfsummenliste nicht vom selben FTP-Angreifer änderbar | ✓ (#241) | Liste je Release, signiert; `CodeIntegritaet::echtheitsfehler()` – wirksam ab gesetztem `PUBLIC_KEY` |
 | H-15 | `config.php`: Schlüssel per `random_bytes`, 0600 | ✓ | `Installer/ConfigWriter` |
 | H-16 | Deny-`.htaccess` für `shared/`, `releases/`, `current/` | ✓ | `.htaccess`, `Update/DenyHtaccess`, Systemcheck |
 | H-17 | Keine Secrets im Repo | ✓ (#78) | Token in `tools/hosting-check.php` entfernt (bleibt in der Git-Historie öffentlich – eine hochgeladene Kopie mit diesem Token muss vom Server); übrige Werte sind gekennzeichnete Dev-/Test-Fixtures |
@@ -230,8 +230,8 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | Nr. | Schwere | Kurz |
 |---|---|---|
 | N-01 | mittel | `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
-| N-02 | mittel | Updater prüft nur Integrität, keine Signatur der Releases |
-| N-03 | mittel | Integritätscheck übersieht `web/` und `config.php` |
+| N-02 | mittel | ✓ (#241) Updater prüft nur Integrität, keine Signatur der Releases – Signaturprüfung eingebaut, scharf mit `PUBLIC_KEY` |
+| N-03 | mittel | ✓ (#241) Integritätscheck übersieht `web/` und `config.php` |
 | N-04 | mittel | Platte/DB über öffentliche Uploads füllbar |
 | N-05 | niedrig | `/install` ohne Token, solange `config.php` fehlt – ✓ behoben (#247) |
 | N-06 | niedrig | Audit-Log ohne Zeitraum-Scope |
@@ -246,7 +246,7 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-15 | Härtung | kein zentraler CSRF-Test über alle POST-Routen |
 | N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails |
 | N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze |
-| N-18 | Härtung | Update-Download-URLs nicht auf github.com beschränkt |
-| N-19 | niedrig | Prüfsummenliste in `shared/` schreibbar (Spec räumt es ein) |
+| N-18 | Härtung | ✓ (#241) Update-Download-URLs nicht auf github.com beschränkt |
+| N-19 | niedrig | ✓ (#241) Prüfsummenliste in `shared/` schreibbar (Spec räumt es ein) – Liste je Release, signiert |
 | N-20 | Hinweis | Posteingang-Scope über `created_at`, Auswertung über Rechnungsdatum (spec-konform, Entscheidung offen) |
 | N-21 | Hinweis | Export-Markierung an „extern" statt an einem eigenen Recht (`export.mark`); eine eigene interne Nur-Lese-Rolle mit `export.zip` darf weiterhin markieren |

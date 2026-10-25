@@ -128,7 +128,7 @@ final class CodeIntegritaetPageFlowTest extends DatabaseTestCase
         self::assertSame(AuditAction::CodeIntegritaetUnveraendert->value, $zeilen[0]->action);
         self::assertSame($this->userId, $zeilen[0]->userId);
         self::assertSame(
-            ['version' => '2.0.0', 'dateien' => 2, 'geaendert' => 0, 'fehlend' => 0, 'zusaetzlich' => 0],
+            ['version' => '2.0.0', 'dateien' => 2, 'geaendert' => 0, 'fehlend' => 0, 'zusaetzlich' => 0, 'umgebung' => 0],
             $this->auditLog()->details($zeilen[0], $this->tresor),
         );
     }
@@ -151,7 +151,7 @@ final class CodeIntegritaetPageFlowTest extends DatabaseTestCase
         self::assertSame(AuditAction::CodeIntegritaetAbweichung->value, $zeilen[0]->action, 'visible without the vault');
         $details = $this->auditLog()->details($zeilen[0], $this->tresor);
         self::assertSame(
-            ['version' => '2.0.0', 'dateien' => 2, 'geaendert' => 1, 'fehlend' => 0, 'zusaetzlich' => 1],
+            ['version' => '2.0.0', 'dateien' => 2, 'geaendert' => 1, 'fehlend' => 0, 'zusaetzlich' => 1, 'umgebung' => 0],
             $details,
         );
         self::assertStringNotContainsString('hintertuer', (string) json_encode($details), 'counts only');

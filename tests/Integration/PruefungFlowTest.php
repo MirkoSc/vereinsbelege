@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Integration;
 
+use App\Admin\VereinskennungenController;
 use App\App\PruefungController;
 use App\Config\Paths;
 use App\Domain\ArtifactKind;
@@ -20,8 +21,8 @@ use App\Domain\JobExecutor;
 use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
-use App\Domain\SupplierKeyKind;
 use App\Domain\Sphere;
+use App\Domain\SupplierKeyKind;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
 use App\Domain\Zahlungsweg;
@@ -44,6 +45,7 @@ use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentDuplicateRepository;
@@ -85,6 +87,8 @@ use App\Service\Ki\LlmAntwort;
 use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
+use App\Service\MasterData\Vereinskennung;
+use App\Service\MasterData\Vereinskennungen;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -1848,6 +1852,171 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertSame([], $daten->ibans, 'an IBAN belongs to one supplier only');
     }
 
+    public function testAConflictWithAnotherSupplierIsMarkedInTheAudit(): void
+    {
+        // Issue #245: not learnt, but marked - ids and field names only.
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'SH Beispiel', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body)));
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt), null, 10);
+        self::assertCount(1, $zeilen);
+        self::assertSame($lieferant, $zeilen[0]->entityId);
+        self::assertSame(['felder' => ['iban'], 'andere' => [$anderer], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+        self::assertStringNotContainsString('Müller', $this->rohTabelle('audit_log'));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN', $seite);
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->ibans);
+    }
+
+    public function testAConflictAloneIsMarkedWithoutAnOfferToTick(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('type="checkbox" name="lieferant_lernen"', $seite, 'nothing to learn');
+        self::assertStringContainsString('<input type="hidden" name="lieferant_lernen" value="konflikt">', $seite);
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $this->lernStand($seite)), 'lieferant_lernen' => 'konflikt']);
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $lieferant), null, 10);
+        self::assertSame([AuditAction::LieferantMerkmalKonflikt->value], array_values(array_filter(
+            array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
+            static fn(string $a): bool => $a !== AuditAction::LieferantAngelegt->value,
+        )), 'marked, nothing changed');
+        self::assertSame(['felder' => ['iban'], 'andere' => [$anderer], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+
+        // The next invoice names the same IBAN: warned again, marked once.
+        $naechster = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+        $seite = $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body;
+        $this->post('/app/belege/pruefen/' . $naechster, [...$this->lernFelder($lieferant, $this->lernStand($seite)), 'lieferant_lernen' => 'konflikt']);
+
+        self::assertStringContainsString('Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+        self::assertStringNotContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+        self::assertCount(1, new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt), null, 10));
+    }
+
+    public function testAConflictOnlyPageWhosePlanChangedDoesNotClaimLostLearning(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        // Meanwhile the other supplier loses the IBAN: the plan changes.
+        $this->supplierService()->aendern($this->tresor, $anderer, ['name' => 'Getränke Müller', 'rolle' => 'lieferant', 'ibans' => ''], new \DateTimeImmutable());
+
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $stand), 'lieferant_lernen' => 'konflikt']);
+
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id']);
+        self::assertStringNotContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'nothing was offered');
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->ibans, 'nothing confirmed, nothing learnt');
+    }
+
+    public function testAMissingVatIdIsLearntAndFindsTheSupplierInStepOne(): void
+    {
+        // Issue #245: a supplier without a VAT id learns the receipt's - once
+        // an admin said which ids are the club's own (here: none).
+        $this->vereinskennungen();
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'iban' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('<li>USt-ID DE123456789</li>', $seite);
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        self::assertSame('DE123456789', $this->supplierService()->finde($this->tresor, $lieferant)?->data->vatId);
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantGeaendert), null, 10);
+        self::assertSame(['felder' => ['aliases', 'vat_id'], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+        self::assertStringContainsString('Beim Lieferanten ergänzt: Name als Alias, USt-ID.', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $naechster = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Ganz anderer Name', 'iban' => ''])])], aufloesen: true);
+        self::assertStringContainsString('Lieferant automatisch erkannt (Stufe 1 – USt-ID).', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+    }
+
+    public function testNoVatIdIsLearntBeforeTheClubsOwnIdsAreSaved(): void
+    {
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'iban' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('<li>USt-ID', $seite);
+        self::assertStringContainsString('Die USt-ID des Belegs wird erst übernommen, wenn unter „Admin → Vereinskennungen“', $seite);
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        self::assertSame('', $this->supplierService()->finde($this->tresor, $lieferant)?->data->vatId);
+        self::assertSame(['Sporthaus Beispeil'], $this->supplierService()->finde($this->tresor, $lieferant)?->data->aliases, 'the rest is learnt');
+    }
+
+    public function testTheClubsOwnVatIdIsNeitherLearntNorResolved(): void
+    {
+        // A B2B invoice prints "Ihre USt-IdNr." - the AI reads it as the seller's.
+        $this->vereinskennungen(ustId: 'DE 123 456 789');
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        // Some supplier holds it already (typed by hand before #245).
+        $falsch = $this->supplierService()->anlegen($this->tresor, ['name' => 'Getränke Müller', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'iban' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('Stufe 1 – USt-ID', $seite, 'step 1 skips the club\'s id');
+        self::assertStringNotContainsString('<option value="' . $falsch . '" selected>', $seite);
+        self::assertStringContainsString('Die USt-ID des Belegs ist die des Vereins – nicht übernommen.', $seite);
+        self::assertStringNotContainsString('<li>USt-ID', $seite);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+        self::assertSame('', $this->supplierService()->finde($this->tresor, $lieferant)?->data->vatId);
+        self::assertSame([], new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt), null, 10), 'the club\'s id is no conflict');
+    }
+
+    public function testANewSupplierFromTheAiDoesNotGetTheClubsOwnIds(): void
+    {
+        $this->vereinskennungen(ustId: 'DE123456789', steuernummer: '12/345/67890');
+
+        $this->pdo()->beginTransaction();
+        $neu = $this->supplierService()->anlegenAusKi($this->tresor, ['name' => 'Neuer Laden', 'vat_id' => 'de123456789', 'tax_number' => '12 345 67890', 'ibans' => self::IBAN], SupplierRole::Lieferant, new \DateTimeImmutable());
+        $this->pdo()->commit();
+
+        $daten = $this->supplierService()->finde($this->tresor, $neu->id)?->data;
+        self::assertSame('', $daten?->vatId);
+        self::assertSame('', $daten->taxNumber);
+        self::assertSame([self::IBAN], $daten->ibans, 'the rest stays');
+    }
+
+    public function testTheClubsOwnIdsAreKeptInTheVaultByAnAdmin(): void
+    {
+        $rolle = $this->rollen->create('Nur Einstellungen', false, [Permission::AdminSettings->value => PermissionScope::Alle]);
+        $this->rollen->assignToUser($this->userId, [$rolle]);
+
+        self::assertStringContainsString('noch nicht gespeichert', $this->get('/admin/vereinskennungen', entsperrt: true)->body);
+        self::assertStringNotContainsString('name="ust_id"', $this->get('/admin/vereinskennungen')->body, 'locked vault: no form');
+
+        $falsch = $this->post('/admin/vereinskennungen', ['ust_id' => '123', 'steuernummer' => '']);
+        self::assertSame(422, $falsch->status);
+        self::assertStringContainsString('Die USt-ID ist ungültig', $falsch->body);
+
+        self::assertSame(302, $this->post('/admin/vereinskennungen', ['ust_id' => 'de 123 456 789', 'steuernummer' => ''])->status);
+        $kennung = new Vereinskennungen(new ClubIdentityRepository($this->pdo()))->lesen($this->tresor);
+        self::assertSame('DE123456789', $kennung?->ustId);
+        self::assertSame('', $kennung->steuernummer);
+        self::assertStringNotContainsString('123456789', $this->rohTabelle('club_identity'), 'vault ciphertext only');
+        self::assertStringContainsString('value="DE123456789"', $this->get('/admin/vereinskennungen', entsperrt: true)->body);
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::EinstellungVereinskennungen), null, 10);
+        self::assertSame(['ust_id' => true, 'steuernummer' => false], $this->audit->details($zeilen[0], $this->tresor), 'whether set, no value');
+        self::assertStringNotContainsString('123456789', $this->rohTabelle('audit_log'));
+    }
+
     public function testAPlanChangedSinceThePageWasShownTeachesNothing(): void
     {
         $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
@@ -1962,6 +2131,12 @@ final class PruefungFlowTest extends DatabaseTestCase
             'lieferant_lernen_stand' => $stand,
             'aktion' => 'speichern',
         ]);
+    }
+
+    /** The club's own VAT id and tax number as an admin saves them (issue #245, E-67). */
+    private function vereinskennungen(string $ustId = '', string $steuernummer = ''): void
+    {
+        new Vereinskennungen(new ClubIdentityRepository($this->pdo()))->speichern($this->tresor, Vereinskennung::pruefen($ustId, $steuernummer), $this->userId, new \DateTimeImmutable());
     }
 
     /** One of the club's own bank accounts (issue #201/M7-6b, E-29). */
@@ -2455,8 +2630,16 @@ final class PruefungFlowTest extends DatabaseTestCase
         $controller[1] = $guard;
         $controller[26] = $pruefung;
 
+        $vereinskennungen = fn(): VereinskennungenController => new VereinskennungenController(
+            $view,
+            new Session(),
+            new SessionVault(),
+            new Vereinskennungen(new ClubIdentityRepository($pdo)),
+            $this->audit,
+        );
+
         $router = new Router();
-        (require dirname(__DIR__, 2) . '/app/src/routes.php')($router, $view, ...$controller);
+        (require dirname(__DIR__, 2) . '/app/src/routes.php')($router, $view, ...$controller, vereinskennungenAdmin: $vereinskennungen);
 
         return new Kernel(
             router: $router,
