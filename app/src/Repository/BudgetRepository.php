@@ -69,16 +69,19 @@ final readonly class BudgetRepository
     public function insert(int $year, ?int $categoryId, ?int $costCenterId, string $dekSealed, ?int $createdBy, \DateTimeImmutable $now): int
     {
         $stmt = $this->pdo->prepare(
-            "INSERT INTO budget (year, category_id, cost_center_id, dek_sealed, data_enc, created_by, created_at, updated_at)
-             VALUES (?, ?, ?, ?, '', ?, ?, ?)",
+            "INSERT INTO budget (year, category_id, cost_center_id, category_key, cost_center_key, dek_sealed, data_enc, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?)",
         );
+        // The key columns carry the UNIQUE index: the id, 0 for "any".
         $stmt->bindValue(1, $year, \PDO::PARAM_INT);
         $stmt->bindValue(2, $categoryId, $categoryId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
         $stmt->bindValue(3, $costCenterId, $costCenterId === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
-        $stmt->bindValue(4, $dekSealed, \PDO::PARAM_LOB);
-        $stmt->bindValue(5, $createdBy, $createdBy === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
-        $stmt->bindValue(6, $now->format(self::FORMAT));
-        $stmt->bindValue(7, $now->format(self::FORMAT));
+        $stmt->bindValue(4, $categoryId ?? 0, \PDO::PARAM_INT);
+        $stmt->bindValue(5, $costCenterId ?? 0, \PDO::PARAM_INT);
+        $stmt->bindValue(6, $dekSealed, \PDO::PARAM_LOB);
+        $stmt->bindValue(7, $createdBy, $createdBy === null ? \PDO::PARAM_NULL : \PDO::PARAM_INT);
+        $stmt->bindValue(8, $now->format(self::FORMAT));
+        $stmt->bindValue(9, $now->format(self::FORMAT));
         $stmt->execute();
 
         return (int) $this->pdo->lastInsertId();

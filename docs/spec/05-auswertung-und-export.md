@@ -206,7 +206,9 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Kostenstellen- und Zeitraum-Scope, Rundung), `tests/Integration/
   BudgetFlowTest.php` (Anlegen/Ändern/Löschen, abgelehnte Eingaben, CSRF,
   nur Chiffrat in der Tabelle und AAD-Bindung, beide Grundlagen, Scopes,
-  gesperrter Tresor, CSV, Audit ohne Betrag, Datenstand ändert sich).
+  gesperrter Tresor, CSV, Audit ohne Betrag, Datenstand ändert sich),
+  `tests/Integration/BackupRestoreRoundtripTest.php` (Budgets überstehen
+  Backup + Restore, UNIQUE gilt danach weiter).
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
