@@ -110,7 +110,7 @@ final class ERechnungLeser
         if (strlen($xml) > self::MAX_BYTES) {
             return ERechnungErgebnis::ohne(ERechnungBefund::ZuGross);
         }
-        if (trim($xml) === '' || self::hatDoctype($xml)) {
+        if (trim($xml) === '' || self::hatDoctype($xml) || self::doctypeVorWurzel($xml)) {
             return ERechnungErgebnis::ohne(ERechnungBefund::Defekt);
         }
 
@@ -120,7 +120,7 @@ final class ERechnungLeser
             // PARSEHUGE: a base64 attachment may be a single text node of
             // several MB. Safe here - without a DOCTYPE there is nothing to
             // expand.
-            if (!$dom->loadXML($xml, LIBXML_NONET | LIBXML_PARSEHUGE) || $dom->documentElement === null) {
+            if (!$dom->loadXML($xml, LIBXML_NONET | LIBXML_PARSEHUGE) || $dom->documentElement === null || $dom->doctype !== null) {
                 return ERechnungErgebnis::ohne(ERechnungBefund::Defekt);
             }
 
@@ -489,6 +489,43 @@ final class ERechnungLeser
     {
         if (!in_array($text, $this->warnungen, true)) {
             $this->warnungen[] = $text;
+        }
+    }
+
+    /**
+     * The byte search above only sees an ASCII-compatible "<!DOCTYPE"; in a
+     * UTF-16 document (or any other encoding libxml converts) it is spread
+     * over NUL bytes and slips past (security review, issue #78 - reachable
+     * through the XML attachment of a public PDF, which never passes
+     * MagicBytes). A pull parser decodes the encoding and meets the DOCTYPE
+     * before the root element, i.e. before DOMDocument would expand a single
+     * entity. Unreadable input counts as "has one": DOMDocument would refuse
+     * it anyway, and refusing is the safe side.
+     */
+    private static function doctypeVorWurzel(string $xml): bool
+    {
+        $vorher = libxml_use_internal_errors(true);
+        $reader = new \XMLReader();
+        try {
+            if (!$reader->XML($xml, null, LIBXML_NONET | LIBXML_PARSEHUGE)) {
+                return true;
+            }
+            while ($reader->read()) {
+                if ($reader->nodeType === \XMLReader::DOC_TYPE) {
+                    return true;
+                }
+                if ($reader->nodeType === \XMLReader::ELEMENT) {
+                    return false;
+                }
+            }
+
+            return true;
+        } catch (\ValueError) {
+            return true;
+        } finally {
+            $reader->close();
+            libxml_clear_errors();
+            libxml_use_internal_errors($vorher);
         }
     }
 
