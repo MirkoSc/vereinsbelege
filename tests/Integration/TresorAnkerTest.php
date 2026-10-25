@@ -248,7 +248,21 @@ final class TresorAnkerTest extends DatabaseTestCase
         $this->ankerMigrationZuruecksetzen();
         $this->schluesselAustauschen();
 
-        $ergebnis = new Migrator($this->pdo(), $this->migrationsDir(), $this->erstbeglaubigung())->migrate();
+        // Up to the anchor migration only: the migrations after it ran
+        // already and are not what this test is about (issue #242 added one).
+        $bisAnker = sys_get_temp_dir() . '/vb_anker_bis_' . uniqid('', true);
+        mkdir($bisAnker);
+        try {
+            foreach (Migration::discover($this->migrationsDir()) as $migration) {
+                if ($migration->version <= $this->ankerVersion()) {
+                    copy($migration->path, $bisAnker . '/' . basename($migration->path));
+                }
+            }
+            $ergebnis = new Migrator($this->pdo(), $bisAnker, $this->erstbeglaubigung())->migrate();
+        } finally {
+            array_map('unlink', glob($bisAnker . '/*') ?: []);
+            rmdir($bisAnker);
+        }
 
         self::assertContains($this->ankerVersion(), array_map(static fn(Migration $m): int => $m->version, $ergebnis->applied), 'the migration did run again');
         self::assertSame([1 => false], $this->vaults()->ankerStand());
