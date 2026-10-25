@@ -34,7 +34,7 @@ final readonly class WorkerCleanupTask implements CronTask
 
     public function run(\DateTimeImmutable $now): int
     {
-        return $this->nonces->deleteOlderThan($now->modify(sprintf('-%d seconds', WorkerAuth::NONCE_AUFBEWAHRUNG_SEKUNDEN)))
+        return $this->nonces->deleteOlderThan($now->setTimestamp($now->getTimestamp() - WorkerAuth::NONCE_AUFBEWAHRUNG_SEKUNDEN))
             + $this->workers->codesAufraeumen($now->modify('-1 day'))
             + $this->freigaben->aufraeumen($now);
     }
