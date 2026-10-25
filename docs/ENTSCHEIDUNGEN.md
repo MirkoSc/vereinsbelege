@@ -1833,3 +1833,40 @@ Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
 richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
 dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
 zeigen soll.
+## E-66 ❓ Backup/Restore abrunden: generierte Spalten, Cron-URL, große Backups per FTP (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+
+Issue #244, Details in `docs/spec/06-betrieb.md` §2 und §5.
+
+Entscheidungen dabei:
+- **Große Backups: FTP-Ablage statt Chunk-Upload.** Ein Backup größer als
+  `upload_max_filesize`/`post_max_size` legt der Admin per FTP in
+  `shared/var/backups/` ab und wählt es im Installer aus. Gründe: Bei
+  einem Restore hat der Admin ohnehin FTP-Zugang (er hat `setup.php` so
+  hochgeladen); ein Chunk-Upload bräuchte eine zweite Schrittkette im
+  Installer samt Zusammensetzen, Aufräumen verwaister Teile und
+  Wiederaufnahme – ohne Anmeldung, also mit eigenem Missbrauchsschutz – und
+  würde die Datei auf dem Server trotzdem einmal vollständig ablegen.
+  Die FTP-Datei wird an Ort und Stelle gelesen (keine Kopie, die den
+  Platzbedarf verdoppelt) und nie gelöscht. Nur einfache Dateinamen direkt
+  im Verzeichnis, keine Symlinks.
+- **FTP-Nachweis je Sitzung:** Liste und Auswahl erst, wenn eine leere
+  Datei `freigabe-<Zufall>.txt` mit dem Namen aus dem Formular dieser
+  Sitzung in `shared/var/backups/` liegt. Sonst könnte ein Fremder, der
+  `/install` vor dem Admin aufruft, das abgelegte Vereins-Backup in seine
+  eigene Datenbank einspielen lassen. Ein zusätzlicher FTP-Handgriff für
+  den Admin, dafür kein neues Geheimnis.
+- **Cron-URL nach jedem Schreiben von `config.php` anzeigen** – nach dem
+  Restore (alle drei Wege) und, weil derselbe Baustein, auch nach der
+  frischen Installation. Sie steht nur in der Antwort an den Browser
+  (`no-store`), nie in Log, Mail, Audit oder Session.
+- **Dauerhaft im Systemcheck** (Recht `admin.system`), aufklappbar und
+  getrennt vom kopierbaren JSON-Bericht, der ausdrücklich für Issues gedacht
+  ist. Keine eigene Seite und kein eigenes Recht.
+- **Generierte Spalten** werden im Dump weggelassen statt etwa
+  `sql_mode` beim Einspielen zu lockern: so bleibt der Dump auch für
+  MySQL einspielbar, wo es keinen nachsichtigen Modus dafür gibt.
+
+Offen für Mirko: ob ein echter Chunk-Upload im Installer doch gewünscht
+ist; ob der FTP-Nachweis (leere Datei) als Handgriff zumutbar ist; ob die Cron-URL auch nach der frischen Installation angezeigt werden
+soll (derzeit ja); ob das Anzeigen der Cron-URL im Systemcheck einen
+Audit-Eintrag (ohne Token) bekommen soll.
