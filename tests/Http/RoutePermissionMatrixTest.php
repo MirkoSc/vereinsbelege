@@ -274,6 +274,9 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Admin, HttpMethod::Get, '/admin/wiederherstellen', true],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/admin/wiederherstellen', false],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
+            // The mail intake's IMAP access (issue #87): admin.settings.
+            [SystemRole::Admin, HttpMethod::Post, '/admin/worker/mail-eingang', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/admin/worker/mail-eingang', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/einreichung', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/einreichung', false],
             // Rechtstexte (M13-3): admin.settings; the pages themselves are public.
@@ -876,6 +879,8 @@ final class RoutePermissionMatrixTest extends TestCase
             kassenpruefung: $stellvertreter,
             // "Wohin fließt das Geld" (issue #73/M11-3), optional.
             geldfluss: $stellvertreter,
+            // The mail intake's worker routes (issue #87), optional.
+            workerMail: $stellvertreter,
         );
 
         return $router;

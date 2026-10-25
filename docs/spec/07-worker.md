@@ -31,8 +31,11 @@ Session-Verarbeitung wie in 03 und 06 beschrieben). Der Worker ist ein
 | `ai_extract` | Session-Schritt | Worker, **ohne Zeitlimit, rund um die Uhr**, mit OCR-Text + Bildern |
 | `resolve_supplier`, `classify`, `detect_*`, `match_transactions` | Session | **bleibt Session** (braucht Tresor) |
 
-Später erweiterbar (Backlog): Beleg-Eingang per E-Mail (IMAP-Abruf durch den
-Worker), Nachverarbeitung des Bestandsarchivs mit OCR.
+Zusätzlich (kein Job, eigene Fähigkeit `mail`): **Beleg-Eingang per E-Mail**
+– der Worker ruft ein IMAP-Postfach des Vereins ab und reicht Anhänge wie die
+öffentliche Einreichung in den Posteingang ein (§9, issue #87, E-54).
+Die Nachverarbeitung des Bestandsarchivs mit OCR ist umgesetzt
+(§6 „Stand #88“).
 
 ## 3. Verschlüsselung – Minimalrechte
 
@@ -340,23 +343,86 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - Alarm-Mail (`worker-ausfall`) an alle aktiven Konten mit
     `admin.settings`: Modul an, Worker > 24 h ohne Meldung, in diesem
     Ausfall Jobs zurückgefallen oder noch frei; einmal je Ausfall.
+- **Stand #88 (OCR-Nachverarbeitung des Bestandsarchivs, E-55):**
+  - Belege aus dem Archiv-Import (`source = archiv`, 05 §3) gehen **nicht**
+    einzeln an den Worker: `extract_text` lässt `ocr_status =
+    uebersprungen` stehen, „OCR nachholen“ lässt sie aus.
+  - Stattdessen Admin-Seite „Worker“, Abschnitt „Archiv nachträglich
+    durchsuchbar machen“: Auswahl eines Import-Laufs (dessen
+    Dokument-ID-Bereich aus `archive_import.stats`) oder aller
+    Archiv-Belege, Start nur mit entsperrtem Tresor, immer nur ein Lauf,
+    Abbrechen. Fortschritt: Belege mit Textebene / gesamt, beim Worker,
+    noch ohne, in diesem Lauf übergeben/ausgelassen.
+  - Ablauf: Session-Job `bestand_ocr` (`App\Service\Worker\BestandsOcr`,
+    Recht `admin.settings`). Kandidaten: Archiv, `ocr_status =
+    uebersprungen`, nicht `abgelehnt` – **festgeschriebene eingeschlossen**
+    –, ohne wartenden/fertigen `ocr`-Job, ohne übernommenen Worker-Text.
+    Je Schritt höchstens 25 geprüft; die Worker-Warteschlange für `ocr`
+    wird nur bis **5** aufgefüllt (OCR-Jobs neuer Belege zählen mit, der
+    Worker holt die ältesten zuerst). Voll → 20 s warten, Worker nicht
+    verfügbar oder keine Grants möglich (Tresor-Rotation) → 5 min warten,
+    Zeiger bleibt stehen; zwischen zwei Schritten 2 s Pause. Am Ende ein
+    weiterer Durchlauf von vorn, solange im Bereich noch eine eigene
+    Texterkennung (`extract_text`) aussteht oder OCR-Jobs beim Worker
+    sind. Ein Beleg, dessen `ocr`-Job in diesem Lauf endgültig
+    gescheitert ist (`fehler`), ist kein Kandidat mehr (angezeigt als
+    „gescheitert“; ein neuer Lauf versucht ihn erneut). Nur abgeschlossene
+    Import-Läufe sind wählbar; Prüfen und Anlegen des Laufs unter
+    `GET_LOCK`, damit zwei gleichzeitige Starts nur einen Lauf ergeben. Zeiger und Zähler in
+    `job.state` → Wiederaufnahme nach Pause, Abmelden, Worker-Ausfall.
+    Der Job zählt nicht zur Kopfzeile „N Belege in Verarbeitung“
+    (`App\Service\Job\HintergrundJob`).
+  - Festschreibung (01 §7): Die Übernahme ergänzt nur Text-Artefakte,
+    `ocr_status` und ein PDF/A-Artefakt; Angaben, Original und
+    `pdf_blob_id` bleiben unverändert, kein KI-Auslesen folgt.
 
 ## 7. Paketierung und Betrieb
 
-- `worker/Dockerfile` im Repo, Basis `debian:trixie-slim` mit
-  `php8.x-cli` (+ sodium, curl, mbstring), `ocrmypdf`,
-  `tesseract-ocr-deu`, `ghostscript`, `poppler-utils`, `unpaper`.
-  Worker-Code = `bin/worker.php` + `worker/src/` (`App\Worker`, nicht im
-  Release-ZIP) + gemeinsames `app/src` (§8).
-- GitHub Action baut bei jedem Tag ein **Multi-Arch-Image**
-  (`linux/arm64` + `linux/amd64`) nach
-  `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z`, `beta`
-  (jedes Tag) und `stable` (beim Hochstufen auf „latest").
+- `worker/Dockerfile` im Repo (Build-Kontext: Repo-Wurzel), Basis das
+  offizielle `php:8.5.x-cli-trixie` (Debian trixie, auf eine
+  PHP-Patchversion gepinnt – Debians eigenes `php8.x-cli` ist 8.4, das
+  Projekt zielt auf 8.5, E-53), dazu aus Debian `ocrmypdf`,
+  `tesseract-ocr-deu`/`-eng`/`-osd`, `ghostscript`, `poppler-utils`,
+  `unpaper`, `tini` (PID 1: leitet SIGTERM weiter, räumt Enkelprozesse
+  ab) und die PHP-Erweiterungen `pcntl`, `gd`, `zip`, `pdo_mysql`
+  (+ sodium, curl, mbstring aus dem Basis-Image). Der Build bricht ab, wenn
+  eine Erweiterung oder ein Werkzeug (inkl. Sprachdaten) fehlt;
+  `bin/worker.php run` verweigert den Start ohne `pcntl` (sonst gäbe
+  SIGTERM den laufenden Job nicht zurück). Läuft als Benutzer `worker`
+  (UID 10001). Worker-Code = `bin/worker.php` + `worker/src/`
+  (`App\Worker`, nicht im Release-ZIP) + gemeinsames `app/src` +
+  `app/prompts` + Composer-Autoloader ohne Dev-Pakete (§8).
+- GitHub Action `worker-image.yml` baut bei jedem Tag ein
+  **Multi-Arch-Image** (`linux/arm64` + `linux/amd64`, buildx/QEMU) nach
+  `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z` und `beta`
+  (jedes Tag, `beta` nur für das höchste Versions-Tag) – vorher läuft der End-to-End-Test mit dem amd64-Image. Beim
+  Hochstufen eines Releases auf „latest“ (Ereignis `release: released`,
+  nur wenn es das neueste Release ist) zeigt `stable` auf das schon
+  getestete `vX.Y.Z` (kein Neubau; war das Image beim Hochstufen noch
+  nicht gepusht, setzt der Tag-Build `stable` nach). Push nur mit dem `GITHUB_TOKEN` des
+  Workflows (`packages: write` nur im Job `publish` für Tag-Pushes; PR-Builds
+  und die CI laufen mit `contents: read`, Checkout ohne gespeicherte
+  Zugangsdaten), kein gespeichertes Secret. PRs, die
+  Worker/Composer/Workflow ändern, bauen das Multi-Arch-Image nur.
 - `worker/docker-compose.yml` als Vorlage: `restart: unless-stopped`,
-  `tmpfs` für Arbeitsverzeichnis, Volume nur für Konfiguration + Schlüssel
-  (Dateirechte 600), Speicherlimit, Logrotation.
+  `tmpfs` für das Arbeitsverzeichnis (`/arbeit`), Volume nur für
+  Konfiguration + Schlüssel (`/daten`, Identitätsdatei 600), Speicherlimit
+  (`mem_limit` – tmpfs-Seiten zählen mit), Logrotation,
+  `stop_grace_period: 30s` (Werkzeug beenden ≈ 5 s + `fail` ≤ 10 s; Docker
+  wartet sonst nur 10 s), schreibgeschütztes Root-Dateisystem, keine
+  Capabilities.
 - Updates: `docker compose pull && docker compose up -d` (Doku), optional
   automatisch per systemd-Timer; der Admin zeigt „Worker-Version veraltet".
+- End-to-End-Test: `tests/e2e/worker/run.sh` (CI-Job `worker-e2e` und vor
+  jedem Image-Push) startet Webhoster-Container (Dev-Image + Apache-TLS +
+  MariaDB) und Worker-Container mit den Einstellungen der Vorlage. Eine
+  nur für den Lauf erzeugte Test-CA wird dem Worker als einzige
+  vertrauenswürdige CA mitgegeben (`curl.cainfo`), die TLS-Prüfung bleibt
+  an. Ablauf: koppeln, Fingerabdruck vergleichen, bestätigen, Fixture-Scan
+  (`tests/fixtures/worker/scan-e2e.jpg`, synthetisch) einreichen, OCR an
+  den Worker, Übernahme wie in einer Session, Prüfung von OCR-Text und
+  PDF/A im Posteingang, `docker stop` mit Exit-Code 0, kein Belegtext in
+  den Logs. Die Webhoster-Seite spielt `tests/e2e/worker/treiber.php`.
 - Einrichtungsanleitung für den Pi: `docs/worker-einrichtung.md` (M7b-6).
 
 ## 8. Worker-Programm (`bin/worker.php`)
@@ -439,6 +505,104 @@ Repository oder Datenbank (`ProcessingArchitectureTest`).
 - **Log:** JSON-Zeilen auf stderr, nur Ereignis, IDs, Zähler, Dauer,
   HTTP-Status und Fehlercodes; alles andere verwirft `App\Worker\Log`.
 
+## 9. E-Mail-Eingang (IMAP)
+
+**Stand issue #87 (E-54, vorläufig).** Rechnungen, die per Mail kommen,
+landen ohne Umweg im Posteingang. Der Worker liest dafür ein **eigenes
+Postfach des Vereins** (z. B. `belege@verein.de`), der Webhoster bleibt
+Datenquelle und -senke; ohne Worker gibt es keinen Mail-Eingang.
+
+**Abnahmekriterien** (beim Einplanen ergänzt, autonom formuliert):
+1. Admin (`admin.settings`) richtet unter `/admin/worker` → „E-Mail-Eingang“
+   Server, Port, Verschlüsselung (**nur** SSL/TLS oder STARTTLS), Benutzer,
+   Passwort, Ordner, optional Zielordner, optional Absender-Allowlist und das
+   Abrufintervall ein. Eingereicht wird nur, was seit dem Einschalten
+   ankam. Passwort und Allowlist liegen nur unter dem
+   Server-Schlüssel, das Passwort wird nie wieder angezeigt; Audit
+   `einstellung.mail_eingang` nur mit Feldnamen.
+2. Der Zugang geht nur **an `W_pub` versiegelt** an den Worker (Feld
+   `mail_eingang` der Worker-Konfiguration) – und nur mit Modul an,
+   E-Mail-Eingang an, vollständigem Zugang und gemeldeter Fähigkeit `mail`.
+   Sonst ersetzt eine Konfiguration ohne Zugang die alte; der Worker verwirft ihn.
+3. Der Worker verbindet sich nur per TLS (IMAPS oder erzwungenes STARTTLS,
+   TLS ≥ 1.2), prüft Zertifikat und Hostnamen und sendet Zugangsdaten nie
+   unverschlüsselt.
+4. Jede neue Mail mit mindestens einem brauchbaren Anhang (PDF, JPEG, PNG,
+   E-Rechnungs-XML nach Magic Bytes) wird **ein** Beleg im Posteingang –
+   `submission` + `document` (`source = einreichung`) wie die öffentliche
+   Einreichung, verschlüsselt an `VK_pub`, dieselben Session-Jobs, dieselbe
+   Benachrichtigung an den Posteingang, **keine** Bestätigungsmail an den
+   Absender. Absender und Betreff stehen nur im versiegelten Payload.
+5. Grenzen der öffentlichen Einreichung (Seiten, Dateigröße, Gesamtgröße);
+   zu große Mails, Spam-Markierung des Mailservers, Absender außerhalb der
+   Allowlist (auch serverseitig geprüft), keine/zu viele/zu große Anhänge →
+   nicht eingereicht, als abgelehnt markiert. Höchstens 20 Mails je Abruf und
+   200 je Tag.
+6. Idempotent: eine Mail wird nach Neustart, verlorener Markierung oder
+   doppeltem Eingang nie zweimal eingereicht.
+7. Verarbeitete Mails werden markiert und optional verschoben, **nie
+   gelöscht** (kein `\Deleted`, kein `EXPUNGE`).
+8. Keine Mailinhalte (Absender, Betreff, Dateinamen) in Logs; der Admin sieht
+   Zeit, Fehlercode und Zähler des letzten Abrufs.
+
+**Webhoster.** Einstellungen `App\Service\Worker\MailEingangEinstellungen`/
+`MailEingangSpeicher` (Settings siehe 02 „Betrieb“). Fähigkeit
+`WorkerFaehigkeit::Mail` (beansprucht keinen Job-Typ),
+`WorkerRouting::mailZugangErlaubt()`. Die Worker-Konfiguration (Format
+`worker-config-v1`, um den Schlüssel `mail_eingang` erweitert; ältere
+Worker ignorieren ihn) trägt `{host, port, sicherheit, benutzer, passwort,
+ordner, ziel_ordner, absender[], abruf_minuten, max_seiten,
+max_datei_bytes, max_einreichung_bytes}` oder `null`. Heartbeat nimmt
+optional `mail_status {zeit, fehler, eingereicht, abgelehnt}` an.
+
+API (`App\Api\WorkerMailController`, signiert wie alle Worker-Routen;
+ohne Freigabe 409 `mail_eingang_aus`):
+
+| Endpunkt | Zweck |
+|---|---|
+| `POST /api/worker/mail/pruefen` `{schluessel}` | `{vorhanden, referenz}` – schon eingereicht? |
+| `POST /api/worker/mail/uploads` `{schluessel, groesse}` | Upload-Ticket wie 03 §4 (Grenze `einreichung_max_datei_mb`) |
+| `POST /api/worker/mail/uploads/{u}/chunks/{n}` | Rohkörper = Klartext-Teil (TLS), Ablage wie die öffentliche Einreichung |
+| `POST /api/worker/mail/uploads/{u}/finish` `{schluessel, name}` | Magic Bytes (PDF/JPEG/PNG/XML, kein HEIC → 415), Blob an `VK_pub` (`UploadStore`), Bindung an die Mail in `submission_upload` |
+| `POST /api/worker/mail/einreichen` `{schluessel, blobs[], absender{name, adresse}, betreff}` | 201 `eingereicht` / 200 `vorhanden` mit Referenz, 422 `{fehler}` |
+
+`App\Service\Submission\MailEinreichung`: `form_hash` =
+SHA-256(`mail|` + Schlüssel), Schlüssel = hex SHA-256 über die Message-ID
+(ohne Message-ID über die ganze Mail). Payload `{name, freitext, email,
+kanal: "mail"}` (Name = Anzeigename, sonst Adresse; Freitext = Betreff, leer
+„(E-Mail ohne Betreff)“; keine Erstattung, keine Kostenstelle). Prüft erneut
+Allowlist, Seitenzahl, Gesamtgröße und dass jeder Blob unter dieser Mail
+hochgeladen wurde. Audit `einreichung.eingegangen` mit `{kanal: mail}`.
+Nicht übernommene Uploads räumt `SubmissionUploadCleanupTask` nach 24 h ab.
+
+**Worker** (`worker/src/Mail/`): eigener minimaler IMAP-Client
+`ImapClient` über `SocketStrom` (keine Bibliothek, keine Prozesse; E-54),
+`MimeNachricht` (RFC 2045–2047/2231, `message/rfc822` wird geöffnet),
+`MailEingang` (Abruf je `abruf_minuten` aus der Schleife, Fehler bleiben
+dort). Nur Mails, die seit dem Einschalten des Eingangs ankamen
+(`aktiv_seit` → IMAP `SINCE`; Altbestand eines Postfachs wird nie
+eingereicht). Auswahl der Anhänge: Typ nach Magic Bytes, Bilder ab 8 KiB,
+Inline-Bilder (Content-ID) erst ab 50 KiB (Signatur-Logos nein, von Apple
+Mail inline gesendete Fotos ja), Duplikate innerhalb der Mail einmal. Ein
+Abruf reicht höchstens 120 s lang ein (Heartbeat und Jobs warten nicht); der
+Rest folgt in der nächsten Runde. TLS nach STARTTLS startet nur ohne
+gepufferte Klartext-Bytes (STARTTLS-Antwort-Injektion). Mails
+größer als `max_einreichung_bytes · 4/3 + 1 MiB` werden nicht geladen.
+Markierung: Keywords `$Vereinsbelege` (+ `\Seen`) bzw.
+`$VereinsbelegeAbgelehnt`; erlaubt der Server keine eigenen Keywords,
+`\Seen` bzw. `\Seen \Flagged` und nur ungelesene Mails gelten als neu.
+Verschieben nur mit `MOVE` (RFC 6851), sonst bleibt die Mail markiert
+liegen. Eine Mail, an der der Worker dreimal scheitert, wird als abgelehnt
+markiert. Vor dem Holen bekommt eine Mail das Keyword `$VereinsbelegeVersuch`
+(ohne eigene Keywords `\Flagged`), danach wird es entfernt; trägt eine offene
+Mail es beim nächsten Abruf noch, ist der Worker an ihr gestorben (z. B.
+Speicher) – sie wird als abgelehnt („unlesbar“) markiert statt erneut
+geholt. Der MIME-Leser arbeitet mit Byte-Offsets im einen Mailpuffer
+(höchstens 4 Ebenen, nur behaltene Anhänge werden dekodiert, Spitze unter
+dem Dreifachen der Mailgröße); das geholte Literal ist auf
+`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt. Eine Mail, die nur für sich scheitert (FETCH nicht beantwortbar,
+Webhoster lehnt einen Anhang mit 5xx ab), hält spätere nicht auf. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
+
 ## Pflicht-Tests
 
 Routing (Modul aus → nie Worker-Jobs; aktiv + online → Worker; offline →
@@ -461,6 +625,18 @@ abgelehnt (localhost nur mit Testoption), leere Profilliste verwirft die
 Schlüssel, Backoff, Arbeitsverzeichnis nur auf tmpfs und nach jedem Job
 leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
 `ai_extract` gegen den echten Controller und die echte Übernahme,
-Prozess-Aufrufe nur in `worker/src/Prozess.php`; Worker-Ablauf
+Prozess-Aufrufe nur in `worker/src/Prozess.php`; Bestandsarchiv (#88):
+Auswahl nach Import-Lauf, festgeschriebene eingeschlossen und unverändert,
+Drosselung auf 5 wartende OCR-Jobs mit Vorrang neuer Belege, Warten ohne
+Worker mit Wiederaufnahme am Zeiger, ein Lauf zugleich und abbrechbar,
+Archiv-Belege nie einzeln an den Worker, nicht in der Kopfzeilen-Zahl,
+dauerhaft scheiternde OCR beendet den Lauf statt ihn endlos zu wiederholen;
+E-Mail-Eingang (#87):
+STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
+(selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
+STARTTLS-Injektion abgelehnt, Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
+Ablehnungen markiert statt gelöscht, Grenzen, verschachtelte große Mail
+bleibt im Speicher begrenzt, Mail mit Versuchs-Marke wird nicht erneut geholt, keine Mailinhalte im Log;
+Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).

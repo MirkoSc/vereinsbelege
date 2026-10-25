@@ -12,9 +12,12 @@
  *
  * @var string $csrf
  * @var array<string, list<\App\Domain\Category>> $gruppen direction value => categories in display order
+ * @var bool $sphaerenSchaltbar the switch of the tax spheres is wired (issue #84)
+ * @var bool $sphaerenAktiv `sphaeren_aktiv`: the default sphere shows as a column
  */
 
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 
 ?>
 <section>
@@ -47,6 +50,9 @@ use App\Domain\CategoryDirection;
                     <thead>
                         <tr>
                             <th scope="col">Name</th>
+                            <?php if ($sphaerenAktiv): ?>
+                                <th scope="col">Sphäre (Vorgabe)</th>
+                            <?php endif; ?>
                             <th scope="col">Status</th>
                             <th scope="col">Reihenfolge</th>
                         </tr>
@@ -58,6 +64,9 @@ use App\Domain\CategoryDirection;
                                     <span class="farbpunkt<?= $kategorie->color === null ? '' : ' ' . e($kategorie->color->cssKlasse()) ?>" aria-hidden="true"></span>
                                     <a href="/admin/kategorien/<?= e((string) $kategorie->id) ?>"><?= e($kategorie->name) ?></a>
                                 </td>
+                                <?php if ($sphaerenAktiv): ?>
+                                    <td><?= e($kategorie->defaultSphere?->label() ?? '–') ?></td>
+                                <?php endif; ?>
                                 <td>
                                     <?php if ($kategorie->active): ?>
                                         <span class="marke marke-ok">Aktiv</span>
@@ -84,4 +93,38 @@ use App\Domain\CategoryDirection;
             </div>
         <?php endif; ?>
     <?php endforeach; ?>
+
+    <?php if ($sphaerenSchaltbar): ?>
+        <section aria-labelledby="kategorien-sphaeren">
+            <h3 id="kategorien-sphaeren">Steuerliche Sphären</h3>
+            <p class="gedaempft">
+                Ein gemeinnütziger Verein ordnet Einnahmen und Ausgaben vier Sphären zu: ideeller
+                Bereich, Vermögensverwaltung, Zweckbetrieb und wirtschaftlicher Geschäftsbetrieb.
+                Eingeschaltet bekommt jede Kategorie eine Vorgabe, jeder Beleg lässt sich in der
+                Prüfung abweichend zuordnen, und die Auswertungen zeigen eine Übersicht je Sphäre.
+                Die Software liefert nur die Struktur – welche Sphäre richtig ist, bitte mit der
+                Steuerberatung abstimmen.
+            </p>
+            <?php if ($sphaerenAktiv): ?>
+                <p><span class="marke marke-ok">Eingeschaltet</span></p>
+                <ul class="gedaempft">
+                    <?php foreach (Sphere::cases() as $sphaere): ?>
+                        <li><?= e($sphaere->label()) ?>: <?= e($sphaere->beispiele()) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php else: ?>
+                <p><span class="marke">Ausgeschaltet</span></p>
+            <?php endif; ?>
+            <form method="post" action="/admin/kategorien/sphaeren" class="formular">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <input type="hidden" name="aktiv" value="<?= $sphaerenAktiv ? '0' : '1' ?>">
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf"><?= $sphaerenAktiv ? 'Sphären ausschalten' : 'Sphären einschalten' ?></button>
+                </p>
+            </form>
+            <?php if ($sphaerenAktiv): ?>
+                <p class="feld-hilfe">Ausschalten blendet die Sphären nur aus – gespeicherte Zuordnungen bleiben erhalten.</p>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
 </section>

@@ -9,13 +9,24 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Domain\ArchiveImportRecord;
+use App\Domain\Job;
+use App\Domain\JobStatus;
+use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
 use App\Repository\WorkerRepository;
+use App\Domain\AuditAction;
+use App\Domain\ImapSicherheit;
+use App\Service\Audit\AuditLog;
+use App\Service\Worker\MailEingangEinstellungen;
+use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\Processing\ProcessingException;
+use App\Service\Worker\BestandsOcr;
 use App\Service\Worker\WorkerFallback;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Worker\WorkerProtokoll;
@@ -30,7 +41,10 @@ use App\View\View;
  * (issue #51/M7b-1: show a pairing code, confirm the fingerprint, unpair)
  * and, since issue #53/M7b-3, the module switch with the fallback period,
  * status (online/offline, last heartbeat, version, capabilities), queue,
- * last errors, throughput and "OCR nachholen".
+ * last errors, throughput and "OCR nachholen"; since issue #88 the OCR
+ * backfill of the imported archive (start for one run or all, progress,
+ * stop - App\Service\Worker\BestandsOcr). Since issue #87 (E-54) also the mail
+ * intake: the IMAP mailbox the worker reads receipts from.
  *
  * Switching the module on and "OCR nachholen" need an unlocked vault in
  * this session (E-43): from then on documents go to the worker, which can
@@ -61,7 +75,61 @@ final readonly class WorkerController
         private DocumentArtifactRepository $artifacts,
         private SettingRepository $settings,
         private SessionVault $sessionVault,
+        private BestandsOcr $bestandsOcr,
+        private ArchiveImportRepository $imports,
+        private ?MailEingangSpeicher $mailEingang = null,
+        private ?AuditLog $audit = null,
     ) {
+    }
+
+    /**
+     * The mail intake's settings (issue #87, 07 section 9). No vault
+     * needed: the worker only writes to the inbox, like the public form.
+     * The password is never shown; an empty field keeps it.
+     */
+    public function mailEingang(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+        if ($this->mailEingang === null) {
+            throw new \LogicException('The mail intake is not wired into the worker page.');
+        }
+        $bisher = $this->mailEingang->laden();
+        [$neu, $fehler] = MailEingangEinstellungen::ausFormular($request->post, $bisher);
+        if ($neu === null) {
+            $this->session->flash(implode(' ', $fehler), FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE . '#mail-eingang');
+        }
+        $this->mailEingang->speichern($neu);
+        $geaendert = [];
+        foreach (['aktiv', 'host', 'port', 'benutzer', 'ordner', 'zielOrdner', 'abrufMinuten'] as $feld) {
+            if ($neu->{$feld} !== $bisher->{$feld}) {
+                $geaendert[] = $feld;
+            }
+        }
+        if ($neu->sicherheit !== $bisher->sicherheit) {
+            $geaendert[] = 'sicherheit';
+        }
+        if (!hash_equals($bisher->passwort, $neu->passwort)) {
+            $geaendert[] = 'passwort';
+        }
+        if ($neu->absender->eintraege !== $bisher->absender->eintraege) {
+            $geaendert[] = 'absender';
+        }
+        // Field names only - never a value (the audit log is for everyone
+        // with audit.view).
+        $this->audit?->record(AuditAction::EinstellungMailEingang, $this->session->userId(), $request->ip, details: ['felder' => $geaendert]);
+
+        $hinweis = $neu->aktiv
+            ? 'E-Mail-Eingang gespeichert. Der Worker übernimmt die Zugangsdaten mit seiner nächsten Meldung'
+                . ($this->routing->modulAktiv() ? '.' : ', sobald das Worker-Modul eingeschaltet ist.')
+            : 'E-Mail-Eingang gespeichert (ausgeschaltet). Der Worker verwirft die Zugangsdaten mit seiner nächsten Meldung.';
+        $this->session->flash($hinweis);
+
+        return Response::redirect(self::SEITE . '#mail-eingang');
     }
 
     /** Module switch and fallback period (section 6). */
@@ -123,6 +191,61 @@ final readonly class WorkerController
         }
         $anzahl = $this->uebergabe->ocrNachholen($vault, self::NACHHOLEN_MAX, $now);
         $this->session->flash(sprintf('%d Beleg(e) an die Texterkennung des Workers übergeben.', $anzahl));
+
+        return Response::redirect(self::SEITE);
+    }
+
+    /**
+     * Starts the archive OCR backfill (issue #88, E-55) for one import run
+     * (`import` = its id) or for the whole archive (`import` = `alle`).
+     * Needs an unlocked vault like "OCR nachholen": from then on archive
+     * documents go to the worker.
+     */
+    public function bestandStarten(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+        if ($this->tresor($request) === null) {
+            $this->session->flash('Dafür muss der Tresor in dieser Sitzung entsperrt sein (erneut anmelden).', FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE);
+        }
+        $auswahl = (string) ($request->post['import'] ?? '');
+        $importId = $auswahl === 'alle' ? null : filter_var($auswahl, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($importId === false) {
+            $this->session->flash('Bitte einen Import-Lauf oder „alle Archiv-Belege“ wählen.', FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE);
+        }
+        if ($this->bestandsOcr->laufender() !== null) {
+            $this->session->flash('Die Nachverarbeitung des Archivs läuft bereits.', FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE);
+        }
+        if ($this->bestandsOcr->starten($importId, new \DateTimeImmutable()) === null) {
+            $this->session->flash('Dieser Import-Lauf ist noch nicht abgeschlossen oder hat keine Belege.', FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE);
+        }
+        $this->session->flash('Nachverarbeitung des Archivs gestartet – sie läuft im Hintergrund, solange jemand mit Verwaltungsrechten angemeldet ist, und lässt neuen Belegen Vorrang.');
+
+        return Response::redirect(self::SEITE);
+    }
+
+    /** Stops the archive OCR backfill; jobs already at the worker finish. */
+    public function bestandAbbrechen(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+        if ($this->bestandsOcr->abbrechen(new \DateTimeImmutable())) {
+            $this->session->flash('Nachverarbeitung des Archivs abgebrochen. Was schon beim Worker ist, wird noch fertig; ein neuer Start macht dort weiter, wo noch Text fehlt.');
+        } else {
+            $this->session->flash('Es läuft keine Nachverarbeitung des Archivs.', FlashArt::Fehler);
+        }
 
         return Response::redirect(self::SEITE);
     }
@@ -221,7 +344,38 @@ final readonly class WorkerController
             'defekte' => $this->artifacts->zaehleDefekte(),
             'nachholbar' => $this->uebergabe->nachholbar(),
             'ocrVerfuegbar' => $this->uebergabe->verfuegbar(WorkerUebergabe::OCR, $now),
+            ...$this->bestand(),
+            'mailEingang' => $this->mailEingang?->laden(),
+            'mailStatus' => $this->mailEingang?->status(),
+            'sicherheiten' => ImapSicherheit::cases(),
         ], Area::Admin));
+    }
+
+    /**
+     * The archive OCR backfill section (issue #88): the newest run with its
+     * progress, and the import runs to choose from.
+     *
+     * @return array{bestandJob: ?Job, bestandZustand: ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int}, bestandStand: ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int}, bestandLaeuft: bool, importLaeufe: list<ArchiveImportRecord>}
+     */
+    private function bestand(): array
+    {
+        $job = $this->bestandsOcr->letzter();
+        try {
+            $zustand = $job === null ? null : BestandsOcr::zustand($job);
+        } catch (ProcessingException) {
+            $zustand = null;
+        }
+
+        return [
+            'bestandJob' => $zustand === null ? null : $job,
+            'bestandZustand' => $zustand,
+            'bestandStand' => $zustand === null || $job === null ? null : $this->bestandsOcr->stand($job),
+            'bestandLaeuft' => $zustand !== null && $job !== null && in_array($job->status, [JobStatus::Offen, JobStatus::Laeuft], true),
+            'importLaeufe' => array_values(array_filter(
+                $this->imports->recent(50),
+                static fn(ArchiveImportRecord $i): bool => !$i->status->offen() && $i->stats->belege > 0,
+            )),
+        ];
     }
 
     private function tresor(Request $request): ?Vault

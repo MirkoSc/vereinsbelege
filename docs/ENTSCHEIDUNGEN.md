@@ -98,6 +98,7 @@ Seitenlimits, Mindest-Ausfülldauer.
 Setting `sphaeren_aktiv` = aus (Default). Dann: kein Feld in UI, kein
 Sphären-Teil im KI-Prompt, keine Sphären-Auswertung. Spalte bleibt im
 Datenmodell (NULL), damit ein späteres Einschalten keine Migration braucht.
+Einschalten, Zuordnung und Auswertung: E-57 (issue #84).
 
 ## E-16 ✅ Geschäftsjahr = Kalenderjahr
 Auswertungen und Export-Default nutzen das Kalenderjahr; kein
@@ -1546,6 +1547,211 @@ Offen für Mirko: ob Ausgaben und Einnahmen gleichzeitig (statt
 umschaltbar) gezeigt werden sollen; ob der Drilldown eine zweite Ebene
 (Kostenstelle → Kategorie → Beleg) braucht; ob Buchungen ohne Beleg im
 Drilldown auch ohne `bank.view` Gegenseite/Zweck zeigen sollen.
+
+## E-55 ❓ OCR-Nachverarbeitung des Bestandsarchivs über den Worker (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #88, 07 §2 und §6 („Stand #88“), 05 §3, 01 §7; keine Migration*
+
+Das Issue hatte keine Abnahmekriterien. Selbst gesetzt (konservativ):
+Archiv-Belege lassen sich nach Import-Lauf (oder alle) an die
+Texterkennung des Workers geben; das blockiert den Worker nicht, neue
+Belege haben Vorrang; Fortschritt sichtbar; Wiederaufnahme nach Pause,
+Abmelden oder Worker-Ausfall; Abbrechen möglich; festgeschriebene Belege
+bleiben inhaltlich unverändert.
+
+Getroffen ohne Rückfrage:
+
+- **Archiv-Belege gehen nicht mehr einzeln an den Worker.** Bisher
+  reihte `extract_text` für jeden Scan sofort einen `ocr`-Job ein – ein
+  Jahresarchiv (400+ Scans) hätte den Worker stundenlang belegt, neue
+  Belege dahinter. Jetzt bleibt `ocr_status = uebersprungen`, das
+  KI-Auslesen läuft wie ohne Worker auf den Seitenbildern. Die
+  Sammelaktion „OCR nachholen“ (#53) lässt Archiv-Belege aus.
+- **Nachverarbeitung als Hintergrund-Session-Job `bestand_ocr`**
+  (`App\Service\Worker\BestandsOcr`), gestartet auf der Admin-Seite
+  „Worker“ für einen Import-Lauf (Dokument-ID-Bereich aus
+  `archive_import.stats`, keine neue Spalte) oder alle Archiv-Belege.
+  Immer nur ein Lauf. Recht `admin.settings` (wie die Worker-Seite),
+  Start nur mit entsperrtem Tresor (E-43: Grants entstehen in der
+  Session). Der Job läuft also nur, solange jemand mit `admin.settings`
+  angemeldet ist – ohne Anmeldung ruht er und macht danach weiter.
+- **Drosselung ohne Prioritätsspalte:** Der Job füllt die
+  Worker-Warteschlange für `ocr` nur bis **5** Jobs auf und zählt dabei
+  die OCR-Jobs neuer Belege mit. Der Worker holt die ältesten zuerst; ein
+  neuer Beleg wartet also höchstens hinter 5 Archiv-Scans. Ist die
+  Warteschlange voll, wartet der Job 20 s, ohne Worker oder ohne mögliche
+  Grants (Tresor-Rotation) 5 min
+  (`JobSchrittErgebnis::warten`). Der Job zählt nicht zu „N Belege in
+  Verarbeitung“ in der Kopfzeile (Marker `HintergrundJob`).
+- **Wiederaufnahme:** Zeiger und Zähler stehen in `job.state`. Ein Beleg,
+  der sich nicht übergeben lässt (kein lesbarer Blob, Grant verweigert),
+  wird übersprungen und gezählt („ausgelassen“), ein neuer Start versucht
+  ihn erneut. Geht der Worker mitten im Schritt weg, bleibt der Zeiger
+  stehen. Am Ende folgt ein weiterer Durchlauf, solange im Bereich noch
+  eine eigene Texterkennung aussteht oder OCR-Jobs beim Worker sind. Ein
+  Beleg, dessen OCR in diesem Lauf endgültig scheitert (`fehler`, z. B.
+  verschlüsseltes PDF), wird in diesem Lauf nicht erneut übergeben und als
+  „gescheitert“ gezählt; ein neuer Start versucht ihn wieder. Nur
+  abgeschlossene Import-Läufe sind wählbar; der Start läuft unter
+  `GET_LOCK` (kein Doppelstart). „Abbrechen“ setzt den Job auf
+  `uebersprungen`; was schon beim Worker ist, wird fertig.
+- **Festgeschriebene Belege (01 §7) sind eingeschlossen.** OCR ergänzt nur
+  abgeleitete Daten: Text-Artefakte, `ocr_status` (wie `content_bi` aus
+  den unveränderlichen Originalen abgeleitet) und ein PDF/A-Artefakt
+  neben den Dateien. Angaben des Belegs, Original und erzeugtes PDF
+  (`pdf_blob_id`) bleiben unverändert; ein KI-Auslesen wird dadurch nicht
+  ausgelöst. Der Volltext-Index nimmt den neuen Text auf.
+- **Kein Jahresfilter:** Das Belegdatum ist verschlüsselt, `created_at`
+  ist bei Archiv-Belegen der Importtag. Ein Import-Lauf entspricht in der
+  Praxis einem Jahr.
+
+## E-53 ❓ Worker-Image: Basis, Tags, Ablauf der Veröffentlichung, End-to-End-Test (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #55/M7b-5, 07 §7; keine Migration*
+
+Getroffen ohne Rückfrage:
+
+- **Basis-Image `php:8.5.12-cli-trixie` statt `debian:trixie-slim` +
+  `php8.x-cli`:** Debian trixie liefert PHP 8.4, das Projekt verlangt
+  PHP 8.5 (CLAUDE.md §1, `composer.json`). Das offizielle PHP-Image ist
+  selbst Debian trixie; die Werkzeuge kommen weiter aus Debian. Gepinnt auf
+  die Patchversion (Tag, kein Digest); Updates des Basis-Images sind eine
+  bewusste Änderung im PR.
+- **Tags:** `vX.Y.Z` bei jedem Tag-Push, nach bestandenem
+  End-to-End-Test; `beta` nur, wenn es das höchste Versions-Tag ist (ein
+  nachgeschobener Patch für eine ältere Linie zieht `beta` nicht zurück). `stable` beim Hochstufen eines Pre-Release zum
+  vollwertigen Release (`release: released`), aber nur, wenn es laut
+  GitHub das neueste Release ist – ein nachträglich veröffentlichter
+  älterer Patch zieht `stable` nicht zurück. `stable` wird per
+  `imagetools create` auf das vorhandene `vX.Y.Z` gesetzt, nicht neu
+  gebaut. Kein `latest`-Tag (die Vorlage nutzt `stable`).
+- **Sichtbarkeit des Pakets:** Ein neues GHCR-Paket ist zunächst privat.
+  Damit ein Pi ohne Anmeldung `docker compose pull` kann, muss es einmalig
+  in den Paket-Einstellungen auf „public“ gestellt werden (offen, Mirko).
+- **`pcntl` hart geprüft:** `bin/worker.php run` beendet sich ohne `pcntl`
+  mit Fehlermeldung (bisher still ohne Signal-Handler); `pair`/`status`
+  gehen weiter ohne. Der Image-Build prüft zusätzlich alle nötigen
+  Erweiterungen und Werkzeuge inkl. der Tesseract-Sprachen `deu`, `eng`,
+  `osd`.
+- **Container-Härtung in der Vorlage:** Benutzer `worker` (UID 10001),
+  `read_only`, `cap_drop: ALL`, `no-new-privileges`, `tini` als PID 1,
+  `stop_grace_period: 30s`, `mem_limit: 2g` bei tmpfs 768 MB und
+  `WORKER_SPEICHER=512M` (tmpfs zählt zum Speicherlimit; für einen Pi mit
+  2 GB ggf. kleiner wählen – Anleitung #56).
+- **End-to-End-Test mit TLS statt Ausnahme für http://:** Die in E-50
+  offene Frage ist so gelöst: `run.sh` erzeugt je Lauf eine Test-CA und ein
+  Zertifikat für `webhoster`; der Worker vertraut nur dieser CA
+  (`curl.cainfo` im Test-Overlay), die Prüfung bleibt an. Die
+  Webhoster-Seite (Tresor anlegen, bestätigen, einreichen, Übernahme wie
+  in der Session) spielt ein CLI-Treiber im Webhoster-Container, nicht die
+  Browser-Oberfläche – die Admin-/Session-Seiten haben eigene Tests.
+  Der Scan wird direkt als Einreichung in den Posteingang gelegt und das
+  `ocr` so eingereiht, wie es `extract_text` tut.
+- **Wo der Test läuft:** in jedem PR (CI-Job `worker-e2e`, amd64) und vor
+  jedem Image-Push. Der Multi-Arch-Build (arm64 unter QEMU, langsam) läuft
+  in PRs nur, wenn Worker, Composer-Dateien oder der Workflow geändert
+  sind.
+
+## E-54 ❓ E-Mail-Eingang über den Worker (IMAP) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #87 (Backlog), 07 §2 und §9, 02 „Betrieb“; keine Migration*
+
+Das Issue hatte keine Abnahmekriterien; sie stehen jetzt in 07 §9 und sind
+mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
+
+- **Nur über den Worker.** Der Webhoster ruft kein Postfach ab (lange
+  Verbindungen, Cron ohne Tresor); ohne Worker gibt es keinen Mail-Eingang.
+  Neue Fähigkeit `mail` (kein Job-Typ).
+- **Zugang wie die KI-Schlüssel:** im Admin eingegeben, Passwort und
+  Absender-Allowlist unter dem Server-Schlüssel gespeichert, an den Worker
+  nur an `W_pub` versiegelt in der bestehenden Worker-Konfiguration
+  (Format `worker-config-v1` um `mail_eingang` erweitert statt neuer
+  Version – ältere Worker ignorieren das Feld). Einschalten braucht **keinen**
+  entsperrten Tresor: der Worker schreibt nur in den Posteingang wie das
+  öffentliche Formular.
+- **Nur TLS:** IMAPS oder erzwungenes STARTTLS, TLS ≥ 1.2, Zertifikat und
+  Hostname immer geprüft, keine Ausnahme für selbstsignierte Zertifikate.
+- **Eigener minimaler IMAP-Client** statt Bibliothek: `ext/imap` gibt es ab
+  PHP 8.4 nicht mehr; die verbreitete reine PHP-Bibliothek (webklex/php-imap)
+  zieht Laravel-/Symfony-/Carbon-Pakete nach, die über `composer.json` ins
+  Release-ZIP kämen, obwohl nur der Worker sie braucht. Der Client kann nur,
+  was ein Belegpostfach braucht (rund 300 Zeilen, getestet).
+- **Anhänge gehen im Klartext über TLS an den Webhoster**, der sie beim
+  Eingang an `VK_pub` verschlüsselt – genau wie bei `/einreichen`. So prüft
+  der Webhoster Dateityp (Magic Bytes) und Grenzen selbst; der Worker kann
+  danach nichts mehr lesen.
+- **Eine Mail = ein Beleg** mit allen brauchbaren Anhängen als Seiten (wie
+  eine öffentliche Einreichung mit mehreren Seiten), nicht ein Beleg je
+  Anhang. Bilder unter 8 KiB und Inline-Bilder (Signatur-Logos) zählen nicht;
+  HEIC wird nicht angenommen (ohne Browser wandelt es niemand um, E-10).
+- **`document.source = einreichung`** mit `kanal: "mail"` im versiegelten
+  Payload statt eines neuen Quellwerts – ein Rücksprung auf das vorige
+  Release kann damit weiterhin alle Belege lesen. Name = Anzeigename des
+  Absenders, E-Mail = Absenderadresse, Beschreibung = Betreff; keine
+  Erstattung, keine Kostenstelle.
+- **Keine automatische Antwort** an den Absender (Backscatter an gefälschte
+  Absender, Spam-Verstärker). Der Posteingang wird wie bei jeder Einreichung
+  benachrichtigt.
+- **Grenzen:** die der öffentlichen Einreichung (Seiten, Datei-, Gesamtgröße),
+  dazu 20 Mails je Abruf, 200 je Tag, Abruf alle 1–60 min (Vorgabe 5).
+  Spam-Markierung des Mailservers (`X-Spam-Flag: YES`, `X-Spam-Status: Yes`)
+  führt zur Ablehnung. Die Allowlist (Adressen oder `@domain`) ist optional;
+  sie prüft nur den `From`-Kopf, der sich fälschen lässt (offen: SPF/DKIM
+  über `Authentication-Results` auswerten).
+- **Idempotenz** über SHA-256 der Message-ID (ohne Message-ID: der ganzen
+  Mail) als `submission.form_hash`; der Worker fragt vor dem Hochladen.
+- **Markieren statt löschen:** Keywords `$Vereinsbelege`/
+  `$VereinsbelegeAbgelehnt`, sonst `\Seen` (+ `\Flagged`); optional
+  Verschieben per `MOVE` in einen Zielordner, den es schon geben muss. Ohne
+  `MOVE` bleibt die Mail markiert liegen (kein Kopieren und Löschen).
+  Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
+  ist empfohlen.
+- **Absturzschutz im Postfach:** Der Worker speichert nichts dauerhaft, also
+  liegt die Versuchs-Marke als Keyword (`$VereinsbelegeVersuch`, sonst
+  `\Flagged`) an der Mail selbst. Eine Mail, an der der Worker gestorben ist,
+  wird beim nächsten Abruf als „unlesbar“ markiert statt erneut geholt –
+  auch dann, wenn der Abbruch nur ein Verbindungsabriss mitten in der Mail
+  war (dann bleibt sie markiert im Postfach für einen Menschen).
+- **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
+  Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
+  nutzt den Archiv-Import oder lädt sie einzeln hoch.
+
+## E-57 ❓ Steuerliche Sphären: Schalter, Zuordnung, Auswertung (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #84, 02 „Sphären“, 05 §1 „Stand issue #84“; ergänzt E-15*
+
+E-15 bleibt: **Standard aus.** Das Issue hatte keine Abnahmekriterien;
+angesetzt wurden:
+
+1. Admin (`admin.settings`) schaltet `sphaeren_aktiv` auf
+   `/admin/kategorien` ein/aus (CSRF, Audit `einstellung.sphaeren`).
+2. Eingeschaltet: Kategorie bekommt eine Vorgabe-Sphäre, Beleg in der
+   Prüfansicht eine eigene oder „Wie Kategorie“.
+3. Eingeschaltet: Auswertung `/app/auswertung/sphaeren` je Sphäre
+   (Einnahmen, Ausgaben, Saldo), beide Grundlagen, mit Hinweis
+   „mit Steuerberatung abstimmen“.
+4. Ausgeschaltet ändert sich nichts Sichtbares außer dem Schalter selbst;
+   gespeicherte Werte bleiben beim Speichern unberührt (Tests).
+5. Kein veralteter Wert aus dem Session-Cache (E-48) nach Änderung von
+   Schalter, Vorgabe oder Beleg (Test).
+
+Entscheidungen:
+- **Wirksame Sphäre** = eigene des Belegs, sonst Vorgabe der Kategorie,
+  sonst „ohne Sphäre“. Die Vorgabe wird erst in der Auswertung angewendet,
+  nicht beim Speichern kopiert – so gelten neue Vorgaben auch für Belege,
+  die vor dem Einschalten erfasst wurden, und Buchungen ohne Beleg (die
+  keine eigene Sphäre haben) bekommen die Vorgabe ihrer Kategorie.
+  **Folge:** Ändert man eine Vorgabe, ändert sich die Auswertung auch für
+  festgeschriebene Belege ohne eigene Sphäre. Alternative wäre Kopieren
+  beim Speichern/Festschreiben.
+- **Schalter auf der Kategorien-Seite** statt eigener Admin-Seite: dort
+  liegen die Vorgaben; kein neuer Navigationspunkt.
+- **KI schlägt noch keine Sphäre vor** (Spec 02 sieht es vor): bleibt
+  Folge-Issue, weil es eine neue Prompt-Version braucht. Ebenso
+  `supplier.default_sphere`, Drilldown/CSV je Sphäre und Sphären im
+  DATEV-Export (#93).
+- Die Beispiele je Sphäre auf der Kategorien-Seite sind bewusst mit „z. B.“
+  formuliert und keine Steuerberatung.
+
+Offen für Mirko: Vorgabe beim Festschreiben einfrieren (statt dynamisch)?
+Soll die KI die Sphäre vorschlagen? Reichen die Beispieltexte, oder sollen
+sie entfallen?
 
 ## E-56 ❓ Performance-Test: Datensatz, Messweg, Ziele in der CI (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: M13-5 (issue #82), 05 §1 „Stand M13-5“, CLAUDE.md §1/§5*

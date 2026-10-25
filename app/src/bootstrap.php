@@ -27,6 +27,8 @@ use App\Api\JobController;
 use App\Api\RasterungController;
 use App\Api\UploadController;
 use App\Api\WorkerApiController;
+use App\Api\WorkerMailController;
+use App\Http\Request;
 use App\App\AccountController;
 use App\App\CsvFormatController;
 use App\App\AuswertungController;
@@ -166,6 +168,7 @@ use App\Service\Cron\SuchindexCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
 use App\Service\Cron\WorkerCleanupTask;
+use App\Service\Worker\BestandsOcr;
 use App\Service\Worker\WorkerArtefakte;
 use App\Service\Worker\WorkerAuth;
 use App\Service\Worker\WorkerFreigaben;
@@ -177,6 +180,9 @@ use App\Service\Worker\WorkerUebernahme;
 use App\Service\Worker\WorkerFallback;
 use App\Service\Worker\WorkerUebergabe;
 use App\Service\Worker\WorkerRouting;
+use App\Service\Worker\MailEingangSpeicher;
+use App\Service\Submission\MailEinreichung;
+use App\Service\Mail\PublicUrl;
 use App\Service\Document\Duplikatindex;
 use App\Service\Document\KiAuslesung;
 use App\Service\Document\LieferantenAufloesung;
@@ -208,6 +214,7 @@ use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierAufloesung;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
@@ -221,6 +228,7 @@ use App\Service\Report\Auswertungsquelle;
 use App\Service\Report\Dashboard;
 use App\Service\Report\Geldfluss;
 use App\Service\Report\Kassenpruefung;
+use App\Service\Report\Sphaerenbericht;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -477,6 +485,14 @@ $workerUebergabeFor = static fn(\PDO $pdo): WorkerUebergabe => new WorkerUeberga
     new JobRepository($pdo),
     new DocumentRepository($pdo),
 );
+// The archive OCR backfill (issue #88, E-55): a session job and the
+// worker page's section to start, follow and stop it.
+$bestandsOcrFor = static fn(\PDO $pdo): BestandsOcr => new BestandsOcr(
+    $workerUebergabeFor($pdo),
+    new DocumentRepository($pdo),
+    new JobRepository($pdo),
+    new ArchiveImportRepository($pdo),
+);
 $workerFallbackFor = static fn(\PDO $pdo, ?WorkerAlarm $alarm = null): WorkerFallback => new WorkerFallback(
     $workerRoutingFor($pdo),
     new WorkerRepository($pdo),
@@ -656,7 +672,7 @@ $kategorien = static function () use ($connections, $view, $auditFor): CategoryC
     $pdo = $connections->pdo();
     $repository = new CategoryRepository($pdo);
 
-    return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo));
+    return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo), new Sphaereneinstellung(new SettingRepository($pdo)));
 };
 
 // Suppliers and payers (M6-2, issue #36): vault data, read and written only
@@ -815,6 +831,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
         $kategorien,
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), $rechnungen, $audit),
+        new Sphaereneinstellung(new SettingRepository($pdo)),
     );
 };
 
@@ -935,6 +952,13 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
+    },
+    static fn(): Sphaereneinstellung => new Sphaereneinstellung(new SettingRepository($connections->pdo())),
+    static function () use ($connections, $auswertungsquelleFor): Sphaerenbericht {
+        $pdo = $connections->pdo();
+
+        // Behind the login guard: the session holds the account.
+        return new Sphaerenbericht($auswertungsquelleFor($pdo, new Session()->userId() ?? 0), new CategoryRepository($pdo));
     },
 );
 
@@ -1720,7 +1744,7 @@ $erfassungSeite = static function () use ($connections, $view, $mailerFor, $mail
 // registered here once and both pick it up.
 //
 // @return list<\App\Service\Job\JobHandler>
-$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor, $serienFor, $workerUebergabeFor): array {
+$jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lieferantenAufloesungFor, $serienFor, $workerUebergabeFor, $bestandsOcrFor): array {
     $blobs = new BlobRepository($pdo);
     $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
     // Issue #53: render_pages and ocr go to the worker when it should run them.
@@ -1747,6 +1771,8 @@ $jobHandlerFor = static function (\PDO $pdo) use ($paths, $kiAuslesungFor, $lief
             $texterkennung,
             $kiAuslesungFor($pdo),
         ),
+        // The throttled OCR backfill of the archive (issue #88).
+        $bestandsOcrFor($pdo),
     ];
 };
 
@@ -1845,7 +1871,14 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
         new WorkerGrantRepository($pdo),
         $workerFreigabenFor($pdo),
         $workerArtefakteFor($pdo),
-        new WorkerKonfiguration(new WorkerRepository($pdo), new AiProviderRepository($pdo, $serverCrypto), $serverCrypto),
+        new WorkerKonfiguration(
+            new WorkerRepository($pdo),
+            new AiProviderRepository($pdo, $serverCrypto),
+            $serverCrypto,
+            // Issue #87: the IMAP access of the mail intake.
+            new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
+            new SettingRepository($pdo),
+        ),
         new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
         new VaultRepository($pdo),
         new CategoryRepository($pdo),
@@ -1853,9 +1886,53 @@ $workerApi = static function () use ($connections, $workerKopplungFor, $workerFr
         $workerRoutingFor($pdo),
         $workerFallbackFor($pdo),
         new DocumentRepository($pdo),
+        new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
     );
 };
-$workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor): WorkerController {
+// The mail intake's worker routes (issue #87, E-54, 07 section 9): the
+// attachments are encrypted to VK_pub on arrival like a public upload,
+// then become a receipt in the inbox. No vault, no session.
+$workerMail = static function () use ($connections, $workerRoutingFor, $einreichungEinstellungenFor, $mailerFor, $mailSettingsFor, $auditFor, $serverCrypto, $paths, $logger): WorkerMailController {
+    $pdo = $connections->pdo();
+    $blobs = new BlobRepository($pdo);
+    $einstellungen = $einreichungEinstellungenFor($pdo);
+    $mailSettings = $mailSettingsFor($pdo);
+
+    return new WorkerMailController(
+        new MailEinreichung(
+            $pdo,
+            new SubmissionRepository($pdo),
+            new DocumentRepository($pdo),
+            new SubmissionUploadRepository($pdo),
+            $blobs,
+            new VaultRepository($pdo),
+            $einstellungen,
+            new JobRepository($pdo),
+            $auditFor($pdo),
+            new EinreichungBenachrichtigung(
+                $mailerFor($pdo),
+                $serverCrypto,
+                new UserRepository($pdo),
+                new UserAccessRepository($pdo),
+            ),
+        ),
+        new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
+        $workerRoutingFor($pdo),
+        new UploadService($paths->uploadDir()),
+        new SubmissionUploadStore(
+            new UploadStore(
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+                new VaultRepository($pdo),
+                new SettingRepository($pdo),
+            ),
+            new SubmissionUploadRepository($pdo),
+        ),
+        $einstellungen,
+        static fn(Request $r): ?string => PublicUrl::resolve($mailSettings->get(), $r->header('host') ?? '', Request::httpsFromGlobals()),
+        $logger,
+    );
+};
+$workerAdmin = static function () use ($connections, $view, $workerKopplungFor, $workerRoutingFor, $workerUebergabeFor, $workerFallbackFor, $bestandsOcrFor, $serverCrypto, $auditFor): WorkerController {
     $pdo = $connections->pdo();
 
     return new WorkerController(
@@ -1870,6 +1947,11 @@ $workerAdmin = static function () use ($connections, $view, $workerKopplungFor, 
         new DocumentArtifactRepository($pdo),
         new SettingRepository($pdo),
         new SessionVault(),
+        $bestandsOcrFor($pdo),
+        new ArchiveImportRepository($pdo),
+        // Issue #87: the mail intake's settings.
+        new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
+        $auditFor($pdo),
     );
 };
 
@@ -1972,6 +2054,7 @@ $router = new Router();
     $datevAdmin,
     $kassenpruefungSeite,
     geldfluss: $geldflussSeite,
+    workerMail: $workerMail,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

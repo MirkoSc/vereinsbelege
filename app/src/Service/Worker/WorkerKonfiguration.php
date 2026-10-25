@@ -6,8 +6,10 @@ namespace App\Service\Worker;
 
 use App\Domain\Worker;
 use App\Repository\AiProviderRepository;
+use App\Repository\SettingRepository;
 use App\Repository\WorkerRepository;
 use App\Service\Crypto\ServerCrypto;
+use App\Service\Submission\EinreichungsEinstellungen;
 
 /**
  * The worker's configuration: the AI provider profiles including their API
@@ -22,6 +24,10 @@ use App\Service\Crypto\ServerCrypto;
  * what it sealed last, and seals anew (with a higher `config_version`) only
  * when they differ - a changed key reaches the worker within one polling
  * interval, and the plaintext is never stored.
+ *
+ * Since issue #87 (E-54) the same envelope carries the IMAP access of the
+ * mail intake (`mail_eingang`, null when not released) - added to format
+ * v1, an older worker ignores the key.
  */
 final readonly class WorkerKonfiguration
 {
@@ -33,6 +39,9 @@ final readonly class WorkerKonfiguration
         private WorkerRepository $workers,
         private AiProviderRepository $anbieter,
         private ServerCrypto $crypto,
+        // Issue #87: the mail intake; without it the key stays null.
+        private ?MailEingangSpeicher $mailEingang = null,
+        private ?SettingRepository $settings = null,
     ) {
     }
 
@@ -41,7 +50,7 @@ final readonly class WorkerKonfiguration
      * the worker as stored afterwards. Only for an active worker - an
      * unconfirmed one gets no API key.
      */
-    public function aktualisieren(Worker $worker, bool $kiSchluesselErlaubt): Worker
+    public function aktualisieren(Worker $worker, bool $kiSchluesselErlaubt, bool $mailZugangErlaubt = false): Worker
     {
         $profile = [];
         // Without the release (module off, no `ai` capability - issue #53,
@@ -63,7 +72,7 @@ final readonly class WorkerKonfiguration
                 'api_key' => $this->anbieter->apiKey($a->id),
             ];
         }
-        $json = json_encode(['format' => self::FORMAT, 'ki_anbieter' => $profile], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $json = json_encode(['format' => self::FORMAT, 'ki_anbieter' => $profile, 'mail_eingang' => $this->mailEingang($mailZugangErlaubt)], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         // Bound to the worker's key as well: a re-paired worker gets its own
         // envelope. The keyed hash goes over a hex digest: forValue()
         // normalises case and whitespace, which must not hide a changed key.
@@ -81,5 +90,27 @@ final readonly class WorkerKonfiguration
         $this->workers->setzeKonfiguration($worker->id, $versiegelt, $worker->configVersion, $hash);
 
         return $this->workers->find($worker->id) ?? $worker;
+    }
+
+    /**
+     * The IMAP access for the worker, or null: only when released (module
+     * on, `mail` reported - WorkerRouting::mailZugangErlaubt()), switched
+     * on in the admin and complete. Null replaces an access sent before -
+     * the worker drops it.
+     *
+     * @return ?array<string, mixed>
+     */
+    private function mailEingang(bool $erlaubt): ?array
+    {
+        if (!$erlaubt || $this->mailEingang === null || $this->settings === null || !$this->mailEingang->aktiv()) {
+            return null;
+        }
+        $e = $this->mailEingang->laden();
+        if (!$e->aktiv || !$e->vollstaendig()) {
+            return null;
+        }
+        $grenzen = EinreichungsEinstellungen::fromSettings($this->settings);
+
+        return $e->fuerWorker($grenzen->maxSeiten, $grenzen->maxDateiBytes(), $grenzen->maxEinreichungBytes());
     }
 }

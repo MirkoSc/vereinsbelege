@@ -1,0 +1,51 @@
+# Template for running the optional processing worker (docs/spec/07-worker.md
+# section 7). Copy this file to the Raspberry Pi / VPS, then:
+#
+#   docker compose pull
+#   docker compose run --rm worker pair https://belege.example.org ABCD-EFGH
+#     -> compare the fingerprint in the admin under "Worker" and confirm
+#   docker compose up -d
+#
+# Updates: docker compose pull && docker compose up -d
+# Channel: `stable` follows the stable releases, `beta` every tag; a fixed
+# version (e.g. `v1.4.0`) never changes.
+#
+# The image is the same for linux/arm64 (Raspberry Pi 4/5, 64-bit OS) and
+# linux/amd64.
+
+services:
+  worker:
+    image: ghcr.io/mirkosc/vereinsbelege-worker:stable
+    restart: unless-stopped
+    environment:
+      # Name shown in the admin (default: the container's host name).
+      WORKER_NAME: "Worker"
+      # PHP memory limit of the worker. With the tmpfs below it must stay
+      # inside mem_limit: tmpfs pages count against the container's memory.
+      WORKER_SPEICHER: "512M"
+    # Plaintext of a receipt only ever lands here: in RAM, never on the SD
+    # card or disk. The worker refuses to start if /arbeit is not a tmpfs.
+    tmpfs:
+      - /arbeit:size=768m,mode=1777
+    # Only the identity file (id, access key, the worker's key pair) is kept,
+    # mode 0600 inside a 0700 directory. Back it up or re-pair after loss.
+    volumes:
+      - daten:/daten
+    # Stopping gives the running job back: up to ~5 s for the tool to end
+    # plus up to 10 s for telling the web host - Docker's default of 10 s
+    # is too short.
+    stop_grace_period: 30s
+    mem_limit: 2g
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  daten:

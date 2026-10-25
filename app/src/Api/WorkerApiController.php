@@ -23,6 +23,7 @@ use App\Repository\VaultRepository;
 use App\Repository\WorkerGrantRepository;
 use App\Repository\WorkerRepository;
 use App\Service\Storage\BlobService;
+use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Worker\WorkerArtefaktFehler;
 use App\Service\Worker\WorkerArtefakte;
 use App\Service\Worker\WorkerFallback;
@@ -87,6 +88,8 @@ final readonly class WorkerApiController
         private WorkerFallback $fallback,
         // Issue #54: which granted blob is which original, for bin/worker.php.
         private DocumentRepository $documents,
+        // Issue #87: the mail intake's status report on heartbeat.
+        private ?MailEingangSpeicher $mailEingang = null,
     ) {
     }
 
@@ -163,7 +166,18 @@ final readonly class WorkerApiController
             // only when something changed (07 section 3 "KI-Zugangsdaten").
             // The keys only with the module on and the `ai` capability just
             // reported (review of #52) - else an empty list replaces them.
-            $worker = $this->konfiguration->aktualisieren($worker, $this->routing->kiSchluesselErlaubt($faehigkeiten));
+            // The IMAP access of the mail intake likewise, with `mail`
+            // (issue #87, E-54).
+            $worker = $this->konfiguration->aktualisieren(
+                $worker,
+                $this->routing->kiSchluesselErlaubt($faehigkeiten),
+                $this->routing->mailZugangErlaubt($faehigkeiten),
+            );
+            if (is_array($daten['mail_status'] ?? null)) {
+                // Time, error code and counters of its last mailbox run,
+                // for the admin page - nothing else is kept.
+                $this->mailEingang?->statusMerken($daten['mail_status']);
+            }
         }
         $typen = WorkerFaehigkeit::jobTypenFuer($faehigkeiten);
         $bekannt = self::zahl($daten, 'config_version');

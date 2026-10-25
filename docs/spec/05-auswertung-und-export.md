@@ -129,7 +129,8 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `$weitereParameter`: Grundlage/Seite bleiben beim Zeitraumwechsel
   erhalten). Standard wie das Dashboard (laufendes Jahr bzw. Ende des
   Zeitraum-Scopes). Reiterzeile `app/views/partials/auswertung-reiter.php`
-  (Wohin fließt das Geld, Kassenprüfung).
+  (Wohin fließt das Geld, Kassenprüfung; „Sphären“ nur mit
+  `sphaeren_aktiv`, issue #84).
 - URLs tragen nur Struktur (Zeitraum, Grundlage, Seite, Dimension, ID oder
   `ohne`). Der Beleg-Link geht auf die normale Belegseite (Prüfansicht bzw.
   Posteingang), die Recht und Scope selbst prüft; Buchungs-Link nur mit
@@ -137,6 +138,31 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Scope. Ein freier Zeitraum umfasst hier höchstens 3 Jahre
   (`AuswertungController::MAX_JAHRE_FREI`), sonst Standardjahr mit Hinweis.
 - Keine neue Tabelle, keine Migration.
+
+### Stand issue #84: Steuerliche Sphären (E-57)
+
+- Nur mit `sphaeren_aktiv` (Schalter auf `/admin/kategorien`, Recht
+  `admin.settings`, `App\Service\MasterData\Sphaereneinstellung`; aus =
+  Default, E-15). Ausgeschaltet gibt es die Seite nicht (404) und keinen
+  Reiter; `ReportService` verweigert die Dimension Sphäre ohnehin.
+- **Seite `/app/auswertung/sphaeren`** (`report.view` mit Scope, Reiter
+  „Sphären“): je Sphäre Einnahmen, Ausgaben, Saldo, Anzahl Posten, alle
+  vier Sphären auch mit 0, „ohne Sphäre“ zuletzt (nur wenn vorhanden),
+  Summe. Grundlage und Zeitraum wie „Wohin fließt das Geld“ (gleicher
+  Filter, gleiche Obergrenze des freien Zeitraums). Hinweis „keine
+  Steuerberatung – mit der Steuerberatung abstimmen“. Berechnung
+  `App\Service\Report\Sphaerenbericht` über `Auswertungsquelle` +
+  `ReportService::gruppiert(Dimension::Sphaere)`.
+- **Wirksame Sphäre einer Zeile:** die eigene des Belegs
+  (`invoice.sphere`, in der Prüfansicht gewählt), sonst die Vorgabe seiner
+  Kategorie (`category.default_sphere`); ein Buchungsteil ohne Beleg hat
+  nur die Vorgabe seiner Kategorie. Die Seite nennt, wie viele Posten die
+  Vorgabe übernehmen.
+- **Session-Cache:** gecacht bleibt nur die gespeicherte Belegsphäre in den
+  `Posten` (Änderung an `invoice` → neuer Datenstand). Vorgaben der
+  Kategorien und der Schalter werden bei jedem Aufruf frisch gelesen –
+  `category` muss deshalb nicht in `AuswertungsStandRepository::TABELLEN`.
+- Keine neue Tabelle, keine Migration (Spalten seit 017/019 vorhanden).
 
 ### Stand M13-5: Performance-Test (issue #82, E-56)
 
@@ -531,6 +557,9 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
     Format `archiv-v1`) und die drei Session-Jobs `pdf_erzeugen`,
     `detect_duplicate`, `extract_text` wie bei jeder Erfassung. Ein
     zweimal importiertes PDF fällt über die Duplikaterkennung auf.
+    Gescannte Archiv-Belege gehen dabei nicht einzeln an die Texterkennung
+    des Workers; sie werden auf Wunsch gedrosselt nachverarbeitet (07 §6
+    „Stand #88“, E-55).
   - **Idempotenz:** eine Transaktion je Datei, eröffnet mit
     `ArchiveImportRepository::advance()` (`next_index` nur vom gelesenen
     Wert aus, Zeilensperre) – ein wiederholter oder paralleler Schritt
@@ -636,6 +665,12 @@ Umgesetzt (M11-3): `tests/Integration/GeldflussFlowTest.php` (Summen je
 Kategorie/Kostenstelle auf beiden Grundlagen, Einnahmen, Zeitraumfilter,
 Drilldown bis Beleg/Buchung, Kostenstellen- und Zeitraum-Scope, gesperrter
 Tresor, nur Struktur in Links, Obergrenze des freien Zeitraums).
+Umgesetzt (issue #84): `tests/Integration/SphaerenFlowTest.php`
+(ausgeschaltet 404 und kein Reiter; je Sphäre auf beiden Grundlagen,
+eigene Sphäre vor Kategorie-Vorgabe, „ohne Sphäre“; keine veraltete Zahl
+nach Änderung der Vorgabe, des Belegs oder des Schalters; gesperrter
+Tresor), Sphären-Fälle in `CategoryAdminFlowTest` und `PruefungFlowTest`
+(ausgeschaltet kein Feld und keine Änderung gespeicherter Werte).
 Umgesetzt (M13-5): `tests/Performance/LeistungsTest.php` (Gruppe
 `performance`, eigener CI-Job) mit `tests/Support/Testdatensatz.php` –
 Auswertungen < 3 s, Posteingang < 1 s bei 3 000 Belegen/5 000 Buchungen.

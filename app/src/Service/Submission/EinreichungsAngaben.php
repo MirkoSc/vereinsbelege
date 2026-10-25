@@ -15,6 +15,10 @@ use App\Domain\Erstattungsart;
  * The internal capture (issue #28/M4-6, App\Service\Submission\
  * InterneErfassung) builds the same object: there the reimbursement is
  * optional ($erstattung null) and the description may be empty.
+ *
+ * The mail intake (issue #87, App\Service\Submission\MailEinreichung)
+ * builds it from sender and subject, without reimbursement, and marks the
+ * channel (`kanal` = `mail`) - readers that do not know the key ignore it.
  */
 final readonly class EinreichungsAngaben
 {
@@ -26,6 +30,7 @@ final readonly class EinreichungsAngaben
         public ?string $kontoinhaber,
         public string $freitext,
         public ?int $kostenstelleId,
+        public ?string $kanal = null,
     ) {
     }
 
@@ -57,6 +62,9 @@ final readonly class EinreichungsAngaben
         }
         if ($this->kostenstelleId !== null) {
             $payload['kostenstelle_hinweis'] = $this->kostenstelleId;
+        }
+        if ($this->kanal !== null) {
+            $payload['kanal'] = $this->kanal;
         }
 
         return $payload;

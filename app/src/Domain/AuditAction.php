@@ -171,6 +171,8 @@ enum AuditAction: string
     case EinstellungRechtstexte = 'einstellung.rechtstexte';
     /** Issue #93: DATEV export settings (counts of mapped accounts only). */
     case EinstellungDatev = 'einstellung.datev';
+    /** Issue #84: tax spheres switched on or off (`aktiv` only). */
+    case EinstellungSphaeren = 'einstellung.sphaeren';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -189,6 +191,8 @@ enum AuditAction: string
     case WorkerGekoppelt = 'worker.gekoppelt';
     case WorkerBestaetigt = 'worker.bestaetigt';
     case WorkerEntkoppelt = 'worker.entkoppelt';
+    /** Issue #87: IMAP access of the mail intake stored or changed (field names only). */
+    case EinstellungMailEingang = 'einstellung.mail_eingang';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -315,11 +319,13 @@ enum AuditAction: string
             self::ExportNextcloud => 'Export in Nextcloud abgelegt',
             self::ExportDatev => 'DATEV-Export erstellt',
             self::EinstellungDatev => 'DATEV-Einstellungen geändert',
+            self::EinstellungSphaeren => 'Steuerliche Sphären ein-/ausgeschaltet',
             self::ArchivImportiert => 'Archiv importiert',
             self::WorkerKopplungscode => 'Worker-Kopplungscode erzeugt',
             self::WorkerGekoppelt => 'Worker gekoppelt',
             self::WorkerBestaetigt => 'Worker-Fingerabdruck bestätigt',
             self::WorkerEntkoppelt => 'Worker entkoppelt',
+            self::EinstellungMailEingang => 'E-Mail-Eingang geändert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -382,7 +388,8 @@ enum AuditAction: string
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
-            self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
+            self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::EinstellungSphaeren, self::WorkerKopplungscode,
+            self::EinstellungMailEingang,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen,
             self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,

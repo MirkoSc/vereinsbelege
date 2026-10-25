@@ -6,6 +6,7 @@ namespace App\Worker;
 
 use App\Service\Worker\WorkerProtokoll;
 use App\Worker\Http\HttpFehler;
+use App\Worker\Mail\MailEingang;
 use App\Worker\Schritt\Schritt;
 
 /**
@@ -59,6 +60,8 @@ final class Schleife
         private readonly Log $log,
         private readonly \Closure $uhr,
         private readonly \Closure $schlafen,
+        // Issue #87: the mail intake; null = not built (tests).
+        private readonly ?MailEingang $mail = null,
     ) {
         foreach ($schritte as $schritt) {
             $this->schritte[$schritt->typ()] = $schritt;
@@ -91,7 +94,7 @@ final class Schleife
                 'version' => $this->version,
                 'faehigkeiten' => $this->faehigkeiten,
                 'config_version' => $this->ki->version(),
-            ]);
+            ] + ($this->mail?->status() !== null ? ['mail_status' => $this->mail->status()] : []));
             if (is_int($antwort['server_zeit'] ?? null)) {
                 $this->api->serverZeit($antwort['server_zeit'], ($this->uhr)());
             }
@@ -113,6 +116,7 @@ final class Schleife
 
                 return $poll;
             }
+            $this->mailAbrufen();
             if (!is_int($antwort['wartend'] ?? null) || $antwort['wartend'] < 1 || $this->abbruch->angefordert()) {
                 return $poll;
             }
@@ -141,6 +145,26 @@ final class Schleife
             $this->log->ereignis('webhoster_nicht_erreichbar');
 
             return $this->zurueckweichen();
+        }
+    }
+
+    /**
+     * The mail intake's run, when it has an access and is due (issue #87,
+     * 07 section 9). Its own errors stay inside; jobs go on regardless.
+     */
+    private function mailAbrufen(): void
+    {
+        if ($this->mail === null) {
+            return;
+        }
+        $zugang = $this->ki->mailZugang();
+        if ($zugang === null) {
+            $this->mail->vergessen();
+
+            return;
+        }
+        if (!$this->abbruch->angefordert() && $this->mail->faellig($zugang)) {
+            $this->mail->abrufen($zugang);
         }
     }
 

@@ -10,13 +10,15 @@
  *
  * @var string $csrf
  * @var \App\Domain\Category|null $kategorie null for a new category
- * @var array{name: string, richtung: string, farbe: string, ki_hinweis: string, active: bool} $felder
+ * @var array{name: string, richtung: string, farbe: string, ki_hinweis: string, active: bool, sphaere: string} $felder
  * @var string|null $fehler
  * @var int $verwendungen
+ * @var bool $sphaerenAktiv `sphaeren_aktiv` (issue #84): only then the default sphere shows
  */
 
 use App\Domain\CategoryColor;
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 use App\Service\MasterData\CategoryService;
 
 $neu = $kategorie === null;
@@ -65,6 +67,22 @@ $ziel = $neu ? '/admin/kategorien' : '/admin/kategorien/' . $kategorie->id;
             Typische Beispiele für diese Kategorie, z. B. „Rasendünger, Mäharbeiten, Sand,
             Linierfarbe“. Die KI nutzt sie, um Belege zuzuordnen.
         </p>
+
+        <?php if ($sphaerenAktiv): ?>
+            <label for="kategorie-sphaere">Steuerliche Sphäre (Vorgabe)
+                <select id="kategorie-sphaere" name="sphaere" aria-describedby="kategorie-sphaere-hilfe">
+                    <option value=""<?= $felder['sphaere'] === '' ? ' selected' : '' ?>>Keine Vorgabe</option>
+                    <?php foreach (Sphere::cases() as $sphaere): ?>
+                        <option value="<?= e($sphaere->value) ?>"<?= $felder['sphaere'] === $sphaere->value ? ' selected' : '' ?>><?= e($sphaere->label()) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+            <p class="feld-hilfe" id="kategorie-sphaere-hilfe">
+                Gilt für jeden Beleg dieser Kategorie, der keine eigene Sphäre hat, und für Buchungen
+                ohne Beleg – auch rückwirkend für bereits erfasste. Die Zuordnung bitte mit der
+                Steuerberatung abstimmen.
+            </p>
+        <?php endif; ?>
 
         <label class="feld-ankreuz">
             <input type="checkbox" name="active" value="1" aria-describedby="kategorie-aktiv-hilfe" <?= $felder['active'] ? 'checked' : '' ?>>
