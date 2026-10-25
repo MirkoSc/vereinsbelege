@@ -204,7 +204,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             'rolle' => [(string) $this->rolle(SystemRole::Vorstand)],
         ], headers: ['host' => self::HOST]));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(1, new UserRepository($this->pdo())->count());
     }
 

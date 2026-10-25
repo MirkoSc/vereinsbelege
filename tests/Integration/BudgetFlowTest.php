@@ -234,7 +234,7 @@ final class BudgetFlowTest extends DatabaseTestCase
         // Without a valid CSRF token: back to the page, nothing written.
         $ohneToken = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/auswertung/budget', post: ['jahr' => '2025', 'kategorie' => (string) $this->platz, 'betrag' => '100'], cookies: $this->tresorCookie()));
         self::assertInstanceOf(Response::class, $ohneToken);
-        self::assertSame(302, $ohneToken->status);
+        self::assertSame(403, $ohneToken->status);
 
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
         self::assertSame([], $this->protokoll(AuditAction::BudgetGespeichert));

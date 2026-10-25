@@ -506,7 +506,7 @@ final class DuplikatFlowTest extends DatabaseTestCase
                 post: ['_csrf' => 'falsch'],
                 ip: self::IP,
             ));
-            self::assertSame(302, $antwort->status);
+            self::assertSame(403, $antwort->status);
         }
         self::assertSame(DocumentStatus::BereitZurAuswertung, $this->belegStatus($zweite));
 

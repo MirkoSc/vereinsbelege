@@ -455,7 +455,7 @@ final class BuchungsregelFlowTest extends DatabaseTestCase
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM assignment_rule')->fetchColumn());
 
         $ohneToken = $this->dispatch(new Request(HttpMethod::Post, '/app/buchungen/regeln/' . $id . '/loeschen', cookies: $this->tresorCookie(), post: []));
-        self::assertSame('/app/buchungen/regeln/' . $id, $ohneToken->headers['Location'] ?? null);
+        self::assertSame(403, $ohneToken->status);
         $ohneToken = $this->dispatch(new Request(HttpMethod::Post, '/app/buchungen/regeln/standard', cookies: $this->tresorCookie(), post: ['einnahme_beleg_noetig' => '1']));
         self::assertSame('', new SettingRepository($this->pdo())->get(BelegStandard::SETTING_EINNAHME));
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM assignment_rule')->fetchColumn());

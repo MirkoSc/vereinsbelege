@@ -435,7 +435,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
         $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/lauf', post: self::ZEITRAUM, cookies: $this->tresorCookie(), ip: self::IP));
 
         self::assertInstanceOf(Response::class, $antwort);
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame([], $this->exportAudits());
         self::assertSame(0, $this->anzahlLaeufe());
     }
@@ -723,7 +723,7 @@ final class ExportZipFlowTest extends DatabaseTestCase
             new Session()->start();
             $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/lauf/' . $lauf . '/' . $aktion, cookies: $this->tresorCookie(), ip: self::IP));
             self::assertInstanceOf(Response::class, $antwort, $aktion);
-            self::assertSame(302, $antwort->status, $aktion);
+            self::assertSame(403, $antwort->status, $aktion);
         }
         self::assertSame(ExportRunStatus::Offen, new ExportRunRepository($this->pdo())->find($lauf)?->status);
         self::assertSame([], $this->exportAudits());

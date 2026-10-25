@@ -460,7 +460,7 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
         new Session()->start();
         $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/export/lauf/' . $lauf . '/nextcloud', cookies: $this->tresorCookie(), ip: self::IP));
         self::assertInstanceOf(Response::class, $antwort);
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertNull(new ExportRunUploadRepository($this->pdo())->find($lauf));
 
         $this->starten($lauf);
@@ -474,7 +474,7 @@ final class NextcloudAblageFlowTest extends DatabaseTestCase
             new Session()->start();
             $antwort = $this->kernel()->handle(new Request(HttpMethod::Post, '/admin/export/nextcloud' . $aktion, post: ['url' => self::URL, 'benutzer' => 'x', 'passwort' => 'y'], cookies: $this->tresorCookie(), ip: self::IP));
             self::assertInstanceOf(Response::class, $antwort);
-            self::assertSame(302, $antwort->status, $aktion);
+            self::assertSame(403, $antwort->status, $aktion);
         }
         self::assertSame('kasse', new NextcloudZielSpeicher(new NextcloudTargetRepository($this->pdo()))->lesen($this->tresor)?->benutzer);
         self::assertSame([], $this->dav->hochgeladen());

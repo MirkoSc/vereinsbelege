@@ -419,7 +419,7 @@ final class InboxFlowTest extends DatabaseTestCase
             cookies: $this->tresorCookie(),
         ));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(DocumentStatus::Eingegangen, $this->belegStatus($id));
     }
 

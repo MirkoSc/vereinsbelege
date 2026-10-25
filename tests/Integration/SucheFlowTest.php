@@ -192,8 +192,8 @@ final class SucheFlowTest extends DatabaseTestCase
         $this->textlayer($this->dokument(), ['Trikots']);
 
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/app/suche', post: ['q' => 'trikots'], cookies: $this->tresorCookie()));
-        self::assertSame(302, $antwort->status);
-        self::assertSame('/app/suche', $antwort->headers['Location'] ?? null);
+        self::assertSame(403, $antwort->status);
+        self::assertSame(403, $antwort->status);
 
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/app/suche/index', cookies: $this->tresorCookie()));
         self::assertSame(403, $antwort->status);
