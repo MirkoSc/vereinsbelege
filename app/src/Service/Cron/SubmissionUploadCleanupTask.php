@@ -39,7 +39,7 @@ final readonly class SubmissionUploadCleanupTask implements CronTask
 
     public function run(\DateTimeImmutable $now): int
     {
-        $cutoff = $now->modify(sprintf('-%d hours', self::KEEP_HOURS));
+        $cutoff = $now->setTimestamp($now->getTimestamp() - self::KEEP_HOURS * 3600);
         $entfernt = 0;
 
         foreach ($this->submissionUploads->olderThan($cutoff, self::BATCH) as $blobId) {
