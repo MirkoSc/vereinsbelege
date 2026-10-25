@@ -19,8 +19,10 @@ use App\Domain\OcrStatus;
 use App\Domain\SupplierRole;
 use App\Domain\Zahlungsweg;
 use App\Domain\ZuordnungMethode;
+use App\Domain\Zugriffsbereich;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
+use App\Repository\BudgetRepository;
 use App\Domain\CategoryDirection;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
@@ -37,6 +39,13 @@ use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
+use App\Service\Processing\Betrag;
+use App\Service\Report\Auswertungsgrundlage;
+use App\Service\Report\Auswertungsquelle;
+use App\Service\Report\Budgets;
+use App\Service\Report\Grundlage;
+use App\Service\Report\ReportService;
+use App\Service\Report\Zeitraum;
 use App\Service\Submission\EinreichungsAngaben;
 use App\Service\Submission\Referenzvergabe;
 
@@ -95,6 +104,17 @@ final class Testdatensatz
 
     public const string IP = '192.0.2.82';
 
+    /**
+     * Budgets per year (issue #250): one per expense category, one per cost
+     * center and the pairs of the BUDGET_PAARE largest categories with every
+     * cost center - more than a club keeps, so the page is measured on the
+     * safe side. The largest category's budget is BUDGET_GROESSTE_KATEGORIE
+     * cent, a figure the page shows only after decrypting it.
+     */
+    private const int BUDGET_PAARE = 3;
+
+    public const int BUDGET_GROESSTE_KATEGORIE = 4321000;
+
     private readonly \Random\Randomizer $zufall;
 
     /** @var array{einnahme: list<int>, ausgabe: list<int>} */
@@ -135,7 +155,7 @@ final class Testdatensatz
     /**
      * Builds the whole data set and returns what it wrote.
      *
-     * @return array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}}
+     * @return array{belege: int, buchungen: int, zuordnungen: int, budgets: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}}
      */
     public function erzeugen(): array
     {
@@ -152,6 +172,7 @@ final class Testdatensatz
 
             throw $e;
         }
+        $budgets = $this->budgets();
 
         $ausgaben = $this->kategorien['ausgabe'][0];
 
@@ -159,6 +180,7 @@ final class Testdatensatz
             'belege' => (int) $this->pdo->query('SELECT COUNT(*) FROM document')->fetchColumn(),
             'buchungen' => (int) $this->pdo->query('SELECT COUNT(*) FROM bank_transaction')->fetchColumn(),
             'zuordnungen' => $this->zuordnungen,
+            'budgets' => $budgets,
             'lieferanten' => count($this->lieferantenNamen),
             'kostenstellen' => count($this->kostenstellen),
             'jahre' => $this->jahre,
@@ -188,6 +210,58 @@ final class Testdatensatz
         for ($i = 0; $this->buchungen < self::BUCHUNGEN; ++$i) {
             $this->buchungOhneBeleg($i);
         }
+    }
+
+    /**
+     * The budgets of every year, saved as the page saves them
+     * (Budgets::speichern(): own DEK, encrypted amount). Each save runs its
+     * own transaction, hence after the bulk transaction.
+     *
+     * @return int how many were written
+     */
+    private function budgets(): int
+    {
+        // Saving never reads report data; the source is only there for vergleich().
+        $keineQuelle = new class implements Auswertungsquelle {
+            public function rechner(): ReportService
+            {
+                throw new \LogicException('Not needed to save budgets.');
+            }
+
+            public function grundlage(Vault $vault, Grundlage $grundlage, Zeitraum $zeitraum, Zugriffsbereich $bereich): Auswertungsgrundlage
+            {
+                throw new \LogicException('Not needed to save budgets.');
+            }
+
+            public function kontobewegungen(Vault $vault, Zeitraum $zeitraum, Zugriffsbereich $bereich): array
+            {
+                throw new \LogicException('Not needed to save budgets.');
+            }
+        };
+        $budgets = new Budgets($this->pdo, new BudgetRepository($this->pdo), new CategoryRepository($this->pdo), new CostCenterRepository($this->pdo), $keineQuelle);
+        $jetzt = new \DateTimeImmutable();
+        $euro = static fn(int $cent): string => Betrag::format($cent);
+
+        $anzahl = 0;
+        foreach ($this->jahre as $jahr) {
+            $speichern = function (?int $kategorie, ?int $kostenstelle, int $cent) use ($budgets, $jahr, $jetzt, $euro, &$anzahl): void {
+                $budgets->speichern($this->tresor, $jahr, ['kategorie' => (string) $kategorie, 'kostenstelle' => (string) $kostenstelle, 'betrag' => $euro($cent)], $this->userId, $jetzt);
+                ++$anzahl;
+            };
+            foreach ($this->kategorien['ausgabe'] as $rang => $kategorie) {
+                $speichern($kategorie, null, $rang === 0 ? self::BUDGET_GROESSTE_KATEGORIE : intdiv(self::BUDGET_GROESSTE_KATEGORIE, $rang + 1));
+            }
+            foreach ($this->kostenstellen as $i => $kostenstelle) {
+                $speichern(null, $kostenstelle, 1000000 * $this->kostenstellenGewicht[$i]);
+            }
+            foreach (array_slice($this->kategorien['ausgabe'], 0, self::BUDGET_PAARE) as $kategorie) {
+                foreach ($this->kostenstellen as $i => $kostenstelle) {
+                    $speichern($kategorie, $kostenstelle, 200000 * $this->kostenstellenGewicht[$i]);
+                }
+            }
+        }
+
+        return $anzahl;
     }
 
     private function stammdaten(): void

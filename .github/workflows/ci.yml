@@ -123,6 +123,9 @@ jobs:
   # group is excluded from the default run in phpunit.xml.
   performance:
     runs-on: ubuntu-latest
+    # A hanging generation or request must not hold a runner for the
+    # default 6 hours; a normal run takes a few minutes.
+    timeout-minutes: 30
 
     services:
       mariadb:

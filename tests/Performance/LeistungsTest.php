@@ -20,6 +20,7 @@ use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
 use App\Service\Migration\Migrator;
+use App\Service\Processing\Betrag;
 use App\Tests\Support\DatabaseTestCase;
 use App\Tests\Support\Testdatensatz;
 use App\Tests\Support\ZuordnungFabrik;
@@ -27,7 +28,7 @@ use PHPUnit\Framework\Attributes\Group;
 
 /**
  * Performance test (issue #82/M13-5): with several years of club data -
- * 3 000 receipts, 5 000 bookings (Testdatensatz) - the reports stay under
+ * 3 000 receipts, 5 000 bookings, budgets (Testdatensatz) - the reports stay under
  * 3 s and the inbox under 1 s per request.
  *
  * Measured is one whole request through the production wiring: each
@@ -108,6 +109,7 @@ final class LeistungsTest extends DatabaseTestCase
 
         self::assertSame(Testdatensatz::BELEGE, $umfang['belege']);
         self::assertSame(Testdatensatz::BUCHUNGEN, $umfang['buchungen']);
+        self::assertGreaterThan(0, $umfang['budgets']);
 
         $jahr = (string) ($aktuell - 1);
         // The expense category the generator gives most receipts.
@@ -124,6 +126,9 @@ final class LeistungsTest extends DatabaseTestCase
             ['Geldfluss 3 Jahre (frei)', '/app/auswertung/geldfluss', ['art' => 'frei', 'von' => ($aktuell - 3) . '-01-01', 'bis' => $jahr . '-12-31'], self::ZIEL_AUSWERTUNG, $groesste],
             ['Geldfluss Drilldown (größte Kategorie)', '/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => $jahr, 'nach' => 'kategorie', 'schluessel' => (string) $kategorie['id']], self::ZIEL_AUSWERTUNG, 'Testfirma'],
             ['Kassenprüfung', '/app/auswertung/kassenpruefung', ['art' => 'jahr', 'jahr' => $jahr], self::ZIEL_AUSWERTUNG, 'Girokonto'],
+            // Every budget of the year against its Ist (issue #250); the
+            // figure is the largest category's Soll, decrypted.
+            ['Budget', '/app/auswertung/budget', ['jahr' => $jahr], self::ZIEL_AUSWERTUNG, Betrag::format(Testdatensatz::BUDGET_GROESSTE_KATEGORIE) . ' €'],
             ['Kassenprüfung CSV (Buchungen)', '/app/auswertung/kassenpruefung/buchungen.csv', ['art' => 'jahr', 'jahr' => $jahr], self::ZIEL_AUSWERTUNG, 'Testperson'],
             ['Posteingang (offen)', '/app/posteingang', [], self::ZIEL_POSTEINGANG, 'Testperson'],
             ['Posteingang (alle)', '/app/posteingang', ['ansicht' => 'alle'], self::ZIEL_POSTEINGANG, 'Testperson'],
@@ -205,16 +210,17 @@ final class LeistungsTest extends DatabaseTestCase
 
     /**
      * @param list<array{name: string, ziel: float, kalt: float, warm: float, max: float, speicher: int}> $ergebnisse
-     * @param array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}} $umfang
+     * @param array{belege: int, buchungen: int, zuordnungen: int, budgets: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}} $umfang
      */
     private function berichten(array $ergebnisse, array $umfang, float $erzeugt): void
     {
         $zeilen = [
             sprintf(
-                '**Datensatz:** %d Belege, %d Buchungen, %d Zuordnungen, %d Lieferanten, %d Kostenstellen, Jahre %s (erzeugt in %.0f s)',
+                '**Datensatz:** %d Belege, %d Buchungen, %d Zuordnungen, %d Budgets, %d Lieferanten, %d Kostenstellen, Jahre %s (erzeugt in %.0f s)',
                 $umfang['belege'],
                 $umfang['buchungen'],
                 $umfang['zuordnungen'],
+                $umfang['budgets'],
                 $umfang['lieferanten'],
                 $umfang['kostenstellen'],
                 implode('–', [$umfang['jahre'][0], $umfang['jahre'][count($umfang['jahre']) - 1]]),
