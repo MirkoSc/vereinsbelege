@@ -84,6 +84,16 @@ final class MailMessageTest extends TestCase
     }
 
     /** Same as the subject: a non-ASCII club name gets the RFC 2047 treatment too. */
+    /** Issue #78: RFC 5322 specials in an ASCII name must not split the header. */
+    public function testFromHeaderQuotesAClubNameWithSpecials(): void
+    {
+        $mail = new MailMessage('a@example.org', 'Betreff', 'Text');
+
+        $raw = $mail->raw($this->settings(vereinsname: 'TSV Musterstadt, Abt. "Tennis"'));
+
+        self::assertStringContainsString('From: "TSV Musterstadt, Abt. \\"Tennis\\"" <verein@example.org>', $raw);
+    }
+
     public function testFromHeaderEncodesANonAsciiClubName(): void
     {
         $mail = new MailMessage('to@example.org', 'Betreff', 'Text');

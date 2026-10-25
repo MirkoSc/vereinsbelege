@@ -70,7 +70,7 @@ final readonly class MailMessage
     {
         $headers = [
             'From' => $settings->vereinsname !== ''
-                ? sprintf('%s <%s>', $this->encodeWord($settings->vereinsname), $settings->absender)
+                ? sprintf('%s <%s>', $this->displayName($settings->vereinsname), $settings->absender)
                 : $settings->absender,
         ];
         if ($settings->antwortAn !== '') {
@@ -90,6 +90,23 @@ final readonly class MailMessage
         $at = strrpos($settings->absender, '@');
 
         return $at === false ? 'localhost' : substr($settings->absender, $at + 1);
+    }
+
+    /**
+     * The club name in front of the sender address. A plain ASCII name with
+     * one of RFC 5322's specials - "TSV Musterstadt, Abt. Tennis" - would
+     * otherwise read as two addresses (security review, issue #78), so it
+     * becomes a quoted string; anything non-ASCII is an encoded-word
+     * anyway.
+     */
+    private function displayName(string $value): string
+    {
+        $wort = $this->encodeWord($value);
+        if ($wort !== $value || preg_match('/[()<>\[\]:;@\\\\,."]/', $value) !== 1) {
+            return $wort;
+        }
+
+        return '"' . addcslashes($value, '"\\') . '"';
     }
 
     /** RFC 2047 encoded-word - only when the value is not plain ASCII. */
