@@ -10,6 +10,10 @@ use App\Service\Ki\OpenAiCompatibleClient;
 use App\Service\Processing\KiAuslese\Auslesung;
 use App\Worker\Http\CurlWorkerHttp;
 use App\Worker\Http\KiHttp;
+use App\Worker\Mail\ImapClient;
+use App\Worker\Mail\MailEingang;
+use App\Worker\Mail\MailZugang;
+use App\Worker\Mail\SocketStrom;
 use App\Worker\Schritt\KiAuslesen;
 use App\Worker\Schritt\Ocr;
 use App\Worker\Schritt\SeitenRendern;
@@ -69,9 +73,9 @@ final class Programm
     }
 
     /**
-     * What the worker reports: `ai` always (the keys come from the web
-     * host), `render`/`ocr` when the tools are there - narrowed by
-     * WORKER_FAEHIGKEITEN.
+     * What the worker reports: `ai` and `mail` always (keys and mailbox
+     * access come from the web host), `render`/`ocr` when the tools are
+     * there - narrowed by WORKER_FAEHIGKEITEN.
      *
      * @return list<string>
      */
@@ -81,6 +85,7 @@ final class Programm
             $werkzeuge->kannOcr() ? 'ocr' : null,
             $werkzeuge->kannRendern() ? 'render' : null,
             'ai',
+            'mail',
         ]));
         if ($vorgabe === null || trim($vorgabe) === '') {
             return $alle;
@@ -171,6 +176,14 @@ final class Programm
             $log,
             $uhr,
             $schlafen,
+            // Issue #87: the mail intake (IMAP over TLS only).
+            new MailEingang(
+                $api,
+                static fn(MailZugang $z): ImapClient => ImapClient::verbinden(SocketStrom::oeffnen($z->host, $z->port, $z->sicherheit), $z->sicherheit, $z->benutzer, $z->passwort),
+                $abbruch,
+                $log,
+                $uhr,
+            ),
         ))->laufen();
 
         return 0;

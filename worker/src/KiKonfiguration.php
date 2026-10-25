@@ -7,6 +7,7 @@ namespace App\Worker;
 use App\Service\Ki\KiAnbieter;
 use App\Service\Ki\KiFaehigkeiten;
 use App\Service\Worker\WorkerKonfiguration;
+use App\Worker\Mail\MailZugang;
 
 /**
  * The AI provider profiles with their API keys, as the web host's admin
@@ -19,6 +20,10 @@ use App\Service\Worker\WorkerKonfiguration;
  * removed the profiles) drops every key held before at once (section 5,
  * review of #52). So does an envelope that does not open or has an
  * unknown format - better no AI than a stale key.
+ *
+ * The same envelope carries the IMAP access of the mail intake since
+ * issue #87 (`mail_eingang`, MailZugang); it is replaced and dropped
+ * together with the AI keys.
  */
 final class KiKonfiguration
 {
@@ -26,6 +31,8 @@ final class KiKonfiguration
 
     /** @var list<array{KiAnbieter, string}> */
     private array $profile = [];
+
+    private ?MailZugang $mail = null;
 
     public function version(): int
     {
@@ -52,6 +59,7 @@ final class KiKonfiguration
         if (!is_array($daten) || ($daten['format'] ?? null) !== WorkerKonfiguration::FORMAT || !is_array($daten['ki_anbieter'] ?? null)) {
             return;
         }
+        $this->mail = is_array($daten['mail_eingang'] ?? null) ? MailZugang::ausKonfiguration($daten['mail_eingang']) : null;
         foreach ($daten['ki_anbieter'] as $p) {
             $profil = is_array($p) ? self::profil($p) : null;
             if ($profil !== null) {
@@ -67,7 +75,14 @@ final class KiKonfiguration
     public function verwerfen(): void
     {
         $this->profile = [];
+        $this->mail = null;
         $this->version = 0;
+    }
+
+    /** The IMAP access of the mail intake, or null (issue #87). */
+    public function mailZugang(): ?MailZugang
+    {
+        return $this->mail;
     }
 
     /** @return ?array{KiAnbieter, string} the default profile with its key */
