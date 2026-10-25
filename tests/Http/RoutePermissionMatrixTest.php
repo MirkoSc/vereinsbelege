@@ -806,6 +806,8 @@ final class RoutePermissionMatrixTest extends TestCase
             tresorRotation: $stellvertreter,
             // The reimbursement page (issue #67/M10-3), optional.
             erstattungen: $stellvertreter,
+            // The dashboard on /app (issue #72/M11-2), optional.
+            dashboard: $stellvertreter,
         );
 
         return $router;

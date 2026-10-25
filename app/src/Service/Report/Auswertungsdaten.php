@@ -28,9 +28,10 @@ use App\Service\Invoice\Pruefung;
  * Volume: a club has a few thousand receipts and bookings a year. Each row
  * costs one sealed-box open plus one AEAD decrypt (well under a
  * millisecond), so a year on either basis stays far below the request time
- * limit; the page caches the result in the session (05 section 1).
+ * limit; pages read it through AuswertungsCache, which keeps the result
+ * encrypted in the session (05 section 1, issue #72).
  */
-final readonly class Auswertungsdaten
+final readonly class Auswertungsdaten implements Auswertungsquelle
 {
     /** Only receipts a human has checked count (KI results are suggestions until then). */
     public const array BELEG_STATUS = [DocumentStatus::Geprueft, DocumentStatus::Festgeschrieben];
