@@ -102,8 +102,9 @@ jobs:
           php-version: '8.5'
           extensions: pdo_mysql, zip, gd, sodium, curl, mbstring, fileinfo
           coverage: none
-          # memory_limit as on the host (docs/hosting-befunde.md: 384 MiB
-          # measured; the dev container's 256M is the stricter value).
+          # memory_limit of the dev container (docker/php/shared-hosting.ini),
+          # deliberately below the host's measured 384 MiB
+          # (docs/hosting-befunde.md): the stricter of the two.
           ini-values: error_reporting=E_ALL, display_errors=On, zend.assertions=1, memory_limit=256M
 
       - name: Install dependencies

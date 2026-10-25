@@ -21,14 +21,15 @@ use App\Domain\Zahlungsweg;
 use App\Domain\ZuordnungMethode;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankTransactionRepository;
+use App\Domain\CategoryDirection;
 use App\Repository\CategoryRepository;
+use App\Repository\CostCenterRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\SubmissionRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Bank\BankAccountService;
 use App\Service\Bank\Import\Dedupschluessel;
-use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
@@ -49,16 +50,20 @@ use App\Service\Submission\Referenzvergabe;
  * Every row goes through the same encryption as in production: a data key
  * per row sealed to the vault's public key, AEAD columns with the
  * table|id|column context, the blind indexes the application keeps
- * (receipt number, booking dedup key and counterparty, supplier name and
- * IBAN), the public submission's payload through Referenzvergabe, and the
- * allocations through the real Zuordnung (status recalculation, audit
- * chain). Nothing here is real: names are numbered placeholders, IBANs are
- * empty, and the random generator is seeded, so two runs build the same
- * data.
+ * (receipt number, booking dedup key, supplier name), the public
+ * submission's payload through Referenzvergabe, and the allocations through
+ * the real Zuordnung (status recalculation, audit chain). Nothing here is
+ * real: names are numbered placeholders, IBANs are empty, and the random
+ * generator is seeded, so two runs build the same data.
  *
- * Bookings are written the way KontoauszugImport writes them (same columns,
- * keys and payload), only without the upload/preview step chain around it -
- * that chain is not what a report reads.
+ * Bank bookings are written the way KontoauszugImport::buchung() writes
+ * them (same columns, keys and payload; no counterparty index, as there is
+ * no IBAN), only without the upload/preview step chain around it - that
+ * chain is not what a report reads. Cash bookings are manual ones, as
+ * Buchungen::anlegen() writes them (no dedup key).
+ *
+ * Everything after the master data runs in one transaction: tens of
+ * thousands of single commits would make the generation slow for nothing.
  */
 final class Testdatensatz
 {
@@ -104,6 +109,9 @@ final class Testdatensatz
     /** @var array{lieferant: list<int>, zahler: list<int>} */
     private array $lieferanten = ['lieferant' => [], 'zahler' => []];
 
+    /** @var array<int, string> supplier names by id */
+    private array $lieferantenNamen = [];
+
     private int $girokonto = 0;
 
     private int $kasse = 0;
@@ -127,12 +135,40 @@ final class Testdatensatz
     /**
      * Builds the whole data set and returns what it wrote.
      *
-     * @return array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>}
+     * @return array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}}
      */
     public function erzeugen(): array
     {
         $this->stammdaten();
 
+        $this->pdo->beginTransaction();
+        try {
+            $this->bewegungsdaten();
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            throw $e;
+        }
+
+        $ausgaben = $this->kategorien['ausgabe'][0];
+
+        return [
+            'belege' => (int) $this->pdo->query('SELECT COUNT(*) FROM document')->fetchColumn(),
+            'buchungen' => (int) $this->pdo->query('SELECT COUNT(*) FROM bank_transaction')->fetchColumn(),
+            'zuordnungen' => $this->zuordnungen,
+            'lieferanten' => count($this->lieferantenNamen),
+            'kostenstellen' => count($this->kostenstellen),
+            'jahre' => $this->jahre,
+            // Zipf rank 1 among the expense categories: the one with most receipts.
+            'groessteKategorie' => ['id' => $ausgaben, 'name' => new CategoryRepository($this->pdo)->find($ausgaben)?->name ?? ''],
+        ];
+    }
+
+    private function bewegungsdaten(): void
+    {
         $geprueft = self::BELEGE - self::EINGEGANGEN - self::IN_PRUEFUNG - self::ABGELEHNT;
         for ($i = 0; $i < $geprueft; ++$i) {
             $this->gepruefterBeleg($i);
@@ -152,32 +188,23 @@ final class Testdatensatz
         for ($i = 0; $this->buchungen < self::BUCHUNGEN; ++$i) {
             $this->buchungOhneBeleg($i);
         }
-
-        return [
-            'belege' => (int) $this->pdo->query('SELECT COUNT(*) FROM document')->fetchColumn(),
-            'buchungen' => (int) $this->pdo->query('SELECT COUNT(*) FROM bank_transaction')->fetchColumn(),
-            'zuordnungen' => $this->zuordnungen,
-            'lieferanten' => count($this->lieferanten['lieferant']) + count($this->lieferanten['zahler']),
-            'kostenstellen' => count($this->kostenstellen),
-            'jahre' => $this->jahre,
-        ];
     }
 
     private function stammdaten(): void
     {
-        foreach ($this->pdo->query("SELECT id, direction FROM category WHERE active = 1 ORDER BY sort, id")->fetchAll() as $zeile) {
-            $richtung = (string) $zeile['direction'];
-            foreach ($richtung === 'beide' ? ['einnahme', 'ausgabe'] : [$richtung] as $r) {
-                $this->kategorien[$r][] = (int) $zeile['id'];
-            }
-        }
+        // What the forms offer per direction, in their order.
+        $kategorien = new CategoryRepository($this->pdo);
+        $this->kategorien = [
+            'einnahme' => array_keys($kategorien->active(CategoryDirection::Einnahme)),
+            'ausgabe' => array_keys($kategorien->active(CategoryDirection::Ausgabe)),
+        ];
         if ($this->kategorien['einnahme'] === [] || $this->kategorien['ausgabe'] === []) {
             throw new \LogicException('The migrations seed categories in both directions.');
         }
 
+        $kostenstellen = new CostCenterRepository($this->pdo);
         foreach (self::KOSTENSTELLEN as $name => $gewicht) {
-            $this->pdo->prepare('INSERT INTO cost_center (name) VALUES (?)')->execute([$name]);
-            $this->kostenstellen[] = (int) $this->pdo->lastInsertId();
+            $this->kostenstellen[] = $kostenstellen->create($name);
             $this->kostenstellenGewicht[] = $gewicht;
         }
 
@@ -186,8 +213,10 @@ final class Testdatensatz
         for ($i = 1; $i <= self::LIEFERANTEN; ++$i) {
             // Four in five sell to the club, the rest pay it (sponsors, members).
             $rolle = $i % 5 === 0 ? SupplierRole::Zahler : SupplierRole::Lieferant;
-            $id = $lieferanten->anlegen($this->tresor, ['name' => sprintf('Testfirma %03d', $i), 'rolle' => $rolle->value], $jetzt)->id;
+            $name = sprintf('Testfirma %03d', $i);
+            $id = $lieferanten->anlegen($this->tresor, ['name' => $name, 'rolle' => $rolle->value], $jetzt)->id;
             $this->lieferanten[$rolle === SupplierRole::Zahler ? 'zahler' : 'lieferant'][] = $id;
+            $this->lieferantenNamen[$id] = $name;
         }
 
         $konten = new BankAccountService($this->pdo, new BankAccountRepository($this->pdo));
@@ -205,7 +234,7 @@ final class Testdatensatz
         $brutto = $this->betrag($einnahme ? 150.0 : 60.0);
         $kostenstelle = $this->zufall->getFloat(0, 1) < self::OHNE_KOSTENSTELLE ? null : $this->gewichtet($this->kostenstellen, $this->kostenstellenGewicht);
 
-        $invoiceId = $this->beleg($nr, DocumentStatus::Geprueft, $richtung, $weg, $datum, $brutto, $kostenstelle);
+        [$invoiceId, $lieferant] = $this->beleg($nr, DocumentStatus::Geprueft, $richtung, $weg, $datum, $brutto, $kostenstelle);
 
         $mitBuchung = match ($weg) {
             Zahlungsweg::Konto => $this->zufall->getFloat(0, 1) < self::ZUGEORDNET,
@@ -222,7 +251,13 @@ final class Testdatensatz
             min($datum->modify('+' . $tage . ' days'), new \DateTimeImmutable('yesterday')),
             $einnahme ? $brutto : -$brutto,
             sprintf('RE-%05d', $nr),
-            sprintf('Testfirma %03d', $nr % self::LIEFERANTEN + 1),
+            // A reimbursement goes to the person who paid, everything else
+            // to (or from) the receipt's supplier.
+            match (true) {
+                $weg === Zahlungsweg::Erstattung => sprintf('Testperson %04d', $nr % 400),
+                $lieferant !== null => $this->lieferantenNamen[$lieferant],
+                default => 'Unbekannte Gegenseite',
+            },
             null,
         );
         $methode = $this->gewichtet([ZuordnungMethode::Auto, ZuordnungMethode::VorschlagBestaetigt, ZuordnungMethode::Manuell], [50, 30, 20]);
@@ -236,7 +271,10 @@ final class Testdatensatz
         $this->beleg(100000 + $nr + ($status === DocumentStatus::Abgelehnt ? 1000 : 0), $status, InvoiceDirection::Ausgabe, Zahlungsweg::Konto, $this->tagIn($jahr), $this->betrag(60.0), null);
     }
 
-    private function beleg(int $nr, DocumentStatus $status, InvoiceDirection $richtung, Zahlungsweg $weg, \DateTimeImmutable $datum, int $brutto, ?int $kostenstelle): int
+    /**
+     * @return array{int, ?int} invoice id and supplier id
+     */
+    private function beleg(int $nr, DocumentStatus $status, InvoiceDirection $richtung, Zahlungsweg $weg, \DateTimeImmutable $datum, int $brutto, ?int $kostenstelle): array
     {
         $einnahme = $richtung === InvoiceDirection::Einnahme;
         $dokument = new DocumentRepository($this->pdo)->insert(
@@ -273,7 +311,7 @@ final class Testdatensatz
             $rechnungen->setzeGeprueft($id, $this->userId, $datum);
         }
 
-        return $id;
+        return [$id, $lieferant];
     }
 
     /** A public submission in the inbox: payload sealed like /einreichen does it, no pages. */
@@ -317,13 +355,18 @@ final class Testdatensatz
         $this->buchung($konto, $this->tagIn($jahr), $cent, $zweck . ' ' . $nr, sprintf('Testperson %04d', $nr % 400), $kategorie, belegNoetig: $cent < 0 && $art !== 'gebuehr');
     }
 
-    /** Writes one booking exactly as KontoauszugImport::buchung() does. */
+    /**
+     * Writes one booking: on the bank account as KontoauszugImport::buchung()
+     * does (dedup key; no counterparty index without an IBAN), in the cash
+     * box as a manual one (Buchungen::anlegen(): no index at all).
+     */
     private function buchung(int $konto, \DateTimeImmutable $datum, int $cent, string $zweck, string $gegenseite, ?int $kategorie, ?bool $belegNoetig = null): int
     {
         $repository = new BankTransactionRepository($this->pdo);
         $richtung = BankTransactionDirection::ausDemBetrag($cent);
         $belegNoetig ??= $richtung === BankTransactionDirection::Ausgabe;
-        $index = $this->tresor->blindIndex();
+        $importiert = $konto === $this->girokonto;
+        ++$this->buchungen;
         $key = DataKey::generate();
         $id = $repository->insert(
             $konto,
@@ -332,17 +375,18 @@ final class Testdatensatz
             $datum,
             $richtung,
             $this->tresor->sealDataKey($key),
-            Dedupschluessel::fuerBuchung($index, $konto, $datum, $cent, $zweck, '', ++$this->buchungen),
-            $index->forValue(KontoauszugImport::COUNTERPARTY_PURPOSE, $gegenseite),
+            $importiert ? Dedupschluessel::fuerBuchung($this->tresor->blindIndex(), $konto, $datum, $cent, $zweck, '', $this->buchungen) : null,
+            null,
             BankTransactionDocStatus::fuerNeueBuchung($belegNoetig),
             $belegNoetig,
-            BankTransactionSource::Import,
+            $importiert ? BankTransactionSource::Import : BankTransactionSource::Manuell,
             $datum,
             categoryId: $kategorie,
         ) ?? throw new \LogicException('Every generated booking has its own dedup key.');
+        $gegenseite = $importiert ? $gegenseite : '';
         $repository->setCiphertext($id, FieldCipher::encrypt($key, json_encode([
             'amount' => $cent, 'currency' => 'EUR', 'counterparty_name' => $gegenseite, 'counterparty_iban' => '',
-            'purpose' => $zweck, 'eref' => '', 'mref' => '', 'cred' => '', 'gvc' => '166', 'booking_text' => 'SEPA-Überweisung',
+            'purpose' => $zweck, 'eref' => '', 'mref' => '', 'cred' => '', 'gvc' => $importiert ? '166' : '', 'booking_text' => $importiert ? 'SEPA-Überweisung' : '',
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), new FieldContext('bank_transaction', $id, 'data_enc')));
 
         return $id;

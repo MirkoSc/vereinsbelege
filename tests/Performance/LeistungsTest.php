@@ -10,7 +10,6 @@ use App\Http\HttpMethod;
 use App\Http\Kernel;
 use App\Http\Request;
 use App\Http\Response;
-use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\AuditLogRepository;
 use App\Repository\RoleRepository;
@@ -59,6 +58,7 @@ final class LeistungsTest extends DatabaseTestCase
     private const int WIEDERHOLUNGEN = 3;
 
     private Vault $tresor;
+    private AuditLog $audit;
     private int $userId;
     private string $configDatei = '';
 
@@ -71,6 +71,7 @@ final class LeistungsTest extends DatabaseTestCase
         $crypto = new ServerCrypto((string) base64_decode(self::configData()['server_key'], true));
         $this->tresor = Vault::create();
         new VaultRepository($this->pdo())->insert($this->tresor->publicKey());
+        $this->audit = new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $crypto);
         $this->userId = new UserRepository($this->pdo())->insert($crypto->encrypt('kasse@example.invalid'), random_bytes(32), $crypto->encrypt('Kassenwart'), 'hash', mfaRequired: false);
         $rollen = new RoleRepository($this->pdo());
         $rollen->assignToUser($this->userId, [$rollen->findSystem(SystemRole::Finanzen)?->id ?? self::fail('no role')]);
@@ -78,10 +79,6 @@ final class LeistungsTest extends DatabaseTestCase
         $this->configDatei = (string) tempnam(sys_get_temp_dir(), 'vb-perf-config-');
         file_put_contents($this->configDatei, '<?php return ' . var_export(self::configData(), true) . ';');
         putenv('APP_CONFIG_FILE=' . $this->configDatei);
-
-        new Session()->start();
-        $jetzt = time();
-        $_SESSION = ['user_id' => $this->userId, 'login_at' => $jetzt, 'last_seen_at' => $jetzt, 'session_epoch' => 0];
     }
 
     protected function tearDown(): void
@@ -98,20 +95,25 @@ final class LeistungsTest extends DatabaseTestCase
     {
         $aktuell = (int) date('Y');
         $jahre = [$aktuell - 4, $aktuell - 3, $aktuell - 2, $aktuell - 1];
-        $audit = new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), new ServerCrypto((string) base64_decode(self::configData()['server_key'], true)));
 
         $start = hrtime(true);
-        $umfang = new Testdatensatz($this->pdo(), $this->tresor, ZuordnungFabrik::bauen($this->pdo(), $audit), $this->userId, $jahre)->erzeugen();
+        $umfang = new Testdatensatz($this->pdo(), $this->tresor, ZuordnungFabrik::bauen($this->pdo(), $this->audit), $this->userId, $jahre)->erzeugen();
         $erzeugt = (hrtime(true) - $start) / 1e9;
+
+        // Logged in only now: however long the generation took, the
+        // session must not have run into its idle timeout.
+        new Session()->start();
+        $jetzt = time();
+        $_SESSION = ['user_id' => $this->userId, 'login_at' => $jetzt, 'last_seen_at' => $jetzt, 'session_epoch' => 0];
 
         self::assertSame(Testdatensatz::BELEGE, $umfang['belege']);
         self::assertSame(Testdatensatz::BUCHUNGEN, $umfang['buchungen']);
 
         $jahr = (string) ($aktuell - 1);
         // The expense category the generator gives most receipts.
-        $kategorie = $this->pdo()->query("SELECT id, name FROM category WHERE active = 1 AND direction IN ('ausgabe', 'beide') ORDER BY sort, id LIMIT 1")->fetch();
-        self::assertIsArray($kategorie);
-        $groesste = htmlspecialchars((string) $kategorie['name']);
+        $kategorie = $umfang['groessteKategorie'];
+        $groesste = htmlspecialchars($kategorie['name']);
+        self::assertNotSame('', $groesste);
         $seiten = [
             // The expected text is decrypted data where the page shows any
             // (account, supplier, submitter names): proof it read through
@@ -171,30 +173,16 @@ final class LeistungsTest extends DatabaseTestCase
         /** @var Kernel $kernel */
         $kernel = require dirname(__DIR__, 2) . '/app/src/bootstrap.php';
         $antwort = $kernel->handle(new Request(HttpMethod::Get, $pfad, query: $query, cookies: $this->tresorCookie()));
-        $body = $this->body($antwort);
         $dauer = (hrtime(true) - $start) / 1e9;
         $spitze = memory_get_peak_usage() - $grund;
 
-        self::assertSame(200, $antwort instanceof Response ? $antwort->status : 200, $pfad);
-        self::assertStringContainsString($erwartet, $body, $pfad);
-        self::assertStringNotContainsString('nur mit entsperrtem Tresor', $body, $pfad);
+        // Every measured page answers in one piece (no StreamResponse).
+        self::assertInstanceOf(Response::class, $antwort, $pfad);
+        self::assertSame(200, $antwort->status, $pfad);
+        self::assertStringContainsString($erwartet, $antwort->body, $pfad);
+        self::assertStringNotContainsString('nur mit entsperrtem Tresor', $antwort->body, $pfad);
 
         return [$dauer, $spitze];
-    }
-
-    private function body(ResponseInterface $antwort): string
-    {
-        if ($antwort instanceof Response) {
-            return $antwort->body;
-        }
-        ob_start();
-        try {
-            $antwort->send();
-        } finally {
-            $body = (string) ob_get_clean();
-        }
-
-        return $body;
     }
 
     /**
@@ -217,7 +205,7 @@ final class LeistungsTest extends DatabaseTestCase
 
     /**
      * @param list<array{name: string, ziel: float, kalt: float, warm: float, max: float, speicher: int}> $ergebnisse
-     * @param array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>} $umfang
+     * @param array{belege: int, buchungen: int, zuordnungen: int, lieferanten: int, kostenstellen: int, jahre: list<int>, groessteKategorie: array{id: int, name: string}} $umfang
      */
     private function berichten(array $ergebnisse, array $umfang, float $erzeugt): void
     {

@@ -146,8 +146,9 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   generiert und anonym (nummerierte Platzhalternamen, keine IBANs, fester
   Zufalls-Seed) über die echten Verschlüsselungspfade: DEK je Zeile an den
   Tresor versiegelt, AEAD-Spalten, Blind Indexes (Rechnungsnummer,
-  Dedup-Schlüssel und Gegenseite der Buchung, Lieferant), Einreichungen
-  über `Referenzvergabe`, Zuordnungen über die echte `Zuordnung`.
+  Dedup-Schlüssel der Bankbuchung, Lieferant), Einreichungen über
+  `Referenzvergabe`, Zuordnungen über die echte `Zuordnung`;
+  Bankbuchungen wie der Kontoauszug-Import, Kassenbuchungen manuell.
   Verteilung: 4 Kalenderjahre (die vier vor dem laufenden), 8
   Kostenstellen gewichtet, 150 Lieferanten und die Kategorien
   Zipf-verteilt, Beträge log-normal; Girokonto und Kasse; ~85 % der
