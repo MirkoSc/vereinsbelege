@@ -29,7 +29,7 @@ final readonly class MfaTotpRepository
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO mfa_totp (user_id, secret_enc, confirmed_at, created_at) VALUES (?, ?, NULL, ?)
-             ON DUPLICATE KEY UPDATE secret_enc = VALUES(secret_enc), confirmed_at = NULL, created_at = VALUES(created_at)',
+             ON DUPLICATE KEY UPDATE secret_enc = VALUES(secret_enc), confirmed_at = NULL, last_step = NULL, created_at = VALUES(created_at)',
         );
         $stmt->bindValue(1, $userId, \PDO::PARAM_INT);
         $stmt->bindValue(2, $secretEnc, \PDO::PARAM_LOB);
@@ -57,6 +57,25 @@ final readonly class MfaTotpRepository
     {
         $stmt = $this->pdo->prepare('UPDATE mfa_totp SET confirmed_at = ? WHERE user_id = ?');
         $stmt->execute([($now ?? new \DateTimeImmutable())->format(self::FORMAT), $userId]);
+    }
+
+    /**
+     * Records `$step` as the last accepted TOTP time step - true only if it
+     * is newer than the one recorded so far, in a single statement, so of
+     * two requests with the same code exactly one wins (issue #78,
+     * migrations/045_totp_last_step.sql).
+     */
+    public function claimStep(int $userId, int $step): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE mfa_totp SET last_step = ? WHERE user_id = ? AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step < ?)',
+        );
+        $stmt->bindValue(1, $step, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $userId, \PDO::PARAM_INT);
+        $stmt->bindValue(3, $step, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->rowCount() === 1;
     }
 
     public function delete(int $userId): void

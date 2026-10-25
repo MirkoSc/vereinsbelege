@@ -123,7 +123,13 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   (`session_idle_timeout_s`, `session_absolute_timeout_s`,
   `App\Service\Account\SessionTimeouts`); ein unbrauchbarer Wert fällt auf
   den Vorgabewert zurück, statt den Ablauf abzuschalten. Logout löscht
-  beides – Sitzung und Cookie.
+  beides – Sitzung und Cookie. Anfragen, die die Seite selbst stellt
+  (Job-Schleife `public/js/jobs.js`), tragen `X-Hintergrund: 1` und
+  verlängern die Leerlaufzeit nicht – sonst liefe eine vergessene Sitzung
+  mit offenem Tresor bis zur absoluten Grenze (Security-Review #78).
+  `session_start()` bekommt `use_strict_mode` und `cache_limiter=nocache`
+  fest mitgegeben (`Session::OPTIONEN`): keine untergeschobenen IDs, kein
+  Browser-Cache für Seiten mit entschlüsselten Daten.
 - Ohne `__Host-vk` ist die Sitzung weiterhin angemeldet, kann aber nichts
   entschlüsseln. Das ist ein eigener Zustand, kein Fehler: Seiten zeigen
   dann einen Hinweis statt leerer Listen
@@ -449,6 +455,14 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
     (RFC-6238-Testvektoren für TOTP, das PyPI-Paket `qrcode` für den
     QR-Encoder – kein Bestandteil dieser Anwendung, nur zur Verifikation
     während der Entwicklung benutzt).
+    **Einmalverwendung** (Security-Review #78, ASVS 2.8.4): ein Code gilt
+    wegen der Toleranz ±1 Schritt rund 90 s, öffnet aber nur **eine**
+    Anmeldung – `MfaService::verifyTotp()` nimmt ihn nur, wenn sein
+    Zeitschritt neuer ist als `mfa_totp.last_step`, in einem bedingten
+    UPDATE (zwei parallele Anmeldungen mit demselben Code: genau eine
+    gewinnt). Ein neues Geheimnis beginnt ohne verbrauchten Schritt.
+    Backup- und E-Mail-Codes werden ebenso nur von der Anfrage verbraucht,
+    die die Zeile tatsächlich ändert.
   - **E-Mail-Code**: 6 Ziffern, 10 min gültig, max. 5 Versuche, nur ein
     HMAC gespeichert (`mfa_email_code.code_hash`, derselbe Blind-Index wie
     `user.email_bi`, Zweck `mfa.email_code`, Wert `Benutzer-ID:Code`).

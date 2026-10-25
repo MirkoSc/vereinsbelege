@@ -113,12 +113,17 @@ final readonly class MfaService
             return false;
         }
 
-        return Totp::verify(
+        $step = Totp::matchingStep(
             $this->crypto->decrypt($secret->secretEnc),
             $code,
             $now,
             window: self::TOTP_WINDOW_STEPS,
         );
+
+        // Each time step once: a code seen over a shoulder or captured on
+        // the way works neither a second time nor in a parallel login
+        // (ASVS 2.8.4, security review, issue #78).
+        return $step !== null && $this->totp->claimStep($userId, $step);
     }
 
     // --------------------------------------------------------- E-Mail-Code

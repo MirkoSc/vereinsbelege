@@ -343,6 +343,45 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertFalse($email->consume($this->userId, str_repeat("\x01", 32)));
     }
 
+    /**
+     * Security review (issue #78, ASVS 2.8.4): a TOTP code is valid for
+     * about 90 s, but it opens one login only - a second login with the same
+     * code (seen over a shoulder, or replayed in parallel) is refused.
+     */
+    public function testEinTotpCodeOeffnetNurEineAnmeldung(): void
+    {
+        $secret = $this->totpEinrichten();
+        $code = $this->totpCode($secret);
+
+        $pending = (string) self::cookieValue($this->passwortAnmelden(), self::pendingCookieName());
+        self::assertSame('/app', $this->bestaetigen($code, [self::pendingCookieName() => $pending])->headers['Location'] ?? null);
+
+        new Session()->destroy();
+        new SessionVault()->clear();
+        $_SESSION = [];
+        $pending = (string) self::cookieValue($this->passwortAnmelden(), self::pendingCookieName());
+        $zweiter = $this->bestaetigen($code, [self::pendingCookieName() => $pending]);
+
+        self::assertNotSame('/app', $zweiter->headers['Location'] ?? null);
+        self::assertNull(new Session()->userId(), 'the same code does not log in twice');
+    }
+
+    public function testEinNeuesTotpGeheimnisBeginntOhneVerbrauchtenSchritt(): void
+    {
+        $this->totpEinrichten();
+        $repo = new MfaTotpRepository($this->pdo());
+
+        self::assertTrue($repo->claimStep($this->userId, 100));
+        self::assertFalse($repo->claimStep($this->userId, 100), 'the same step once only');
+        self::assertFalse($repo->claimStep($this->userId, 99), 'nor an older one');
+        self::assertTrue($repo->claimStep($this->userId, 101));
+
+        $repo->put($this->userId, str_repeat("\x00", 61));
+        self::assertFalse($repo->claimStep($this->userId, 5), 'an unconfirmed secret accepts nothing');
+        $repo->confirm($this->userId);
+        self::assertTrue($repo->claimStep($this->userId, 5), 'a new secret starts afresh');
+    }
+
     // --------------------------------------------------------- Gerät merken
 
     public function testEinGemerktesGeraetUeberspringtDieAbfrage(): void
