@@ -11,6 +11,7 @@ use App\Domain\AuditEntry;
 use App\Domain\Category;
 use App\Domain\CategoryColor;
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 use App\Domain\SystemRole;
 use App\Http\HttpMethod;
 use App\Http\Kernel;
@@ -23,6 +24,7 @@ use App\Http\StaticFileHandler;
 use App\Repository\AuditLogRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\RoleRepository;
+use App\Repository\SettingRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
 use App\Repository\VaultRepository;
@@ -32,6 +34,7 @@ use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\MasterData\CategoryService;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\Migration\Migrator;
 use App\Tests\Support\DatabaseTestCase;
 use App\View\View;
@@ -340,6 +343,100 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
         self::assertCount($vorher, $this->kategorien->all());
     }
 
+    // --------------------------------------------------- tax spheres (#84)
+
+    /**
+     * E-15: switched off (the default) the category pages show no sphere -
+     * only the switch itself - and a posted default is not saved.
+     */
+    public function testWithTheSpheresOffNoSphereShowsAndNoneIsSaved(): void
+    {
+        $platz = $this->eigene('Platzpflege & Grünanlagen');
+
+        $liste = $this->dispatch(new Request(HttpMethod::Get, '/admin/kategorien'))->body;
+        self::assertStringNotContainsString('Sphäre (Vorgabe)', $liste);
+        self::assertStringContainsString('Ausgeschaltet', $liste);
+        self::assertStringContainsString('Sphären einschalten', $liste);
+        self::assertStringContainsString('Steuerberatung', $liste);
+
+        $formular = $this->dispatch(new Request(HttpMethod::Get, '/admin/kategorien/' . $platz->id))->body;
+        self::assertStringNotContainsString('name="sphaere"', $formular);
+        self::assertStringNotContainsString('Sphäre', $formular);
+
+        $this->post('/admin/kategorien/' . $platz->id, [
+            'name' => $platz->name, 'richtung' => 'ausgabe', 'farbe' => '', 'ki_hinweis' => '', 'active' => '1', 'sphaere' => 'ideell',
+        ]);
+        self::assertNull($this->kategorien->find($platz->id)?->defaultSphere);
+
+        // A default stored while the switch was on survives a save while it is off.
+        $this->kategorien->setDefaultSphere($platz->id, Sphere::Zweckbetrieb);
+        $this->post('/admin/kategorien/' . $platz->id, [
+            'name' => $platz->name, 'richtung' => 'ausgabe', 'farbe' => '', 'ki_hinweis' => 'neu', 'active' => '1',
+        ]);
+        self::assertSame(Sphere::Zweckbetrieb, $this->kategorien->find($platz->id)?->defaultSphere);
+    }
+
+    public function testTheSpheresAreSwitchedOnAndACategoryGetsItsDefault(): void
+    {
+        $einstellung = new Sphaereneinstellung(new SettingRepository($this->pdo()));
+        // Without the token nothing changes.
+        $ohne = $this->dispatch(new Request(HttpMethod::Post, '/admin/kategorien/sphaeren', post: ['aktiv' => '1']));
+        self::assertSame(302, $ohne->status);
+        self::assertFalse($einstellung->aktiv());
+
+        self::assertSame(302, $this->post('/admin/kategorien/sphaeren', ['aktiv' => '1'])->status);
+        self::assertTrue($einstellung->aktiv());
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::EinstellungSphaeren), null, 10);
+        self::assertCount(1, $zeilen);
+
+        $liste = $this->dispatch(new Request(HttpMethod::Get, '/admin/kategorien'))->body;
+        self::assertStringContainsString('Sphäre (Vorgabe)', $liste);
+        self::assertStringContainsString('Eingeschaltet', $liste);
+        self::assertStringContainsString('Sphären ausschalten', $liste);
+
+        $beitrag = $this->eigene('Mitgliedsbeiträge');
+        $formular = $this->dispatch(new Request(HttpMethod::Get, '/admin/kategorien/' . $beitrag->id))->body;
+        self::assertStringContainsString('<select id="kategorie-sphaere" name="sphaere"', $formular);
+
+        $felder = ['name' => $beitrag->name, 'richtung' => 'einnahme', 'farbe' => '', 'ki_hinweis' => $beitrag->aiHint, 'active' => '1'];
+        self::assertSame(302, $this->post('/admin/kategorien/' . $beitrag->id, [...$felder, 'sphaere' => 'ideell'])->status);
+        self::assertSame(Sphere::Ideell, $this->kategorien->find($beitrag->id)?->defaultSphere);
+        self::assertMatchesRegularExpression('#Mitgliedsbeiträge</a>\s*</td>\s*<td>Ideeller Bereich</td>#', $this->dispatch(new Request(HttpMethod::Get, '/admin/kategorien'))->body);
+
+        $falsch = $this->post('/admin/kategorien/' . $beitrag->id, [...$felder, 'name' => 'Umbenannt', 'sphaere' => 'steuerfrei']);
+        self::assertSame(422, $falsch->status);
+        self::assertStringContainsString('Diese Sphäre gibt es nicht.', $falsch->body);
+        self::assertSame($beitrag->name, $this->kategorien->find($beitrag->id)?->name, 'nothing of the form is saved');
+
+        self::assertSame(302, $this->post('/admin/kategorien/' . $beitrag->id, [...$felder, 'sphaere' => ''])->status);
+        self::assertNull($this->kategorien->find($beitrag->id)?->defaultSphere);
+
+        $neu = $this->post('/admin/kategorien', ['name' => 'Kiosk', 'richtung' => 'einnahme', 'farbe' => '', 'ki_hinweis' => '', 'sphaere' => 'wirtschaftlich']);
+        self::assertSame(302, $neu->status);
+        self::assertSame(Sphere::Wirtschaftlich, $this->eigene('Kiosk')->defaultSphere);
+
+        // A form opened before the switch was turned on has no field - the stored default stays.
+        $this->kategorien->setDefaultSphere($beitrag->id, Sphere::Ideell);
+        self::assertSame(302, $this->post('/admin/kategorien/' . $beitrag->id, [...$felder, 'ki_hinweis' => 'ohne Feld'])->status);
+        self::assertSame(Sphere::Ideell, $this->kategorien->find($beitrag->id)?->defaultSphere);
+        self::assertSame('ohne Feld', $this->kategorien->find($beitrag->id)?->aiHint);
+
+        // Switching off keeps what is stored.
+        $this->kategorien->setDefaultSphere($beitrag->id, Sphere::Ideell);
+        self::assertSame(302, $this->post('/admin/kategorien/sphaeren', ['aktiv' => '0'])->status);
+        self::assertFalse($einstellung->aktiv());
+        self::assertSame(Sphere::Ideell, $this->kategorien->find($beitrag->id)?->defaultSphere);
+        self::assertCount(2, new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::EinstellungSphaeren), null, 10));
+    }
+
+    public function testTheSwitchNeedsAdminSettings(): void
+    {
+        $this->alsRolle(SystemRole::Vorstand);
+
+        self::assertSame(403, $this->post('/admin/kategorien/sphaeren', ['aktiv' => '1'])->status);
+        self::assertFalse(new Sphaereneinstellung(new SettingRepository($this->pdo()))->aktiv());
+    }
+
     // ----------------------------------------------------------- scaffolding
 
     /**
@@ -418,6 +515,7 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
             new CategoryRepository($pdo),
             new CategoryService(new CategoryRepository($pdo)),
             new AuditLog(new AuditLogRepository($pdo), new VaultRepository($pdo), new ServerCrypto(random_bytes(32))),
+            new Sphaereneinstellung(new SettingRepository($pdo)),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

@@ -98,6 +98,7 @@ Seitenlimits, Mindest-Ausfülldauer.
 Setting `sphaeren_aktiv` = aus (Default). Dann: kein Feld in UI, kein
 Sphären-Teil im KI-Prompt, keine Sphären-Auswertung. Spalte bleibt im
 Datenmodell (NULL), damit ein späteres Einschalten keine Migration braucht.
+Einschalten, Zuordnung und Auswertung: E-57 (issue #84).
 
 ## E-16 ✅ Geschäftsjahr = Kalenderjahr
 Auswertungen und Export-Default nutzen das Kalenderjahr; kein
@@ -1711,6 +1712,46 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
 - **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
   Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
   nutzt den Archiv-Import oder lädt sie einzeln hoch.
+
+## E-57 ❓ Steuerliche Sphären: Schalter, Zuordnung, Auswertung (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #84, 02 „Sphären“, 05 §1 „Stand issue #84“; ergänzt E-15*
+
+E-15 bleibt: **Standard aus.** Das Issue hatte keine Abnahmekriterien;
+angesetzt wurden:
+
+1. Admin (`admin.settings`) schaltet `sphaeren_aktiv` auf
+   `/admin/kategorien` ein/aus (CSRF, Audit `einstellung.sphaeren`).
+2. Eingeschaltet: Kategorie bekommt eine Vorgabe-Sphäre, Beleg in der
+   Prüfansicht eine eigene oder „Wie Kategorie“.
+3. Eingeschaltet: Auswertung `/app/auswertung/sphaeren` je Sphäre
+   (Einnahmen, Ausgaben, Saldo), beide Grundlagen, mit Hinweis
+   „mit Steuerberatung abstimmen“.
+4. Ausgeschaltet ändert sich nichts Sichtbares außer dem Schalter selbst;
+   gespeicherte Werte bleiben beim Speichern unberührt (Tests).
+5. Kein veralteter Wert aus dem Session-Cache (E-48) nach Änderung von
+   Schalter, Vorgabe oder Beleg (Test).
+
+Entscheidungen:
+- **Wirksame Sphäre** = eigene des Belegs, sonst Vorgabe der Kategorie,
+  sonst „ohne Sphäre“. Die Vorgabe wird erst in der Auswertung angewendet,
+  nicht beim Speichern kopiert – so gelten neue Vorgaben auch für Belege,
+  die vor dem Einschalten erfasst wurden, und Buchungen ohne Beleg (die
+  keine eigene Sphäre haben) bekommen die Vorgabe ihrer Kategorie.
+  **Folge:** Ändert man eine Vorgabe, ändert sich die Auswertung auch für
+  festgeschriebene Belege ohne eigene Sphäre. Alternative wäre Kopieren
+  beim Speichern/Festschreiben.
+- **Schalter auf der Kategorien-Seite** statt eigener Admin-Seite: dort
+  liegen die Vorgaben; kein neuer Navigationspunkt.
+- **KI schlägt noch keine Sphäre vor** (Spec 02 sieht es vor): bleibt
+  Folge-Issue, weil es eine neue Prompt-Version braucht. Ebenso
+  `supplier.default_sphere`, Drilldown/CSV je Sphäre und Sphären im
+  DATEV-Export (#93).
+- Die Beispiele je Sphäre auf der Kategorien-Seite sind bewusst mit „z. B.“
+  formuliert und keine Steuerberatung.
+
+Offen für Mirko: Vorgabe beim Festschreiben einfrieren (statt dynamisch)?
+Soll die KI die Sphäre vorschlagen? Reichen die Beispieltexte, oder sollen
+sie entfallen?
 
 ## E-58 ❓ Budget je Kategorie/Kostenstelle mit Soll/Ist (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #92, 05 §1 „Stand #92“, 02 (`budget`), 01 §4*

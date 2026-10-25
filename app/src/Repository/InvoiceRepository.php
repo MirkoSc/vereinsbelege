@@ -121,9 +121,9 @@ final readonly class InvoiceRepository
     ): int {
         $stmt = $this->pdo->prepare(
             "INSERT INTO invoice (document_id, doc_type, direction, supplier_id, invoice_date, due_date, service_from, service_to,
-                                  category_id, cost_center_id, payment_kind, payment_status, dek_sealed, data_enc, number_bi,
+                                  category_id, cost_center_id, payment_kind, sphere, payment_status, dek_sealed, data_enc, number_bi,
                                   created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
         );
         $stmt->bindValue(1, $documentId, \PDO::PARAM_INT);
         $n = self::bindStruktur($stmt, 2, $struktur);
@@ -159,7 +159,7 @@ final readonly class InvoiceRepository
     ): void {
         $stmt = $this->pdo->prepare(
             'UPDATE invoice SET doc_type = ?, direction = ?, supplier_id = ?, invoice_date = ?, due_date = ?, service_from = ?,
-                                service_to = ?, category_id = ?, cost_center_id = ?, payment_kind = ?, data_enc = ?, number_bi = ?,
+                                service_to = ?, category_id = ?, cost_center_id = ?, payment_kind = ?, sphere = ?, data_enc = ?, number_bi = ?,
                                 updated_by = ?, updated_at = ?
              WHERE id = ? AND locked_at IS NULL',
         );
@@ -612,6 +612,7 @@ final readonly class InvoiceRepository
         self::bindNullable($stmt, $n++, $s->categoryId, \PDO::PARAM_INT);
         self::bindNullable($stmt, $n++, $s->costCenterId, \PDO::PARAM_INT);
         $stmt->bindValue($n++, $s->paymentKind->value);
+        self::bindNullable($stmt, $n++, $s->sphere?->value, \PDO::PARAM_STR);
 
         return $n;
     }

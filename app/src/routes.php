@@ -749,6 +749,8 @@ return static function (
     $get('/app/auswertung', $berichte, static fn() => $geldfluss()->start());
     $get('/app/auswertung/geldfluss', $berichte, static fn(Request $r) => $geldfluss()->geldfluss($r));
     $get('/app/auswertung/geldfluss/posten', $berichte, static fn(Request $r) => $geldfluss()->posten($r));
+    // Per tax sphere (issue #84, E-57): 404 while `sphaeren_aktiv` is off.
+    $get('/app/auswertung/sphaeren', $berichte, static fn(Request $r) => $geldfluss()->sphaeren($r));
     // Budgets with Soll/Ist (issue #92, docs/spec/05-auswertung-und-export.md
     // section 1 "Stand #92", E-58). Reading: `report.view` with its scope (a
     // Vereinsverantwortlicher sees only the budgets of his cost centers),
@@ -759,7 +761,6 @@ return static function (
     $get('/app/auswertung/budget.csv', Zugriff::recht(Permission::ExportCsv), static fn(Request $r) => $budgets()->csv($r));
     $post('/app/auswertung/budget', Zugriff::recht(Permission::BankBook), static fn(Request $r) => $budgets()->speichern($r));
     $post('/app/auswertung/budget/{id:\d+}/loeschen', Zugriff::recht(Permission::BankBook), static fn(Request $r, array $params) => $budgets()->loeschen($r, $params));
-
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,
     // Vorstand, Finanzen, Kassenprüfer, Steuerberater) to see the list, an
@@ -1047,6 +1048,8 @@ return static function (
     $post('/admin/kategorien/{id:\d+}/loeschen', $einstellungen, static fn(Request $r, array $params) => $kategorien()->loeschen($r, $params));
     $post('/admin/kategorien/{id:\d+}/nach-oben', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachOben($r, $params));
     $post('/admin/kategorien/{id:\d+}/nach-unten', $einstellungen, static fn(Request $r, array $params) => $kategorien()->nachUnten($r, $params));
+    // The switch of the tax spheres (issue #84, E-57) - same right as the categories.
+    $post('/admin/kategorien/sphaeren', $einstellungen, static fn(Request $r) => $kategorien()->sphaerenSchalten($r));
 
     // AI provider profiles (03 section 6 "Client", issue #41/M7-1): CRUD,
     // the default profile, the optional fallback profile (issue #180/M7-2b)

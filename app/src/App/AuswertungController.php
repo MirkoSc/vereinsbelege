@@ -15,10 +15,12 @@ use App\Http\Session;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\Report\Dashboard;
 use App\Service\Report\Dimension;
 use App\Service\Report\Geldfluss;
 use App\Service\Report\Grundlage;
+use App\Service\Report\Sphaerenbericht;
 use App\Service\Report\ZeitraumAuswahl;
 use App\View\Area;
 use App\View\View;
@@ -36,6 +38,10 @@ use App\View\View;
  *
  * Amounts are vault data: without an unlocked vault the page says so and
  * shows nothing. Never cached by the browser.
+ *
+ * With `sphaeren_aktiv` on (issue #84, E-57) a further view shows income,
+ * expenses and balance per tax sphere; switched off, it does not exist (404)
+ * and its tab is not shown (E-15).
  */
 final readonly class AuswertungController
 {
@@ -45,12 +51,18 @@ final readonly class AuswertungController
     /**
      * @param \Closure(): Geldfluss $geldfluss built only when figures are
      *        actually rendered (it opens the database)
+     * @param (\Closure(): Sphaereneinstellung)|null $sphaeren the switch of
+     *        the tax spheres (opens the database); null = always off
+     * @param (\Closure(): Sphaerenbericht)|null $sphaerenbericht built only
+     *        when the sphere view is rendered
      */
     public function __construct(
         private View $view,
         private Session $session,
         private SessionVault $sessionVault,
         private \Closure $geldfluss,
+        private ?\Closure $sphaeren = null,
+        private ?\Closure $sphaerenbericht = null,
     ) {
     }
 
@@ -77,6 +89,38 @@ final readonly class AuswertungController
             ...$filter,
             'entsperrt' => $tresor !== null,
             'ergebnis' => $ergebnis,
+            'sphaerenAktiv' => $this->sphaerenAktiv(),
+        ]);
+    }
+
+    /** Income, expenses and balance per tax sphere (issue #84) - only with `sphaeren_aktiv`. */
+    public function sphaeren(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->sphaerenAktiv() || $this->sphaerenbericht === null) {
+            return Response::html($this->view->render('error', [
+                'title' => 'Nicht gefunden',
+                'message' => 'Diese Auswertung gibt es nicht.',
+                'startseite' => '/app/auswertung/geldfluss',
+            ], Area::App), 404);
+        }
+
+        $filter = $this->filter($request);
+        $tresor = $this->tresor($request);
+        $ergebnis = $tresor === null ? null : ($this->sphaerenbericht)()->bericht(
+            $tresor,
+            $filter['grundlage'],
+            $filter['auswahl']->zeitraum,
+            $filter['bereich'],
+        );
+
+        return $this->seite('app/auswertung-sphaeren', 'Sphären', [
+            ...$filter,
+            // The side is not a filter of this view.
+            'ansicht' => ['grundlage' => $filter['grundlage']->value],
+            'entsperrt' => $tresor !== null,
+            'ergebnis' => $ergebnis,
+            'sphaerenAktiv' => true,
         ]);
     }
 
@@ -174,6 +218,11 @@ final readonly class AuswertungController
         ], Area::App));
 
         return new Response($antwort->status, [...$antwort->headers, 'Cache-Control' => 'no-store, private'], $antwort->body, $antwort->additionalCookies);
+    }
+
+    private function sphaerenAktiv(): bool
+    {
+        return $this->sphaeren !== null && ($this->sphaeren)()->aktiv();
     }
 
     private function berechtigungen(): Berechtigungen

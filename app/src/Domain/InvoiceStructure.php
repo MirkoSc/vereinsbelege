@@ -9,7 +9,9 @@ namespace App\Domain;
  * structural `invoice` columns SQL filters and sorts on - since M10-1
  * (issue #65) with the Zahlungsweg; the derived payment status is not part
  * of it, nobody enters it. Next to it, App\Domain\InvoiceData holds what
- * goes into the vault.
+ * goes into the vault. The tax sphere (issue #84) is the receipt's own
+ * choice; null = none, the category's default applies in the report. With
+ * `sphaeren_aktiv` off the review page keeps whatever is stored.
  */
 final readonly class InvoiceStructure
 {
@@ -24,6 +26,7 @@ final readonly class InvoiceStructure
         public ?int $categoryId,
         public ?int $costCenterId,
         public Zahlungsweg $paymentKind = Zahlungsweg::Konto,
+        public ?Sphere $sphere = null,
     ) {
     }
 
@@ -40,6 +43,7 @@ final readonly class InvoiceStructure
             categoryId: $record->categoryId,
             costCenterId: $record->costCenterId,
             paymentKind: $record->paymentKind,
+            sphere: $record->sphere,
         );
     }
 
@@ -79,6 +83,7 @@ final readonly class InvoiceStructure
             'category_id' => $this->categoryId,
             'cost_center_id' => $this->costCenterId,
             'payment_kind' => $this->paymentKind->value,
+            'sphere' => $this->sphere?->value,
         ];
     }
 }

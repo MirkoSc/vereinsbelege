@@ -216,6 +216,7 @@ use App\Service\Mail\MailTemplates;
 use App\Service\MaintenanceMode;
 use App\Service\MasterData\CategoryService;
 use App\Service\MasterData\CostCenterService;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierAufloesung;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
@@ -230,6 +231,7 @@ use App\Service\Report\Budgets;
 use App\Service\Report\Dashboard;
 use App\Service\Report\Geldfluss;
 use App\Service\Report\Kassenpruefung;
+use App\Service\Report\Sphaerenbericht;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -673,7 +675,7 @@ $kategorien = static function () use ($connections, $view, $auditFor): CategoryC
     $pdo = $connections->pdo();
     $repository = new CategoryRepository($pdo);
 
-    return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo));
+    return new CategoryController($view, new Session(), $repository, new CategoryService($repository), $auditFor($pdo), new Sphaereneinstellung(new SettingRepository($pdo)));
 };
 
 // Suppliers and payers (M6-2, issue #36): vault data, read and written only
@@ -832,6 +834,7 @@ $pruefungSeite = static function () use ($connections, $view, $paths, $auditFor,
         $kategorien,
         $kostenstellen,
         new Duplikatpruefung($pdo, $documents, new DocumentDuplicateRepository($pdo), $rechnungen, $audit),
+        new Sphaereneinstellung(new SettingRepository($pdo)),
     );
 };
 
@@ -952,6 +955,13 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
+    },
+    static fn(): Sphaereneinstellung => new Sphaereneinstellung(new SettingRepository($connections->pdo())),
+    static function () use ($connections, $auswertungsquelleFor): Sphaerenbericht {
+        $pdo = $connections->pdo();
+
+        // Behind the login guard: the session holds the account.
+        return new Sphaerenbericht($auswertungsquelleFor($pdo, new Session()->userId() ?? 0), new CategoryRepository($pdo));
     },
 );
 

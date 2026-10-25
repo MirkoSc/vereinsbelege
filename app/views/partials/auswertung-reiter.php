@@ -6,6 +6,8 @@
  * rights check. A new view adds one line.
  *
  * @var string $aktiv the path of the current view
+ * @var bool|null $sphaerenAktiv `sphaeren_aktiv` (issue #84): only then the
+ *      sphere view has a tab
  */
 
 $auswertungen = [
@@ -13,6 +15,9 @@ $auswertungen = [
     '/app/auswertung/kassenpruefung' => 'Kassenprüfung',
     '/app/auswertung/budget' => 'Budget',
 ];
+if (($sphaerenAktiv ?? false) === true) {
+    $auswertungen['/app/auswertung/sphaeren'] = 'Sphären';
+}
 ?>
 <nav aria-label="Auswertungen">
     <p class="knopfreihe">

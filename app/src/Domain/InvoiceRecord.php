@@ -38,6 +38,8 @@ final readonly class InvoiceRecord
         public Zahlungsweg $paymentKind = Zahlungsweg::Konto,
         public PaymentStatus $paymentStatus = PaymentStatus::Offen,
         public ?Differenzgrund $differenceReason = null,
+        /** The receipt's own tax sphere (issue #84) - NULL while unused (E-15). */
+        public ?Sphere $sphere = null,
     ) {
     }
 
@@ -73,6 +75,7 @@ final readonly class InvoiceRecord
             paymentKind: Zahlungsweg::from((string) $row['payment_kind']),
             paymentStatus: PaymentStatus::from((string) $row['payment_status']),
             differenceReason: $row['difference_reason'] === null ? null : Differenzgrund::from((string) $row['difference_reason']),
+            sphere: Sphere::ausWert(isset($row['sphere']) ? (string) $row['sphere'] : null),
         );
     }
 }
