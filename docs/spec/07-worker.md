@@ -357,8 +357,12 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     –, ohne wartenden/fertigen `ocr`-Job, ohne übernommenen Worker-Text.
     Je Schritt höchstens 25 geprüft; die Worker-Warteschlange für `ocr`
     wird nur bis **5** aufgefüllt (OCR-Jobs neuer Belege zählen mit, der
-    Worker holt die ältesten zuerst). Voll → 60 s warten, Worker nicht
-    verfügbar → 5 min warten, Zeiger bleibt stehen. Zeiger und Zähler in
+    Worker holt die ältesten zuerst). Voll → 20 s warten, Worker nicht
+    verfügbar oder keine Grants möglich (Tresor-Rotation) → 5 min warten,
+    Zeiger bleibt stehen; zwischen zwei Schritten 2 s Pause. Am Ende ein
+    weiterer Durchlauf von vorn, solange im Bereich noch eine eigene
+    Texterkennung (`extract_text`) aussteht oder OCR-Jobs beim Worker
+    sind. Nur abgeschlossene Import-Läufe sind wählbar. Zeiger und Zähler in
     `job.state` → Wiederaufnahme nach Pause, Abmelden, Worker-Ausfall.
     Der Job zählt nicht zur Kopfzeile „N Belege in Verarbeitung“
     (`App\Service\Job\HintergrundJob`).

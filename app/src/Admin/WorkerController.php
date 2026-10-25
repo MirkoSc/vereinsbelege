@@ -10,8 +10,8 @@ use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Domain\ArchiveImportRecord;
-use App\Domain\ArchiveImportStatus;
 use App\Domain\Job;
+use App\Domain\JobStatus;
 use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\JobRepository;
@@ -167,7 +167,7 @@ final readonly class WorkerController
             return Response::redirect(self::SEITE);
         }
         if ($this->bestandsOcr->starten($importId, new \DateTimeImmutable()) === null) {
-            $this->session->flash('Dieser Import-Lauf hat keine Belege.', FlashArt::Fehler);
+            $this->session->flash('Dieser Import-Lauf ist noch nicht abgeschlossen oder hat keine Belege.', FlashArt::Fehler);
 
             return Response::redirect(self::SEITE);
         }
@@ -294,7 +294,7 @@ final readonly class WorkerController
      * The archive OCR backfill section (issue #88): the newest run with its
      * progress, and the import runs to choose from.
      *
-     * @return array{bestandJob: ?Job, bestandZustand: ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int}, bestandStand: ?array{gesamt: int, mitText: int, beimWorker: int, offen: int}, bestandLaeuft: bool, importLaeufe: list<ArchiveImportRecord>}
+     * @return array{bestandJob: ?Job, bestandZustand: ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int}, bestandStand: ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int}, bestandLaeuft: bool, importLaeufe: list<ArchiveImportRecord>}
      */
     private function bestand(): array
     {
@@ -309,10 +309,10 @@ final readonly class WorkerController
             'bestandJob' => $zustand === null ? null : $job,
             'bestandZustand' => $zustand,
             'bestandStand' => $zustand === null || $job === null ? null : $this->bestandsOcr->stand($job),
-            'bestandLaeuft' => $zustand !== null && $this->bestandsOcr->laufender() !== null,
+            'bestandLaeuft' => $zustand !== null && $job !== null && in_array($job->status, [JobStatus::Offen, JobStatus::Laeuft], true),
             'importLaeufe' => array_values(array_filter(
                 $this->imports->recent(50),
-                static fn(ArchiveImportRecord $i): bool => $i->status !== ArchiveImportStatus::Vorschau && $i->stats->belege > 0,
+                static fn(ArchiveImportRecord $i): bool => !$i->status->offen() && $i->stats->belege > 0,
             )),
         ];
     }

@@ -1491,15 +1491,19 @@ Getroffen ohne Rückfrage:
   Worker-Warteschlange für `ocr` nur bis **5** Jobs auf und zählt dabei
   die OCR-Jobs neuer Belege mit. Der Worker holt die ältesten zuerst; ein
   neuer Beleg wartet also höchstens hinter 5 Archiv-Scans. Ist die
-  Warteschlange voll, wartet der Job 60 s, ohne Worker 5 min
+  Warteschlange voll, wartet der Job 20 s, ohne Worker oder ohne mögliche
+  Grants (Tresor-Rotation) 5 min
   (`JobSchrittErgebnis::warten`). Der Job zählt nicht zu „N Belege in
   Verarbeitung“ in der Kopfzeile (Marker `HintergrundJob`).
 - **Wiederaufnahme:** Zeiger und Zähler stehen in `job.state`. Ein Beleg,
   der sich nicht übergeben lässt (kein lesbarer Blob, Grant verweigert),
   wird übersprungen und gezählt („ausgelassen“), ein neuer Start versucht
   ihn erneut. Geht der Worker mitten im Schritt weg, bleibt der Zeiger
-  stehen. „Abbrechen“ setzt den Job auf `uebersprungen`; was schon beim
-  Worker ist, wird fertig.
+  stehen. Am Ende folgt ein weiterer Durchlauf, solange im Bereich noch
+  eine eigene Texterkennung aussteht oder OCR-Jobs beim Worker sind (ein
+  fehlgeschlagener wird so erneut versucht). Nur abgeschlossene
+  Import-Läufe sind wählbar. „Abbrechen“ setzt den Job auf
+  `uebersprungen`; was schon beim Worker ist, wird fertig.
 - **Festgeschriebene Belege (01 §7) sind eingeschlossen.** OCR ergänzt nur
   abgeleitete Daten: Text-Artefakte, `ocr_status` (wie `content_bi` aus
   den unveränderlichen Originalen abgeleitet) und ein PDF/A-Artefakt

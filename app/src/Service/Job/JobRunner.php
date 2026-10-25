@@ -42,6 +42,9 @@ final readonly class JobRunner
      */
     private const int AUFRUF_PUFFER_SEKUNDEN = 60;
 
+    /** @var list<string> background job types (HintergrundJob), left out of the header count */
+    private array $hintergrundTypen;
+
     /**
      * @param list<JobHandler> $handler every session job type this runner
      *        may drive - each declares the right it needs itself
@@ -57,6 +60,10 @@ final readonly class JobRunner
         private array $handler,
         private array $browserTypen = [],
     ) {
+        $this->hintergrundTypen = array_values(array_map(
+            static fn(HintergrundJob $h): string => $h->typ(),
+            array_filter($handler, static fn(JobHandler $h): bool => $h instanceof HintergrundJob),
+        ));
     }
 
     /**
@@ -217,13 +224,7 @@ final readonly class JobRunner
      */
     private function zaehleSession(array $typen): int
     {
-        $hintergrund = [];
-        foreach ($this->handler as $handler) {
-            if ($handler instanceof HintergrundJob) {
-                $hintergrund[] = $handler->typ();
-            }
-        }
-        $gezaehlt = array_values(array_diff($typen, $hintergrund));
+        $gezaehlt = array_values(array_diff($typen, $this->hintergrundTypen));
 
         return $gezaehlt === [] ? 0 : $this->jobs->zaehleOffen(JobExecutor::Session, $gezaehlt);
     }

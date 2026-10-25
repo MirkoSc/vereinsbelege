@@ -210,10 +210,12 @@ final readonly class DocumentRepository
     /**
      * Progress of the backfill over archive documents $von..$bis ($bis 0 =
      * no upper end, rejected ones left out): all of them, those with a text
-     * layer (`ocr_status` `fertig`), those with an `ocr` job at the worker
-     * right now, and those still to be caught up (bestandOcrNachholbar()).
+     * layer (`ocr_status` `fertig`), those whose own text detection has not
+     * decided yet (`keine`/`ausstehend` with an `extract_text` job pending), those with an `ocr` job at the
+     * worker right now, and those still to be caught up
+     * (bestandOcrNachholbar()).
      *
-     * @return array{gesamt: int, mitText: int, beimWorker: int, offen: int}
+     * @return array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int}
      */
     public function bestandOcrStand(int $von, int $bis): array
     {
@@ -221,11 +223,19 @@ final readonly class DocumentRepository
         $bereichParameter = [DocumentSource::Archiv->value, DocumentStatus::Abgelehnt->value, $von, $bis, $bis];
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(*) AS gesamt, COALESCE(SUM(d.ocr_status = ?), 0) AS mit_text,
+                    COALESCE(SUM(d.ocr_status IN (?, ?) AND EXISTS (SELECT 1 FROM job t WHERE t.typ = ? AND t.ref_type = ? AND t.ref_id = d.id AND t.status IN (?, ?))), 0) AS in_erkennung,
                     COALESCE(SUM(EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.executor = ? AND j.status IN (?, ?))), 0) AS beim_worker
              FROM document d WHERE ' . $bereich,
         );
         $stmt->execute([
             OcrStatus::Fertig->value,
+            OcrStatus::Keine->value,
+            OcrStatus::Ausstehend->value,
+            // App\Service\Document\Texterkennung::JOB_TYP
+            'extract_text',
+            'document',
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
             'ocr',
             'document',
             JobExecutor::Worker->value,
@@ -240,6 +250,7 @@ final readonly class DocumentRepository
         return [
             'gesamt' => (int) ($zeile['gesamt'] ?? 0),
             'mitText' => (int) ($zeile['mit_text'] ?? 0),
+            'inErkennung' => (int) ($zeile['in_erkennung'] ?? 0),
             'beimWorker' => (int) ($zeile['beim_worker'] ?? 0),
             'offen' => (int) $offen->fetchColumn(),
         ];

@@ -25,7 +25,7 @@
  * @var bool $ocrVerfuegbar
  * @var ?\App\Domain\Job $bestandJob
  * @var ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int} $bestandZustand
- * @var ?array{gesamt: int, mitText: int, beimWorker: int, offen: int} $bestandStand
+ * @var ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, offen: int} $bestandStand
  * @var bool $bestandLaeuft
  * @var list<\App\Domain\ArchiveImportRecord> $importLaeufe
  */
@@ -279,7 +279,7 @@ $typName = static fn(string $typ): string => match ($typ) {
             <p class="gedaempft">
                 In diesem Lauf übergeben: <?= e((string) $bestandZustand['uebergeben']) ?>
                 <?php if ($bestandZustand['ausgelassen'] > 0): ?>
-                    · ausgelassen (nicht übergebbar, beim nächsten Start erneut versucht): <?= e((string) $bestandZustand['ausgelassen']) ?>
+                    · ausgelassen (nicht übergebbar, wird erneut versucht): <?= e((string) $bestandZustand['ausgelassen']) ?>
                 <?php endif; ?>
             </p>
             <?php if ($bestandLaeuft): ?>

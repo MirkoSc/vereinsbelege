@@ -72,7 +72,12 @@ final class BestandsOcrTest extends WorkerTestCase
         self::assertSame([$gesperrt, $offen], $this->ocrJobs());
         self::assertSame(DocumentStatus::Festgeschrieben, $this->documents->find($gesperrt)?->status);
         $job = $this->laufender();
-        self::assertSame(['gesamt' => 3, 'mitText' => 1, 'beimWorker' => 2, 'offen' => 0], $this->bestand->stand($job));
+        self::assertSame(['gesamt' => 3, 'mitText' => 1, 'inErkennung' => 0, 'beimWorker' => 2, 'offen' => 0], $this->bestand->stand($job));
+        // At the end, but the worker still has two: another pass later (one may fail).
+        self::assertSame(JobStatus::Offen, $this->schritt()->status);
+        foreach ($this->ocrJobIds() as $id) {
+            $this->jobs->finish($id, JobStatus::Fertig);
+        }
         self::assertSame(JobStatus::Fertig, $this->schritt()->status, 'Nothing left: the run ends.');
         self::assertNotContains($intern, $this->ocrJobs());
         self::assertNotContains($vorher, $this->ocrJobs());
@@ -116,7 +121,6 @@ final class BestandsOcrTest extends WorkerTestCase
 
         // 2 archive + 1 new are waiting: the backfill tops up to 5, not more
         // (once its wait is over).
-        $this->pdo()->exec("UPDATE job SET locked_until = NULL WHERE typ = 'bestand_ocr'");
         $this->schritt();
         self::assertSame(BestandsOcr::NACHSCHUB, $this->jobs->zaehleOffen(JobExecutor::Worker, [WorkerUebergabe::OCR]));
         self::assertSame(7, $this->bestandsZustand()['uebergeben']);
@@ -142,9 +146,54 @@ final class BestandsOcrTest extends WorkerTestCase
 
         // Back: picks up where it stood (the wait is over).
         $this->workers->heartbeat($worker, 1, '1.0.0', WorkerFaehigkeit::cases(), new \DateTimeImmutable());
-        $this->pdo()->exec("UPDATE job SET locked_until = NULL WHERE typ = 'bestand_ocr'");
         $this->schritt();
         self::assertSame([$a, $b], $this->ocrJobs());
+    }
+
+    public function testARefusedVaultWaitsInsteadOfSkippingEverything(): void
+    {
+        $a = $this->dokument(DocumentSource::Archiv);
+        $this->onlineWorker();
+        $this->bestand->starten(null, new \DateTimeImmutable());
+
+        // A vault key rotation runs: no grants from any session.
+        $this->rotation = true;
+        $ergebnis = $this->schritt();
+        self::assertSame(JobStatus::Offen, $ergebnis->status);
+        self::assertSame(['nach' => 0, 'ausgelassen' => 0], array_intersect_key($this->bestandsZustand(), ['nach' => 0, 'ausgelassen' => 0]));
+
+        $this->rotation = false;
+        $this->schritt();
+        self::assertSame([$a], $this->ocrJobs());
+    }
+
+    public function testDocumentsWhoseTextDetectionIsPendingAreTakenInALaterPass(): void
+    {
+        // Below the cursor once it passed: the lower id waits for its text detection.
+        $spaet = $this->dokument(DocumentSource::Archiv, ocr: OcrStatus::Ausstehend);
+        $frueh = $this->dokument(DocumentSource::Archiv);
+        $this->jobs->enqueue(Texterkennung::JOB_TYP, JobExecutor::Session, 'document', $spaet);
+        $this->onlineWorker();
+        $this->bestand->starten(null, new \DateTimeImmutable());
+
+        $this->schritt();
+        self::assertSame([$frueh], $this->ocrJobs());
+        $this->documents->setzeOcrStatus($spaet, OcrStatus::Uebersprungen);
+        $this->pdo()->exec("UPDATE job SET status = 'fertig' WHERE typ = 'extract_text'");
+
+        $this->schritt(); // end of the pass, the worker still has one: from the start again
+        $this->schritt();
+        self::assertSame([$frueh, $spaet], $this->ocrJobs());
+    }
+
+    public function testARunningImportCannotBeChosen(): void
+    {
+        $doc = $this->dokument(DocumentSource::Archiv);
+        $id = $this->imports->insert(str_repeat('c', 32), '{lieferant} {datum}', 5, $this->vault->sealDataKey(DataKey::generate()), null, new \DateTimeImmutable());
+        $this->imports->starte($id, '{lieferant} {datum}', new \DateTimeImmutable());
+        $this->imports->setzeStand($id, new ArchiveImportStats(belege: 1, ersteDocumentId: $doc, letzteDocumentId: $doc), null);
+
+        self::assertNull($this->bestand->starten($id, new \DateTimeImmutable()), 'Its range is not known yet.');
     }
 
     public function testOneRunAtATimeAndStoppable(): void
@@ -279,9 +328,13 @@ final class BestandsOcrTest extends WorkerTestCase
         return [$id, $schluessel];
     }
 
-    /** One step of the backfill, the way JobRunner runs it; returns the job afterwards. */
+    /**
+     * One step of the backfill, the way JobRunner runs it, its wait (if
+     * any) taken as over; returns the job afterwards.
+     */
     private function schritt(): Job
     {
+        $this->pdo()->exec("UPDATE job SET locked_until = NULL WHERE typ = 'bestand_ocr'");
         $job = $this->jobs->claim(JobExecutor::Session, 'sitzung', 60, BestandsOcr::JOB_TYP);
         self::assertNotNull($job);
         $this->jobs->schrittErledigt($job->id, 'sitzung', $this->bestand->schritt($job, $this->vault, new \DateTimeImmutable()));
