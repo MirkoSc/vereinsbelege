@@ -40,35 +40,37 @@ final readonly class RateLimitRepository
     }
 
     /**
-     * Counts one attempt and returns the row as it stands afterwards
-     * (security review N-09, issue #246). The count and the window move in
-     * ONE statement: a row whose window has run out starts over at 1, a
-     * current one goes up by 1, a missing one is created - so parallel
-     * requests never read the same value and write it back. MariaDB applies
-     * the assignments left to right, which is why `count` (it compares the
-     * OLD window) comes before `window_start`; GREATEST() keeps a request
-     * with a slightly older clock from rolling a newer window back.
+     * Counts one attempt and returns the count THIS request produced
+     * (security review N-09, issue #246) - in one statement: a row whose
+     * window has run out starts over at 1, a current one goes up by 1, a
+     * missing one is created, and LAST_INSERT_ID(expr) hands back the value
+     * this very statement wrote (per connection, so a parallel request's
+     * increment or reset cannot shift it). MariaDB applies the assignments
+     * left to right, which is why `count` (it compares the OLD window) comes
+     * before `window_start`; GREATEST() keeps a request with a slightly
+     * older clock from rolling a newer window back.
      *
-     * The row read back afterwards can only be at or above this request's
-     * own increment (or gone, after a success reset it) - never below it, so
-     * a limit checked against it lets at most `limit` attempts through.
-     *
-     * @return array{windowStart: string, count: int}|null null only when a
-     *         parallel reset removed the row in between
+     * @param bool $lesen false when the caller only counts and does not need
+     *        the value back (RateLimiter::registerFailure()) - saves the read
      */
-    public function hit(string $keyHash, string $windowStart): ?array
+    public function hit(string $keyHash, string $windowStart, bool $lesen = true): int
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO rate_limit (key_hash, window_start, `count`) VALUES (?, ?, 1)
+            'INSERT INTO rate_limit (key_hash, window_start, `count`) VALUES (?, ?, LAST_INSERT_ID(1))
              ON DUPLICATE KEY UPDATE
-                 `count` = IF(window_start < VALUES(window_start), 1, `count` + 1),
+                 `count` = LAST_INSERT_ID(IF(window_start < VALUES(window_start), 1, `count` + 1)),
                  window_start = GREATEST(window_start, VALUES(window_start))',
         );
         $stmt->bindValue(1, $keyHash, \PDO::PARAM_LOB);
         $stmt->bindValue(2, $windowStart);
         $stmt->execute();
+        if (!$lesen) {
+            return 0;
+        }
 
-        return $this->find($keyHash);
+        $zaehler = $this->pdo->query('SELECT LAST_INSERT_ID()');
+
+        return $zaehler === false ? 0 : (int) $zaehler->fetchColumn();
     }
 
     /**

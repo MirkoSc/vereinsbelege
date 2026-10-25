@@ -104,9 +104,7 @@ final readonly class RateLimiter
             return true;
         }
 
-        $row = $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()));
-
-        return $row === null || $row['count'] <= $limit;
+        return $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable())) <= $limit;
     }
 
     /**
@@ -134,7 +132,7 @@ final readonly class RateLimiter
             return;
         }
 
-        $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()));
+        $this->rows->hit($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()), lesen: false);
     }
 
     /**

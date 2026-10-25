@@ -402,9 +402,9 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertFalse($repo->claimStep($this->userId, $eingerichtet), 'nor an older one');
         self::assertTrue($repo->claimStep($this->userId, $eingerichtet + 2));
 
-        $repo->put($this->userId, str_repeat("\x00", 61));
-        self::assertFalse($repo->claimStep($this->userId, 5), 'an unconfirmed secret accepts nothing');
-        $repo->confirm($this->userId);
+        // A new secret starts from the step of the code that confirmed it.
+        $repo->putConfirmed($this->userId, str_repeat("\x00", 61), 4);
+        self::assertFalse($repo->claimStep($this->userId, 4), 'its confirming code is spent');
         self::assertTrue($repo->claimStep($this->userId, 5), 'a new secret starts afresh');
     }
 
@@ -507,7 +507,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         // Not stored until confirmed (issue #246): the pending secret lives
         // in the session, as server-key ciphertext.
         self::assertFalse($this->pdo()->query('SELECT secret_enc FROM mfa_totp WHERE user_id = ' . $this->userId)->fetchColumn());
-        $secretEnc = $session->totpEinrichtung();
+        $secretEnc = $session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN);
         self::assertIsString($secretEnc);
         $secret = $this->crypto->decrypt($secretEnc);
 
@@ -554,7 +554,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
             self::assertSame(302, $antwort->status, $pfad);
             self::assertStringStartsWith('/app/sicherheit/bestaetigen', (string) ($antwort->headers['Location'] ?? ''), $pfad);
         }
-        self::assertNull($session->totpEinrichtung(), 'no setup was started');
+        self::assertNull($session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN), 'no setup was started');
         self::assertSame(0, $this->anzahlQueueEintraege(), 'no setup mail went out');
 
         $vorher = $this->backupCodeHashes();
@@ -626,7 +626,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         $gestartet = $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/starten', post: ['_csrf' => $session->csrfToken()], ip: '198.51.100.7'));
         self::assertSame(200, $gestartet->status);
         self::assertStringContainsString('<svg', $gestartet->body);
-        self::assertNotNull($session->totpEinrichtung());
+        self::assertNotNull($session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN));
 
         // Abandoned here. The old secret is still the account's.
         $gespeichert = $this->pdo()->query('SELECT secret_enc FROM mfa_totp WHERE user_id = ' . $this->userId)->fetchColumn();
@@ -642,7 +642,7 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         $this->neuanmelden(self::PASSWORT, $this->naechsterCode($alt));
         $session = new Session();
         $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/starten', post: ['_csrf' => $session->csrfToken()], ip: '198.51.100.7'));
-        $neu = $this->crypto->decrypt((string) $session->totpEinrichtung());
+        $neu = $this->crypto->decrypt((string) $session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN));
 
         $falsch = $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/bestaetigen', post: ['_csrf' => $session->csrfToken(), 'code' => '000000'], ip: '198.51.100.7'));
         self::assertStringContainsString('stimmt nicht', $falsch->body);
@@ -653,9 +653,33 @@ final class TwoFactorFlowTest extends DatabaseTestCase
 
         $gespeichert = (string) $this->pdo()->query('SELECT secret_enc FROM mfa_totp WHERE user_id = ' . $this->userId)->fetchColumn();
         self::assertSame($neu, $this->crypto->decrypt($gespeichert));
-        self::assertNull($session->totpEinrichtung());
+        self::assertNull($session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN));
         self::assertFalse($session->neuanmeldungGueltig(Neuanmeldung::GUELTIG_SEKUNDEN), 'a second change asks again');
         self::assertSame(302, $this->dispatch($this->get('/app/sicherheit/einrichten'))->status);
+    }
+
+    /**
+     * The re-authentication running out while the QR code is being scanned
+     * does not cost the setup: it has its own window from the start.
+     */
+    public function testEineGestarteteEinrichtungUeberlebtDasEndeDerBestaetigung(): void
+    {
+        $alt = $this->totpAngemeldet();
+        $this->neuanmelden(self::PASSWORT, $this->naechsterCode($alt));
+        $session = new Session();
+        $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/starten', post: ['_csrf' => $session->csrfToken()], ip: '198.51.100.7'));
+        $neu = $this->crypto->decrypt((string) $session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN));
+        $session->verwirfNeuanmeldung();
+
+        $richtig = $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/bestaetigen', post: ['_csrf' => $session->csrfToken(), 'code' => Totp::code($neu, new \DateTimeImmutable())], ip: '198.51.100.7'));
+
+        self::assertSame(200, $richtig->status);
+        self::assertStringContainsString('eingerichtet', $richtig->body);
+
+        // A pending secret older than the window is not: back to the confirmation.
+        $session->merkeTotpEinrichtung($this->crypto->encrypt($neu), new \DateTimeImmutable('-11 minutes'));
+        $spaet = $this->dispatch(new Request(HttpMethod::Post, '/app/sicherheit/einrichten/totp/bestaetigen', post: ['_csrf' => $session->csrfToken(), 'code' => '123456'], ip: '198.51.100.7'));
+        self::assertStringStartsWith('/app/sicherheit/bestaetigen', (string) ($spaet->headers['Location'] ?? ''));
     }
 
     /** Switching to e-mail drops the authenticator: the login would otherwise still take its codes. */

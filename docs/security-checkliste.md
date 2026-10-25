@@ -34,7 +34,7 @@ eine in diesem PR behobene Zeile.
 | `tests/Http/RoutePermissionMatrixTest` | jede Route × anonym × sechs Systemrollen gegen ihre Deklaration; Stichproben gegen die Rechte-Tabelle; Allowlist öffentlicher Routen; `/admin` nur mit `admin.*`; **jede** Deklaration gegen `routen-zugriff.txt` (#78); **jede** POST-Route ohne gültiges CSRF-Token → 403, Ausnahmen festgeschrieben; 2FA-Einrichtungspflicht auch für JSON (#246) |
 | `tests/Http/CspComplianceTest` | CSP ohne `unsafe-inline`/`unsafe-eval`, kein externer Host, kein Inline-JS/`on*`/`hx-on` in Views, Security-Header vollständig (#78: XFO, Permissions-Policy, COOP) |
 | `tests/Http/SessionOptionsTest` | `cache_limiter=nocache`, kein `use_strict_mode` (#78) |
-| `tests/Http/ResponseSendTest` | Session-Cookie über HTTPS `__Host-sid` mit Secure, Path=/, ohne Domain; altes `PHPSESSID` ignoriert und gelöscht (#246) |
+| `tests/Http/ResponseSendTest` | Session-Cookie über HTTPS `__Host-sid` mit Secure, Path=/, ohne Domain; altes `PHPSESSID` einmal übernommen und gelöscht (#246) |
 | `tests/Integration/RateLimiterTest` | `versuch()` lässt auch über parallele Verbindungen höchstens das Limit durch (#246) |
 | `tests/Http/KernelErrorLogTest`, `ExceptionArgsTest` | Fehlerseite ohne Trace, Log ohne Argumente |
 | `tests/Support/NoShellExecutionTest` | kein `exec` & Co. außerhalb von `worker/src/Prozess.php` |
@@ -75,7 +75,7 @@ eine in diesem PR behobene Zeile.
 | B-01 | Session-Cookie `httponly`, `samesite=Lax`, `secure` aus dem Schema | ✓ | `Http/Session::start()` |
 | B-02 | Kein Cache für Sitzungsseiten; `use_strict_mode` bewusst aus (Regenerations-Race mit Pollern) | ✓ (#78) | `Session::OPTIONEN` |
 | B-03 | Tresor-, 2FA-, Geräte-Cookie mit `__Host-`-Präfix | ✓ | `Http/Cookie` |
-| B-04 | Session-Cookie mit `__Host-`-Namen | ✓ (#246) | `Session::NAME_HTTPS` = `__Host-sid` über HTTPS; altes `PHPSESSID` wird ignoriert und gelöscht (einmal neu anmelden) – vorher N-14 |
+| B-04 | Session-Cookie mit `__Host-`-Namen | ✓ (#246) | `Session::NAME_HTTPS` = `__Host-sid` über HTTPS; altes `PHPSESSID` wird einmal übernommen und gelöscht (kein Logout mitten im Update) – vorher N-14 |
 | B-05 | Neue Session-ID bei Login, Rechte-/Passwortwechsel; CSRF-Token verworfen | ✓ | `Session::login()`, `adoptEpoch()` |
 | B-06 | Idle 30 min / absolut 12 h, Settings mit sicherem Rückfall | ✓ | `SessionTimeouts`, `Session::isExpired()` |
 | B-07 | Idle-Timeout greift auch bei offenem Tab (Hintergrund-Polling verlängert nicht) | ✓ (#78) | `LoginGuard::HINTERGRUND_HEADER`, `public/js/jobs.js`, `rasterung.js` – Folge: eine lange Job-Kette ohne Klick endet nach 30 min, weiter nach erneuter Anmeldung |

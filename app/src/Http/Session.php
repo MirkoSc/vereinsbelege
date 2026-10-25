@@ -76,11 +76,23 @@ final class Session
         if (session_status() === PHP_SESSION_NONE) {
             $https = Request::httpsFromGlobals();
             session_name($https ? self::NAME_HTTPS : self::NAME_HTTP);
-            // The switch from PHPSESSID (N-14): a cookie of that name is
-            // ignored over HTTPS - the session behind it is not taken over,
-            // so the update costs one fresh login and nothing else - and
-            // deleted, so it does not linger next to the new one.
-            if ($https && isset($_COOKIE[self::NAME_HTTP]) && !headers_sent()) {
+            // The switch from PHPSESSID (N-14): a browser that still has
+            // only the old cookie keeps its session - the same id moves over
+            // to `__Host-sid` once, and the old cookie is deleted. Not
+            // ignoring it is deliberate: the self-update switches to this
+            // release between two of its steps, and an admin logged out
+            // there would leave the site in maintenance mode (the login page
+            // is closed while the flag is set). The id is kept, not
+            // regenerated: a regeneration racing with the pollers' requests,
+            // which carry the same old cookie, would log the tab out (the
+            // reason use_strict_mode is off). It is no weaker than before -
+            // it is the session this browser already had - and the next
+            // login regenerates it anyway.
+            $alt = $_COOKIE[self::NAME_HTTP] ?? null;
+            if ($https && is_string($alt) && !isset($_COOKIE[self::NAME_HTTPS]) && preg_match('/^[A-Za-z0-9,-]{22,256}$/', $alt) === 1) {
+                session_id($alt);
+            }
+            if ($https && $alt !== null && !headers_sent()) {
                 setcookie(self::NAME_HTTP, '', [
                     'expires' => 1,
                     'path' => '/',
@@ -261,16 +273,26 @@ final class Session
      * setup started and then abandoned leaves the account's current
      * authenticator working (N-08, issue #246).
      */
-    public function merkeTotpEinrichtung(string $secretEnc): void
+    public function merkeTotpEinrichtung(string $secretEnc, ?\DateTimeImmutable $now = null): void
     {
-        $_SESSION[self::TOTP_EINRICHTUNG] = $secretEnc;
+        $_SESSION[self::TOTP_EINRICHTUNG] = [
+            'enc' => $secretEnc,
+            'at' => ($now ?? new \DateTimeImmutable())->getTimestamp(),
+        ];
     }
 
-    public function totpEinrichtung(): ?string
+    /**
+     * The pending secret, if it was started less than $sekunden ago.
+     */
+    public function totpEinrichtung(int $sekunden, ?\DateTimeImmutable $now = null): ?string
     {
         $wert = $_SESSION[self::TOTP_EINRICHTUNG] ?? null;
+        if (!is_array($wert) || !is_string($wert['enc'] ?? null) || $wert['enc'] === '' || !is_int($wert['at'] ?? null)) {
+            return null;
+        }
+        $alter = ($now ?? new \DateTimeImmutable())->getTimestamp() - $wert['at'];
 
-        return is_string($wert) && $wert !== '' ? $wert : null;
+        return $alter >= 0 && $alter < $sekunden ? $wert['enc'] : null;
     }
 
     public function verwirfTotpEinrichtung(): void

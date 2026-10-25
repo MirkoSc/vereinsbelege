@@ -29,12 +29,22 @@ $istTotp = $mfaMethod === \App\Service\Account\MfaMethod::Totp;
         oder einem Backup-Code. Die Bestätigung gilt zehn Minuten.
     </p>
 
+    <?php if (!$istTotp): ?>
+        <form method="post" action="/app/sicherheit/bestaetigen/code-senden">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <input type="hidden" name="weiter" value="<?= e($weiter) ?>">
+            <p>Fordern Sie zuerst einen Code an:
+                <button type="submit" class="knopf">Code per E-Mail senden</button>
+            </p>
+        </form>
+    <?php endif; ?>
+
     <form method="post" action="/app/sicherheit/bestaetigen" class="formular">
         <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
         <input type="hidden" name="weiter" value="<?= e($weiter) ?>">
 
         <label for="neuanmeldung-passwort">Passwort
-            <input type="password" id="neuanmeldung-passwort" name="passwort" autocomplete="current-password" required autofocus>
+            <input type="password" id="neuanmeldung-passwort" name="passwort" autocomplete="current-password" required<?= $istTotp ? ' autofocus' : '' ?>>
         </label>
 
         <label for="neuanmeldung-code">Code
@@ -46,13 +56,15 @@ $istTotp = $mfaMethod === \App\Service\Account\MfaMethod::Totp;
         <p><button type="submit" class="knopf knopf-primaer">Bestätigen</button></p>
     </form>
 
-    <form method="post" action="/app/sicherheit/bestaetigen/code-senden">
-        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
-        <input type="hidden" name="weiter" value="<?= e($weiter) ?>">
-        <p class="feld-hilfe"><?= $istTotp ? 'Kein Zugriff auf die Authenticator-App?' : 'Keinen Code erhalten?' ?>
-            <button type="submit" class="knopf knopf-still">Code per E-Mail senden</button>
-        </p>
-    </form>
+    <?php if ($istTotp): ?>
+        <form method="post" action="/app/sicherheit/bestaetigen/code-senden">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <input type="hidden" name="weiter" value="<?= e($weiter) ?>">
+            <p class="feld-hilfe">Kein Zugriff auf die Authenticator-App?
+                <button type="submit" class="knopf knopf-still">Code stattdessen per E-Mail senden</button>
+            </p>
+        </form>
+    <?php endif; ?>
 
     <p><a class="knopf knopf-still" href="/app/sicherheit">Abbrechen</a></p>
 </section>

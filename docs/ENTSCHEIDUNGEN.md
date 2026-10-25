@@ -2045,10 +2045,13 @@ Entscheidungen dabei:
   Erfolge; zwei zeitgleiche Einreichungen können beide durch – das atomare
   Upload-Budget begrenzt, was dabei gespeichert werden kann).
 - **Session-Cookie `__Host-sid` über HTTPS (N-14),** über HTTP (nur
-  Docker-Entwicklung) weiter `PHPSESSID`. Übergang: ein altes `PHPSESSID`
-  wird über HTTPS **nicht übernommen**, sondern gelöscht – nach dem Update
-  meldet sich jeder **einmal neu an**. Übernehmen hätte genau die nicht
-  geschützte ID weitergetragen, gegen die das Präfix schützt.
+  Docker-Entwicklung) weiter `PHPSESSID`. Übergang: hat der Browser nur das
+  alte `PHPSESSID`, wandert **dieselbe** Session-ID einmal unter
+  `__Host-sid`, das alte Cookie wird gelöscht – kein Massen-Logout. Grund:
+  der Self-Updater führt seine letzten Schritte schon auf dem neuen Release
+  aus; ein dort abgemeldeter Admin käme nicht mehr hinein (die Anmeldeseite
+  ist im Wartungsmodus gesperrt). Keine Neuvergabe der ID dabei (Race mit
+  den Pollern, wie bei `use_strict_mode`); der nächste Login vergibt sie neu.
 - **2FA-Pflicht auch für JSON-Routen (N-10):** 403 mit `weiter` statt
   Umleitung; die Poller (`jobs.js`, `rasterung.js`) halten bei 403 an, die
   Einrichtungsseiten unter `/app/sicherheit/*` bleiben offen.
@@ -2059,6 +2062,14 @@ Entscheidungen dabei:
   und per Test. Die bisherigen Prüfungen in den Controllern bleiben.
   Folge: ein abgelaufenes Formular auf der Anmeldeseite zeigt jetzt die
   403-Seite mit Link statt das Formular mit Hinweis.
+
+- Eine **gestartete TOTP-Einrichtung** hat ihr eigenes 10-Minuten-Fenster ab
+  Start; läuft die Bestätigung beim QR-Scannen ab, lässt sie sich trotzdem
+  abschließen. „Code per E-Mail senden“ auf der Bestätigungsseite zählt
+  gegen das Limit des zweiten Faktors.
+- Skript-Anfragen (Token im Header `X-CSRF-Token` oder `Accept: application/json`)
+  bekommen die 403 als JSON, auch auf Routen ohne API-Deklaration (Update-,
+  Backup-, Speicher-Schrittketten).
 
 Offen für Mirko: ob 10 Minuten passen; ob die erste Einrichtung zusätzlich
 das Passwort verlangen soll; ob die 403-Seite beim Login statt dessen das

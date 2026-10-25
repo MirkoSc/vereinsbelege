@@ -795,8 +795,11 @@ final class RoutePermissionMatrixTest extends TestCase
                 self::assertInstanceOf(Response::class, $antwort);
                 self::assertSame(403, $antwort->status, 'POST ' . $route->pattern . ' without a valid token');
                 self::assertNotSame(self::ERREICHT, $antwort->body, 'POST ' . $route->pattern . ' reached its handler');
-                if ($route->zugriff->api) {
+                if ($route->zugriff->api || $token !== null) {
+                    // A stale token in the header is a script's request - it gets JSON.
                     self::assertStringStartsWith('application/json', $antwort->headers['Content-Type'] ?? '', $route->pattern);
+                } else {
+                    self::assertStringStartsWith('text/html', $antwort->headers['Content-Type'] ?? '', $route->pattern);
                 }
             }
             ++$geprueft;

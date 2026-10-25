@@ -145,7 +145,9 @@ final readonly class SecurityController
         if (!$this->session->checkCsrf($request)) {
             return $this->bestaetigenSeite($userId, $weiter, fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
-        if ($this->mfa->isBlocked($request->ip, $userId)) {
+        // Every mail counts against the second factor's limit, so the page
+        // cannot be used to flood the account's mailbox.
+        if (!$this->mfa->versuch($request->ip, $userId)) {
             return $this->bestaetigenSeite($userId, $weiter, fehler: NeuanmeldungErgebnis::ZuVieleVersuche->meldung());
         }
 
@@ -189,14 +191,15 @@ final readonly class SecurityController
             return $this->seite('waehlen', fehler: 'Die Sitzung ist abgelaufen – bitte erneut versuchen.');
         }
         $userId = $this->requireUserId();
-        $umweg = $this->ohneNeuanmeldung($userId, self::EINRICHTEN);
-        if ($umweg !== null) {
-            return $umweg;
-        }
 
-        $secretEnc = $this->session->totpEinrichtung();
+        // A setup started within the window may be finished even if the
+        // re-authentication itself has run out meanwhile: starting it
+        // already required one (totpStarten()), and scanning the code takes
+        // its time. The setup has its own window of the same length.
+        $secretEnc = $this->session->totpEinrichtung(Neuanmeldung::GUELTIG_SEKUNDEN);
         if ($secretEnc === null) {
-            return $this->seite('waehlen', fehler: 'Die Einrichtung ist abgelaufen – bitte erneut starten.');
+            return $this->ohneNeuanmeldung($userId, self::EINRICHTEN)
+                ?? $this->seite('waehlen', fehler: 'Die Einrichtung ist abgelaufen – bitte erneut starten.');
         }
         $secret = $this->crypto->decrypt($secretEnc);
 

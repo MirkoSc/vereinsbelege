@@ -589,13 +589,15 @@ Schrittkette auf `/admin/tresor/rotation` (Recht `admin.vault_grant`,
 - **Session-Cookie** (issue #246, N-14): über HTTPS heißt es `__Host-sid`
   (`Secure`, `Path=/`, keine `Domain`, `httponly`, `samesite=Lax`) – weder
   eine Nachbar-Subdomain noch eine HTTP-Antwort kann es setzen oder
-  überschreiben. Über HTTP (nur Docker-Entwicklung) bleibt `PHPSESSID`. Ein
-  altes `PHPSESSID` wird über HTTPS nicht übernommen, sondern gelöscht: nach
-  dem Update meldet sich jeder einmal neu an. `use_strict_mode` bleibt aus
-  (Regenerations-Race mit den Pollern, #78).
+  überschreiben. Über HTTP (nur Docker-Entwicklung) bleibt `PHPSESSID`. Hat
+  ein Browser über HTTPS nur das alte `PHPSESSID`, läuft dieselbe Session
+  einmal unter `__Host-sid` weiter und das alte Cookie wird gelöscht – sonst
+  wäre der Admin mitten im Self-Update abgemeldet (06 §1). `use_strict_mode`
+  bleibt aus (Regenerations-Race mit den Pollern, #78).
 - **CSRF zentral** (issue #246, N-15): `app/src/routes.php` legt um jede
   POST-Route `App\Http\CsrfSchutz` (hinter dem Login-Guard; ohne gültiges
-  Token 403, HTML bzw. JSON). Einzige Ausnahmen, festgeschrieben in
+  Token 403 – JSON für API-Routen und für Skript-Anfragen mit Token-Header,
+  sonst HTML). Einzige Ausnahmen, festgeschrieben in
   `CsrfSchutz::AUSNAHMEN`: `/einreichen*` (keine Session, Formular-Token,
   §5) und `/api/worker/*` (HMAC-Signatur, 07). Die Prüfungen in den
   Controllern bleiben zusätzlich.
@@ -1061,8 +1063,8 @@ auch für JSON-Routen; 2FA ändern/Backup-Codes neu nur nach Neuanmeldung
 (Passwort + aktueller Faktor, 10 min, verbraucht), abgebrochene
 TOTP-Neueinrichtung lässt die alte App gültig; `RateLimiter::versuch()`
 lässt auch über parallele Verbindungen höchstens das Limit durch;
-Session-Cookie `__Host-sid` über HTTPS, altes `PHPSESSID` ignoriert und
-gelöscht;
+Session-Cookie `__Host-sid` über HTTPS, altes `PHPSESSID` einmal
+übernommen und gelöscht;
 Kostenstellen-Scope; Zeitraum-Scope und Ablauf externer Konten
 (Kassenprüfer/Steuerberater); Audit-Hash-Kette inkl.
 Manipulationserkennung; CSP-Compliance (übernommen). Öffentliche

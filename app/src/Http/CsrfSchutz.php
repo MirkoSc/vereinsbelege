@@ -75,7 +75,12 @@ final readonly class CsrfSchutz
 
     private function abweisen(Request $request, bool $api): ResponseInterface
     {
-        if ($api) {
+        // Script-driven requests answer in JSON even on routes that are not
+        // declared API: the step chains of update, backup and storage
+        // (update.js, backups.js, speicher.js) read the answer with json().
+        // They - and htmx - send the token as a header; a plain form never
+        // does.
+        if ($api || $request->header('x-csrf-token') !== null || str_contains($request->header('accept') ?? '', 'application/json')) {
             return Response::json(['fehler' => 'Das Sicherheits-Token fehlt oder ist abgelaufen. Bitte laden Sie die Seite neu.'], 403);
         }
 

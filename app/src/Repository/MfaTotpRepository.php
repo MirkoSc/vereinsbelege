@@ -21,23 +21,6 @@ final readonly class MfaTotpRepository
     }
 
     /**
-     * Overwrites any previous secret with an unconfirmed one. The setup no
-     * longer goes through here (putConfirmed(), issue #246) - it stays for
-     * tests and tooling that need a secret in place.
-     */
-    public function put(int $userId, string $secretEnc, ?\DateTimeImmutable $now = null): void
-    {
-        $stmt = $this->pdo->prepare(
-            'INSERT INTO mfa_totp (user_id, secret_enc, confirmed_at, created_at) VALUES (?, ?, NULL, ?)
-             ON DUPLICATE KEY UPDATE secret_enc = VALUES(secret_enc), confirmed_at = NULL, last_step = NULL, created_at = VALUES(created_at)',
-        );
-        $stmt->bindValue(1, $userId, \PDO::PARAM_INT);
-        $stmt->bindValue(2, $secretEnc, \PDO::PARAM_LOB);
-        $stmt->bindValue(3, ($now ?? new \DateTimeImmutable())->format(self::FORMAT));
-        $stmt->execute();
-    }
-
-    /**
      * Replaces the account's secret with one whose first code was just
      * confirmed - confirmed and with that code's step spent, in ONE
      * statement (issue #246, N-08). Until this runs, the previous secret
@@ -74,12 +57,6 @@ final readonly class MfaTotpRepository
             secretEnc: (string) $row['secret_enc'],
             confirmedAt: is_string($row['confirmed_at']) ? new \DateTimeImmutable($row['confirmed_at']) : null,
         );
-    }
-
-    public function confirm(int $userId, ?\DateTimeImmutable $now = null): void
-    {
-        $stmt = $this->pdo->prepare('UPDATE mfa_totp SET confirmed_at = ? WHERE user_id = ?');
-        $stmt->execute([($now ?? new \DateTimeImmutable())->format(self::FORMAT), $userId]);
     }
 
     /**

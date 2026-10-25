@@ -115,12 +115,12 @@ final class ResponseSendTest extends TestCase
     }
 
     /**
-     * The switch after the update: a browser still sending PHPSESSID does
-     * not get that session back over HTTPS (it would carry an id that was
-     * never protected by the prefix) - it gets a fresh one, which means one
-     * new login, and the old cookie is deleted instead of lingering.
+     * The switch after the update: a browser still sending only PHPSESSID
+     * keeps its session - the self-update runs its last steps on this
+     * release, and logging the admin out there would leave the site in
+     * maintenance mode. The id moves to `__Host-sid`, PHPSESSID is deleted.
      */
-    public function testAnOldPhpsessidIsIgnoredAndDeletedOverHttps(): void
+    public function testAnOldPhpsessidMovesToTheHostCookieOverHttps(): void
     {
         $alt = $this->cookies($this->request('/anmelden'))[Session::NAME_HTTP] ?? '';
         self::assertNotSame('', $alt, 'Testvorbereitung: eine angemeldete Session unter dem alten Namen.');
@@ -128,14 +128,22 @@ final class ResponseSendTest extends TestCase
         $antwort = $this->request('/', Session::NAME_HTTP . '=' . $alt, https: true);
         $cookies = $this->cookies($antwort);
 
-        self::assertArrayHasKey(Session::NAME_HTTPS, $cookies);
-        self::assertNotSame($alt, $cookies[Session::NAME_HTTPS], 'Die alte Session wird nicht übernommen.');
-        self::assertStringNotContainsString(
-            'user_id',
-            (string) file_get_contents($this->sessionDir . '/sess_' . $cookies[Session::NAME_HTTPS]),
-        );
+        self::assertSame($alt, $cookies[Session::NAME_HTTPS] ?? null, 'Die Session läuft unter dem neuen Namen weiter.');
+        self::assertStringContainsString('user_id|i:42;', (string) file_get_contents($this->sessionDir . '/sess_' . $alt));
         $loeschen = $this->setCookieZeile($antwort, Session::NAME_HTTP);
         self::assertMatchesRegularExpression('/expires=Thu, 01[ -]Jan[ -]1970/i', $loeschen, 'PHPSESSID wird gelöscht.');
+    }
+
+    /** Once the new cookie exists, a leftover PHPSESSID is not taken over again. */
+    public function testWithBothCookiesTheHostCookieWins(): void
+    {
+        $neu = $this->cookies($this->request('/', https: true))[Session::NAME_HTTPS] ?? '';
+        $alt = $this->cookies($this->request('/anmelden'))[Session::NAME_HTTP] ?? '';
+
+        $antwort = $this->request('/', Session::NAME_HTTPS . '=' . $neu . '; ' . Session::NAME_HTTP . '=' . $alt, https: true);
+
+        self::assertArrayNotHasKey(Session::NAME_HTTPS, $this->cookies($antwort), 'kein neues Cookie - die bestehende Session bleibt');
+        $this->setCookieZeile($antwort, Session::NAME_HTTP);
     }
 
     private function setCookieZeile(string $response, string $name): string
