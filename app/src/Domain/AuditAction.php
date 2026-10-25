@@ -169,6 +169,8 @@ enum AuditAction: string
     case EinstellungAbgleich = 'einstellung.abgleich';
     /** Issue #80/M13-3: Impressum/Datenschutz/notice changed (names of the texts only). */
     case EinstellungRechtstexte = 'einstellung.rechtstexte';
+    /** Issue #93: DATEV export settings (counts of mapped accounts only). */
+    case EinstellungDatev = 'einstellung.datev';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -177,6 +179,8 @@ enum AuditAction: string
     case ExportZurueckgesetzt = 'export.zurueckgesetzt';
     /** Every file of an export run filed into the Nextcloud (issue #95). */
     case ExportNextcloud = 'export.nextcloud';
+    /** DATEV Buchungsstapel downloaded (issue #93): period and number of bookings. */
+    case ExportDatev = 'export.datev';
     // The archive import (issue #77/M12-3): counts and document ids - never a name.
     case ArchivImportiert = 'archiv.importiert';
 
@@ -309,6 +313,8 @@ enum AuditAction: string
             self::ExportMarkiert => 'Export als vollständig bestätigt',
             self::ExportZurueckgesetzt => 'Export-Markierung zurückgesetzt',
             self::ExportNextcloud => 'Export in Nextcloud abgelegt',
+            self::ExportDatev => 'DATEV-Export erstellt',
+            self::EinstellungDatev => 'DATEV-Einstellungen geändert',
             self::ArchivImportiert => 'Archiv importiert',
             self::WorkerKopplungscode => 'Worker-Kopplungscode erzeugt',
             self::WorkerGekoppelt => 'Worker gekoppelt',
@@ -376,7 +382,7 @@ enum AuditAction: string
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
-            self::ExportErstellt, self::WorkerKopplungscode,
+            self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen,
             self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,
