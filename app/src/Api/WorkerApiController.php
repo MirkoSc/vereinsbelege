@@ -438,7 +438,7 @@ final readonly class WorkerApiController
         if ($job === null || !self::haeltJob($job, $worker, $now)) {
             return self::fehler(404, 'job_unbekannt', 'Kein Job dieses Workers.');
         }
-        $tresor = $this->vaults->current();
+        $tresor = $this->vaults->zumVersiegeln();
         if ($tresor === null) {
             return self::fehler(409, 'kein_tresor', 'Der Tresor ist nicht eingerichtet.');
         }

@@ -1712,11 +1712,29 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
   Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
   ist empfohlen.
 - **Absturzschutz im Postfach:** Der Worker speichert nichts dauerhaft, also
-  liegt die Versuchs-Marke als Keyword (`$VereinsbelegeVersuch`, sonst
-  `\Flagged`) an der Mail selbst. Eine Mail, an der der Worker gestorben ist,
-  wird beim nächsten Abruf als „unlesbar“ markiert statt erneut geholt –
-  auch dann, wenn der Abbruch nur ein Verbindungsabriss mitten in der Mail
-  war (dann bleibt sie markiert im Postfach für einen Menschen).
+  liegt der Versuchszähler als Keywords (`$VereinsbelegeVersuch`, `…2`,
+  `…3`) an der Mail selbst. *Geändert mit issue #243 (vorläufig, autonom
+  getroffen – Bestätigung durch Mirko offen):* Statt einer einmaligen Marke,
+  nach der eine Mail beim nächsten Abruf sofort „unlesbar“ war, wird eine
+  Mail nach Verbindungsabbruch oder hartem Kill **bis zu dreimal** versucht;
+  erst danach wird sie abgelehnt – und vorher über ihre Message-ID mit dem
+  Posteingang abgeglichen, damit eine schon eingereichte Mail „erledigt“
+  statt „abgelehnt“ wird. Fällt der Webhoster als Ganzes aus, zählt der
+  Versuch nicht. **Ohne eigene Keywords** gibt es keine Versuchs-Marke mehr
+  im Postfach (vorher `\Flagged`, das von Hand markierte Mails fälschlich
+  beiseitelegte); gezählt wird dann in einer kleinen Datei im Volume
+  `/daten` (HMAC von Ordner|UIDVALIDITY|UID, keine Mailinhalte), damit auch
+  ein harter Kill zählt. Der Worker speichert damit eine zweite Datei
+  dauerhaft – bewusste Ausnahme vom „nichts dauerhaft“.
+  Der **Idempotenz-Schlüssel ohne Message-ID** geht jetzt über den
+  Header-Block (höchstens 64 KiB) statt über die ganze Mail, damit er ohne
+  den Mailkörper berechenbar ist.
+- **Mengengrenze auch beim Webhoster** (issue #243, N-17, vorläufig): je
+  Worker und Stunde höchstens 60 Mails und 500 MiB (Settings mit Vorgabe,
+  ohne Admin-Formularfeld), atomar reserviert. Darüber 429 `mail_limit`; der Worker beendet
+  den Abruf, die Mail wartet unmarkiert.
+- **Quelle im Posteingang:** „per E-Mail“ in Liste und Detail, gelesen aus
+  dem versiegelten Payload (`kanal`), also nur mit entsperrtem Tresor.
 - **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
   Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
   nutzt den Archiv-Import oder lädt sie einzeln hoch.
@@ -2016,6 +2034,65 @@ anlegen, `PUBLIC_KEY` committen (`docs/betrieb.md` §13); ob der vierte
 Host so in Ordnung ist; ob handangepasste `.htaccess` dauerhaft als Befund
 erscheinen soll (Alternative: eine im Admin bestätigte „erwartete“
 Prüfsumme).
+
+## E-62 ❓ Anker des Tresor-Schlüssels: MAC unter dem Server-Schlüssel, Erstbeglaubigung beim Update (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #240 (Befunde N-01, F-10, H-05 aus #78), 01 §2 „Anker des Tresor-Schlüssels“, 02 (`vault.public_key_mac`), 06 §1/§2*
+
+`vault.public_key` war das Einzige, was zum Versiegeln nötig ist – und lag
+unbeglaubigt in der Datenbank. Entschieden:
+
+1. **Anker = HMAC-SHA256 über Version und Schlüssel**, Schlüssel aus dem
+   Server-Schlüssel abgeleitet, in der Spalte `public_key_mac` (Migration
+   047). Keine Signatur (es gibt keinen Signaturschlüssel außerhalb des
+   Servers), keine Datei in `shared/` (der Server-Schlüssel ist schon der
+   Teil, der getrennt gesichert wird; eine zweite Datei müsste Backup,
+   Restore und Rotation zusätzlich mitführen).
+2. **Fail closed:** passt der MAC nicht oder fehlt er, wird nichts
+   versiegelt – `current()` wirft, der Login lässt den Tresor gesperrt.
+   Audit `tresor.anker_abweichung` höchstens einmal je Generation und
+   Stunde (öffentliche Seite darf das Log nicht fluten), Systemcheck rot.
+   Das Audit-Log schreibt in dieser Lage ohne Details weiter; Banner und
+   Benutzerverwaltung bleiben erreichbar.
+3. **Neu beglaubigen nur mit Beweis:** Installer und Rotationsstart (Schlüssel
+   im selben Request erzeugt) und der Wiederherstellungsschlüssel
+   (`/admin/wiederherstellen`, Installer-Zugangsschritt). Eine
+   Tresor-Freigabe beim Login ist **kein** Beweis (jeder kann an `U_pub`
+   versiegeln) – darum beglaubigt der Login nie.
+4. **Bestehende Installationen: Erstbeglaubigung (TOFU)** genau in dem
+   Request, der Migration 047 anwendet (Nach-Haken des `Migrator`,
+   erkannt am Namen `vault_anchor`, nicht an der Nummer) – **einmal je
+   Installation**, festgehalten außerhalb der Datenbank in
+   `shared/vault_anchor.flag` (der Installer schreibt sie mit
+   `config.php`). Sonst könnte ein DB-Schreiber den Moment wiederholen
+   (Spalte löschen, `schema_version` senken, Schlüssel tauschen – Befund
+   aus dem Review von #258). Annahme: im Moment des Updates ist der
+   Schlüssel unverfälscht – ein schon vorher ausgetauschter würde
+   beglaubigt (Stand ohne Anker, nicht schlechter).
+5. **Restore beglaubigt nie auf Vertrauen:** mit `config.php` bzw. altem
+   Server-Schlüssel gelten die MACs des Dumps; ein Backup von vor 047 (oder
+   eines, das sich so ausgibt) bleibt unbeglaubigt, bis der
+   Wiederherstellungsschlüssel den Schlüssel beweist. Weg 2 (neuer
+   Schlüssel) beglaubigt die aktuelle Generation per
+   Wiederherstellungsschlüssel. Eine vorgemerkte Rotations-Generation aus
+   einem Backup mitten in der Rotation bleibt dann unbeglaubigt → Rotation
+   abbrechen und neu starten.
+6. **Lebenszyklus im MAC:** Ab der Bestätigung einer neueren Generation
+   trägt die ältere einen MAC mit eigenem Zweck („retired“); versiegelt
+   wird nur an einen aktiven MAC. Zurückdrehen von Bestätigung oder
+   Stilllegung in der DB bringt die alte Generation nicht zurück (Befund
+   aus dem Review von #258).
+
+Bewusst nicht gelöst (Folge-Ideen im PR): Backup mit `config.php`
+beglaubigt sich selbst; kein Reparaturweg für einen tatsächlich
+ausgetauschten Schlüssel außer Restore; das übrige Backup bleibt ohne MAC
+(H-05 nur teilweise).
+
+Offen für Mirko: ob TOFU beim Update akzeptabel ist oder ob nach dem
+Update zusätzlich die Eingabe des Wiederherstellungsschlüssels verlangt
+werden soll (sicherer, aber ein Ausfall der Einreichung bis dahin); ob nach
+dem Restore eines Backups von vor 047 der rote Check bis zur Eingabe des
+Papierschlüssels so in Ordnung ist; ob die Abweichung zusätzlich per Mail
+an die Admins gehen soll.
 
 ## E-70 ❓ Worker abrunden: Rückgabe ohne Versuchsverlust, Aufräumen abgebrochener Versuche, KI-Protokoll, kein `image_cleanup` (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #248, 07 §2, §5, §6, §7, §8; 02 `ai_call_log`; keine Migration*

@@ -29,18 +29,33 @@ final class ImapClient implements Postfach
     public const string KEYWORD_ABGELEHNT = '$VereinsbelegeAbgelehnt';
 
     /**
-     * Set before a mail is fetched and removed after it was handled: a mail
-     * that still carries it crashed the worker (review of #87) and is set
-     * aside instead of being fetched again on every start.
+     * The attempt counter, kept at the mail itself because the worker keeps
+     * nothing (review of #87, issue #243): before the n-th attempt the mail
+     * gets the n-th keyword, all go once it is handled. A mail still
+     * carrying them was not finished - the connection broke or the worker
+     * died - and is tried again; after the last one it is set aside.
      */
-    public const string KEYWORD_VERSUCH = '$VereinsbelegeVersuch';
+    public const array KEYWORDS_VERSUCH = ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2', '$VereinsbelegeVersuch3'];
+
+    /** Piece size for reading off a literal that is dropped. */
+    private const int STUECK = 65536;
+
 
     /** Largest literal accepted unless a command sets a smaller one. */
     private const int MAX_LITERAL = 96 * 1024 * 1024;
 
     private int $maxLiteral = self::MAX_LITERAL;
 
+    /**
+     * A literal of the last command was larger than allowed and was read
+     * off the stream and dropped - the answer is unusable, the connection
+     * stays in step (review of #243).
+     */
+    private bool $verworfen = false;
+
     private int $tag = 0;
+
+    private int $uidGueltigkeit = 0;
 
     /** @var list<string> upper case */
     private array $faehigkeiten = [];
@@ -80,12 +95,18 @@ final class ImapClient implements Postfach
         if ($status !== 'OK') {
             throw new ImapFehler('imap_ordner', 'Der Ordner wurde nicht gefunden.');
         }
+        $this->uidGueltigkeit = 0;
+        foreach ($antworten as [$text]) {
+            if (preg_match('/\[UIDVALIDITY (\d+)\]/i', $text, $t) === 1) {
+                $this->uidGueltigkeit = (int) $t[1];
+            }
+        }
         foreach ($antworten as [$text]) {
             if (preg_match('/\[PERMANENTFLAGS \(([^)]*)\)\]/i', $text, $t) === 1) {
                 $flags = preg_split('/\s+/', trim($t[1])) ?: [];
 
                 return in_array('\\*', $flags, true)
-                    || (in_array(self::KEYWORD_ERLEDIGT, $flags, true) && in_array(self::KEYWORD_ABGELEHNT, $flags, true) && in_array(self::KEYWORD_VERSUCH, $flags, true));
+                    || array_diff([self::KEYWORD_ERLEDIGT, self::KEYWORD_ABGELEHNT, ...self::KEYWORDS_VERSUCH], $flags) === [];
             }
         }
 
@@ -126,29 +147,44 @@ final class ImapClient implements Postfach
         return $uids;
     }
 
-    public function inArbeit(bool $mitKeywords, ?string $seit = null): array
-    {
-        $kriterien = $mitKeywords
-            ? 'KEYWORD ' . self::KEYWORD_VERSUCH . ' UNKEYWORD ' . self::KEYWORD_ERLEDIGT . ' UNKEYWORD ' . self::KEYWORD_ABGELEHNT . ' UNDELETED'
-            : 'UNSEEN FLAGGED UNDELETED';
-
-        return $this->suchen($kriterien, $seit);
-    }
-
-    public function groessen(array $uids): array
+    public function angaben(array $uids): array
     {
         if ($uids === []) {
             return [];
         }
-        [$antworten] = $this->befehlOk('UID FETCH ' . implode(',', array_map(intval(...), $uids)) . ' (RFC822.SIZE)');
-        $groessen = [];
+        [$antworten] = $this->befehlOk('UID FETCH ' . implode(',', array_map(intval(...), $uids)) . ' (RFC822.SIZE FLAGS)');
+        $angaben = [];
         foreach ($antworten as [$text]) {
             if (preg_match('/\bUID (\d+)/i', $text, $u) === 1 && preg_match('/\bRFC822\.SIZE (\d+)/i', $text, $g) === 1) {
-                $groessen[(int) $u[1]] = (int) $g[1];
+                $flags = preg_match('/\bFLAGS \(([^)]*)\)/i', $text, $f) === 1 ? (preg_split('/\s+/', trim($f[1]), -1, PREG_SPLIT_NO_EMPTY) ?: []) : [];
+                $angaben[(int) $u[1]] = ['groesse' => (int) $g[1], 'flags' => array_values($flags)];
             }
         }
 
-        return $groessen;
+        return $angaben;
+    }
+
+    public function uidGueltigkeit(): int
+    {
+        return $this->uidGueltigkeit;
+    }
+
+    public function kopf(int $uid): string
+    {
+        $this->maxLiteral = self::KOPF_BYTES;
+        try {
+            [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[HEADER]<0.' . self::KOPF_BYTES . '>)');
+        } finally {
+            $this->maxLiteral = self::MAX_LITERAL;
+        }
+        $this->nichtVerworfen();
+        foreach ($antworten as [$text, $literale]) {
+            if ($literale !== [] && preg_match('/BODY\[HEADER\](?:<0>)? \{\d+\+?\}/i', $text) === 1) {
+                return $literale[0];
+            }
+        }
+
+        throw new ImapFehler('imap_protokoll', 'Die Mail konnte nicht gelesen werden.');
     }
 
     public function holen(int $uid, int $maxBytes): string
@@ -160,6 +196,7 @@ final class ImapClient implements Postfach
         } finally {
             $this->maxLiteral = self::MAX_LITERAL;
         }
+        $this->nichtVerworfen();
         foreach ($antworten as [$text, $literale]) {
             if ($literale !== [] && preg_match('/\bUID ' . $uid . '\b/i', $text) === 1 && preg_match('/BODY\[\] \{\d+\+?\}/i', $text) === 1) {
                 return $literale[0];
@@ -177,22 +214,23 @@ final class ImapClient implements Postfach
 
     public function markieren(int $uid, array $flags): void
     {
-        foreach ($flags as $flag) {
-            if (preg_match('/^\\\\?\$?[A-Za-z][A-Za-z0-9]*$/', $flag) !== 1) {
-                throw new \InvalidArgumentException('Invalid flag.');
-            }
-        }
-        $this->befehlOk('UID STORE ' . $uid . ' +FLAGS.SILENT (' . implode(' ', $flags) . ')');
+        $this->speichern($uid, '+', $flags);
     }
 
     public function entmarkieren(int $uid, array $flags): void
+    {
+        $this->speichern($uid, '-', $flags);
+    }
+
+    /** @param list<string> $flags */
+    private function speichern(int $uid, string $richtung, array $flags): void
     {
         foreach ($flags as $flag) {
             if (preg_match('/^\\\\?\$?[A-Za-z][A-Za-z0-9]*$/', $flag) !== 1) {
                 throw new \InvalidArgumentException('Invalid flag.');
             }
         }
-        $this->befehlOk('UID STORE ' . $uid . ' -FLAGS.SILENT (' . implode(' ', $flags) . ')');
+        $this->befehlOk('UID STORE ' . $uid . ' ' . $richtung . 'FLAGS.SILENT (' . implode(' ', $flags) . ')');
     }
 
     public function verschieben(int $uid, string $ordner): bool
@@ -353,6 +391,7 @@ final class ImapClient implements Postfach
     private function befehlTeile(array $teile): array
     {
         $tag = $this->naechsterTag();
+        $this->verworfen = false;
         $puffer = $tag;
         foreach ($teile as $teil) {
             if (is_string($teil)) {
@@ -417,15 +456,30 @@ final class ImapClient implements Postfach
         $zeile = $this->strom->zeile();
         while (preg_match('/\{(\d+)\+?\}\r?\n$/', $zeile, $t) === 1) {
             $laenge = (int) $t[1];
-            if ($laenge > $this->maxLiteral) {
-                throw new ImapFehler('imap_protokoll', 'Die Antwort des IMAP-Servers ist zu groß.');
-            }
             $text .= rtrim($zeile, "\r\n");
-            $literale[] = $this->strom->lesen($laenge);
+            if ($laenge > $this->maxLiteral) {
+                // No buffer for it - but read off and dropped piece by piece,
+                // else its bytes would be taken for the server's answers.
+                for ($rest = $laenge; $rest > 0; $rest -= self::STUECK) {
+                    $this->strom->lesen(min(self::STUECK, $rest));
+                }
+                $this->verworfen = true;
+                $literale[] = '';
+            } else {
+                $literale[] = $this->strom->lesen($laenge);
+            }
             $zeile = $this->strom->zeile();
         }
 
         return [$text . rtrim($zeile, "\r\n"), $literale];
+    }
+
+    /** @throws ImapFehler when the last answer had a literal that was dropped */
+    private function nichtVerworfen(): void
+    {
+        if ($this->verworfen) {
+            throw new ImapFehler('imap_protokoll', 'Die Antwort des IMAP-Servers ist zu groß.');
+        }
     }
 
     private function naechsterTag(): string

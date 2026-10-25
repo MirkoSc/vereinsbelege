@@ -35,7 +35,7 @@ final readonly class UploadStore
      */
     public function store(iterable $chunks, BlobMeta $meta): Blob
     {
-        $vault = $this->vaults->current() ?? throw new UploadException(UploadError::VaultMissing);
+        $vault = $this->vaults->zumVersiegeln() ?? throw new UploadException(UploadError::VaultMissing);
 
         return $this->blobs->store($chunks, $meta, $vault, BlobService::configuredStorage($this->settings));
     }

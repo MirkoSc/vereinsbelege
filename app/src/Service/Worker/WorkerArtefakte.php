@@ -124,7 +124,7 @@ final readonly class WorkerArtefakte
         if ($seq < 0 || $seq > self::MAX_SEQ) {
             throw new WorkerArtefaktFehler('seq_ungueltig', 422);
         }
-        $tresor = $this->vaults->current() ?? throw new WorkerArtefaktFehler('kein_tresor', 409);
+        $tresor = $this->vaults->zumVersiegeln() ?? throw new WorkerArtefaktFehler('kein_tresor', 409);
         // Sealed to the CURRENT VK_pub (issue #90: after a rotation started,
         // that is the new generation) - anything else could not be opened.
         if (!WorkerKrypto::istTresorDek($dekSealed, $tresor->version)) {
@@ -270,7 +270,7 @@ final readonly class WorkerArtefakte
         // (issue #90) has since made a new one current: a blob stored now
         // could slip past the rotation's re-sealing. Start over with the
         // current VK_pub from the job's context.
-        $tresor = $this->vaults->current();
+        $tresor = $this->vaults->zumVersiegeln();
         if ($tresor === null || !WorkerKrypto::istTresorDek($zeile['dek_sealed'], $tresor->version)) {
             $this->verwerfen($upload);
 

@@ -84,6 +84,7 @@ final readonly class VaultRecoveryController
 
         $vault = $ergebnis->vault;
         assert($vault !== null);
+        $wiederhergestellteVersion = $vault->version;
         // During a key rotation (issue #90) the two paper keys can be entered
         // one after the other: the session keeps both generations as a ring.
         // Only a generation still in use joins: a ring left over from an
@@ -94,6 +95,11 @@ final readonly class VaultRecoveryController
             $vault = $bisher->version > $vault->version ? $bisher->withPrevious($vault) : $vault->withPrevious($bisher);
         }
 
+        if ($ergebnis->ankerErneuert) {
+            $this->audit->record(AuditAction::TresorAnkerGesetzt, $userId, $request->ip, $wiederhergestellteVersion, [
+                'weg' => 'wiederherstellungsschluessel',
+            ]);
+        }
         $this->audit->record(AuditAction::TresorWiederhergestellt, $userId, $request->ip, $userId, [
             'tresor_version' => $vault->version,
             'freigabe' => $ergebnis->freigabeErteilt,

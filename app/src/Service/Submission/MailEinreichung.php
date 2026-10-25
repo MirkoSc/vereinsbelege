@@ -131,7 +131,7 @@ final readonly class MailEinreichung
         if ($this->blobs->totalSize($ids) > $this->einstellungen->maxEinreichungBytes()) {
             return MailEinreichungErgebnis::abgelehnt('zu_gross');
         }
-        $vault = $this->vaults->current();
+        $vault = $this->vaults->zumVersiegeln();
         if ($vault === null) {
             return MailEinreichungErgebnis::abgelehnt('kein_tresor');
         }

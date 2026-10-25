@@ -78,6 +78,9 @@ $referenz = $eintrag->item->referenz ?? '#' . $document->id;
             <dd><?= e($document->costCenterId === null ? 'keine Angabe' : ($alleKostenstellen[$document->costCenterId] ?? '?')) ?></dd>
 
             <?php if ($daten !== null): ?>
+                <dt>Quelle</dt>
+                <dd><?= $daten->perMail() ? 'per E-Mail' : ($document->source === \App\Domain\DocumentSource::Intern ? 'intern erfasst' : 'Formular „Beleg einreichen“') ?></dd>
+
                 <dt>Name</dt>
                 <dd><?= e($daten->name) ?></dd>
 
