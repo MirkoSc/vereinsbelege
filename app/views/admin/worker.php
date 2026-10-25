@@ -3,7 +3,8 @@
 /**
  * Admin page "Worker" (docs/spec/07-worker.md sections 4 and 6): pairing
  * code, fingerprint confirmation, unpairing (issue #51/M7b-1); module
- * switch, status, queue, last errors, throughput, "OCR nachholen" (#53).
+ * switch, status, queue, last errors, throughput, "OCR nachholen" (#53);
+ * OCR backfill of the imported archive (#88).
  *
  * Only components from /admin/designsystem, no page-specific CSS/JS.
  *
@@ -22,6 +23,11 @@
  * @var int $defekte
  * @var int $nachholbar
  * @var bool $ocrVerfuegbar
+ * @var ?\App\Domain\Job $bestandJob
+ * @var ?array{import: int, von: int, bis: int, nach: int, uebergeben: int, ausgelassen: int} $bestandZustand
+ * @var ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int} $bestandStand
+ * @var bool $bestandLaeuft
+ * @var list<\App\Domain\ArchiveImportRecord> $importLaeufe
  */
 
 use App\Domain\WorkerStatus;
@@ -222,7 +228,8 @@ $typName = static fn(string $typ): string => match ($typ) {
 
     <h3>OCR nachholen</h3>
     <p class="gedaempft">
-        Belege, deren Texterkennung ohne Worker ausgefallen ist: <?= e((string) $nachholbar) ?>.
+        Belege, deren Texterkennung ohne Worker ausgefallen ist: <?= e((string) $nachholbar) ?>
+        (ohne Belege aus dem Archiv-Import – dafür gibt es den nächsten Abschnitt).
         Je Klick gehen bis zu <?= e((string) \App\Admin\WorkerController::NACHHOLEN_MAX) ?> davon an den Worker.
     </p>
     <?php if ($nachholbar > 0 && $ocrVerfuegbar): ?>
@@ -234,5 +241,89 @@ $typName = static fn(string $typ): string => match ($typ) {
         </form>
     <?php elseif ($nachholbar > 0): ?>
         <p class="hinweis hinweis-info">Möglich, sobald das Modul aktiv ist und der Worker mit Texterkennung online ist.</p>
+    <?php endif; ?>
+
+    <h3>Archiv nachträglich durchsuchbar machen</h3>
+    <p class="gedaempft">
+        Belege aus dem Archiv-Import gehen nicht einzeln an den Worker, sondern hier gesammelt und
+        gedrosselt: Es warten höchstens <?= e((string) \App\Service\Worker\BestandsOcr::NACHSCHUB) ?> Texterkennungen
+        gleichzeitig beim Worker, neue Belege kommen immer zuerst dran. Festgeschriebene Belege bleiben
+        unverändert – es kommt nur die Textebene für die Suche dazu, das Original bleibt erhalten.
+    </p>
+    <?php if ($bestandJob !== null && $bestandZustand !== null && $bestandStand !== null): ?>
+        <?php
+        $bestandLauf = $bestandZustand['import'] === 0 ? 'alle Archiv-Belege' : 'Import-Lauf ' . $bestandZustand['import'];
+        $bestandErgebnis = match ($bestandJob->status) {
+            \App\Domain\JobStatus::Fertig => 'abgeschlossen',
+            \App\Domain\JobStatus::Uebersprungen => 'abgebrochen',
+            \App\Domain\JobStatus::Fehler => 'mit Fehler beendet',
+            default => '',
+        };
+        ?>
+        <div class="karte">
+            <h4>
+                <?= e($bestandLauf) ?>
+                <?php if ($bestandLaeuft): ?>
+                    <span class="marke marke-ok">läuft</span>
+                <?php else: ?>
+                    <span class="marke"><?= e($bestandErgebnis) ?></span>
+                <?php endif; ?>
+            </h4>
+            <progress max="<?= e((string) max(1, $bestandStand['gesamt'])) ?>" value="<?= e((string) $bestandStand['mitText']) ?>"
+                      aria-label="Belege mit Textebene"></progress>
+            <p>
+                <?= e((string) $bestandStand['mitText']) ?> von <?= e((string) $bestandStand['gesamt']) ?> Belegen haben eine Textebene ·
+                beim Worker: <?= e((string) $bestandStand['beimWorker']) ?> ·
+                noch ohne: <?= e((string) $bestandStand['offen']) ?>
+                <?php if ($bestandStand['fehlgeschlagen'] > 0): ?>
+                    · Texterkennung gescheitert (in diesem Lauf nicht erneut): <?= e((string) $bestandStand['fehlgeschlagen']) ?>
+                <?php endif; ?>
+            </p>
+            <p class="gedaempft">
+                In diesem Lauf übergeben: <?= e((string) $bestandZustand['uebergeben']) ?>
+                <?php if ($bestandZustand['ausgelassen'] > 0): ?>
+                    · ausgelassen (nicht übergebbar, wird erneut versucht): <?= e((string) $bestandZustand['ausgelassen']) ?>
+                <?php endif; ?>
+            </p>
+            <?php if ($bestandLaeuft): ?>
+                <?php if (!$ocrVerfuegbar): ?>
+                    <p class="hinweis hinweis-info">Wartet, bis der Worker mit Texterkennung wieder online ist – danach geht es von selbst weiter.</p>
+                <?php endif; ?>
+                <p class="feld-hilfe">
+                    Läuft im Hintergrund, solange jemand mit Verwaltungsrechten angemeldet ist; nach einer Pause
+                    geht es an derselben Stelle weiter. Die Zahlen aktualisieren sich beim Neuladen der Seite.
+                </p>
+                <form method="post" action="/admin/worker/bestand-ocr/abbrechen">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <p class="knopfreihe">
+                        <button type="submit" class="knopf knopf-still">Abbrechen</button>
+                    </p>
+                </form>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+    <?php if (!$bestandLaeuft): ?>
+        <?php if ($importLaeufe === []): ?>
+            <p class="gedaempft">Es gibt noch keinen Archiv-Import.</p>
+        <?php elseif (!$ocrVerfuegbar): ?>
+            <p class="hinweis hinweis-info">Möglich, sobald das Modul aktiv ist und der Worker mit Texterkennung online ist.</p>
+        <?php else: ?>
+            <form method="post" action="/admin/worker/bestand-ocr" class="formular">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label for="worker-bestand-import">Welche Belege?
+                    <select id="worker-bestand-import" name="import">
+                        <?php foreach ($importLaeufe as $lauf): ?>
+                            <option value="<?= e((string) $lauf->id) ?>">
+                                Import vom <?= e(($lauf->startedAt ?? $lauf->createdAt)->format('d.m.Y')) ?> (<?= e((string) $lauf->stats->belege) ?> Belege)
+                            </option>
+                        <?php endforeach; ?>
+                        <option value="alle">alle Archiv-Belege</option>
+                    </select>
+                </label>
+                <p class="knopfreihe">
+                    <button type="submit" class="knopf">Nachverarbeitung starten</button>
+                </p>
+            </form>
+        <?php endif; ?>
     <?php endif; ?>
 </section>
