@@ -96,13 +96,18 @@ final readonly class WorkerMailController
             if ($groesse > $this->einstellungen->maxDateiBytes() || $this->grenze->passtNie($groesse)) {
                 return self::fehler(413, 'zu_gross', 'Die Datei ist zu groß.');
             }
-            if (!$this->grenze->mailErlaubt($worker->id) || !$this->grenze->bytesErlaubt($worker->id, $groesse)) {
+            if (!$this->grenze->mailErlaubt($worker->id) || !$this->grenze->bytesReservieren($worker->id, $groesse)) {
                 return self::mengenGrenze();
             }
 
             return $this->ausgefuehrt($request, function () use ($groesse, $worker): Response {
-                $ticket = $this->uploads->create($groesse);
-                $this->grenze->bytesZaehlen($worker->id, $groesse);
+                try {
+                    $ticket = $this->uploads->create($groesse);
+                } catch (\Throwable $e) {
+                    $this->grenze->bytesFreigeben($worker->id, $groesse);
+
+                    throw $e;
+                }
 
                 return Response::json($ticket->toArray(), 201);
             });
@@ -172,28 +177,34 @@ final readonly class WorkerMailController
     public function einreichen(Request $request, Worker $worker): Response
     {
         return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request, $worker): Response {
-            if (!$this->grenze->mailErlaubt($worker->id)) {
-                return self::mengenGrenze();
-            }
             $absender = is_array($daten['absender'] ?? null) ? $daten['absender'] : [];
             $blobs = $daten['blobs'] ?? null;
             if (!is_array($blobs) || !array_is_list($blobs)) {
                 return self::fehler(422, 'anhaenge_ungueltig', 'Erwartet wird eine Liste von Blob-IDs.');
             }
+            if (!$this->grenze->mailReservieren($worker->id)) {
+                return self::mengenGrenze();
+            }
 
-            $ergebnis = $this->einreichung->einreichen(
-                $schluessel,
-                $blobs,
-                is_string($absender['name'] ?? null) ? $absender['name'] : '',
-                is_string($absender['adresse'] ?? null) ? $absender['adresse'] : '',
-                is_string($daten['betreff'] ?? null) ? $daten['betreff'] : '',
-                $this->speicher->laden()->absender,
-                new \DateTimeImmutable(),
-                $this->linkBasis === null ? null : ($this->linkBasis)($request),
-            );
+            try {
+                $ergebnis = $this->einreichung->einreichen(
+                    $schluessel,
+                    $blobs,
+                    is_string($absender['name'] ?? null) ? $absender['name'] : '',
+                    is_string($absender['adresse'] ?? null) ? $absender['adresse'] : '',
+                    is_string($daten['betreff'] ?? null) ? $daten['betreff'] : '',
+                    $this->speicher->laden()->absender,
+                    new \DateTimeImmutable(),
+                    $this->linkBasis === null ? null : ($this->linkBasis)($request),
+                );
+            } catch (\Throwable $e) {
+                $this->grenze->mailFreigeben($worker->id);
 
-            if ($ergebnis->status === MailEinreichungErgebnis::EINGEREICHT) {
-                $this->grenze->mailZaehlen($worker->id);
+                throw $e;
+            }
+            // Only a new receipt counts against the hour.
+            if ($ergebnis->status !== MailEinreichungErgebnis::EINGEREICHT) {
+                $this->grenze->mailFreigeben($worker->id);
             }
 
             return match ($ergebnis->status) {

@@ -168,29 +168,30 @@ final class ImapClientTest extends TestCase
     }
 
     /**
-     * Issue #243: the Message-ID of a mail that is not fetched again (all
-     * attempts used up) comes from its header alone.
+     * Issue #243: the header block of a mail that is not fetched again (all
+     * attempts used up) comes alone, at most 64 KiB; UIDVALIDITY is kept.
      */
-    public function testTheMessageIdIsReadWithoutTheMail(): void
+    public function testTheHeaderBlockIsReadWithoutTheMail(): void
     {
-        $kopf = "Message-ID: <r-1@mueller-getraenke.de>\r\n\r\n";
+        $kopf = "From: a@b.de\r\nMessage-ID: <r-1@mueller-getraenke.de>\r\n\r\n";
         $strom = new SkriptStrom(
             self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
-            . '* 1 FETCH (UID 7 BODY[HEADER.FIELDS (MESSAGE-ID)] {' . strlen($kopf) . "}\r\n" . $kopf . ")\r\nA0004 OK\r\n"
-            . "* 2 FETCH (UID 8 BODY[HEADER.FIELDS (\"MESSAGE-ID\")] {2}\r\n\r\n)\r\nA0005 OK\r\n"
-            . "* 3 FETCH (UID 9 BODY[HEADER.FIELDS (MESSAGE-ID)] {70000}\r\n" . str_repeat('x', 70000) . ")\r\nA0006 OK\r\n",
+            . "* OK [UIDVALIDITY 1700000001] ok\r\n* OK [PERMANENTFLAGS (\\*)] ok\r\nA0004 OK\r\n"
+            . '* 1 FETCH (UID 7 BODY[HEADER]<0> {' . strlen($kopf) . "}\r\n" . $kopf . ")\r\nA0005 OK\r\n"
+            . "* 3 FETCH (UID 9 BODY[HEADER]<0> {70000}\r\n" . str_repeat('x', 70000) . ")\r\nA0006 OK\r\n",
             tls: true,
         );
         $client = ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p');
 
-        self::assertSame('r-1@mueller-getraenke.de', $client->messageId(7));
-        self::assertStringContainsString('A0004 UID FETCH 7 (BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])', $strom->gesendet, 'only the header, without \\Seen');
-        self::assertNull($client->messageId(8), 'a mail without Message-ID');
+        self::assertTrue($client->auswaehlen('INBOX'));
+        self::assertSame(1700000001, $client->uidGueltigkeit());
+        self::assertSame($kopf, $client->kopf(7));
+        self::assertStringContainsString('A0005 UID FETCH 7 (BODY.PEEK[HEADER]<0.65536>)', $strom->gesendet, 'only the header, without \\Seen');
         try {
-            $client->messageId(9);
+            $client->kopf(9);
             self::fail('expected a refusal');
         } catch (ImapFehler $e) {
-            self::assertSame('imap_protokoll', $e->fehlercode, 'a header block is small');
+            self::assertSame('imap_protokoll', $e->fehlercode, 'a server ignoring the partial limit');
         }
     }
 

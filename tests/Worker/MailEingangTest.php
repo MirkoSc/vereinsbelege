@@ -26,6 +26,7 @@ use App\Worker\Log;
 use App\Worker\Mail\ImapFehler;
 use App\Worker\Mail\MailEingang;
 use App\Worker\Mail\MailZugang;
+use App\Worker\Mail\VersuchsSpeicher;
 use App\Worker\Schleife;
 
 /**
@@ -61,6 +62,12 @@ final class MailEingangTest extends WorkerTestCase
 
     private string $schluessel = '';
 
+    private ApiClient $apiClient;
+
+    private Abbruch $abbruch;
+
+    private Log $workerLog;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -69,13 +76,13 @@ final class MailEingangTest extends WorkerTestCase
         $arbeit = $this->tmp . '/arbeit';
         mkdir($arbeit, 0700);
         $this->uhr = time();
-        $abbruch = new Abbruch();
-        $log = new Log(function (string $zeile): void {
+        $abbruch = $this->abbruch = new Abbruch();
+        $log = $this->workerLog = new Log(function (string $zeile): void {
             $this->log .= $zeile;
         });
         $uhr = fn(): int => $this->uhr;
         $schlafen = static fn(float $s): bool => true;
-        $api = new ApiClient(new InProzessHttp($this->auth, $this->api, $this->mailApi), $identitaet, $abbruch, $uhr, $schlafen);
+        $api = $this->apiClient = new ApiClient(new InProzessHttp($this->auth, $this->api, $this->mailApi), $identitaet, $abbruch, $uhr, $schlafen);
         $this->postfach = new FakePostfach();
         $this->ki = new KiKonfiguration();
         $this->schleife = new Schleife(
@@ -90,12 +97,7 @@ final class MailEingangTest extends WorkerTestCase
             $log,
             $uhr,
             $schlafen,
-            new MailEingang($api, function (MailZugang $z): FakePostfach {
-                $this->verbindungen[] = $z;
-                ++$this->postfach->anmeldungen;
-
-                return $this->postfach;
-            }, $abbruch, $log, fn(): int => $this->uhr + $this->spaeter),
+            $this->neuerEingang(),
         );
         $this->einrichten();
     }
@@ -243,7 +245,7 @@ final class MailEingangTest extends WorkerTestCase
         $this->schleife->runde();
 
         self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'three attempts: not fetched again');
-        self::assertSame([$uid], $this->postfach->messageIdAbgefragt);
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
     }
 
     /**
@@ -293,7 +295,7 @@ final class MailEingangTest extends WorkerTestCase
             self::assertSame('Belege/Erledigt', $this->postfach->verschoben[$uid] ?? null);
         }
         self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'the last time matched by its Message-ID alone');
-        self::assertSame([$uid], $this->postfach->messageIdAbgefragt);
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
         self::assertStringNotContainsString('"grund"', $this->log);
     }
@@ -378,6 +380,74 @@ final class MailEingangTest extends WorkerTestCase
         self::assertNotContains('\\Flagged', $this->postfach->flagsBeimHolen[$abbruch], 'no mark of ours');
         self::assertSame(3, $this->postfach->geholt[$abbruch]);
         self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$abbruch], 'set aside after three attempts');
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /**
+     * Review of #243: without own keywords the attempts survive a killed
+     * worker - in /daten, not in memory. A mail that kills the worker on
+     * every start is set aside after three, not fetched after every restart.
+     */
+    public function testWithoutOwnKeywordsAttemptsSurviveARestart(): void
+    {
+        $this->postfach->keywords = false;
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        // What a kill looks like from the counter's side: the attempt began
+        // and never ended.
+        $this->postfach->beimHolen = static fn(int $u) => throw new ImapFehler('imap_verbindung');
+
+        $this->schleife->runde();
+        $zugang = $this->ki->mailZugang();
+        self::assertNotNull($zugang);
+        for ($neustart = 2; $neustart <= 4; ++$neustart) {
+            // A fresh process: nothing in memory, only the file.
+            $this->neuerEingang()->abrufen($zugang);
+        }
+
+        self::assertSame(3, $this->postfach->geholt[$uid], 'three attempts across restarts, not a fourth');
+        self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$uid], 'then set aside');
+        self::assertStringContainsString('"grund":"unlesbar"', $this->log);
+        $inhalt = (string) file_get_contents($this->versuchsDatei());
+        self::assertSame('{"format":1,"eintraege":[]}', $inhalt, 'cleared once handled');
+        self::assertSame(0o600, fileperms($this->versuchsDatei()) & 0o777);
+    }
+
+    public function testTheAttemptFileHoldsNoMailContent(): void
+    {
+        $this->postfach->keywords = false;
+        $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->beimHolen = static fn(int $u) => throw new ImapFehler('imap_verbindung');
+
+        $this->schleife->runde();
+
+        $inhalt = (string) file_get_contents($this->versuchsDatei());
+        self::assertMatchesRegularExpression('/^\{"format":1,"eintraege":\{"[0-9a-f]{64}":\[1,\d+\]\}\}$/', $inhalt);
+        foreach (['INBOX', 'mueller', 'r-1'] as $verboten) {
+            self::assertStringNotContainsString($verboten, $inhalt);
+        }
+    }
+
+    /**
+     * Review of #243: a mail without Message-ID handed in on its last
+     * attempt, the worker killed before marking it - matched by its header
+     * block, "erledigt", not "abgelehnt".
+     */
+    public function testAMailWithoutMessageIdHandedInBeforeTheCrashIsNotSetAside(): void
+    {
+        $uid = $this->postfach->hinzufuegen(str_replace("Message-ID: <r-1@mueller-getraenke.de>\r\n", '', $this->rechnungsMail()));
+        self::assertStringNotContainsString('Message-ID', $this->postfach->mails[$uid]);
+        $this->schleife->runde();
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+
+        $this->postfach->flags[$uid] = \App\Worker\Mail\ImapClient::KEYWORDS_VERSUCH;
+        unset($this->postfach->verschoben[$uid], $this->postfach->geholt[$uid]);
+        $this->spaeter += 5 * 60;
+        $this->schleife->runde();
+
+        self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'not fetched again');
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
+        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$uid]);
+        self::assertStringNotContainsString('"grund"', $this->log);
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
     }
 
@@ -504,6 +574,26 @@ final class MailEingangTest extends WorkerTestCase
         $antwort = $this->aufruf($this->signiert($this->workerId, $this->schluessel, '/api/worker/mail/uploads', json_encode(['schluessel' => hash('sha256', 'x'), 'groesse' => 1024 * 1024 + 1], JSON_THROW_ON_ERROR)), fn($r, $p, $w) => $this->mailApi->uploadAnlegen($r, $w));
 
         self::assertSame(413, $antwort->status, 'the worker sets the mail aside');
+    }
+
+    /** A mail intake as a fresh worker process would build it - attempts in the /daten file. */
+    private function neuerEingang(): MailEingang
+    {
+        return new MailEingang($this->apiClient, function (MailZugang $z): FakePostfach {
+            $this->verbindungen[] = $z;
+            ++$this->postfach->anmeldungen;
+
+            return $this->postfach;
+        }, $this->abbruch, $this->workerLog, fn(): int => $this->uhr + $this->spaeter, new VersuchsSpeicher($this->versuchsDatei(), 'test-schluessel', fn(): int => $this->uhr + $this->spaeter));
+    }
+
+    private function versuchsDatei(): string
+    {
+        if (!is_dir($this->tmp . '/daten')) {
+            mkdir($this->tmp . '/daten', 0700);
+        }
+
+        return $this->tmp . '/daten/mail_versuche.json';
     }
 
     private function einrichten(): void

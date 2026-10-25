@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Worker\Support;
 
 use App\Worker\Mail\ImapFehler;
-use App\Worker\Mail\MimeNachricht;
+use App\Worker\Mail\MailEingang;
 use App\Worker\Mail\Postfach;
 
 /**
@@ -50,8 +50,8 @@ final class FakePostfach implements Postfach
     /** @var array<int, int> uid => how often the whole mail was fetched */
     public array $geholt = [];
 
-    /** @var list<int> UIDs whose Message-ID alone was asked for */
-    public array $messageIdAbgefragt = [];
+    /** @var list<int> UIDs whose header block alone was asked for */
+    public array $kopfAbgefragt = [];
 
     public function hinzufuegen(string $roh): int
     {
@@ -108,12 +108,18 @@ final class FakePostfach implements Postfach
     /** @var array<int, list<string>> the flags of each mail at the moment it was fetched */
     public array $flagsBeimHolen = [];
 
-    public function messageId(int $uid): ?string
-    {
-        $this->messageIdAbgefragt[] = $uid;
-        $kopf = preg_split('/\r?\n\r?\n/', $this->mails[$uid], 2)[0] ?? '';
+    public int $uidGueltigkeit = 1;
 
-        return MimeNachricht::messageIdAusKopf($kopf);
+    public function uidGueltigkeit(): int
+    {
+        return $this->uidGueltigkeit;
+    }
+
+    public function kopf(int $uid): string
+    {
+        $this->kopfAbgefragt[] = $uid;
+
+        return MailEingang::kopfAus($this->mails[$uid]);
     }
 
     public function entmarkieren(int $uid, array $flags): void

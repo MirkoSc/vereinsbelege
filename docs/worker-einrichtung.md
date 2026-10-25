@@ -25,7 +25,9 @@ Raspberry Pi (Worker) ──fragt regelmäßig per https nach Arbeit──▶ We
   `/arbeit`), nie auf der SD-Karte. Der Worker startet gar nicht erst,
   wenn `/arbeit` nicht im Arbeitsspeicher liegt.
 - Dauerhaft gespeichert wird nur eine kleine Identitätsdatei (Worker-ID,
-  Zugangsschlüssel, Schlüsselpaar des Workers) im Docker-Volume `daten`.
+  Zugangsschlüssel, Schlüsselpaar des Workers) im Docker-Volume `daten` –
+  beim Mail-Eingang ohne eigene Schlagwörter dazu ein Versuchszähler
+  ohne Mailinhalte (Abschnitt 6.1).
 
 Inhalt:
 
@@ -436,8 +438,8 @@ Erlaubt der Server keine eigenen Schlagwörter, markiert der Worker
 eingereichte Mails nur als gelesen und abgelehnte als gelesen + Fähnchen
 (`\Flagged`); als neu gelten dann nur ungelesene Mails. Ein Fähnchen, das
 jemand von Hand gesetzt hat, lässt der Worker in Ruhe. Die Versuche zählt
-er in diesem Fall nur im Arbeitsspeicher – nach einem harten Neustart
-beginnt die Zählung von vorn.
+er in diesem Fall in der Datei `mail_versuche.json` im Volume `daten`
+(ohne Mailinhalte); sie übersteht auch einen harten Neustart.
 
 **Grenzen:** die der Einreichung (Seiten, Dateigröße, Gesamtgröße), höchstens
 20 Mails je Abruf und 200 je Tag. Zusätzlich nimmt der **Webhoster** je

@@ -14,11 +14,14 @@ use App\Service\RateLimiter;
  * backstop for a worker that does not, so a broken or taken-over worker
  * cannot fill the inbox and the web space.
  *
- * Counted on the `rate_limit` table (App\Service\RateLimiter, built with
- * RateLimiter::SUBMISSION_WINDOW_SECONDS, the hour the public submission
- * counts in as well): a mail when it became a receipt, bytes when an
- * upload ticket is handed out - before anything is written. Bytes are
- * counted in KiB so the counter stays far below the column's range.
+ * Counted on the `rate_limit` table (App\Service\RateLimiter::reserve(),
+ * built with RateLimiter::SUBMISSION_WINDOW_SECONDS, the hour the public
+ * submission counts in as well) - check and count in one statement, so
+ * parallel requests cannot pass the limit together: a mail is reserved
+ * before it is handed in and given back when it does not become a receipt,
+ * bytes are reserved when an upload ticket is handed out - before anything
+ * is written. Bytes are counted in KiB so the counter stays far below the
+ * column's range.
  *
  * Settings `mail_eingang_limit_stunde` (mails, default 60) and
  * `mail_eingang_limit_mb_stunde` (MiB, default 500); an unusable value
@@ -68,7 +71,7 @@ final readonly class MailEingangGrenze
         ];
     }
 
-    /** Whether this worker may hand in one more mail this hour. */
+    /** Whether this worker may hand in one more mail this hour (read only, before uploads). */
     public function mailErlaubt(int $workerId, ?\DateTimeImmutable $jetzt = null): bool
     {
         return !$this->limiter->isBlocked(self::ZWECK_MAILS, (string) $workerId, $this->mailsStunde(), $jetzt);
@@ -80,20 +83,27 @@ final readonly class MailEingangGrenze
         return self::kib($bytes) > $this->mbStunde() * 1024;
     }
 
-    /** Whether $bytes more fit into this worker's hour. */
-    public function bytesErlaubt(int $workerId, int $bytes, ?\DateTimeImmutable $jetzt = null): bool
+    /** Counts one mail if it still fits this hour - atomically (RateLimiter::reserve()). */
+    public function mailReservieren(int $workerId, ?\DateTimeImmutable $jetzt = null): bool
     {
-        return $this->limiter->stand(self::ZWECK_KIB, (string) $workerId, $jetzt) + self::kib($bytes) <= $this->mbStunde() * 1024;
+        return $this->limiter->reserve(self::ZWECK_MAILS, (string) $workerId, 1, $this->mailsStunde(), $jetzt);
     }
 
-    public function mailZaehlen(int $workerId, ?\DateTimeImmutable $jetzt = null): void
+    /** The mail did not become a receipt (already there, refused): it does not count. */
+    public function mailFreigeben(int $workerId, ?\DateTimeImmutable $jetzt = null): void
     {
-        $this->limiter->register(self::ZWECK_MAILS, (string) $workerId, $jetzt);
+        $this->limiter->release(self::ZWECK_MAILS, (string) $workerId, 1, $jetzt);
     }
 
-    public function bytesZaehlen(int $workerId, int $bytes, ?\DateTimeImmutable $jetzt = null): void
+    /** Counts $bytes if they still fit this hour - atomically. */
+    public function bytesReservieren(int $workerId, int $bytes, ?\DateTimeImmutable $jetzt = null): bool
     {
-        $this->limiter->registerMenge(self::ZWECK_KIB, (string) $workerId, self::kib($bytes), $jetzt);
+        return $this->limiter->reserve(self::ZWECK_KIB, (string) $workerId, self::kib($bytes), $this->mbStunde() * 1024, $jetzt);
+    }
+
+    public function bytesFreigeben(int $workerId, int $bytes, ?\DateTimeImmutable $jetzt = null): void
+    {
+        $this->limiter->release(self::ZWECK_KIB, (string) $workerId, self::kib($bytes), $jetzt);
     }
 
     private static function kib(int $bytes): int

@@ -40,8 +40,6 @@ final class ImapClient implements Postfach
     /** Piece size for reading off a literal that is dropped. */
     private const int STUECK = 65536;
 
-    /** Largest Message-ID header block accepted. */
-    private const int MAX_KOPF_LITERAL = 64 * 1024;
 
     /** Largest literal accepted unless a command sets a smaller one. */
     private const int MAX_LITERAL = 96 * 1024 * 1024;
@@ -56,6 +54,8 @@ final class ImapClient implements Postfach
     private bool $verworfen = false;
 
     private int $tag = 0;
+
+    private int $uidGueltigkeit = 0;
 
     /** @var list<string> upper case */
     private array $faehigkeiten = [];
@@ -94,6 +94,12 @@ final class ImapClient implements Postfach
         [$antworten, $status] = $this->befehl('SELECT ' . self::zitat(self::mutf7($ordner)));
         if ($status !== 'OK') {
             throw new ImapFehler('imap_ordner', 'Der Ordner wurde nicht gefunden.');
+        }
+        $this->uidGueltigkeit = 0;
+        foreach ($antworten as [$text]) {
+            if (preg_match('/\[UIDVALIDITY (\d+)\]/i', $text, $t) === 1) {
+                $this->uidGueltigkeit = (int) $t[1];
+            }
         }
         foreach ($antworten as [$text]) {
             if (preg_match('/\[PERMANENTFLAGS \(([^)]*)\)\]/i', $text, $t) === 1) {
@@ -158,18 +164,23 @@ final class ImapClient implements Postfach
         return $angaben;
     }
 
-    public function messageId(int $uid): ?string
+    public function uidGueltigkeit(): int
     {
-        $this->maxLiteral = self::MAX_KOPF_LITERAL;
+        return $this->uidGueltigkeit;
+    }
+
+    public function kopf(int $uid): string
+    {
+        $this->maxLiteral = self::KOPF_BYTES;
         try {
-            [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])');
+            [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[HEADER]<0.' . self::KOPF_BYTES . '>)');
         } finally {
             $this->maxLiteral = self::MAX_LITERAL;
         }
         $this->nichtVerworfen();
         foreach ($antworten as [$text, $literale]) {
-            if ($literale !== [] && preg_match('/BODY\[HEADER\.FIELDS \("?MESSAGE-ID"?\)\] \{\d+\+?\}/i', $text) === 1) {
-                return MimeNachricht::messageIdAusKopf($literale[0]);
+            if ($literale !== [] && preg_match('/BODY\[HEADER\](?:<0>)? \{\d+\+?\}/i', $text) === 1) {
+                return $literale[0];
             }
         }
 

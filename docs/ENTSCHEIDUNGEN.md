@@ -1719,13 +1719,16 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
   statt „abgelehnt“ wird. Fällt der Webhoster als Ganzes aus, zählt der
   Versuch nicht. **Ohne eigene Keywords** gibt es keine Versuchs-Marke mehr
   im Postfach (vorher `\Flagged`, das von Hand markierte Mails fälschlich
-  beiseitelegte); gezählt wird nur im Speicher des Workers, ein harter Kill
-  wird dort also nicht erkannt – bewusst in Kauf genommen, weil der
-  MIME-Leser jetzt unter 3× Mailgröße bleibt (N-16) und Mails über der
-  Größengrenze gar nicht geholt werden.
+  beiseitelegte); gezählt wird dann in einer kleinen Datei im Volume
+  `/daten` (HMAC von Ordner|UIDVALIDITY|UID, keine Mailinhalte), damit auch
+  ein harter Kill zählt. Der Worker speichert damit eine zweite Datei
+  dauerhaft – bewusste Ausnahme vom „nichts dauerhaft“.
+  Der **Idempotenz-Schlüssel ohne Message-ID** geht jetzt über den
+  Header-Block (höchstens 64 KiB) statt über die ganze Mail, damit er ohne
+  den Mailkörper berechenbar ist.
 - **Mengengrenze auch beim Webhoster** (issue #243, N-17, vorläufig): je
   Worker und Stunde höchstens 60 Mails und 500 MiB (Settings mit Vorgabe,
-  ohne Admin-Formularfeld). Darüber 429 `mail_limit`; der Worker beendet
+  ohne Admin-Formularfeld), atomar reserviert. Darüber 429 `mail_limit`; der Worker beendet
   den Abruf, die Mail wartet unmarkiert.
 - **Quelle im Posteingang:** „per E-Mail“ in Liste und Detail, gelesen aus
   dem versiegelten Payload (`kanal`), also nur mit entsperrtem Tresor.

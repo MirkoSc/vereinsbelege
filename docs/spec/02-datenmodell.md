@@ -26,7 +26,7 @@ anpassen, muss dann aber diese Datei im selben PR nachziehen.
 | `mfa_backup_code` | id, user_id, code_hash, used_at NULL, created_at (Migration 008, M3-4) | – |
 | `trusted_device` | id, user_id, token_hash UNIQUE, label, created_at, last_used_at NULL, expires_at (Migration 008, M3-4) | – |
 | `auth_token` | id, user_id, typ (`reset`/`invite`), token_hash UNIQUE, expires_at, used_at NULL, created_at (Migration 009, M3-5; `invite` seit M3-7) | – |
-| `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin; seit issue #243 zählt `count` auch Mengen (Mail-Eingang: Mails und KiB je Worker und Stunde, `App\Service\Worker\MailEingangGrenze`) | – |
+| `rate_limit` | key_hash (PK, SHA-256 über `zweck:wert`), window_start, count (übernommen; Migration 007, M3-3) – feste Fenster, eine Zeile je aktivem Schlüssel statt einer je Versuch; der Wert (IP, Konto-Blindindex) steht nie im Klartext darin; seit issue #243 zählt `count` auch Mengen (Mail-Eingang: Mails und KiB je Worker und Stunde, atomar über `RateLimiter::reserve()`, `App\Service\Worker\MailEingangGrenze`) | – |
 | `audit_log` | id (vom Schreiber gesetzt, kein AUTO_INCREMENT), ts, user_id NULL (kein FK), action, entity NULL, entity_id NULL, ip_hash NULL (HMAC, Server-Schlüssel), details_enc NULL, dek_sealed NULL, prev_hash, hash (Migration 011, M3-8), dek_resealed NULL (Migration 040: nach einer Schlüsselrotation neu versiegelter DEK, außerhalb der Hash-Kette) | T (details) |
 
 - `vault` stand als einzige dieser Tabellen schon vor `user`/`user_key`/

@@ -86,7 +86,21 @@ final readonly class RateLimiter
      */
     public function registerFailure(string $purpose, string $value, ?\DateTimeImmutable $now = null): void
     {
-        $this->registerMenge($purpose, $value, 1, $now);
+        if ($value === '') {
+            return;
+        }
+
+        $key = $this->keyHash($purpose, $value);
+        $window = $this->windowStart($now ?? new \DateTimeImmutable());
+        $row = $this->rows->find($key);
+
+        if ($row === null || $row['windowStart'] !== $window) {
+            $this->rows->startWindow($key, $window);
+
+            return;
+        }
+
+        $this->rows->increment($key);
     }
 
     /**
@@ -102,37 +116,43 @@ final readonly class RateLimiter
     }
 
     /**
-     * How much this key has counted in the current window (0 when its
-     * window ran out) - for a limit on an amount rather than on attempts:
-     * the mail intake's bytes per worker (issue #243, N-17).
+     * Counts $amount if the window's total stays within $limit, decided in
+     * the database (issue #243, N-17: the mail intake's mails and bytes per
+     * worker). Unlike isBlocked() + register(), parallel requests cannot
+     * together pass the limit. The login and submission limits do not use
+     * it and keep their behaviour.
+     *
+     * @return bool whether it was counted (false: over the limit)
      */
-    public function stand(string $purpose, string $value, ?\DateTimeImmutable $now = null): int
+    public function reserve(string $purpose, string $value, int $amount, int $limit, ?\DateTimeImmutable $now = null): bool
     {
-        $row = $this->rows->find($this->keyHash($purpose, $value));
-
-        return $row !== null && $row['windowStart'] === $this->windowStart($now ?? new \DateTimeImmutable()) ? $row['count'] : 0;
-    }
-
-    /**
-     * Counts $menge more for this key - register() for amounts.
-     */
-    public function registerMenge(string $purpose, string $value, int $menge, ?\DateTimeImmutable $now = null): void
-    {
-        if ($value === '' || $menge < 1) {
-            return;
+        if ($amount < 1) {
+            return true;
+        }
+        if ($value === '' || $amount > $limit) {
+            return false;
         }
 
         $key = $this->keyHash($purpose, $value);
         $window = $this->windowStart($now ?? new \DateTimeImmutable());
-        $row = $this->rows->find($key);
+        // Twice: a parallel request may open the window between the two.
+        for ($i = 0; $i < 2; ++$i) {
+            if ($this->rows->addInWindow($key, $window, $amount, $limit) || $this->rows->openWindow($key, $window, $amount)) {
+                return true;
+            }
+        }
 
-        if ($row === null || $row['windowStart'] !== $window) {
-            $this->rows->startWindow($key, $window, $menge);
+        return false;
+    }
 
+    /** Gives back what reserve() counted for something that did not happen. */
+    public function release(string $purpose, string $value, int $amount, ?\DateTimeImmutable $now = null): void
+    {
+        if ($value === '' || $amount < 1) {
             return;
         }
 
-        $this->rows->increment($key, $menge);
+        $this->rows->subtractInWindow($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()), $amount);
     }
 
     /**

@@ -11,8 +11,14 @@ namespace App\Worker\Mail;
  */
 interface Postfach
 {
+    /** Most bytes of a header block used for the idempotency key. */
+    public const int KOPF_BYTES = 64 * 1024;
+
     /** Selects $ordner; true when the server lets us set our own keywords. */
     public function auswaehlen(string $ordner): bool;
+
+    /** UIDVALIDITY of the selected folder (0: not reported) - UIDs are only unique with it. */
+    public function uidGueltigkeit(): int;
 
     /**
      * UIDs of the mails not handled yet, ascending - with $seit (Y-m-d)
@@ -33,10 +39,11 @@ interface Postfach
     public function angaben(array $uids): array;
 
     /**
-     * The Message-ID alone, without fetching the mail (null: it has none) -
-     * to find a mail in the inbox that is not fetched again (issue #243).
+     * The header block of the mail, at most KOPF_BYTES from its start
+     * (`BODY.PEEK[HEADER]<0.n>`), without the body - the idempotency key
+     * of a mail that is not fetched again (issue #243).
      */
-    public function messageId(int $uid): ?string;
+    public function kopf(int $uid): string;
 
     /** The whole mail, without setting \Seen; refused when larger than $maxBytes. */
     public function holen(int $uid, int $maxBytes): string;

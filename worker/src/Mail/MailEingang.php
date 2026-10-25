@@ -42,8 +42,9 @@ use App\Worker\Log;
  * unless its Message-ID shows it reached the inbox already. Failures of
  * the web host as a whole (down, switched off, rate limit) are not the
  * mail's fault and take the attempt back. Without own keywords the count
- * lives in memory only, and \Flagged stays the person's: the worker
- * neither sets nor clears it on a mail it hands in.
+ * lives in a small file in /daten (VersuchsSpeicher, no mail content), and
+ * \Flagged stays the person's: the worker neither sets nor clears it on a
+ * mail it hands in.
  *
  * Nothing of a mail reaches the log - no sender, subject, file name;
  * only counters, UIDs and reason codes.
@@ -94,8 +95,11 @@ final class MailEingang
 
     private int $heute = 0;
 
-    /** @var array<string, int> "ordner|uid" => attempts begun - only without own keywords */
-    private array $versuche = [];
+    /** Attempts without own keywords - in /daten, so they survive a killed worker. */
+    private readonly VersuchsSpeicher $versuche;
+
+    /** UIDVALIDITY of the folder in this run - part of a mail's identity. */
+    private int $uidGueltigkeit = 0;
 
     /**
      * @param \Closure(MailZugang): Postfach $verbinden opens and logs in
@@ -107,7 +111,9 @@ final class MailEingang
         private readonly Abbruch $abbruch,
         private readonly Log $log,
         private readonly \Closure $uhr,
+        ?VersuchsSpeicher $versuche = null,
     ) {
+        $this->versuche = $versuche ?? new VersuchsSpeicher(null, random_bytes(32), $uhr);
     }
 
     public function faellig(MailZugang $zugang): bool
@@ -143,6 +149,7 @@ final class MailEingang
         try {
             $postfach = ($this->verbinden)($zugang);
             $keywords = $postfach->auswaehlen($zugang->ordner);
+            $this->uidGueltigkeit = $postfach->uidGueltigkeit();
             $alle = $postfach->offene($keywords, $zugang->seit);
             $neu = count($alle);
             $uids = array_slice($alle, 0, min(self::MAX_JE_ABRUF, $this->restHeute()));
@@ -191,7 +198,7 @@ final class MailEingang
         $this->zugang = null;
         $this->letzterAbruf = null;
         $this->mehr = false;
-        $this->versuche = [];
+        $this->versuche->leeren();
     }
 
     /**
@@ -207,24 +214,25 @@ final class MailEingang
 
             return;
         }
-        $kennung = $zugang->ordner . '|' . $uid;
+        $kennung = $this->kennung($zugang, $uid);
         $bisher = $keywords
             // Flags are case-insensitive (RFC 3501), some servers lower-case them.
             ? count(array_intersect(array_map(strtolower(...), ImapClient::KEYWORDS_VERSUCH), array_map(strtolower(...), $flags)))
-            : $this->versuche[$kennung] ?? 0;
+            : $this->versuche->anzahl($kennung);
         if ($bisher >= self::MAX_VERSUCHE) {
             $this->aufgeben($postfach, $zugang, $keywords, $uid);
 
             return;
         }
         // The attempt is counted before the mail is fetched - in the
-        // mailbox, so it survives a broken connection and a killed worker.
+        // mailbox (or without own keywords in /daten), so it survives a
+        // broken connection and a killed worker.
         $marke = [];
         if ($keywords) {
             $marke = [ImapClient::KEYWORDS_VERSUCH[$bisher]];
             $postfach->markieren($uid, $marke);
         } else {
-            $this->versuche[$kennung] = $bisher + 1;
+            $this->versuche->setzen($kennung, $bisher + 1);
         }
         try {
             $this->bearbeiten($postfach, $zugang, $keywords, $uid, $bisher + 1);
@@ -237,10 +245,8 @@ final class MailEingang
                 } catch (ImapFehler) {
                     // Connection gone as well: one attempt more is counted.
                 }
-            } elseif ($bisher === 0) {
-                unset($this->versuche[$kennung]);
             } else {
-                $this->versuche[$kennung] = $bisher;
+                $this->versuche->setzen($kennung, $bisher);
             }
 
             throw $e;
@@ -254,10 +260,11 @@ final class MailEingang
      */
     private function bearbeiten(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, int $versuch): void
     {
+        $schluessel = null;
         try {
             $roh = $postfach->holen($uid, $zugang->maxMailBytes());
+            $schluessel = self::schluessel(self::kopfAus($roh));
             $nachricht = MimeNachricht::lesen($roh);
-            $schluessel = self::schluessel($nachricht->messageId, $roh);
             unset($roh);
             [$anhaenge, $grund] = $this->pruefen($nachricht, $zugang);
             if ($grund === null) {
@@ -268,20 +275,20 @@ final class MailEingang
             // cannot answer, the web host refusing one attachment): try it
             // again next time, set it aside after a few attempts - one bad
             // mail must not hold up every later one.
-            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->getMessage(), $versuch);
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->getMessage(), $versuch, $schluessel);
 
             return;
         } catch (ImapFehler $e) {
             if ($e->fehlercode !== 'imap_protokoll') {
                 throw $e;
             }
-            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->fehlercode, $versuch);
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->fehlercode, $versuch, $schluessel);
 
             return;
         } catch (ApiFehler | HttpFehler | Abgebrochen $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->fehlschlag($postfach, $zugang, $keywords, $uid, (new \ReflectionClass($e))->getShortName(), $versuch);
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, (new \ReflectionClass($e))->getShortName(), $versuch, $schluessel);
 
             return;
         }
@@ -295,55 +302,79 @@ final class MailEingang
 
     /**
      * The idempotency key: SHA-256 over the Message-ID, without one over
-     * the whole mail - hashed incrementally, no copy of the mail (N-16).
+     * the header block (Received, Date, From ... make it unique) - both
+     * from the first Postfach::KOPF_BYTES of the mail, so the key of a mail
+     * that is not fetched again comes from `BODY.PEEK[HEADER]<0.n>` alone
+     * (issue #243). Changed from "over the whole mail" for mails without
+     * Message-ID: such a mail handed in before #243 and found again
+     * unmarked is set aside rather than matched - never handed in twice by
+     * that, the web host's key check stays.
      */
-    public static function schluessel(?string $messageId, string $roh): string
+    public static function schluessel(string $kopf): string
     {
-        if ($messageId !== null) {
-            return hash('sha256', 'mid|' . $messageId);
-        }
-        $hash = hash_init('sha256');
-        hash_update($hash, 'roh|');
-        hash_update($hash, $roh);
+        $messageId = MimeNachricht::messageIdAusKopf($kopf);
 
-        return hash_final($hash);
+        return $messageId !== null ? hash('sha256', 'mid|' . $messageId) : hash('sha256', 'kopf|' . $kopf);
     }
 
-    private function fehlschlag(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, string $fehler, int $versuch): void
+    /**
+     * The header block of a whole mail as `BODY[HEADER]<0.n>` gives it:
+     * up to and with the empty line, at most Postfach::KOPF_BYTES.
+     */
+    public static function kopfAus(string $roh): string
+    {
+        $fenster = substr($roh, 0, Postfach::KOPF_BYTES + 4);
+        $enden = array_filter([
+            ($p = strpos($fenster, "\r\n\r\n")) === false ? null : $p + 4,
+            ($p = strpos($fenster, "\n\n")) === false ? null : $p + 2,
+        ], static fn(?int $e): bool => $e !== null);
+        $ende = $enden === [] ? strlen($fenster) : min($enden);
+
+        return substr($roh, 0, min($ende, Postfach::KOPF_BYTES));
+    }
+
+    private function fehlschlag(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, string $fehler, int $versuch, ?string $schluessel): void
     {
         $this->log->ereignis('mail_fehler', ['uid' => $uid, 'fehler' => $fehler, 'versuch' => $versuch]);
         if ($versuch >= self::MAX_VERSUCHE) {
-            $this->aufgeben($postfach, $zugang, $keywords, $uid);
+            $this->aufgeben($postfach, $zugang, $keywords, $uid, $schluessel);
         }
     }
 
     /**
      * All attempts used up: set aside as "unlesbar" - unless the mail
      * reached the inbox already and only its mark was lost (the worker died
-     * after handing it in, issue #243). That is asked by its Message-ID,
-     * which the server gives without the mail itself; a mail without one
-     * cannot be matched without fetching it and is set aside.
+     * after handing it in, issue #243). Its key comes from the header block,
+     * which the server gives without the mail itself (or is known from the
+     * attempt that just failed).
      *
      * @throws ImapFehler|ApiFehler|HttpFehler|Abgebrochen
      */
-    private function aufgeben(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid): void
+    private function aufgeben(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, ?string $schluessel = null): void
     {
-        try {
-            $messageId = $postfach->messageId($uid);
-        } catch (ImapFehler $e) {
-            if ($e->fehlercode !== 'imap_protokoll') {
-                throw $e;
+        if ($schluessel === null) {
+            try {
+                $schluessel = self::schluessel($postfach->kopf($uid));
+            } catch (ImapFehler $e) {
+                if ($e->fehlercode !== 'imap_protokoll') {
+                    throw $e;
+                }
             }
-            $messageId = null;
         }
-        if ($messageId !== null
-            && ($this->api->json('POST', '/mail/pruefen', ['schluessel' => self::schluessel($messageId, '')])['vorhanden'] ?? false) === true) {
+        if ($schluessel !== null
+            && ($this->api->json('POST', '/mail/pruefen', ['schluessel' => $schluessel])['vorhanden'] ?? false) === true) {
             $this->log->ereignis('mail_eingereicht', ['status' => 'vorhanden']);
             $this->erledigt($postfach, $zugang, $keywords, $uid);
 
             return;
         }
         $this->ablehnen($postfach, $zugang, $keywords, $uid, 'unlesbar');
+    }
+
+    /** A mail's identity across runs: UIDs are unique only per folder and UIDVALIDITY. */
+    private function kennung(MailZugang $zugang, int $uid): string
+    {
+        return $zugang->ordner . '|' . $this->uidGueltigkeit . '|' . $uid;
     }
 
     /** In the inbox: marked "erledigt", attempts cleared, moved when asked. */
@@ -363,7 +394,7 @@ final class MailEingang
         if ($keywords) {
             $postfach->entmarkieren($uid, ImapClient::KEYWORDS_VERSUCH);
         } else {
-            unset($this->versuche[$zugang->ordner . '|' . $uid]);
+            $this->versuche->setzen($this->kennung($zugang, $uid), 0);
         }
     }
 

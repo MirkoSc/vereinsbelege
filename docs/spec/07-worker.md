@@ -603,18 +603,30 @@ ist ein Versuch nicht fertig geworden (Verbindungsabbruch, harter Kill,
 Speicher): sie wird erneut versucht, **höchstens dreimal**, auch wenn ein
 Versuch nur für sich scheiterte (FETCH nicht beantwortbar, Webhoster lehnt
 einen Anhang mit 5xx ab) – eine solche Mail hält spätere nicht auf. Nach dem dritten wird sie nicht mehr geholt, sondern
-nur ihre Message-ID (`BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]`, höchstens
-64 KiB) gelesen und per `mail/pruefen` abgeglichen: schon im Posteingang →
-„erledigt“ (Absturz zwischen Einreichen und Markieren), sonst „abgelehnt“
-(`unlesbar`). Ohne Message-ID lässt sie sich ohne Holen nicht abgleichen
-und wird abgelehnt. Fällt der Webhoster als Ganzes aus (Netz, 401/403,
+nur ihr Header-Block (`BODY.PEEK[HEADER]<0.65536>`) gelesen, daraus der
+Schlüssel gebildet und per `mail/pruefen` abgeglichen (ist er vom letzten
+Versuch bekannt, entfällt das Lesen): schon im Posteingang → „erledigt“
+(Absturz zwischen Einreichen und Markieren), sonst „abgelehnt“
+(`unlesbar`). **Schlüssel** = SHA-256 über `mid|` + Message-ID, ohne
+Message-ID über `kopf|` + Header-Block (höchstens 64 KiB ab Mailbeginn bis
+einschließlich Leerzeile) – beides ohne den Mailkörper berechenbar. (Vor
+#243 ging der Schlüssel ohne Message-ID über die ganze Mail; eine solche
+schon eingereichte Mail, deren Marke verloren ging, wird beim Wiederfinden
+abgelehnt statt abgeglichen – nie doppelt eingereicht.) Fällt der Webhoster als Ganzes aus (Netz, 401/403,
 `mail_eingang_aus`, `mail_limit`) oder wird der Worker angehalten, nimmt der
 Worker die gerade gesetzte Marke zurück – das zählt nicht gegen die Mail.
 **Ohne eigene Keywords** setzt der Worker keine Versuchs-Marke im Postfach:
 `\Flagged` gehört dem Menschen (von Hand markierte Mails werden normal
-eingereicht und behalten ihr Fähnchen), die Versuche zählt der Worker nur im
-Speicher – Verbindungsabbrüche ja, ein harter Kill nein (dafür gibt es ohne
-Keywords keinen Ort im Postfach).
+eingereicht und behalten ihr Fähnchen). Die Versuche zählt er dann in
+`/daten/mail_versuche.json` neben der Identität (`VersuchsSpeicher`):
+Schlüssel HMAC-SHA256(Ordner|UIDVALIDITY|UID) unter einem aus dem
+Worker-Geheimnis abgeleiteten Schlüssel, Wert Anzahl und Zeit – keine
+Mailinhalte; atomar geschrieben (0600) **vor** dem Holen, gelöscht nach
+Erledigt/Abgelehnt, Einträge älter als 30 Tage und über 500 fallen weg.
+So übersteht der Zähler auch einen harten Kill (OOM, `restart:
+unless-stopped`): eine Mail, die den Worker jedes Mal abstürzen ließe, wird
+nach drei Neustarts beiseitegelegt, statt Abruf, OCR und KI endlos zu
+blockieren.
 
 **Speicher (N-16).** Der MIME-Leser arbeitet mit Byte-Offsets im einen
 Mailpuffer (höchstens 4 Ebenen, Text des Mailkörpers wird nicht dekodiert)
@@ -623,9 +635,9 @@ Puffer – ohne Kopie des kodierten Teils. Eine selbst kodierte
 `message/rfc822` (RFC 2046 verbietet es, manche Programme tun es) bekommt
 eine dekodierte Kopie; eine kodierte weitergeleitete Mail **in** dieser
 Kopie wird nicht geöffnet. Damit bleibt die Spitze unter dem Dreifachen der
-Mailgröße (Kopie < 1×, Anhänge < 1×), auch bei ineinander kodierten
-Weiterleitungen (getestet). Der Idempotenz-Schlüssel ohne Message-ID wird
-inkrementell gehasht (keine Kopie der Mail). Das geholte Literal ist auf
+Mailgröße: gemessen rund 1,9× zusätzlich zur Rohmail, also etwa 2,9×
+insgesamt (Kopie < 1×, Anhänge < 1×), auch bei ineinander kodierten
+Weiterleitungen (getestet). Das geholte Literal ist auf
 `max_einreichung_bytes · 4/3 + 1 MiB` begrenzt; ein größeres wird
 stückweise gelesen und verworfen (die Verbindung bleibt im Takt, seine Bytes
 gelten nie als Serverantwort).
@@ -635,9 +647,16 @@ Workers nimmt der Webhoster je Worker und Stunde höchstens
 `mail_eingang_limit_stunde` Mails (Vorgabe 60) und
 `mail_eingang_limit_mb_stunde` MiB (Vorgabe 500) an
 (`App\Service\Worker\MailEingangGrenze` auf `rate_limit`, Fenster
-`RateLimiter::SUBMISSION_WINDOW_SECONDS`). Bytes zählen beim Ausgeben des
-Upload-Tickets (vor dem Schreiben), Mails beim Einreichen; darüber 429
-`mail_limit`. Eine Datei, die größer ist als eine ganze Stunde erlaubt,
+`RateLimiter::SUBMISSION_WINDOW_SECONDS`). **Atomar:** `RateLimiter::reserve()`
+prüft und zählt in einer bedingten Anweisung (`UPDATE … SET count = count + n
+WHERE … AND window_start = ? AND count + n <= grenze`, sonst Fenster per
+`INSERT … ON DUPLICATE KEY UPDATE` öffnen, nur wenn die Zeile ein älteres
+Fenster hat) – parallele Anfragen können die Grenze nicht gemeinsam
+überschreiten (Test mit sechs Prozessen). Bytes werden beim Ausgeben des
+Upload-Tickets reserviert (vor dem Schreiben), eine Mail vor dem Einreichen
+(und zurückgegeben, wenn kein neuer Beleg entsteht); darüber 429
+`mail_limit`. Login- und Einreichungsgrenzen nutzen `reserve()` nicht und
+bleiben unverändert. Eine Datei, die größer ist als eine ganze Stunde erlaubt,
 bekommt 413 (die Mail wird abgelehnt statt stündlich erneut zu warten). Der Worker beendet dann den Abruf, nimmt die Marke zurück und
 meldet `mail_limit` im `mail_status`; die Mail wartet unmarkiert. Kein
 Admin-Formularfeld (Setting mit Vorgabe), die Admin-Seite zeigt die Werte.
