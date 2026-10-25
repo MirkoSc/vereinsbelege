@@ -956,3 +956,92 @@ Daten-Schlüssel. Getroffen ohne Rückfrage:
   HMAC (Schlüssel aus dem Server-Schlüssel, `worker.config_hash`) über die
   aktiven Anbieter-Profile geändert hat. Eine Änderung erreicht den Worker
   so binnen eines Polling-Intervalls; Klartext wird nie gespeichert.
+
+## E-43 ❓ Worker-Routing, Rückfall und Übernahme der Ergebnisse (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #53/M7b-3, 07 §1, §3, §5 und §6; keine Migration*
+
+Getroffen ohne Rückfrage:
+
+- **Grants entstehen beim Routing aus der Session, nicht bei der
+  Einreichung.** Alle Worker-fähigen Schritte werden ohnehin aus einer
+  angemeldeten Session eingereiht: `render_pages` von `pdf_erzeugen`, `ocr`
+  von `extract_text` (wenn die Seitenbilder gebraucht werden), `ai_extract`
+  beim Annehmen im Posteingang, „OCR nachholen“ im Admin.
+  `WorkerUebergabe::einreihen()` erteilt dort die Grants über
+  `WorkerFreigaben::ausSession()` und reiht mit `executor = worker` ein –
+  nur für Dokumente, die wirklich zum Worker gehen. Bei der öffentlichen
+  Einreichung liegen die DEKs der zuvor hochgeladenen Blobs nur noch
+  tresorversiegelt vor; sie dort an `W_pub` zu versiegeln, hätte eine
+  Schemaänderung am Upload gebraucht und jedem Beleg einen Grant gegeben,
+  auch denen, die nie zum Worker gehen. `beiAnlage()`/`kontextBeiAnlage()`
+  bleiben für Wege ohne Session (z. B. E-Mail-Eingang, Backlog) ungenutzt
+  stehen. Folge: Der Worker beginnt erst, nachdem eine Session die ersten
+  Schritte (`pdf_erzeugen`, `extract_text`) eines Belegs gemacht hat.
+- **Routing-Regel** (`WorkerRouting::workerFuer()`): Setting
+  `worker_modul_aktiv = 1`, Worker `aktiv`, Protokoll unterstützt,
+  Heartbeat < 5 min, Fähigkeit für den Job-Typ gemeldet. Sonst Browser
+  (`render_pages`), Session (`ai_extract`) oder gar nicht (`ocr` –
+  „entfällt“). Verweigert `ausSession()` (Tresor-Rotation), läuft der
+  Schritt ebenfalls über Browser/Session. Ein Worker-`ai_extract` wird erst
+  beansprucht, wenn für dasselbe Dokument kein `pdf_erzeugen`,
+  `extract_text`, `render_pages`, `ocr` oder `image_cleanup` mehr wartet
+  (`WorkerRouting::VORGAENGER`, Bedingung im Claim).
+- **Rückfall im Cron bei jedem Lauf** (`WorkerFallbackTask`, nicht nur im
+  Aufräum-Intervall): Ist das Modul aus, kein einsatzbereiter Worker da oder
+  der letzte Heartbeat älter als `worker_fallback_minuten` (Standard 60,
+  5 … 10080), gehen alle **freien** Worker-Jobs (offen oder mit
+  abgelaufener Sperre) zurück – per bedingtem UPDATE an Ort und Stelle
+  (Executor wechselt, Schritt/Zustand/Versuche zurückgesetzt), sodass ein
+  gleichzeitiger Claim gewinnt. `ocr`/`image_cleanup` enden `uebersprungen`
+  (`last_error = WorkerAusfall`). Jobs eines Typs, dessen Fähigkeit der
+  Worker nicht mehr meldet, gehen sofort zurück. Ein Job, den der Worker
+  mit gültiger Sperre hält, bleibt bei ihm. Modul ausschalten und
+  Entkoppeln lösen den Rückfall sofort aus. Endgültiges `fail` oder
+  erschöpfte Versuche reihen den Browser-/Session-Gegenpart ein.
+- **Übernahme der Ergebnisse als Session-Job** `worker_uebernahme`
+  (eingereiht von `complete`): Die Worker-Artefakte sind an den Tresor
+  versiegelt, prüfen kann sie nur eine Session. Jedes Artefakt des Laufs
+  wird entschlüsselt und auf die Form der Session-Artefakte geprüft;
+  unbrauchbare bekommen das Kind-Präfix `!`
+  (`DocumentArtifactRepository::DEFEKT`, für Leser unsichtbar, im Admin
+  gezählt, „OCR nachholen“ wiederholt einen solchen Lauf nicht). Danach:
+  `ocr` – alle Texte brauchbar → `ocr_status = fertig`, ältere Textläufe
+  weg; `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
+  die Session-Kette (`ausgewertet`/`ki_fehler`, dann Lieferanten-Auflösung),
+  keiner → Session-`ai_extract`; `render_pages` – ein Lauf mit nur einer
+  defekten Seite wird ganz verworfen und der Browser rendert. Blob-Artefakte
+  werden nur auf Vollständigkeit und öffnenden DEK geprüft, nicht ganz
+  entschlüsselt (Größe); der secretstream erkennt Beschädigung beim Lesen.
+  Worker-KI-Aufrufe erscheinen (noch) nicht im KI-Protokoll
+  (`ai_call_log`); Modell, Prompt-Version und Rohantwort stehen
+  verschlüsselt im Artefakt.
+- **Leser sind robust gegen Worker-Artefakte** (Review #52):
+  `ArtefaktJson::lesen()` behandelt ein Worker-Artefakt, das nicht
+  entschlüsselt oder kein JSON ist, als fehlend (Texterkennung,
+  E-Rechnung, KI-Auszug) – auch schon vor der Übernahme. Artefakte der
+  Session schlagen weiter laut fehl (dort ist das ein Fehler, keine Eingabe).
+  Der Volltext-Index fängt zusätzlich `\SodiumException`.
+- **Suchindex holt spät sichtbare Artefakte nach** (Review #52): Passiert
+  der Cursor eine noch reservierte `~`-Zeile, merkt sich der (verschlüsselte)
+  Session-Zustand ihre ID (`nachholen`, Format-Version 2 – alte Indizes
+  werden einmal neu aufgebaut). Wird sie sichtbar, nimmt der nächste Schritt
+  ihr Dokument neu auf; bis dahin bleibt sie aus der Signatur der
+  Kostenstellen-Mitglieder heraus, damit ihr Commit allein keinen Neuaufbau
+  auslöst. Keine Schemaänderung.
+- **KI-Schlüssel nur mit Freigabe** (Review #52): Die Anbieter-Profile
+  samt API-Key werden nur versiegelt, wenn das Modul aktiv ist **und** der
+  Worker im selben Heartbeat `ai` meldet; sonst eine leere Profilliste, die
+  (über den geänderten Hash) frühere Schlüssel auf dem Worker ersetzt. Mit
+  ausgeschaltetem Modul gibt `jobs/claim` nichts aus.
+- **Einschalten und „OCR nachholen“ nur mit entsperrtem Tresor**: Wer das
+  Modul einschaltet, entscheidet, dass der Worker künftig Belege lesen
+  kann – das soll nur, wer sie selbst lesen kann. Das Koppeln/Bestätigen
+  bleibt bei `admin.settings` (#51); ob dafür zusätzlich
+  `admin.vault_grant` nötig sein soll, ist offen.
+- **Alarm-Mail** an alle aktiven Konten mit `admin.settings`, wenn der
+  Worker bei aktivem Modul > 24 h schweigt und in diesem Ausfall Jobs für
+  ihn anstanden (zurückgefallen oder noch frei) – einmal je Ausfall
+  (Kennung = Worker + letzter Heartbeat, Setting `worker_alarm_fuer`).
+- „OCR nachholen“ gibt es vorerst nur als Sammelaktion im Admin (50 je
+  Klick); der Knopf je Beleg im Posteingang folgt mit der Posteingangs-
+  Oberfläche des Workers (offen).

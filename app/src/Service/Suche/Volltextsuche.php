@@ -348,7 +348,7 @@ final readonly class Volltextsuche
             // contributes nothing for this document.
             try {
                 array_push($texte, ...$quelle->texte($document, $vault));
-            } catch (CryptoException | \JsonException) {
+            } catch (CryptoException | \SodiumException | \JsonException) {
                 continue;
             }
         }

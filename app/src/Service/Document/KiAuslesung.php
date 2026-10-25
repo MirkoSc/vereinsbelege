@@ -41,6 +41,8 @@ use App\Service\Processing\PngZuJpeg;
 use App\Service\Processing\ProcessingException;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
+use App\Service\Worker\WorkerUebergabe;
+use App\Service\Worker\WorkerUebernahme;
 
 /**
  * The `ai_extract` job (issue #47/M7-5, docs/spec/03-erfassung-und-ki.md
@@ -310,13 +312,12 @@ final readonly class KiAuslesung implements ExternerJobHandler
      * False when the run left no usable attempt - the caller falls back to
      * the session run.
      */
-    public function workerLaufUebernehmen(Job $workerJob, Vault $vault, \DateTimeImmutable $now): bool
+    public function workerLaufUebernehmen(Document $document, int $workerJobId, Vault $vault, \DateTimeImmutable $now): bool
     {
-        $document = $this->dokument($workerJob);
         $letzter = null;
         $letzteNummer = -1;
         foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
-            if ($artefakt->jobId !== $workerJob->id || $artefakt->seq <= $letzteNummer) {
+            if ($artefakt->jobId !== $workerJobId || $artefakt->seq <= $letzteNummer) {
                 continue;
             }
             $versuch = $this->workerVersuch($artefakt, $vault);
@@ -327,7 +328,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
         if ($letzter === null) {
             return false;
         }
-        $this->abschliessen($document, $workerJob, $letzter->gueltig(), $now);
+        $this->abschliessen($document, $workerJobId, $letzter->gueltig(), $now);
 
         return true;
     }
@@ -358,7 +359,9 @@ final readonly class KiAuslesung implements ExternerJobHandler
         if ($standard === null) {
             return JobSchrittErgebnis::uebersprungen();
         }
-        if ($this->jobs->offenFuer([Texterkennung::JOB_TYP, PdfRasterung::JOB_TYP], self::REF_TYPE, $document->id)) {
+        // Also the worker's OCR and the takeover of its results (issue #53):
+        // the AI reads the recognised text instead of guessing from images.
+        if ($this->jobs->offenFuer([Texterkennung::JOB_TYP, PdfRasterung::JOB_TYP, WorkerUebergabe::OCR, WorkerUebernahme::JOB_TYP], self::REF_TYPE, $document->id)) {
             return JobSchrittErgebnis::warten('', [], self::WARTEN_SEKUNDEN);
         }
 
@@ -368,7 +371,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
                 $this->speichern($document, $job->id, 0, $vault, $now, ['versuch' => null, 'meldung' => $grund, 'extraktion' => null, 'hinweise' => []]);
             }
 
-            return $this->abschliessen($document, $job, false, $now);
+            return $this->abschliessen($document, $job->id, false, $now);
         }
 
         return JobSchrittErgebnis::weiter(self::SCHRITT_FRAGEN, ['n' => 0]);
@@ -391,7 +394,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
             return JobSchrittErgebnis::uebersprungen();
         }
 
-        return $this->abschliessen($document, $job, false, $now);
+        return $this->abschliessen($document, $job->id, false, $now);
     }
 
     /** What follows attempt $n: done, the repair call, the fallback, or "KI fehlgeschlagen". */
@@ -399,7 +402,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
     {
         $versuch = $this->gespeicherterVersuch($document, $job->id, $n, $vault) ?? throw new ProcessingException('Versuch nicht gespeichert.');
         if ($versuch->gueltig()) {
-            return $this->abschliessen($document, $job, true, $now);
+            return $this->abschliessen($document, $job->id, true, $now);
         }
         if ($versuch->reparaturMoeglich()) {
             return JobSchrittErgebnis::weiter(self::SCHRITT_REPARIEREN, ['n' => $n + 1]);
@@ -408,12 +411,12 @@ final readonly class KiAuslesung implements ExternerJobHandler
             return JobSchrittErgebnis::weiter(self::SCHRITT_FALLBACK, ['n' => $n + 1]);
         }
 
-        return $this->abschliessen($document, $job, false, $now);
+        return $this->abschliessen($document, $job->id, false, $now);
     }
 
-    private function abschliessen(Document $document, Job $job, bool $gueltig, \DateTimeImmutable $now): JobSchrittErgebnis
+    private function abschliessen(Document $document, int $jobId, bool $gueltig, \DateTimeImmutable $now): JobSchrittErgebnis
     {
-        $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Extraction, $job->id);
+        $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Extraction, $jobId);
         // Only from `bereit_zur_auswertung` (UPDATE ... WHERE status = ?): a
         // receipt someone took up meanwhile keeps its status.
         $gewechselt = $this->documents->wechsleStatus(

@@ -85,7 +85,8 @@ Der Worker erhält **nie** den Tresor-Private-Key.
   für den aktiven, bestätigten Worker; **verweigert während einer
   Tresor-Rotation** (#90) und mit einem Tresor, der nicht die aktuelle
   Generation ist) sowie `beiAnlage()`/`kontextBeiAnlage()` für frisch
-  erzeugte DEKs ohne Geheimnis (Einhängen in Einreichung und Routing: #53).
+  erzeugte DEKs ohne Geheimnis (seit #53 ungenutzt: Grants entstehen beim
+  Routing aus der Session, §6 „Stand M7b-3“, E-43).
   Ein Grant öffnet einen Blob nur, solange derselbe Worker einen laufenden,
   nicht abgelaufenen Job desselben Dokuments hält. Gelöscht werden Grants
   und Kontext, sobald nach `complete`, endgültigem `fail` oder erschöpften
@@ -149,8 +150,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   Grenzen: 30 Fehlversuche je IP/15 min (429), 300 Anfragen je Worker/min;
   Kopplung 10 Fehlversuche je IP und 50 insgesamt je 15 min. Nonces räumt
   der Cron (`worker_aufraeumen`) nach 11 min, abgelaufene Codes nach einem
-  Tag. Grants löschen (#52, umgesetzt) und Rückkehr zum Browser-Weg (#53)
-  hängen sich an `WorkerKopplung::entkoppeln()`.
+  Tag. Grants löschen (#52) hängt an `WorkerKopplung::entkoppeln()`, die
+  Rückkehr zum Browser-Weg (#53) löst die Admin-Seite direkt danach aus
+  (`WorkerFallback::ausfuehren()`).
 
 ## 5. Protokoll (Webhoster-API `/api/worker/*`)
 
@@ -240,8 +242,47 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - Blob-Artefakte haben kein `meta_enc` (AAD mit Blob-ID); das Kind sagt,
     was es ist. Ein nicht festgeschriebener Upload verfällt mit dem Job
     (`complete`/`fail`), beim Entkoppeln und per Cron nach einem Tag.
-  - Wer die Ergebnisse in den Ablauf übernimmt (z. B. ältere Läufe
-    ablöst, `ocr_status` setzt), ist Sache von #53/#54.
+  - Wer die Ergebnisse in den Ablauf übernimmt: siehe „Stand M7b-3“.
+
+- **Stand M7b-3 (issue #53, E-43):**
+  - `complete` reiht den Session-Job `worker_uebernahme` ein
+    (`App\Service\Worker\WorkerUebernahme`, State `{job, typ}`). Er prüft
+    jedes Artefakt des Laufs mit dem Tresor; was nicht entschlüsselt oder
+    nicht die Form der Session-Artefakte hat, bekommt das Kind-Präfix `!`
+    (unsichtbar, im Admin gezählt). Formen: `text` = `{brauchbar, seiten[]}`
+    (wie `extract_text`), `extraction` = `{versuch, meldung, extraktion,
+    hinweise}` (wie `ai_extract`; `extraktion` genau dann ein Objekt, wenn
+    der Versuch gültig ist), `page_image`/`pdfa` = vollständiger Blob mit
+    öffnendem DEK. Folgen: `ocr` mit durchweg brauchbarem Text →
+    `ocr_status = fertig`; `ai_extract` → Status `ausgewertet`/`ki_fehler`
+    wie die Session-Kette, ohne brauchbaren Versuch Session-`ai_extract`;
+    `render_pages` mit einer defekten Seite → ganzer Lauf verworfen,
+    Browser rendert.
+  - Leser (Texterkennung, E-Rechnung, KI-Auszug, Volltext-Index) werten
+    ein Worker-Artefakt, das nicht entschlüsselt oder kein JSON ist, als
+    fehlend (`App\Service\Document\ArtefaktJson`) – schon vor der
+    Übernahme. Der Volltext-Index merkt sich reservierte Zeilen, die sein
+    Cursor passiert, und nimmt sie nach dem Festschreiben auf.
+  - Endgültiges `fail` und erschöpfte Versuche reihen den Browser-/
+    Session-Gegenpart ein (`WorkerFallback::nachFehlschlag()`).
+  - Mit ausgeschaltetem Modul liefert `jobs/claim` keine Jobs und der
+    Heartbeat `wartend = 0`; die KI-Profile samt API-Keys gehen nur an einen
+    Worker, der bei aktivem Modul `ai` meldet – sonst eine leere Liste.
+  - Ein Worker-`ai_extract` wird erst beansprucht, wenn für dasselbe
+    Dokument kein `pdf_erzeugen`, `extract_text`, `render_pages`, `ocr`,
+    `image_cleanup` mehr wartet.
+
+- **Vorgaben für `bin/worker.php` (#54)** aus den Reviews von #52/#53:
+  - Jeder Versuch einer Anfrage – auch die Wiederholung nach Timeout oder
+    Netzfehler – bekommt einen **neuen Nonce** (und einen neuen
+    Zeitstempel); ein wiederholter Nonce wird als Replay abgelehnt.
+  - Die Webhoster-Adresse beim `pair` und in der Konfiguration muss
+    `https://` sein; `http://`-URLs lehnt der Worker ab (Zugangsschlüssel,
+    Grants und Ergebnisse gingen sonst unverschlüsselt über die Leitung –
+    die HMAC schützt nur die Integrität).
+  - Eine neue Konfiguration mit leerer `ki_anbieter`-Liste ersetzt die alte
+    vollständig – zuvor erhaltene API-Keys verwirft der Worker.
+  - Ergebnisformate wie oben; `text` je Original eine Zeile.
 
 ## 6. Routing auf dem Webhoster
 
@@ -256,6 +297,37 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   Fähigkeiten), Warteschlange, letzte Fehler, Durchsatz, koppeln/
   entkoppeln. Alarm-Mail, wenn der Worker > 24 h offline ist und Jobs
   warten.
+- **Stand M7b-3 (issue #53, E-43):**
+  - `App\Service\Worker\WorkerRouting`: Modul an, Worker `aktiv`,
+    Protokoll unterstützt, Heartbeat < 5 min, Fähigkeit für den Typ →
+    Worker. `App\Service\Worker\WorkerUebergabe::einreihen()` erteilt
+    dann die Grants aus der Session (`WorkerFreigaben::ausSession()`) und
+    reiht mit `executor = worker` ein, sonst Browser/Session bzw. – bei
+    `ocr` – nichts. Eingehängt in `pdf_erzeugen` (`render_pages`),
+    `extract_text` (`ocr`, wenn die Seitenbilder gebraucht werden: keine
+    PDF/XML-Quelle oder unbrauchbare Textebene) und das Annehmen im
+    Posteingang (`ai_extract`). Je Typ und Dokument höchstens ein
+    wartender Job.
+  - Rückfall: `WorkerFallbackTask` bei **jedem** Cron-Lauf
+    (`App\Service\Worker\WorkerFallback`) sowie sofort beim Ausschalten
+    und Entkoppeln. Freie Worker-Jobs (offen bzw. Sperre abgelaufen) gehen
+    zurück, wenn das Modul aus ist, kein einsatzbereiter Worker da ist oder
+    er seit `worker_fallback_minuten` schweigt; Jobs eines Typs, dessen
+    Fähigkeit er nicht mehr meldet, sofort. `render_pages` → `browser`,
+    `ai_extract` → `session` (an Ort und Stelle, Schritt/Versuche
+    zurückgesetzt), `ocr`/`image_cleanup` → `uebersprungen`
+    (`WorkerAusfall`). Grants gehen mit dem letzten Worker-Job.
+  - „OCR nachholen“ (Admin, Sammelaktion, 50 je Klick, Tresor entsperrt):
+    Belege mit `ocr_status = uebersprungen`, nicht festgeschrieben, ohne
+    wartenden/fertigen `ocr`-Job und ohne Worker-Text (auch keinen
+    defekten). Der Knopf je Beleg im Posteingang ist offen.
+  - Admin-Seite: Modul-Schalter (Einschalten nur mit entsperrtem Tresor)
+    und Wartezeit, online/offline, Warteschlange je Typ, erledigt in 24 h,
+    verworfene Ergebnisse, letzte Fehler (Typ, Code, Zeit), „OCR
+    nachholen“.
+  - Alarm-Mail (`worker-ausfall`) an alle aktiven Konten mit
+    `admin.settings`: Modul an, Worker > 24 h ohne Meldung, in diesem
+    Ausfall Jobs zurückgefallen oder noch frei; einmal je Ausfall.
 
 ## 7. Paketierung und Betrieb
 
@@ -277,7 +349,12 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 ## Pflicht-Tests
 
 Routing (Modul aus → nie Worker-Jobs; aktiv + online → Worker; offline →
-Fallback nach Frist; OCR übersprungen und nachholbar); Worker-Grant nur bei
+Fallback nach Frist; OCR übersprungen und nachholbar; gehaltener Job
+bleibt beim Worker; endgültiger Fehler → Session-Gegenpart; Alarm-Mail
+einmal je Ausfall; KI-Schlüssel nur mit Modul und `ai`); Übernahme
+(brauchbare Ergebnisse übernommen, defekte markiert + Rückfall, kein Leser
+wirft); Volltext-Index nimmt spät festgeschriebene und überspringt defekte
+Worker-Artefakte; Worker-Grant nur bei
 aktivem Modul, Löschung nach Abschluss und nach max. Fehlversuchen;
 Worker-Kontext enthält nie Name/E-Mail/IBAN; `GET /blobs` ohne
 beanspruchten Job → 403; Artefakte sind mit Tresor-Schlüssel lesbar, mit

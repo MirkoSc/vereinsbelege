@@ -40,7 +40,7 @@ final readonly class DocumentRepository
 
     /** ocrNachholbar(): see there. */
     private const string OCR_NACHHOLBAR =
-        'd.ocr_status = ? AND d.status <> ?
+        'd.ocr_status = ? AND d.status NOT IN (?, ?)
          AND NOT EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.status IN (?, ?, ?))
          AND NOT EXISTS (SELECT 1 FROM document_artifact a WHERE a.document_id = d.id AND a.producer = ? AND a.kind IN (?, ?))';
 
@@ -151,7 +151,7 @@ final readonly class DocumentRepository
     /**
      * Documents whose OCR is to be caught up (docs/spec/07-worker.md section
      * 6 "OCR nachholen", issue #53): page images needed (`ocr_status`
-     * `uebersprungen`), not fixed yet, and no `ocr` job that is pending or
+     * `uebersprungen`), not fixed or rejected, and no `ocr` job that is pending or
      * done and no OCR text of the worker - a failed or skipped one (the
      * worker fell out) may be repeated.
      * Oldest first, ids only.
@@ -184,6 +184,7 @@ final readonly class DocumentRepository
         return [
             OcrStatus::Uebersprungen->value,
             DocumentStatus::Festgeschrieben->value,
+            DocumentStatus::Abgelehnt->value,
             'ocr',
             'document',
             JobStatus::Offen->value,
