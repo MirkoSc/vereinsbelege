@@ -158,7 +158,7 @@ eine in diesem PR behobene Zeile.
 | F-07 | Argon2id MODERATE, Parameter je Benutzer, Hash und KEK-Salt getrennt | ✓ | `Crypto/KdfParameters`, `UserKey` |
 | F-08 | `random_bytes` für alles Sicherheitsrelevante, `hash_equals` für Vergleiche | ✓ | Volltext-Suche; `mt_rand` nur für Backoff-Jitter im Worker |
 | F-09 | Wiederherstellungsschlüssel mit Prüfsumme, Abgleich gegen `vault.public_key` | ✓ | `Crypto/RecoveryKey` |
-| F-10 | Echtheit von `vault.public_key` gegen etwas außerhalb der DB geprüft | ✗ mittel | `VaultRepository::current()` → N-01 |
+| F-10 | Echtheit von `vault.public_key` gegen etwas außerhalb der DB geprüft | ✓ (#240) | `Crypto/TresorAnker` (MAC unter dem Server-Schlüssel, `vault.public_key_mac`), geprüft in `VaultRepository::current()` und `LoginService`; Alarm `Tresor/TresorAnkerAlarm`, Systemcheck `vault_anchor`; 01 §2 „Anker des Tresor-Schlüssels“, E-62 |
 | F-11 | Rotation: Recht, CSRF, idempotent, Abbruch nur vor Bestätigung, Abschluss unter Sperre | ✓ | `Tresor/Schluesselrotation`, `VaultRotationController` |
 | F-12 | Alte DEKs/Backups nach Rotation mit altem Schlüssel lesbar | ⚠ | 01 §2 „Rest-Exposure", E-32 |
 
@@ -175,8 +175,8 @@ eine in diesem PR behobene Zeile.
 | G-07 | `proc_open` nur mit Argumentliste, feste Dateinamen | ✓ | `worker/src/Prozess.php`, `Schritt/*` |
 | G-08 | IMAP nur TLS ≥ 1.2 mit Zertifikatsprüfung, STARTTLS erzwungen, keine Befehlsinjektion | ✓ | `worker/src/Mail/SocketStrom`, `ImapClient` |
 | G-09 | Mails nie gelöscht, keine Mailinhalte im Log | ✓ | `MailEingang`, `worker/src/Log` |
-| G-10 | MIME-Speicherspitze < 3× Mailgröße | ✗ niedrig | `MimeNachricht` (kodierte `message/rfc822` je Ebene kopiert) → N-16 |
-| G-11 | Serverseitige Mengengrenze des Mail-Eingangs | ✗ niedrig | `WorkerMailController` → N-17 |
+| G-10 | MIME-Speicherspitze < 3× Mailgröße | ✓ (#243) | `MimeNachricht` (stückweise dekodiert, höchstens eine dekodierte Kopie; `MimeNachrichtTest`) → N-16 |
+| G-11 | Serverseitige Mengengrenze des Mail-Eingangs | ✓ (#243) | `WorkerMailController` + `MailEingangGrenze` (Mails/Bytes je Worker und Stunde, 429 `mail_limit`) → N-17 |
 | G-12 | Worker-HTTP nur https, keine Redirects, TLS-Prüfung an | ✓ | `worker/src/Http/CurlWorkerHttp` |
 
 ## H – Betrieb: Backup, Update, Integrität, Konfiguration (ASVS V10/V14)
@@ -187,7 +187,7 @@ eine in diesem PR behobene Zeile.
 | H-02 | Backup-Dateien und ihre Arbeitsdateien nur für den Besitzer lesbar (0600) | ✓ (#78) | `BackupService::nurFuerBesitzer()`, `BackupErstellung::oeffnen()` |
 | H-03 | Download: `admin.system`, Namensmuster; mit `config.php` nur POST + CSRF + Passwort | ✓ | `Admin/BackupController` |
 | H-04 | Restore nur im Installer, kein Zip-Slip, `config.php` nie per `include` | ✓ | `Installer/RestoreService` |
-| H-05 | Backup-Echtheit (MAC/Signatur) | ✗ | Weg zu N-01 |
+| H-05 | Backup-Echtheit (MAC/Signatur) | ⚠ teilweise (#240) | Der Tresor-Schlüssel eines Backups ohne `config.php` ist beglaubigt: ausgetauscht fällt er unter dem echten Server-Schlüssel durch (`InstallFlowTest`). Offen: übrige Backup-Inhalte ohne MAC; ein Backup mit `config.php` beglaubigt sich selbst (01 §2 „Grenzen“) |
 | H-06 | Update: feste Quelle, HTTPS, Prüfsumme, kein Downgrade, Zip-Slip | ✓ | `Update/ReleaseDownloader`, `UpdateService` |
 | H-07 | Update: Echtheit (Signatur) statt nur Integrität | ✓ (#241) | `Update/ReleaseSignatur`, `UpdateService::download()`/`extract()`, `setup.php`; scharf, sobald `PUBLIC_KEY` gesetzt ist (Maintainer, `docs/betrieb.md` §13) – bis dahin Hinweis |
 | H-08 | Download-URLs/Redirect-Protokolle auf github.com/https beschränkt | ✓ (#241) | `ReleaseDownloader::pruefeUrl()`/`folgeWeiterleitungen()` – jeder Sprung |
@@ -231,7 +231,7 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 
 | Nr. | Schwere | Kurz |
 |---|---|---|
-| N-01 | mittel | `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
+| N-01 | mittel | ✓ behoben in #240 (→ F-10): `vault.public_key` unbeglaubigt: DB-Schreiber oder manipuliertes Backup lenkt künftige Einreichungen auf eigenen Schlüssel |
 | N-02 | mittel | ✓ (#241) Updater prüft nur Integrität, keine Signatur der Releases – Signaturprüfung eingebaut, scharf mit `PUBLIC_KEY` |
 | N-03 | mittel | ✓ (#241) Integritätscheck übersieht `web/` und `config.php` |
 | N-04 | mittel | Platte/DB über öffentliche Uploads füllbar |
@@ -246,8 +246,8 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-13 | niedrig | TOCTOU Magic Bytes ↔ Speichern beim Upload |
 | N-14 | Härtung | ✓ behoben (#246): Session-Cookie `PHPSESSID` statt `__Host-` |
 | N-15 | Härtung | ✓ behoben (#246): kein zentraler CSRF-Test über alle POST-Routen |
-| N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails |
-| N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze |
+| N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails – ✓ behoben (#243) |
+| N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze – ✓ behoben (#243) |
 | N-18 | Härtung | ✓ (#241) Update-Download-URLs nicht auf github.com beschränkt |
 | N-19 | niedrig | ✓ (#241) Prüfsummenliste in `shared/` schreibbar (Spec räumt es ein) – Liste je Release, signiert |
 | N-20 | Hinweis | Posteingang-Scope über `created_at`, Auswertung über Rechnungsdatum (spec-konform, Entscheidung offen) |

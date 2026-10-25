@@ -158,6 +158,14 @@ final readonly class LoginService
             return LoginResult::erfolg($user, null, VaultAccess::KeineFreigabe);
         }
 
+        // The session seals with its newest key: only one that is anchored
+        // outside the database (issue #240). A grant proves nothing here -
+        // box_seal needs only the user's PUBLIC key, so whoever swapped
+        // `vault.public_key` could have sealed a matching grant as well.
+        if (!$this->vaults->pruefe($neueste)) {
+            return LoginResult::erfolg($user, null, VaultAccess::Unbeglaubigt);
+        }
+
         // The newest generation must be among the grants: a session seals
         // everything new with its newest key, and that must never be a key
         // that is on its way out.

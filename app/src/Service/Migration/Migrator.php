@@ -17,9 +17,16 @@ namespace App\Service\Migration;
  */
 final class Migrator
 {
+    /**
+     * @param (\Closure(Migration): void)|null $nachMigration called after each
+     *        migration is applied and recorded, in the same request - for work
+     *        SQL cannot do and that belongs to exactly that moment (the vault
+     *        anchor's first-use MAC, App\Service\Tresor\Erstbeglaubigung)
+     */
     public function __construct(
         private readonly \PDO $pdo,
         private readonly string $migrationsDir,
+        private readonly ?\Closure $nachMigration = null,
     ) {
     }
 
@@ -58,6 +65,9 @@ final class Migrator
             }
             $this->apply($migration);
             $applied[] = $migration;
+            if ($this->nachMigration !== null) {
+                ($this->nachMigration)($migration);
+            }
         }
 
         return new MigrationResult($applied, $fromVersion, $this->currentVersion());

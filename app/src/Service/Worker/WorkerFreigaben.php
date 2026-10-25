@@ -72,7 +72,9 @@ final readonly class WorkerFreigaben
     {
         return $vault->isUnlocked()
             && !($this->rotationLaeuft)()
-            && $this->vaults->current()?->version === $vault->version;
+            // Version only: the session's vault was checked at the login,
+            // results come back through WorkerArtefakte (checked).
+            && $this->vaults->currentUngeprueft()?->version === $vault->version;
     }
 
     /**
@@ -91,7 +93,7 @@ final readonly class WorkerFreigaben
         if (!$vault->isUnlocked()) {
             throw new WorkerFreigabeVerweigert('tresor_gesperrt');
         }
-        if (($this->rotationLaeuft)() || $this->vaults->current()?->version !== $vault->version) {
+        if (($this->rotationLaeuft)() || $this->vaults->currentUngeprueft()?->version !== $vault->version) {
             throw new WorkerFreigabeVerweigert('rotation');
         }
 

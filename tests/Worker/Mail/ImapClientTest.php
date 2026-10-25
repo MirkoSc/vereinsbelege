@@ -136,7 +136,7 @@ final class ImapClientTest extends TestCase
             self::GRUSS . "* CAPABILITY IMAP4rev1 MOVE\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1 MOVE\r\nA0003 OK\r\n"
             . "* 3 EXISTS\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged \\*)] ok\r\nA0004 OK [READ-WRITE] SELECT\r\n"
             . "* SEARCH 12 7\r\nA0005 OK\r\n"
-            . "* 1 FETCH (UID 7 RFC822.SIZE 120)\r\n* 2 FETCH (RFC822.SIZE 4000 UID 12)\r\nA0006 OK\r\n"
+            . "* 1 FETCH (UID 7 RFC822.SIZE 120 FLAGS ())\r\n* 2 FETCH (RFC822.SIZE 4000 FLAGS (\\Flagged \$VereinsbelegeVersuch) UID 12)\r\nA0006 OK\r\n"
             . '* 1 FETCH (UID 7 BODY[] {' . strlen($mail) . "}\r\n" . $mail . ")\r\nA0007 OK\r\n"
             . "A0008 OK\r\n"
             . "A0009 OK\r\n"
@@ -147,7 +147,10 @@ final class ImapClientTest extends TestCase
 
         self::assertTrue($client->auswaehlen('Belege/Eingang'));
         self::assertSame([7, 12], $client->offene(true));
-        self::assertSame([7 => 120, 12 => 4000], $client->groessen([7, 12]));
+        self::assertSame([
+            7 => ['groesse' => 120, 'flags' => []],
+            12 => ['groesse' => 4000, 'flags' => ['\\Flagged', '$VereinsbelegeVersuch']],
+        ], $client->angaben([7, 12]));
         self::assertSame($mail, $client->holen(7, 1024));
         $client->markieren(7, [ImapClient::KEYWORD_ERLEDIGT, '\\Seen']);
         self::assertTrue($client->verschieben(7, 'Erledigt'));
@@ -155,6 +158,7 @@ final class ImapClientTest extends TestCase
 
         self::assertStringContainsString('A0004 SELECT "Belege/Eingang"', $strom->gesendet);
         self::assertStringContainsString('A0005 UID SEARCH UNKEYWORD $Vereinsbelege UNKEYWORD $VereinsbelegeAbgelehnt UNDELETED', $strom->gesendet);
+        self::assertStringContainsString('A0006 UID FETCH 7,12 (RFC822.SIZE FLAGS)', $strom->gesendet);
         self::assertStringContainsString('A0007 UID FETCH 7 (BODY.PEEK[])', $strom->gesendet, 'reading sets no \Seen');
         self::assertStringContainsString('A0008 UID STORE 7 +FLAGS.SILENT ($Vereinsbelege \Seen)', $strom->gesendet);
         self::assertStringContainsString('A0009 UID MOVE 7 "Erledigt"', $strom->gesendet);
@@ -163,11 +167,55 @@ final class ImapClientTest extends TestCase
         self::assertTrue($strom->geschlossen);
     }
 
-    public function testAMailLargerThanAnnouncedIsNotRead(): void
+    /**
+     * Issue #243: the header block of a mail that is not fetched again (all
+     * attempts used up) comes alone, at most 64 KiB; UIDVALIDITY is kept.
+     */
+    public function testTheHeaderBlockIsReadWithoutTheMail(): void
     {
+        $kopf = "From: a@b.de\r\nMessage-ID: <r-1@mueller-getraenke.de>\r\n\r\n";
         $strom = new SkriptStrom(
             self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
-            . "* 1 FETCH (UID 7 BODY[] {5000000}\r\n",
+            . "* OK [UIDVALIDITY 1700000001] ok\r\n* OK [PERMANENTFLAGS (\\*)] ok\r\nA0004 OK\r\n"
+            . '* 1 FETCH (UID 7 BODY[HEADER]<0> {' . strlen($kopf) . "}\r\n" . $kopf . ")\r\nA0005 OK\r\n"
+            . "* 3 FETCH (UID 9 BODY[HEADER]<0> {70000}\r\n" . str_repeat('x', 70000) . ")\r\nA0006 OK\r\n",
+            tls: true,
+        );
+        $client = ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p');
+
+        self::assertTrue($client->auswaehlen('INBOX'));
+        self::assertSame(1700000001, $client->uidGueltigkeit());
+        self::assertSame($kopf, $client->kopf(7));
+        self::assertStringContainsString('A0005 UID FETCH 7 (BODY.PEEK[HEADER]<0.65536>)', $strom->gesendet, 'only the header, without \\Seen');
+        try {
+            $client->kopf(9);
+            self::fail('expected a refusal');
+        } catch (ImapFehler $e) {
+            self::assertSame('imap_protokoll', $e->fehlercode, 'a server ignoring the partial limit');
+        }
+    }
+
+    public function testOwnKeywordsNeedTheAttemptCounterToo(): void
+    {
+        $alle = '$Vereinsbelege $VereinsbelegeAbgelehnt $VereinsbelegeVersuch $VereinsbelegeVersuch2 $VereinsbelegeVersuch3';
+        foreach ([$alle => true, '$Vereinsbelege $VereinsbelegeAbgelehnt $VereinsbelegeVersuch' => false] as $flags => $erwartet) {
+            $strom = new SkriptStrom(
+                self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
+                . "* OK [PERMANENTFLAGS (\\Seen \\Flagged " . $flags . ")] ok\r\nA0004 OK\r\n",
+                tls: true,
+            );
+            self::assertSame($erwartet, ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p')->auswaehlen('INBOX'), $flags);
+        }
+    }
+
+    public function testAMailLargerThanAnnouncedIsNotRead(): void
+    {
+        // The literal's bytes look like answers - they must not be taken for them.
+        $literal = str_pad("A0005 OK\r\n* 1 FETCH (UID 7 FLAGS (\\Seen))\r\n", 5000, 'x');
+        $strom = new SkriptStrom(
+            self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
+            . "* 1 FETCH (UID 7 BODY[] {5000}\r\n" . $literal . ")\r\nA0004 OK\r\n"
+            . "A0005 NO not now\r\n",
             tls: true,
         );
         $client = ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p');
@@ -176,7 +224,14 @@ final class ImapClientTest extends TestCase
             $client->holen(7, 1000);
             self::fail('expected a refusal');
         } catch (ImapFehler $e) {
-            self::assertSame('imap_protokoll', $e->fehlercode, 'no 5 MB buffer for a mail allowed 1000 bytes');
+            self::assertSame('imap_protokoll', $e->fehlercode, 'no 5000 byte buffer for a mail allowed 1000 bytes');
+        }
+        // Read off and dropped: the next command gets its own answer.
+        try {
+            $client->markieren(7, ['\\Seen']);
+            self::fail('the NO of the server, not the fake OK inside the literal');
+        } catch (ImapFehler $e) {
+            self::assertSame('imap_protokoll', $e->fehlercode);
         }
     }
 

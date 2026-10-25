@@ -46,7 +46,8 @@ final readonly class FirstAdminSetup
      */
     public function vaultExists(): bool
     {
-        return new VaultRepository($this->pdo)->current() !== null;
+        // anchor-exempt: only whether a row exists; nothing is sealed to it.
+        return new VaultRepository($this->pdo)->currentUngeprueft() !== null;
     }
 
     /**
@@ -77,7 +78,9 @@ final readonly class FirstAdminSetup
 
         $this->pdo->beginTransaction();
         try {
-            new VaultRepository($this->pdo)->insert($vault->publicKey(), $vault->version);
+            // The key pair was generated just above: its MAC (issue #240) is
+            // written with the server key that goes into config.php.
+            new VaultRepository($this->pdo, $crypto->tresorAnker())->insert($vault->publicKey(), $vault->version);
 
             $userId = new UserRepository($this->pdo)->insert(
                 $crypto->encrypt($email),
@@ -118,6 +121,7 @@ final readonly class FirstAdminSetup
         $this->pdo->beginTransaction();
         try {
             new UserRepository($this->pdo)->delete($userId);
+            // anchor-exempt: deletes the row, reads nothing.
             new VaultRepository($this->pdo)->delete($vaultVersion);
             $this->pdo->commit();
         } catch (\Throwable $e) {

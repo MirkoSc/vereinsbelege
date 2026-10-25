@@ -148,6 +148,46 @@ final readonly class RateLimiter
     }
 
     /**
+     * Counts $amount if the window's total stays within $limit, decided in
+     * the database (issue #243, N-17: the mail intake's mails and bytes per
+     * worker). Unlike isBlocked() + register(), parallel requests cannot
+     * together pass the limit. The login and submission limits do not use
+     * it and keep their behaviour.
+     *
+     * @return bool whether it was counted (false: over the limit)
+     */
+    public function reserve(string $purpose, string $value, int $amount, int $limit, ?\DateTimeImmutable $now = null): bool
+    {
+        if ($amount < 1) {
+            return true;
+        }
+        if ($value === '' || $amount > $limit) {
+            return false;
+        }
+
+        $key = $this->keyHash($purpose, $value);
+        $window = $this->windowStart($now ?? new \DateTimeImmutable());
+        // Twice: a parallel request may open the window between the two.
+        for ($i = 0; $i < 2; ++$i) {
+            if ($this->rows->addInWindow($key, $window, $amount, $limit) || $this->rows->openWindow($key, $window, $amount)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Gives back what reserve() counted for something that did not happen. */
+    public function release(string $purpose, string $value, int $amount, ?\DateTimeImmutable $now = null): void
+    {
+        if ($value === '' || $amount < 1) {
+            return;
+        }
+
+        $this->rows->subtractInWindow($this->keyHash($purpose, $value), $this->windowStart($now ?? new \DateTimeImmutable()), $amount);
+    }
+
+    /**
      * Clears the counter - what a successful attempt does, so that a user
      * who mistyped their password twice starts the next day from zero.
      */

@@ -25,6 +25,12 @@ final readonly class MimeNachricht
     private const int MAX_TEILE = 200;
 
     /**
+     * Encoded parts are decoded in pieces of this size, straight from the
+     * one mail buffer - no copy of the encoded part (N-16).
+     */
+    private const int STUECK = 1024 * 1024;
+
+    /**
      * @param list<MimeAnhang> $anhaenge
      */
     private function __construct(
@@ -42,10 +48,7 @@ final readonly class MimeNachricht
         $ende = strlen($roh);
         [$felder, $rumpfStart] = self::kopf($roh, 0, $ende);
         [$name, $adresse] = self::absender($felder['from'][0] ?? '');
-        $messageId = null;
-        if (preg_match('/<([^<>\s]{1,995})>/', $felder['message-id'][0] ?? '', $t) === 1) {
-            $messageId = $t[1];
-        }
+        $messageId = self::messageId($felder);
 
         $anhaenge = [];
         $zaehler = 0;
@@ -62,15 +65,37 @@ final readonly class MimeNachricht
     }
 
     /**
+     * The Message-ID of a header block alone (`BODY.PEEK[HEADER.FIELDS
+     * (MESSAGE-ID)]`) - the idempotency key of a mail that is not fetched
+     * again (issue #243).
+     */
+    public static function messageIdAusKopf(string $kopf): ?string
+    {
+        return self::messageId(self::felder(substr($kopf, 0, self::MAX_KOPF)));
+    }
+
+    /** @param array<string, list<string>> $felder */
+    private static function messageId(array $felder): ?string
+    {
+        return preg_match('/<([^<>\s]{1,995})>/', $felder['message-id'][0] ?? '', $t) === 1 ? $t[1] : null;
+    }
+
+    /**
      * One MIME entity whose body is $roh[$start, $ende). Works on offsets
      * into the one buffer: a nesting level costs no copy of the mail, only
-     * the leaves that may be attachments are cut out and decoded (review
-     * of #87 - a crafted, deeply nested mail must not exhaust the memory).
+     * the leaves that may be attachments are decoded (review of #87 - a
+     * crafted, deeply nested mail must not exhaust the memory).
+     *
+     * A forwarded mail that is itself base64 or quoted-printable encoded
+     * (RFC 2046 forbids it, some clients do it) needs a decoded copy of its
+     * own. There is at most one such copy at a time: an encoded forward
+     * inside the copy is not opened (N-16) - so the decoded parts stay
+     * below three times the mail: the copy (< 1x) plus the leaves (< 1x).
      *
      * @param array<string, list<string>> $felder
      * @param list<MimeAnhang> $anhaenge
      */
-    private static function teil(string $roh, array $felder, int $start, int $ende, int $tiefe, array &$anhaenge, int &$zaehler): void
+    private static function teil(string $roh, array $felder, int $start, int $ende, int $tiefe, array &$anhaenge, int &$zaehler, bool $kopie = false): void
     {
         if (++$zaehler > self::MAX_TEILE || $tiefe > self::MAX_TIEFE) {
             return;
@@ -86,7 +111,7 @@ final readonly class MimeNachricht
             }
             foreach (self::teile($roh, $start, $ende, $grenze) as [$s, $e]) {
                 [$k, $r] = self::kopf($roh, $s, $e);
-                self::teil($roh, $k, $r, $e, $tiefe + 1, $anhaenge, $zaehler);
+                self::teil($roh, $k, $r, $e, $tiefe + 1, $anhaenge, $zaehler, $kopie);
                 if ($zaehler > self::MAX_TEILE) {
                     return;
                 }
@@ -97,13 +122,16 @@ final readonly class MimeNachricht
 
         if ($typ === 'message/rfc822') {
             if (in_array($kodierung, ['base64', 'quoted-printable'], true)) {
-                // Encoded forwarded mail (rare): one decoded copy, its own buffer.
-                $innen = self::dekodieren(substr($roh, $start, $ende - $start), $kodierung);
+                if ($kopie) {
+                    // An encoded forward inside an encoded forward: not opened.
+                    return;
+                }
+                $innen = self::dekodieren($roh, $start, $ende, $kodierung);
                 [$k, $r] = self::kopf($innen, 0, strlen($innen));
-                self::teil($innen, $k, $r, strlen($innen), $tiefe + 1, $anhaenge, $zaehler);
+                self::teil($innen, $k, $r, strlen($innen), $tiefe + 1, $anhaenge, $zaehler, true);
             } else {
                 [$k, $r] = self::kopf($roh, $start, $ende);
-                self::teil($roh, $k, $r, $ende, $tiefe + 1, $anhaenge, $zaehler);
+                self::teil($roh, $k, $r, $ende, $tiefe + 1, $anhaenge, $zaehler, $kopie);
             }
 
             return;
@@ -118,7 +146,7 @@ final readonly class MimeNachricht
         }
         $anhaenge[] = new MimeAnhang(
             name: self::dateiname($name),
-            inhalt: self::dekodieren(substr($roh, $start, $ende - $start), $kodierung),
+            inhalt: self::dekodieren($roh, $start, $ende, $kodierung),
             typ: $typ,
             inline: $disposition !== 'attachment' && isset($felder['content-id']),
         );
@@ -224,15 +252,52 @@ final readonly class MimeNachricht
         return $teile;
     }
 
-    private static function dekodieren(string $inhalt, string $kodierung): string
+    /**
+     * Decodes $roh[$start, $ende) piece by piece: only the decoded result
+     * and one piece are in memory, never a copy of the encoded part.
+     */
+    private static function dekodieren(string $roh, int $start, int $ende, string $kodierung): string
     {
-        return match ($kodierung) {
-            // Non-strict base64_decode skips line breaks and other foreign
-            // bytes itself - no cleaned copy of a large part.
-            'base64' => (string) base64_decode($inhalt, false),
-            'quoted-printable' => quoted_printable_decode($inhalt),
-            default => $inhalt,
-        };
+        if ($kodierung !== 'base64' && $kodierung !== 'quoted-printable') {
+            return substr($roh, $start, $ende - $start);
+        }
+        $aus = '';
+        $rest = '';
+        $pos = $start;
+        while ($pos < $ende) {
+            $stueck = substr($roh, $pos, min(self::STUECK, $ende - $pos));
+            if ($kodierung === 'base64') {
+                $pos += strlen($stueck);
+                // Line breaks, padding and foreign bytes out, then whole
+                // groups of four - the rest goes with the next piece.
+                $stueck = $rest . (preg_replace('~[^A-Za-z0-9+/]~', '', $stueck) ?? '');
+                $nutzbar = strlen($stueck) - strlen($stueck) % 4;
+                $aus .= (string) base64_decode(substr($stueck, 0, $nutzbar), false);
+                $rest = substr($stueck, $nutzbar);
+                continue;
+            }
+            // Quoted-printable: up to the last line break of the piece, so
+            // no `=XX` and no soft line break is cut in two.
+            if ($pos + strlen($stueck) < $ende) {
+                $zeilenEnde = strrpos($stueck, "\n");
+                if ($zeilenEnde !== false) {
+                    $stueck = substr($stueck, 0, $zeilenEnde + 1);
+                } else {
+                    // A line longer than a piece: at least no `=XX` cut in two.
+                    $gleich = strrpos(substr($stueck, -2), '=');
+                    if ($gleich !== false) {
+                        $stueck = substr($stueck, 0, strlen($stueck) - 2 + $gleich);
+                    }
+                }
+            }
+            $pos += strlen($stueck);
+            $aus .= quoted_printable_decode($stueck);
+        }
+        if ($rest !== '') {
+            $aus .= (string) base64_decode($rest, false);
+        }
+
+        return $aus;
     }
 
     /**
