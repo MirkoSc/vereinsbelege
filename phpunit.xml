@@ -20,6 +20,13 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <!-- The performance test (issue #82) builds a large data set: run it
+         on its own with: vendor/bin/phpunit with option group=performance. -->
+    <groups>
+        <exclude>
+            <group>performance</group>
+        </exclude>
+    </groups>
     <source>
         <include>
             <directory>app/src</directory>
