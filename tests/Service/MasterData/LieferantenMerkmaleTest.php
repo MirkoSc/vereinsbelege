@@ -149,57 +149,43 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertNull($merkmale->vatId);
     }
 
-    public function testAMissingVatIdAndTaxNumberAreLearnt(): void
+    public function testAMissingVatIdIsLearntButNoTaxNumber(): void
     {
         $merkmale = LieferantenMerkmale::neue(
             new SupplierData(name: 'Sporthaus Beispiel'),
-            ['name' => 'Sporthaus Beispiel', 'vat_id' => 'de 123 456 789', 'tax_number' => ' 12/345/67890 '],
+            ['name' => 'Sporthaus Beispiel', 'vat_id' => 'de 123 456 789', 'tax_number' => '12/345/67890'],
             '',
         );
 
         self::assertSame('DE123456789', $merkmale->vatId, 'normalised like the form');
-        self::assertSame('12/345/67890', $merkmale->taxNumber);
-        self::assertSame(['vat_id', 'tax_number'], $merkmale->felder());
-        self::assertSame(['USt-ID', 'Steuernummer'], $merkmale->bezeichnungen());
-        self::assertSame(['USt-ID DE123456789', 'Steuernummer 12/345/67890'], $merkmale->beschreibung());
+        self::assertSame(['vat_id'], $merkmale->felder(), 'a tax number has two forms - never learnt (E-67)');
+        self::assertSame(['USt-ID'], $merkmale->bezeichnungen());
+        self::assertSame(['USt-ID DE123456789'], $merkmale->beschreibung());
 
-        $nachher = $merkmale->anwenden(new SupplierData(name: 'Sporthaus Beispiel'));
+        $nachher = $merkmale->anwenden(new SupplierData(name: 'Sporthaus Beispiel', taxNumber: '99/999/99999'));
         self::assertSame('DE123456789', $nachher->vatId);
-        self::assertSame('12/345/67890', $nachher->taxNumber);
+        self::assertSame('99/999/99999', $nachher->taxNumber, 'kept');
     }
 
-    public function testAKnownOrDifferentVatIdOrTaxNumberIsNotReplaced(): void
+    public function testAKnownOrDifferentVatIdIsNotReplaced(): void
     {
-        $lieferant = new SupplierData(name: 'Sporthaus Beispiel', vatId: 'DE123456789', taxNumber: '12/345/67890');
+        $lieferant = new SupplierData(name: 'Sporthaus Beispiel', vatId: 'DE123456789');
 
-        $gleich = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE 123456789', 'tax_number' => '12 345 67890'], '');
-        self::assertTrue($gleich->leer(), 'the same ids, written differently');
+        $gleich = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE 123456789'], '');
+        self::assertTrue($gleich->leer(), 'the same id, written differently');
         self::assertSame([], $gleich->hinweise);
 
-        $anders = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE999999999', 'tax_number' => '99/999/99999'], '');
+        $anders = LieferantenMerkmale::neue($lieferant, ['vat_id' => 'DE999999999'], '');
         self::assertTrue($anders->leer(), 'a different id is reported, not replaced');
-        self::assertCount(2, $anders->hinweise);
+        self::assertSame(['Der Beleg nennt die USt-ID DE999999999, beim Lieferanten steht DE123456789 – nicht übernommen.'], $anders->hinweise);
     }
 
     public function testAnInvalidVatIdIsNotLearnt(): void
     {
-        $merkmale = LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['vat_id' => '123456789', 'tax_number' => '//'], '');
+        $merkmale = LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['vat_id' => '123456789'], '');
 
         self::assertNull($merkmale->vatId, 'no country code');
-        self::assertNull($merkmale->taxNumber, 'no letters or digits');
         self::assertTrue($merkmale->leer());
-
-        foreach (['St.-Nr. 12/345/67890', '12', 'DE123456789'] as $keine) {
-            self::assertNull(
-                LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['tax_number' => $keine], '')->taxNumber,
-                'a label, a fragment or a VAT id is no tax number: ' . $keine,
-            );
-        }
-        self::assertSame(
-            '2893081508152',
-            LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['tax_number' => '2893081508152'], '')->taxNumber,
-            'the 13-digit form',
-        );
     }
 
     public function testTooLongValuesAreLeftOutAndSaySo(): void

@@ -51,16 +51,17 @@ final readonly class VereinskennungenController
     {
         $this->session->start();
         $tresor = $this->tresor($request);
-        $kennung = null;
-        if ($tresor !== null) {
-            try {
-                $kennung = $this->kennungen->lesen($tresor);
-            } catch (CryptoException | \JsonException) {
-                $kennung = null;
-            }
+        if ($tresor === null) {
+            return $this->formular(false, $this->kennungen->gepflegt(), '', '', null);
+        }
+        try {
+            $kennung = $this->kennungen->lesen($tresor);
+        } catch (CryptoException | \JsonException) {
+            // Never an empty form over stored ids: saving it would erase them.
+            return $this->formular(false, true, '', '', 'Die gespeicherten Vereinskennungen lassen sich mit Ihrem Tresor nicht lesen. Bitte melden Sie sich neu an.');
         }
 
-        return $this->formular($tresor !== null, $kennung?->ustId ?? '', $kennung?->steuernummer ?? '', null);
+        return $this->formular(true, $kennung !== null, $kennung?->ustId ?? '', $kennung?->steuernummer ?? '', null);
     }
 
     public function save(Request $request): ResponseInterface
@@ -79,7 +80,7 @@ final readonly class VereinskennungenController
         try {
             $kennung = Vereinskennung::pruefen($ustId, $steuernummer);
         } catch (SupplierRuleViolation $fehler) {
-            return $this->formular(true, $ustId, $steuernummer, $fehler->getMessage(), 422);
+            return $this->formular(true, $this->kennungen->gepflegt(), $ustId, $steuernummer, $fehler->getMessage(), 422);
         }
 
         $this->kennungen->speichern($tresor, $kennung, $this->session->userId(), new \DateTimeImmutable());
@@ -92,14 +93,14 @@ final readonly class VereinskennungenController
         return $this->zurueck('Vereinskennungen gespeichert.', FlashArt::Ok);
     }
 
-    private function formular(bool $entsperrt, string $ustId, string $steuernummer, ?string $fehler, int $status = 200): ResponseInterface
+    private function formular(bool $entsperrt, bool $gepflegt, string $ustId, string $steuernummer, ?string $fehler, int $status = 200): ResponseInterface
     {
         return Response::html($this->view->render('admin/vereinskennungen', [
             'title' => 'Vereinskennungen',
             'csrf' => $this->session->csrfToken(),
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $entsperrt,
-            'gepflegt' => $this->kennungen->gepflegt(),
+            'gepflegt' => $gepflegt,
             'ustId' => $ustId,
             'steuernummer' => $steuernummer,
             'fehler' => $fehler,

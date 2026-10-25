@@ -26,7 +26,8 @@ use App\Service\MasterData\SupplierService;
         Die eigene USt-ID und Steuernummer des Vereins. Viele Rechnungen nennen sie („Ihre USt-IdNr.“) –
         damit die Lieferantenerkennung sie nicht für die des Lieferanten hält, wird sie nie bei einem
         Lieferanten gelernt und bei der Zuordnung übergangen. Solange diese Seite nicht gespeichert ist,
-        lernen Lieferanten aus Belegen keine USt-ID und keine Steuernummer.
+        lernen Lieferanten aus Belegen keine USt-ID, und die KI legt neue Lieferanten ohne USt-ID und
+        Steuernummer an.
     </p>
 
     <p>
@@ -42,11 +43,11 @@ use App\Service\MasterData\SupplierService;
         <p class="hinweis hinweis-fehler" role="alert"><?= e($fehler) ?></p>
     <?php endif; ?>
 
-    <?php if (!$entsperrt): ?>
+    <?php if (!$entsperrt && $fehler === null): ?>
         <p class="hinweis hinweis-info">
             Die Kennungen liegen verschlüsselt im Tresor. Melden Sie sich neu an, um sie einzusehen oder zu ändern.
         </p>
-    <?php else: ?>
+    <?php elseif ($entsperrt): ?>
         <form method="post" action="/admin/vereinskennungen" class="formular">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
 
@@ -62,7 +63,9 @@ use App\Service\MasterData\SupplierService;
             </label>
             <p class="feld-hilfe" id="verein-kennungen-hilfe">
                 Leer lassen, was der Verein nicht hat. Auch mit zwei leeren Feldern speichern – das bestätigt,
-                dass der Verein keine hat, und Lieferanten lernen ab dann USt-ID und Steuernummer aus Belegen.
+                dass der Verein keine hat, und Lieferanten lernen ab dann die USt-ID aus Belegen. Die
+                Steuernummer bitte so eintragen, wie sie auf Rechnungen an den Verein steht (z. B.
+                <code>12/345/67890</code>); die 13-stellige ELSTER-Form gilt als andere Nummer.
             </p>
 
             <p class="knopfreihe">

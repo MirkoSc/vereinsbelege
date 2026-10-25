@@ -9,7 +9,7 @@ use App\Domain\SupplierData;
 /**
  * What a confirmed receipt teaches its supplier (issue #201/M7-6b, #245,
  * docs/spec/03-erfassung-und-ki.md section 7): at most one new IBAN, one
- * new alias, a creditor id, VAT id or tax number the supplier had none of
+ * new alias, a creditor id or VAT id the supplier had none of
  * and one new mandate reference - each null when there is nothing new. Planned by
  * App\Service\MasterData\LieferantenMerkmale, written by
  * SupplierService::merkmaleErgaenzen().
@@ -35,14 +35,13 @@ final readonly class Merkmale
         public array $hinweise = [],
         public array $konflikte = [],
         public ?string $vatId = null,
-        public ?string $taxNumber = null,
     ) {
     }
 
     public function leer(): bool
     {
         return $this->iban === null && $this->alias === null && $this->creditorId === null && $this->mandateRef === null
-            && $this->vatId === null && $this->taxNumber === null;
+            && $this->vatId === null;
     }
 
     /**
@@ -58,7 +57,6 @@ final readonly class Merkmale
             'creditor_id' => $this->creditorId !== null,
             'mandate_refs' => $this->mandateRef !== null,
             'vat_id' => $this->vatId !== null,
-            'tax_number' => $this->taxNumber !== null,
         ]));
     }
 
@@ -91,7 +89,6 @@ final readonly class Merkmale
             'creditor_id' => 'Gläubiger-ID',
             'mandate_refs' => 'Mandatsreferenz',
             'vat_id' => 'USt-ID',
-            'tax_number' => 'Steuernummer',
             default => $feld,
         };
     }
@@ -119,9 +116,6 @@ final readonly class Merkmale
         if ($this->vatId !== null) {
             $zeilen[] = 'USt-ID ' . $this->vatId;
         }
-        if ($this->taxNumber !== null) {
-            $zeilen[] = 'Steuernummer ' . $this->taxNumber;
-        }
 
         return $zeilen;
     }
@@ -142,7 +136,6 @@ final readonly class Merkmale
             hinweise: [...$this->hinweise, $hinweis],
             konflikte: $anderer === null ? $this->konflikte : [...$this->konflikte, $feld => $anderer],
             vatId: $feld === 'vat_id' ? null : $this->vatId,
-            taxNumber: $feld === 'tax_number' ? null : $this->taxNumber,
         );
     }
 
@@ -153,7 +146,7 @@ final readonly class Merkmale
     public function fingerabdruck(\App\Service\Crypto\BlindIndex $index): string
     {
         return bin2hex($index->forValue(self::ZWECK, json_encode(
-            [$this->iban, $this->alias, $this->creditorId, $this->mandateRef, $this->vatId, $this->taxNumber],
+            [$this->iban, $this->alias, $this->creditorId, $this->mandateRef, $this->vatId],
             JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
         )));
     }
@@ -168,7 +161,7 @@ final readonly class Merkmale
             ibans: $this->iban === null ? $daten->ibans : [...$daten->ibans, $this->iban],
             bic: $daten->bic,
             vatId: $this->vatId ?? $daten->vatId,
-            taxNumber: $this->taxNumber ?? $daten->taxNumber,
+            taxNumber: $daten->taxNumber,
             email: $daten->email,
             website: $daten->website,
             creditorId: $this->creditorId ?? $daten->creditorId,

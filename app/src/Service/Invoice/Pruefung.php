@@ -54,7 +54,6 @@ use App\Service\MasterData\Merkmale;
 use App\Service\MasterData\SupplierKeys;
 use App\Service\MasterData\SupplierRuleViolation;
 use App\Service\MasterData\SupplierService;
-use App\Service\MasterData\Vereinskennung;
 use App\Service\Processing\Betrag;
 use App\Service\Upload\MagicBytes;
 
@@ -1185,17 +1184,16 @@ final readonly class Pruefung
     {
         $wert = static fn(string $schluessel): string => is_string($partner[$schluessel] ?? null) ? $partner[$schluessel] : '';
         $index = $vault->blindIndex();
-        // Nor do the club's own VAT id and tax number (issue #245, E-67).
-        $verein = $this->lieferanten->vereinskennung($vault) ?? new Vereinskennung();
         $kennungen = [
-            [SupplierKeyKind::VatId, $verein->istUstId($wert('vat_id')) ? '' : SupplierKeys::kennung($wert('vat_id'))],
-            [SupplierKeyKind::TaxNumber, $verein->istSteuernummer($wert('tax_number')) ? '' : SupplierKeys::steuernummer($wert('tax_number'))],
-            // The club's own account names no supplier (issue #201, E-29).
-            [SupplierKeyKind::Iban, $this->lieferanten->istVereinsIban($vault, $wert('iban')) ? '' : Iban::normalisieren($wert('iban'))],
+            [SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))],
+            [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))],
+            [SupplierKeyKind::Iban, Iban::normalisieren($wert('iban'))],
             [SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))],
         ];
         foreach ($kennungen as [$art, $kennung]) {
-            if ($kennung === '') {
+            // The club's own ids name no supplier: its account (issue #201,
+            // E-29), its VAT id and tax number (issue #245, E-67).
+            if ($kennung === '' || $this->lieferanten->istVereinsKennung($vault, $art, $kennung)) {
                 continue;
             }
             $ids = $this->lieferantenRepository->idsWithKey($art, $index->forValue($art->purpose(), $kennung));

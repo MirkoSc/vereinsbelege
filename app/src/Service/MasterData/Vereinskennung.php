@@ -19,7 +19,10 @@ final readonly class Vereinskennung
 
     /**
      * Checks the admin form: a VAT id like the supplier form, a tax number
-     * with letters or digits, at most SupplierService::TEXT_MAX characters.
+     * with digits, at most SupplierService::TEXT_MAX characters. A tax
+     * number is compared as written (its digits and letters): the local and
+     * the 13-digit ELSTER form of the same number do not match - the page
+     * says to enter the form the club's invoices print.
      *
      * @throws SupplierRuleViolation
      */
@@ -30,7 +33,7 @@ final readonly class Vereinskennung
             throw new SupplierRuleViolation('Die USt-ID ist ungültig (Ländercode und bis zu 13 Zeichen, z. B. DE123456789).');
         }
         $steuernummer = trim((string) preg_replace('/\s+/u', ' ', $steuernummer));
-        if ($steuernummer !== '' && SupplierKeys::steuernummer($steuernummer) === '') {
+        if ($steuernummer !== '' && preg_match('/[0-9]/', $steuernummer) !== 1) {
             throw new SupplierRuleViolation('Die Steuernummer enthält keine Ziffern.');
         }
         if (mb_strlen($steuernummer) > SupplierService::TEXT_MAX) {
