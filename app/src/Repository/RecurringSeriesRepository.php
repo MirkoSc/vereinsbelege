@@ -91,6 +91,23 @@ final readonly class RecurringSeriesRepository
     }
 
     /**
+     * How many confirmed series are overdue on $heute: the next expected
+     * receipt plus the tolerance lies before today - the same rule as
+     * App\Service\Invoice\SerienKennzahlen (dashboard, issue #72).
+     * Structure only, nothing decrypted.
+     */
+    public function anzahlUeberfaellig(\DateTimeImmutable $heute): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM recurring_series
+             WHERE status = ? AND next_expected IS NOT NULL AND DATE_ADD(next_expected, INTERVAL tolerance_days DAY) < ?',
+        );
+        $stmt->execute([SeriesStatus::Bestaetigt->value, $heute->format('Y-m-d')]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * First step of a new row: everything but the ciphertext, whose AAD
      * needs the id this returns. The caller writes setData() in the same
      * transaction.
