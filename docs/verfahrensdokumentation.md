@@ -437,10 +437,20 @@ gesperrt“]].
 | Kontoauszüge importieren und abgleichen | [[monatlich]] | [[NAME]] |
 | Backup erstellen und extern ablegen | [[monatlich]] | [[NAME]] |
 | Audit-Log „Integrität prüfen“, Kontrollwert notieren | [[zur Kassenprüfung]] | [[Kassenprüfer]] |
+| Code-Integrität prüfen (Verwaltung → „Code-Integrität“) | [[vierteljährlich und nach jedem Update]] | [[Admin]] |
 | Archiv-Export des Geschäftsjahres | [[jährlich]] | [[NAME]] |
 | Benutzer und Freigaben durchsehen | [[jährlich]] | [[Admin]] |
 | Probe-Wiederherstellung | [[jährlich]] | [[NAME]] |
 | Diese Dokumentation prüfen | [[jährlich]] | [[NAME]] |
+
+**Code-Integrität:** Die Seite vergleicht jede Programmdatei des installierten
+Releases mit den Prüfsummen, die das Release mitbringt, und listet geänderte,
+fehlende und zusätzliche Dateien auf. Jede Prüfung steht im Audit-Log –
+„unverändert“ oder „Abweichungen gefunden“, mit Anzahlen, ohne Dateinamen.
+Belegdaten werden dabei nicht gelesen. Möglich ist die Prüfung erst bei
+Releases, die Prüfsummen je Datei mitliefern; nach einem Rollback warnt die
+Seite, dass die Prüfsummen zu einer anderen Version gehören. Unerklärliche
+Abweichungen: Zugangsdaten zum Webspace ändern und das Release neu einspielen.
 
 ---
 
@@ -451,6 +461,10 @@ gesperrt“]].
 - Die Hash-Kette des Audit-Logs erkennt Manipulationen innerhalb der Kette.
   Wer die Datenbank vollständig ersetzt oder die Kette neu berechnet, fällt
   nur über den extern notierten Kontrollwert auf (Abschnitt 6).
+- Der Code-Integritätscheck erkennt plumpe oder versehentliche Änderungen an
+  den Programmdateien, schützt aber nicht vor einem versierten Angreifer: wer
+  Dateien auf dem Webspace ändern kann, kann auch die Prüfsummenliste ändern.
+  Er läuft nur auf Knopfdruck, nicht automatisch.
 - Prüfung und Festschreibung durch dieselbe Person sind möglich (kein
   Vier-Augen-Prinzip in der Software, Abschnitt 3).
 - Die Software löscht Belege nicht, auch nicht nach Ablauf der
