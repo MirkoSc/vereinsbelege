@@ -143,6 +143,18 @@ final readonly class Spamschutz
         $this->limits->register(self::PURPOSE_SUBMIT_GESAMT, self::GLOBAL_VALUE, $now);
     }
 
+    /**
+     * The pause alone - for App\Api\EinreichungUploadController::finish(),
+     * the step that turns an upload opened before the pause into a stored
+     * blob (security review, issue #78: "Absenden und Upload antworten mit
+     * 503", 01 section 5). The proof of work is not repeated there; create()
+     * checked it for this upload id.
+     */
+    public function pruefePause(): ?EinreichungAbgelehnt
+    {
+        return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : null;
+    }
+
     /** What every entry point checks first: pause, then proof of work. */
     private function pruefeGrundlegend(FormTokenData $token, ?string $powLoesung): ?EinreichungAbgelehnt
     {

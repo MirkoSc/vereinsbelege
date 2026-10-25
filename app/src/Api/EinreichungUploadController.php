@@ -37,7 +37,8 @@ use App\Support\FileLogger;
  * public/js/upload.js), the per-file size limit and the rate limit. Every
  * accepted call counts against the budget immediately - chunk(), finish()
  * and abort() only continue an upload create() already let through, so they
- * check nothing but the token.
+ * check nothing but the token - except that finish() also honours the pause
+ * (issue #78), since it is the step that stores the blob.
  */
 final readonly class EinreichungUploadController
 {
@@ -48,8 +49,8 @@ final readonly class EinreichungUploadController
 
     /**
      * @param \Closure(): Spamschutz $spamschutz built lazily: it opens the
-     *        database connection (the rate limit), which only create() must
-     *        pay for.
+     *        database connection (the rate limit), which only create() and
+     *        finish() must pay for.
      * @param \Closure(): SubmissionUploadStore $store built lazily: it opens
      *        the database connection, which the chunk requests must not pay
      *        for.
@@ -123,6 +124,16 @@ final readonly class EinreichungUploadController
     {
         return $this->guarded($request, function () use ($request, $params): Response {
             $id = $params['id'];
+
+            // Paused in the meantime: an upload opened before the pause must
+            // not become a stored blob after it (issue #78). Chunks before
+            // this only reach var/tmp, which the cleanup empties anyway.
+            $pausiert = ($this->spamschutz)()->pruefePause();
+            if ($pausiert !== null) {
+                $this->uploads->discard($id);
+
+                return Response::json(['fehler' => $pausiert->message()], $pausiert->status());
+            }
 
             $status = $this->uploads->status($id);
             if (!$status->vollstaendig()) {

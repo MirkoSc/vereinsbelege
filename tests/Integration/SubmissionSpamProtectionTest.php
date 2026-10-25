@@ -104,6 +104,24 @@ final class SubmissionSpamProtectionTest extends DatabaseTestCase
         self::assertSame(503, $upload->status);
     }
 
+    /**
+     * Security review (issue #78): an upload opened before the pause must
+     * not be stored as a blob after it.
+     */
+    public function testAnUploadOpenedBeforeThePauseIsNotStoredAfterIt(): void
+    {
+        $token = $this->issuedToken();
+        $controller = $this->uploadController();
+        $offen = $this->json($controller->create($this->uploadRequest($token, ['groesse' => 8], self::IP_A)));
+        self::assertSame(200, $controller->chunk($this->chunkRequest($token, self::IP_A, "%PDF-1.4"), ['id' => $offen['id'], 'n' => '0'])->status);
+
+        EinreichungsEinstellungen::setzePausiert($this->settings(), true);
+
+        $antwort = $this->uploadController()->finish($this->uploadRequest($token, ['name' => 'seite.pdf'], self::IP_A), ['id' => $offen['id']]);
+        self::assertSame(503, $antwort->status);
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission_upload')->fetchColumn(), 'no blob stored');
+    }
+
     public function testMissingProofOfWorkIsRejectedOnUploadAndSubmit(): void
     {
         $token = $this->issuedToken();
