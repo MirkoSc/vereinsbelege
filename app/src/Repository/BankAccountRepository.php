@@ -131,9 +131,10 @@ final readonly class BankAccountRepository
         $stmt = $this->pdo->prepare(
             'SELECT (SELECT COUNT(*) FROM cash_count WHERE account_id = ?)
                   + (SELECT COUNT(*) FROM bank_import WHERE account_id = ?)
-                  + (SELECT COUNT(*) FROM bank_transaction WHERE account_id = ?)',
+                  + (SELECT COUNT(*) FROM bank_transaction WHERE account_id = ?)
+                  + (SELECT COUNT(*) FROM payment_run WHERE bank_account_id = ?)',
         );
-        $stmt->execute([$id, $id, $id]);
+        $stmt->execute([$id, $id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

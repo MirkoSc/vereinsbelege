@@ -32,6 +32,7 @@ use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
 use App\App\ErstattungController;
+use App\App\ZahllaufController;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -84,6 +85,7 @@ use App\Repository\ExportRunRepository;
 use App\Repository\ExportRunUploadRepository;
 use App\Repository\NextcloudTargetRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\PaymentRunRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MatchRejectionRepository;
@@ -140,6 +142,7 @@ use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Umbuchungen;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Bank\Uebersichten;
+use App\Service\Bank\Zahllaeufe;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
@@ -695,24 +698,29 @@ $serienSeite = static function () use ($connections, $view, $serienFor): SerienC
 
 // The work lists "Offen" (issue #69/M10-5): read-only, they reuse the
 // matching, booking and series services - only they open the connection.
-$offenSeite = static function () use ($connections, $view, $serienFor, $zuordnungFor, $mailSettingsFor): UebersichtController {
-    $pdo = $connections->pdo();
-    $lieferanten = new SupplierRepository($pdo);
+// The open-payment lists behind "Offen" (issue #69) and the payment runs
+// (issue #85) - one wiring for both.
+$uebersichtenFor = static function (\PDO $pdo) use ($zuordnungFor): Uebersichten {
     $kategorien = new CategoryRepository($pdo);
-    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+
+    return new Uebersichten(
+        new InvoiceRepository($pdo),
+        new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+        $zuordnungFor($pdo),
+        new Buchungen($pdo, new BankTransactionRepository($pdo), new BankAccountService($pdo, new BankAccountRepository($pdo)), $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
+    );
+};
+$offenSeite = static function () use ($connections, $view, $serienFor, $uebersichtenFor, $mailSettingsFor): UebersichtController {
+    $pdo = $connections->pdo();
 
     return new UebersichtController(
         $view,
         new Session(),
         new SessionVault(),
-        new Uebersichten(
-            new InvoiceRepository($pdo),
-            new SupplierService($pdo, $lieferanten, $kategorien),
-            $zuordnungFor($pdo),
-            new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
-        ),
+        $uebersichtenFor($pdo),
         $serienFor($pdo),
         $mailSettingsFor($pdo),
+        new PaymentRunRepository($pdo),
     );
 };
 
@@ -812,6 +820,27 @@ $erstattungen = static function () use ($connections, $view, $zuordnungFor): Ers
         new Session(),
         new SessionVault(),
         new Erstattungen($pdo, new ErstattungRepository($pdo), new InvoiceRepository($pdo), new BankTransactionRepository($pdo), $zuordnungFor($pdo)),
+    );
+};
+
+// SEPA payment runs (issue #85): reimbursements, accounts and runs are
+// vault data - only these pages open the connection.
+$zahllaeufe = static function () use ($connections, $view, $uebersichtenFor, $auditFor, $mailSettingsFor): ZahllaufController {
+    $pdo = $connections->pdo();
+
+    return new ZahllaufController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Zahllaeufe(
+            $pdo,
+            new PaymentRunRepository($pdo),
+            $uebersichtenFor($pdo),
+            new BankAccountService($pdo, new BankAccountRepository($pdo)),
+            $auditFor($pdo),
+            new DocumentRepository($pdo),
+        ),
+        $mailSettingsFor($pdo),
     );
 };
 
@@ -1698,6 +1727,7 @@ $router = new Router();
     $offenSeite,
     $tresorRotation,
     $erstattungen,
+    $zahllaeufe,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

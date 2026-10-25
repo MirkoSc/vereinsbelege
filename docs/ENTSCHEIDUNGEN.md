@@ -429,6 +429,58 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   werden soll (dafür müsste sie gespeichert werden); ob die automatische
   Erkennung beim Import auf den Zugriffsbereich des Importierenden
   beschränkt werden soll.
+## E-42 ❓ SEPA-Zahllauf für Erstattungen: pain.001.001.09, nur Eindeutiges, Datei nie gespeichert (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #85 (Migration 043), 02 „Fachdaten“, 04 §5 „Stand SEPA-Zahllauf“*
+
+- **Format pain.001.001.09** nach DK (DFÜ-Abkommen Anlage 3): eine
+  `PmtInf` je Lauf, Service-Level `SEPA`, `SLEV`, nur EUR, IBAN-only beim
+  Empfänger, Auftraggeberbank per BIC oder `NOTPROVIDED`. Getestet gegen
+  das **ISO-20022-Schema** (frei erhältlich, unter `tests/fixtures/sepa/`
+  mit Herkunft und Lizenzhinweis); die zusätzlichen DK-Regeln
+  (Zeichensatz, Längen, Referenzen) prüft `Pain001` selbst. Das DK-eigene
+  GBIC-Schema liegt nicht bei. **Offen für Mirko:** Abnahme mit einem
+  echten Upload ins Online-Banking des Vereins (Prüfpunkt im PR); ob die
+  Bank `.09` annimmt (Pflicht seit Nov. 2025) oder noch `.03` erwartet.
+- **`BtchBookg = false`:** jede Überweisung einzeln auf dem Auszug, damit
+  der Erstattungs-Abgleich (E-36) sie über die Empfänger-IBAN findet. Eine
+  Sammelbuchung bräuchte einen eigenen Abgleich Lauf ↔ Buchung. **Offen für
+  Mirko:** ob die Bank dafür Gebühren je Posten berechnet.
+- **Nur Eindeutiges in den Lauf:** Empfänger mit gleichem Namen und
+  anderer/fehlender IBAN (E-37), ohne Namen, ohne gültige IBAN, mit
+  Vereins-IBAN, Barerstattungen, ungeprüfte Belege und nicht-EUR werden
+  **nicht** angeboten (auch nicht abwählbar vorbelegt) – sie werden nach
+  Prüfung von Hand überwiesen. Verworfen: mehrdeutige Gruppen mit
+  Bestätigungshaken anbieten (zu leicht weggeklickt).
+- **Eine Überweisung je Empfänger** (Name + IBAN) über die Summe der
+  offenen Beträge (Teilbezahlte mit ihrem Rest); der Abgleich findet sie
+  über die Kombinationssuche (E-36, bis 6 Belege). Verwendungszweck mit
+  Belegnummer bzw. Belegdatum, damit der Empfänger zuordnen kann.
+- **Doppelte Anweisung ausgeschlossen** über `payment_run_item.active_invoice_id`
+  (`UNIQUE`, NULL nach Verwerfen) statt nur per Prüfung – hält auch bei
+  zwei gleichzeitigen Anfragen. Ein Beleg bleibt reserviert, solange sein
+  Lauf `angewiesen` ist, auch nach dem Ausgleich.
+- **Status:** gespeichert nur `angewiesen`/`verworfen`; „ausgeglichen“ wird
+  aus den Belegen abgeleitet (keine zweite Wahrheit neben `payment_status`).
+  Verwerfen ist nur möglich, solange kein Beleg des Laufs seit dessen
+  Anlage eine Zuordnung bekommen hat (Teilausführung = Geld ist raus), und
+  gedacht für
+  eine abgelehnte oder nie eingereichte Datei. **Offen für Mirko:** ob ein
+  Lauf nach einer Frist ohne Ausgleich markiert werden soll.
+- **Datei nie gespeichert:** alle Angaben verschlüsselt in
+  `payment_run.data_enc`; die XML entsteht bei jedem Download im Speicher
+  (`attachment`, `no-store`) und wird beim Anlegen einmal probehalber
+  erzeugt. Kein Blob, nichts in `var/tmp`.
+- **Recht `matching.edit`** (es ist die Gegenseite des Erstattungs-Abgleichs)
+  mit dessen Zugriffsbereich: Kandidaten im Bereich; ein Lauf ist nur
+  sichtbar, wenn **alle** seine Belege im Bereich liegen. Kein eigenes
+  Recht (die Spec sieht keines vor). **Offen für Mirko:** ob ein
+  Vier-Augen-Prinzip (Anlegen ≠ Herunterladen) gewünscht ist.
+- **Empfängername = Kontoinhaber** laut Einreichung (sonst Name des
+  Einreichers), weil die Bank Name und IBAN abgleichen kann (Empfänger-
+  überprüfung); nennen Einreichungen derselben IBAN verschiedene Inhaber,
+  wird die Gruppe nicht angeboten.
+- **Auftraggeber-Name** frei eingebbar, vorbelegt mit dem Vereinsnamen aus
+  den Mail-Einstellungen (kein eigenes Setting), Umlaute ausgeschrieben.
 
 ## E-41 ✅ Abgleich-Oberfläche: verworfene Vorschläge speichern, Betrag/Suche nur per POST, Seiten-Integration über Links (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: M10-4 (issue #68, Migration 042), 02 „Fachdaten“, 04 §5 „Stand M10-4“*
