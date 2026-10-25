@@ -22,6 +22,7 @@ use App\Service\Processing\PdfAusBildern;
 use App\Service\Processing\ProcessingException;
 use App\Service\Processing\SchwarzweissFallback;
 use App\Service\Storage\BlobService;
+use App\Service\Worker\WorkerUebergabe;
 use App\Service\Upload\MagicBytes;
 
 /**
@@ -72,6 +73,9 @@ final readonly class PdfErzeugung implements JobHandler
         private BlobService $blobService,
         private SubmissionRepository $submissions,
         private JobRepository $jobs,
+        // Issue #53: `render_pages` goes to the worker when the module
+        // routes it there, else to the browser as before.
+        private ?WorkerUebergabe $uebergabe = null,
     ) {
     }
 
@@ -150,13 +154,17 @@ final readonly class PdfErzeugung implements JobHandler
         // (issue #30/M4-8, App\Service\Document\PdfRasterung). One job per
         // document, covering every PDF original, not one job per file.
         if (!$this->jobs->gibtEs(PdfRasterung::JOB_TYP, self::REF_TYPE, $document->id)) {
-            $this->jobs->enqueue(
-                PdfRasterung::JOB_TYP,
-                JobExecutor::Browser,
-                self::REF_TYPE,
-                $document->id,
-                now: $now,
-            );
+            if ($this->uebergabe !== null) {
+                $this->uebergabe->einreihen(PdfRasterung::JOB_TYP, JobExecutor::Browser, $document->id, $vault, $now);
+            } else {
+                $this->jobs->enqueue(
+                    PdfRasterung::JOB_TYP,
+                    JobExecutor::Browser,
+                    self::REF_TYPE,
+                    $document->id,
+                    now: $now,
+                );
+            }
         }
 
         if (count($pdfs) === 1 && count($typen) === 1) {

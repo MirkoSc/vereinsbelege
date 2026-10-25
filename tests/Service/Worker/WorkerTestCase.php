@@ -38,7 +38,10 @@ use App\Service\Worker\WorkerAuth;
 use App\Service\Worker\WorkerFreigaben;
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
+use App\Service\Worker\WorkerFallback;
 use App\Service\Worker\WorkerProtokoll;
+use App\Service\Worker\WorkerRouting;
+use App\Service\Worker\WorkerUebergabe;
 use App\Tests\Support\DatabaseTestCase;
 
 /**
@@ -67,6 +70,12 @@ abstract class WorkerTestCase extends DatabaseTestCase
     protected DocumentArtifactRepository $artifacts;
     protected AiProviderRepository $anbieter;
     protected bool $rotation = false;
+
+    // Issue #53/M7b-3: module switch, routing, handover, fallback.
+    protected SettingRepository $settings;
+    protected WorkerRouting $routing;
+    protected WorkerUebergabe $uebergabe;
+    protected WorkerFallback $fallback;
 
     /** The key pair of the worker koppeln() paired last - what stays on the worker. */
     protected string $workerSchluesselpaar = '';
@@ -111,6 +120,12 @@ abstract class WorkerTestCase extends DatabaseTestCase
             fn(): bool => $this->rotation,
             $this->artefakte,
         );
+        $this->settings = new SettingRepository($this->pdo());
+        // The module is on in these tests unless one switches it off.
+        $this->settings->set(WorkerRouting::SETTING_AKTIV, '1');
+        $this->routing = new WorkerRouting($this->workers, $this->settings);
+        $this->uebergabe = new WorkerUebergabe($this->routing, $this->freigaben, $this->jobs, $this->documents);
+        $this->fallback = new WorkerFallback($this->routing, $this->workers, $this->jobs, $this->freigaben, $this->settings, $this->artifacts);
         $this->kopplung = new WorkerKopplung(
             $this->workers,
             $this->jobs,
@@ -138,6 +153,8 @@ abstract class WorkerTestCase extends DatabaseTestCase
             $vaults,
             new CategoryRepository($this->pdo()),
             new CostCenterRepository($this->pdo()),
+            $this->routing,
+            $this->fallback,
         );
     }
 

@@ -69,6 +69,117 @@ final readonly class DocumentArtifactRepository
     public const string PENDING = '~';
 
     /**
+     * Kind prefix of a worker artifact that did not open or did not have the
+     * expected shape when its result was taken over (issue #53,
+     * App\Service\Worker\WorkerUebernahme): hidden from every reader like
+     * a reservation, but kept - the admin can see that the worker delivered
+     * something broken, and "OCR nachholen" does not repeat a run that
+     * produced it.
+     */
+    public const string DEFEKT = '!';
+
+    /**
+     * Hides a committed worker artifact for good (DEFEKT). Only the worker's
+     * own rows, never a reservation or one of the session's.
+     */
+    public function alsDefektMarkieren(int $id): bool
+    {
+        $stmt = $this->pdo->prepare(
+            "UPDATE document_artifact SET kind = CONCAT(?, kind) WHERE id = ? AND producer = ? AND kind NOT LIKE ? AND kind NOT LIKE ?",
+        );
+        $stmt->execute([self::DEFEKT, $id, JobExecutor::Worker->value, self::PENDING . '%', self::DEFEKT . '%']);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Hides every committed worker artifact of job $jobId (DEFEKT) - for a
+     * worker job that fell back or failed: nobody checked them, and a job
+     * moved to the browser/session keeps its id, so its new run must not
+     * pick them up as its own. Returns how many.
+     */
+    public function workerLaufVerwerfen(int $jobId): int
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE document_artifact SET kind = CONCAT(?, kind) WHERE job_id = ? AND producer = ? AND kind NOT LIKE ? AND kind NOT LIKE ?',
+        );
+        $stmt->execute([self::DEFEKT, $jobId, JobExecutor::Worker->value, self::PENDING . '%', self::DEFEKT . '%']);
+
+        return $stmt->rowCount();
+    }
+
+    /** How many worker artifacts are marked defective - for the admin page. */
+    public function zaehleDefekte(): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document_artifact WHERE producer = ? AND kind LIKE ?');
+        $stmt->execute([JobExecutor::Worker->value, self::DEFEKT . '%']);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Reservations (PENDING) with an id up to $bisId. The full-text index
+     * remembers them when its cursor passes them: their id is older than
+     * the moment they become visible (issue #53, review of #52).
+     *
+     * @return list<int>
+     */
+    public function reservierteBis(int $bisId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT id FROM document_artifact WHERE id <= ? AND kind LIKE ? ORDER BY id');
+        $stmt->execute([$bisId, self::PENDING . '%']);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Which of $ids are still reservations.
+     *
+     * @param list<int> $ids
+     * @return list<int>
+     */
+    public function nochReserviert(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $stmt = $this->pdo->prepare(sprintf(
+            'SELECT id FROM document_artifact WHERE id IN (%s) AND kind LIKE ? ORDER BY id',
+            implode(',', array_fill(0, count($ids), '?')),
+        ));
+        $stmt->execute([...$ids, self::PENDING . '%']);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * The documents within $bereich of those of $ids that are visible now
+     * with one of $kinds - former reservations the full-text index has
+     * still to take in.
+     *
+     * @param list<int> $ids
+     * @param list<ArtifactKind> $kinds
+     * @return list<int>
+     */
+    public function sichtbarGeworden(array $ids, array $kinds, Zugriffsbereich $bereich): array
+    {
+        if ($ids === [] || $kinds === []) {
+            return [];
+        }
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        $stmt = $this->pdo->prepare(sprintf(
+            'SELECT DISTINCT a.document_id FROM document_artifact a JOIN document d ON d.id = a.document_id
+             WHERE a.id IN (%s) AND a.kind IN (%s) AND %s ORDER BY a.document_id',
+            implode(',', array_fill(0, count($ids), '?')),
+            implode(',', array_fill(0, count($kinds), '?')),
+            $scope,
+        ));
+        $stmt->execute([...$ids, ...array_map(static fn(ArtifactKind $k): string => $k->value, $kinds), ...$scopeParameter]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
      * Reserves the row of a worker upload: kind with PENDING prefix, no
      * payload yet. Null when the unique key (document, kind, job, seq) is
      * taken - by the same announcement (a repeat) or a committed artifact.
@@ -281,16 +392,23 @@ final readonly class DocumentArtifactRepository
      * Which documents within $bereich have artifacts of $kinds up to id
      * $bisId, as a short signature (count and sum of their ids) - the full-
      * text index compares it to notice an old document entering or leaving
-     * a cost-center scope (issue #94).
+     * a cost-center scope (issue #94). $ausser: artifact ids the index has
+     * not taken in yet although they lie below the cursor (former
+     * reservations, issue #53) - left out until it has.
      *
      * @param list<ArtifactKind> $kinds
+     * @param list<int> $ausser
      */
-    public function suchdokumenteBis(int $bisId, array $kinds, Zugriffsbereich $bereich): string
+    public function suchdokumenteBis(int $bisId, array $kinds, Zugriffsbereich $bereich, array $ausser = []): string
     {
         if ($kinds === []) {
             return '0:0';
         }
         [$sql, $parameter] = self::suchquellenBedingung('a.id <= ?', $bisId, $kinds, $bereich);
+        if ($ausser !== []) {
+            $sql .= sprintf(' AND a.id NOT IN (%s)', implode(',', array_fill(0, count($ausser), '?')));
+            array_push($parameter, ...$ausser);
+        }
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(DISTINCT a.document_id), COALESCE(SUM(DISTINCT a.document_id), 0)
              FROM document_artifact a JOIN document d ON d.id = a.document_id WHERE ' . $sql,

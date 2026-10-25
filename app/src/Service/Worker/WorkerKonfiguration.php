@@ -41,10 +41,13 @@ final readonly class WorkerKonfiguration
      * the worker as stored afterwards. Only for an active worker - an
      * unconfirmed one gets no API key.
      */
-    public function aktualisieren(Worker $worker): Worker
+    public function aktualisieren(Worker $worker, bool $kiSchluesselErlaubt): Worker
     {
         $profile = [];
-        foreach ($this->anbieter->all() as $a) {
+        // Without the release (module off, no `ai` capability - issue #53,
+        // WorkerRouting::kiSchluesselErlaubt()) the worker gets no profile
+        // at all; the changed hash makes it replace keys it got before.
+        foreach ($kiSchluesselErlaubt ? $this->anbieter->all() : [] as $a) {
             if (!$a->active) {
                 continue;
             }
