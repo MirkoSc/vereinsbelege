@@ -46,7 +46,13 @@ final readonly class Sphaerenbericht
         }
 
         $daten = $this->quelle->grundlage($vault, $grundlage, $zeitraum, $bereich);
-        [$posten, $ausKategorie] = $this->mitVorgaben($daten->posten);
+        // Only the lines the reader may see - the loader narrows already,
+        // this keeps the count of defaults to the same lines as the sums.
+        $sichtbarePosten = array_values(array_filter(
+            $daten->posten,
+            static fn(Posten $p): bool => $daten->zeitraum->enthaelt($p->datum) && $bereich->erlaubt($p->kostenstelleId, $p->datum),
+        ));
+        [$posten, $ausKategorie] = $this->mitVorgaben($sichtbarePosten);
         $gruppen = $rechner->gruppiert(
             new Auswertungsgrundlage($daten->grundlage, $daten->zeitraum, $posten, $daten->unlesbar, $daten->fremdwaehrung),
             $bereich,

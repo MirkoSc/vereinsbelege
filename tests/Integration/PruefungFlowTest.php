@@ -612,6 +612,10 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertSame(422, $falsch->status);
         self::assertMatchesRegularExpression('/name="sphaere"[^>]*aria-invalid="true"/', $falsch->body);
         self::assertSame('zweckbetrieb', $this->rechnung($id)['sphere']);
+
+        // A form opened before the switch was turned on has no field - the stored sphere stays.
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['notiz' => 'später', 'aktion' => 'speichern']))->status);
+        self::assertSame('zweckbetrieb', $this->rechnung($id)['sphere']);
     }
 
     public function testTheSupplierMustFitTheDirection(): void

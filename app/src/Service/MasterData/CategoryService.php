@@ -36,13 +36,16 @@ final readonly class CategoryService
     }
 
     /**
+     * @param string $sphaere the default tax sphere, '' = none - only passed
+     *        while `sphaeren_aktiv` is on (issue #84)
+     *
      * @throws CategoryRuleViolation
      */
-    public function anlegen(string $name, string $richtung, string $farbe, string $kiHinweis): int
+    public function anlegen(string $name, string $richtung, string $farbe, string $kiHinweis, string $sphaere = ''): int
     {
         $name = $this->pruefeName($name, null);
 
-        return $this->kategorien->create($name, self::richtung($richtung), self::farbe($farbe), self::kiHinweis($kiHinweis));
+        return $this->kategorien->create($name, self::richtung($richtung), self::farbe($farbe), self::kiHinweis($kiHinweis), self::sphaere($sphaere));
     }
 
     /**

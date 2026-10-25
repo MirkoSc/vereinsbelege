@@ -329,9 +329,10 @@ final readonly class PruefungController
         }
 
         $felder = self::felder($request);
-        if ($this->sphaerenAktiv()) {
-            // Only then the form shows the field (issue #84, E-15).
-            $wert = $request->post[Pruefung::FELD_SPHAERE] ?? '';
+        // Only a form that showed the field sends it (issue #84, E-15) - a
+        // form opened before the switch was turned on keeps the stored sphere.
+        if ($this->sphaerenAktiv() && array_key_exists(Pruefung::FELD_SPHAERE, $request->post)) {
+            $wert = $request->post[Pruefung::FELD_SPHAERE];
             $felder[Pruefung::FELD_SPHAERE] = is_string($wert) ? $wert : '';
         }
         $geprueft = ($request->post['aktion'] ?? '') === 'geprueft';

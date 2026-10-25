@@ -100,11 +100,8 @@ final readonly class CategoryController
         $felder = self::felder($request);
 
         try {
-            $sphaere = $this->sphaerenAktiv() ? CategoryService::sphaere($felder['sphaere']) : null;
-            $id = $this->service->anlegen($felder['name'], $felder['richtung'], $felder['farbe'], $felder['ki_hinweis']);
-            if ($sphaere !== null) {
-                $this->service->sphaereSetzen($id, $sphaere->value);
-            }
+            // Switched off, a posted sphere is ignored (E-15).
+            $id = $this->service->anlegen($felder['name'], $felder['richtung'], $felder['farbe'], $felder['ki_hinweis'], $this->sphaerenAktiv() ? $felder['sphaere'] : '');
         } catch (CategoryRuleViolation $e) {
             return $this->formular(null, $felder, $e->getMessage(), 422);
         }

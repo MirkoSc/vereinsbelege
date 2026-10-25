@@ -89,10 +89,10 @@ final readonly class CategoryRepository
     }
 
     /** New rows sort last within their direction - 10 more than its current highest. */
-    public function create(string $name, CategoryDirection $direction, ?CategoryColor $color, string $aiHint): int
+    public function create(string $name, CategoryDirection $direction, ?CategoryColor $color, string $aiHint, ?Sphere $defaultSphere = null): int
     {
-        $stmt = $this->pdo->prepare('INSERT INTO category (name, direction, color, sort, active, ai_hint) VALUES (?, ?, ?, ?, 1, ?)');
-        $stmt->execute([$name, $direction->value, $color?->value, $this->nextSort($direction), $aiHint]);
+        $stmt = $this->pdo->prepare('INSERT INTO category (name, direction, color, sort, active, ai_hint, default_sphere) VALUES (?, ?, ?, ?, 1, ?, ?)');
+        $stmt->execute([$name, $direction->value, $color?->value, $this->nextSort($direction), $aiHint, $defaultSphere?->value]);
 
         return (int) $this->pdo->lastInsertId();
     }
