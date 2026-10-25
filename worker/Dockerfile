@@ -27,13 +27,15 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progre
 FROM ${PHP_IMAGE}
 
 # The tools, from Debian. tesseract-ocr-osd: page orientation (--rotate-pages).
+# ca-certificates: the system CA bundle the worker checks TLS against - the
+# web host, AI providers and (#87) mail servers.
 # tini as PID 1: forwards SIGTERM to PHP and reaps the grandchildren of
 # OCRmyPDF (Tesseract, Ghostscript) when a job is cut off.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ocrmypdf tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng tesseract-ocr-osd \
-        ghostscript poppler-utils unpaper tini; \
+        ghostscript poppler-utils unpaper tini ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
 # PHP extensions: pcntl (SIGTERM gives the running job back - bin/worker.php
@@ -74,6 +76,7 @@ RUN set -eux; \
 # check when `help` below loads the autoloader.
 RUN set -eux; \
     php -r 'exit(extension_loaded("pcntl") ? 0 : 1);'; \
+    test -s /etc/ssl/certs/ca-certificates.crt; \
     ocrmypdf --version; \
     tesseract --list-langs 2>&1 | grep -qx deu; \
     tesseract --list-langs 2>&1 | grep -qx eng; \

@@ -50,6 +50,9 @@ final class WorkerImageTest extends TestCase
         self::assertMatchesRegularExpression('/docker-php-ext-install[^\n]*\bpcntl\b/', $dockerfile);
         self::assertStringContainsString('extension_loaded("pcntl")', $dockerfile, 'the build checks the extension is loaded');
         self::assertMatchesRegularExpression('/^USER worker$/m', $dockerfile);
+        // TLS to the web host, AI providers and mail servers is checked against the system CAs.
+        self::assertMatchesRegularExpression('/apt-get install[^;]*\bca-certificates\b/', $dockerfile);
+        self::assertStringContainsString('test -s /etc/ssl/certs/ca-certificates.crt', $dockerfile);
         self::assertMatchesRegularExpression('/^ENV WORKER_DATEN=\/daten \\\\\n\s*WORKER_ARBEIT=\/arbeit/m', $dockerfile);
         // The web app's code never comes along beyond app/src and the prompts.
         self::assertDoesNotMatchRegularExpression('/^COPY (public|migrations|app\/views|setup\.php)/m', $dockerfile);
