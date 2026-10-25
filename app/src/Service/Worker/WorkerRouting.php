@@ -44,7 +44,7 @@ final readonly class WorkerRouting
      * @var array<string, non-empty-list<string>>
      */
     public const array VORGAENGER = [
-        'ai_extract' => ['pdf_erzeugen', 'extract_text', 'render_pages', 'ocr', 'image_cleanup'],
+        'ai_extract' => ['pdf_erzeugen', 'extract_text', 'render_pages', 'ocr'],
     ];
 
     public function __construct(

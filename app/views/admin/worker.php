@@ -12,6 +12,8 @@
  * @var ?\App\Domain\Worker $worker
  * @var string $fingerabdruck
  * @var bool $protokollOk
+ * @var bool $versionVeraltet the worker runs an older release than this installation (issue #248)
+ * @var ?string $serverVersion
  * @var ?string $code
  * @var ?\DateTimeImmutable $codeBis
  * @var ?\DateTimeImmutable $offenerCodeBis
@@ -39,7 +41,6 @@ use App\Service\Worker\WorkerRouting;
 
 $typName = static fn(string $typ): string => match ($typ) {
     'ocr' => 'Texterkennung (OCR)',
-    'image_cleanup' => 'Bildaufbereitung',
     'render_pages' => 'PDF-Seiten rendern',
     'ai_extract' => 'KI-Auslesen',
     default => $typ,
@@ -129,6 +130,8 @@ $mailFehler = static fn(string $code): string => match ($code) {
             <?php endif; ?>
             <?php if (!$protokollOk): ?>
                 <span class="marke marke-fehler">Worker-Update nötig</span>
+            <?php elseif ($versionVeraltet ?? false): ?>
+                <span class="marke marke-warnung">Worker-Version veraltet</span>
             <?php endif; ?>
             <?php if ($online): ?>
                 <span class="marke marke-ok">online</span>
@@ -150,6 +153,13 @@ $mailFehler = static fn(string $code): string => match ($code) {
                 (Protokoll <?= e((string) $worker->protokollVersion) ?>) ·
                 Fähigkeiten: <?= e($worker->faehigkeiten === [] ? '–' : implode(', ', array_map(static fn(\App\Domain\WorkerFaehigkeit $f): string => $f->label(), $worker->faehigkeiten))) ?>
             </p>
+            <?php if ($protokollOk && ($versionVeraltet ?? false)): ?>
+                <p class="hinweis hinweis-warnung">
+                    Der Worker läuft mit Version <?= e($worker->appVersion) ?>, diese Installation mit
+                    <?= e((string) ($serverVersion ?? '')) ?>. Er arbeitet weiter; bitte auf dem Worker-Rechner
+                    <code>docker compose pull &amp;&amp; docker compose up -d</code> ausführen.
+                </p>
+            <?php endif; ?>
         </div>
 
         <?php if ($worker->status === WorkerStatus::Gekoppelt): ?>

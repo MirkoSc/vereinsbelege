@@ -25,7 +25,7 @@ enum WorkerFaehigkeit: string
     public function jobTypen(): array
     {
         return match ($this) {
-            self::Ocr => ['ocr', 'image_cleanup'],
+            self::Ocr => ['ocr'],
             self::Render => ['render_pages'],
             self::Ai => ['ai_extract'],
             self::Mail => [],

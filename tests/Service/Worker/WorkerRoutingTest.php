@@ -26,6 +26,7 @@ use App\Service\Mail\MailTemplates;
 use App\Service\Mail\WorkerAlarm;
 use App\Service\Upload\MagicBytes;
 use App\Service\Worker\WorkerFallback;
+use App\Service\Worker\WorkerArtefakte;
 use App\Service\Worker\WorkerRouting;
 use App\Service\Worker\WorkerUebergabe;
 
@@ -108,6 +109,42 @@ final class WorkerRoutingTest extends WorkerTestCase
         self::assertSame(1, $this->uebergabe->ocrNachholen($this->vault, 50, $now));
         self::assertSame(0, $this->uebergabe->nachholbar());
         self::assertTrue($this->jobs->wartetAufWorker('document', $doc));
+    }
+
+    public function testThereIsNoSeparateImageCleanupJob(): void
+    {
+        // Issue #248: `ocr` straightens and rotates the PDF/A itself, the GD
+        // fallback cleans up without a browser - no worker job of its own.
+        self::assertSame(['ocr'], WorkerFaehigkeit::Ocr->jobTypen());
+        self::assertSame([], WorkerArtefakte::erlaubteKinds('image_cleanup'));
+        self::assertNotContains('image_cleanup', WorkerRouting::VORGAENGER['ai_extract']);
+    }
+
+    public function testOcrCanBeCaughtUpForOneReceipt(): void
+    {
+        [$doc] = $this->dokument(OcrStatus::Uebersprungen);
+        [$anderer] = $this->dokument(OcrStatus::Uebersprungen);
+        [$fertig] = $this->dokument(OcrStatus::Fertig);
+        $now = new \DateTimeImmutable();
+
+        // No worker: nothing to offer, nothing queued.
+        self::assertFalse($this->uebergabe->ocrNachholbarFuer($doc, $now));
+        self::assertFalse($this->uebergabe->ocrNachholenFuer($doc, $this->vault, $now));
+
+        $this->onlineWorker();
+        self::assertTrue($this->uebergabe->ocrNachholbarFuer($doc, $now));
+        self::assertFalse($this->uebergabe->ocrNachholbarFuer($fertig, $now), 'Only a skipped OCR is caught up.');
+        self::assertFalse($this->uebergabe->ocrNachholenFuer($fertig, $this->vault, $now));
+
+        self::assertTrue($this->uebergabe->ocrNachholenFuer($doc, $this->vault, $now));
+        self::assertTrue($this->jobs->wartetAufWorker('document', $doc));
+        self::assertFalse($this->jobs->wartetAufWorker('document', $anderer), 'Only this receipt, not the batch.');
+        self::assertNotSame(0, $this->zaehle('SELECT COUNT(*) FROM worker_grant WHERE document_id = ?', [$doc]));
+
+        // Pending now: neither offered nor queued twice.
+        self::assertFalse($this->uebergabe->ocrNachholbarFuer($doc, $now));
+        self::assertFalse($this->uebergabe->ocrNachholenFuer($doc, $this->vault, $now));
+        self::assertSame(1, $this->zaehle('SELECT COUNT(*) FROM job WHERE typ = ? AND ref_id = ?', [WorkerUebergabe::OCR, $doc]));
     }
 
     public function testSwitchingTheModuleOffFallsBackAtOnceAndClaimsNothing(): void

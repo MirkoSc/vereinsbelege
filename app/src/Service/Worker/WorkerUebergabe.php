@@ -16,7 +16,8 @@ use App\Service\Crypto\Vault;
  *
  * Every such step is queued from a signed-in session: `render_pages` by
  * `pdf_erzeugen`, `ocr` by `extract_text`, `ai_extract` when a receipt is
- * accepted, "OCR nachholen" from the admin page. The session holds the
+ * accepted, "OCR nachholen" from the admin page or for one receipt from
+ * the inbox. The session holds the
  * unlocked vault, so the worker grants are made right here
  * (WorkerFreigaben::ausSession()) - for exactly the documents that go to the
  * worker. If granting is refused (vault key rotation, issue #90) the step
@@ -101,6 +102,30 @@ final readonly class WorkerUebergabe
         }
 
         return $anzahl;
+    }
+
+    /**
+     * Whether "OCR nachholen" can be offered for this one document now
+     * (issue #248): it is eligible (as for the admin's batch action) and
+     * the worker takes OCR jobs.
+     */
+    public function ocrNachholbarFuer(int $documentId, \DateTimeImmutable $now): bool
+    {
+        return $this->documents->istOcrNachholbar($documentId) && $this->verfuegbar(self::OCR, $now);
+    }
+
+    /**
+     * "OCR nachholen" for one document - the button in the inbox (issue
+     * #248, section 6). Same rule as ocrNachholen(); true when it went to
+     * the worker.
+     */
+    public function ocrNachholenFuer(int $documentId, Vault $vault, \DateTimeImmutable $now): bool
+    {
+        if (!$this->ocrNachholbarFuer($documentId, $now)) {
+            return false;
+        }
+
+        return $this->einreihen(self::OCR, null, $documentId, $vault, $now) === JobExecutor::Worker;
     }
 
     /**

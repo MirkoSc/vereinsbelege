@@ -54,6 +54,27 @@ final class WorkerProtokoll
         return in_array($version, self::UNTERSTUETZT, true);
     }
 
+    /**
+     * Whether the worker runs an older release than the web host (07
+     * section 7 "Worker-Version veraltet", issue #248) - a hint on the
+     * admin page, not a refusal: only an unsupported protocol blocks.
+     * Release versions `X.Y.Z` (optionally `-suffix`, optionally with a
+     * leading `v`); a development build (`-dev`) or anything else that is
+     * no such version compares as not outdated.
+     */
+    public static function versionVeraltet(string $worker, string $server): bool
+    {
+        $muster = '/^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/';
+        if (preg_match($muster, $worker, $w) !== 1 || preg_match($muster, $server, $s) !== 1) {
+            return false;
+        }
+        if (str_ends_with($w[1], '-dev') || str_ends_with($s[1], '-dev')) {
+            return false;
+        }
+
+        return version_compare($w[1], $s[1], '<');
+    }
+
     public static function kanonisch(string $methode, string $pfad, int $zeit, string $nonce, string $body): string
     {
         return implode('|', [strtoupper($methode), $pfad, (string) $zeit, $nonce, hash('sha256', $body)]);

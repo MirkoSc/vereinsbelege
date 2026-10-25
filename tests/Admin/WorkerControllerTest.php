@@ -17,6 +17,7 @@ use App\Service\Account\SessionVault;
 use App\Service\Crypto\DataKey;
 use App\Service\Upload\MagicBytes;
 use App\Service\Worker\BestandsOcr;
+use App\Service\Worker\WorkerProtokoll;
 use App\Service\Worker\WorkerRouting;
 use App\Http\HttpMethod;
 use App\Http\Request;
@@ -57,7 +58,21 @@ final class WorkerControllerTest extends WorkerTestCase
             new ArchiveImportRepository($this->pdo()),
             $this->mailEingang,
             new \App\Service\Audit\AuditLog(new \App\Repository\AuditLogRepository($this->pdo()), new \App\Repository\VaultRepository($this->pdo()), $this->crypto),
+            '1.4.0',
         );
+    }
+
+    public function testAnOlderWorkerReleaseIsFlaggedNotOnlyAnOtherProtocol(): void
+    {
+        [$id] = $this->koppeln();
+        $this->workers->heartbeat($id, WorkerProtokoll::VERSION, '1.3.2', [], new \DateTimeImmutable());
+        $seite = $this->controller->page(new Request(HttpMethod::Get, '/admin/worker'))->body;
+        self::assertStringContainsString('Worker-Version veraltet', $seite);
+        self::assertStringContainsString('1.3.2', $seite);
+        self::assertStringNotContainsString('Worker-Update nötig', $seite, 'the protocol still fits');
+
+        $this->workers->heartbeat($id, WorkerProtokoll::VERSION, '1.4.0', [], new \DateTimeImmutable());
+        self::assertStringNotContainsString('Worker-Version veraltet', $this->controller->page(new Request(HttpMethod::Get, '/admin/worker'))->body);
     }
 
     public function testTheMailIntakeKeepsThePasswordHiddenAndEncrypted(): void
