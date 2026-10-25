@@ -52,6 +52,9 @@ final class RoutePermissionMatrixTest extends TestCase
      */
     private const array OEFFENTLICH = [
         '/',
+        // Issue #80/M13-3: the legal pages, without a session.
+        '/impressum',
+        '/datenschutz',
         '/anmelden',
         '/abmelden',
         '/anmelden/bestaetigen',
@@ -273,6 +276,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/einreichung', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/einreichung', false],
+            // Rechtstexte (M13-3): admin.settings; the pages themselves are public.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/rechtstexte', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/rechtstexte', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/rechtstexte', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/rechtstexte', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/impressum', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/datenschutz', true],
             // Export pattern (M12-1): admin.settings, like Einreichung -
             // export.zip alone (Vorstand, Finanzen) does not configure it.
             [SystemRole::Admin, HttpMethod::Get, '/admin/export', true],
@@ -827,6 +837,9 @@ final class RoutePermissionMatrixTest extends TestCase
             zahllaeufe: $stellvertreter,
             // The code integrity check (issue #79/M13-2), optional.
             integritaet: $stellvertreter,
+            // Impressum/Datenschutz and their admin page (issue #80/M13-3), optional.
+            rechtstexte: $stellvertreter,
+            rechtstexteAdmin: $stellvertreter,
             // The dashboard on /app (issue #72/M11-2), optional.
             dashboard: $stellvertreter,
         );
