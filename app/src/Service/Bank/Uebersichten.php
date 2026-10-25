@@ -6,6 +6,7 @@ namespace App\Service\Bank;
 
 use App\Domain\BankTransactionDocStatus;
 use App\Domain\Belegstand;
+use App\Domain\Iban;
 use App\Domain\InvoiceDirection;
 use App\Domain\OffenerBelegRecord;
 use App\Domain\PaymentStatus;
@@ -56,6 +57,90 @@ final readonly class Uebersichten
         $gewaehlt = array_values(array_filter($records, static fn(OffenerBelegRecord $r): bool => $r->altbestand === $altbestand));
 
         return [...$this->posten($vault, $gewaehlt, $heute), 'andere' => count($records) - count($gewaehlt)];
+    }
+
+    /**
+     * The GiroCode page of one unpaid receipt (issue #86, E-40): only a
+     * receipt the unpaid list would show ($bereich in SQL, Zahlungsweg
+     * `konto`, open or partly paid, not rejected), found by its document
+     * id. Null when it is none of those - the page says "not found" without
+     * telling which. A code only for an expense in EUR with an open rest
+     * and a supplier with a valid IBAN that is not one of the club's own
+     * (E-29); the amount is the open rest, the remittance the invoice
+     * number. Receipts from before the matching (Altbestand) get no code:
+     * their status says nothing about whether they are paid.
+     */
+    public function ueberweisung(Vault $vault, Zugriffsbereich $bereich, int $documentId, \DateTimeImmutable $heute): ?Ueberweisung
+    {
+        $zeilen = array_values(array_filter(
+            $this->belege->offen(Zahlungsweg::Konto, [PaymentStatus::Offen, PaymentStatus::Teilbezahlt], $bereich),
+            static fn(OffenerBelegRecord $r): bool => $r->record->documentId === $documentId,
+        ));
+        if ($zeilen === []) {
+            return null;
+        }
+        $posten = $this->posten($vault, $zeilen, $heute)['posten'][0] ?? null;
+        if ($posten === null) {
+            return null;
+        }
+        $ohne = static fn(string $grund): Ueberweisung => new Ueberweisung($posten, [], $grund);
+
+        if ($posten->record->direction !== InvoiceDirection::Ausgabe) {
+            return $ohne('Das ist eine Einnahme – hier zahlt nicht der Verein.');
+        }
+        if ($posten->altbestand) {
+            return $ohne('Der Beleg wurde erfasst, bevor es den Abgleich gab; ob er bezahlt ist, weiß die Anwendung nicht. Bitte zuerst in der Prüfansicht Zahlungsweg oder Zuordnung nachholen.');
+        }
+        if (strtoupper($posten->waehrung) !== 'EUR') {
+            return $ohne('Einen GiroCode gibt es nur für Beträge in Euro.');
+        }
+        if ($posten->offen <= 0) {
+            return $ohne('Es ist kein Betrag mehr offen.');
+        }
+        if ($posten->record->supplierId === null) {
+            return $ohne('Dem Beleg ist kein Lieferant zugeordnet.');
+        }
+        try {
+            $lieferant = $this->lieferanten->finde($vault, $posten->record->supplierId);
+        } catch (CryptoException | \JsonException) {
+            $lieferant = null;
+        }
+        if ($lieferant === null) {
+            return $ohne('Der Lieferant ließ sich nicht lesen.');
+        }
+
+        $ibans = [];
+        $verworfen = 0;
+        $alle = array_unique(array_filter(array_map(Iban::normalisieren(...), $lieferant->data->ibans)));
+        foreach ($lieferant->data->ibans as $iban) {
+            $iban = Iban::normalisieren($iban);
+            if ($iban === '' || isset($ibans[$iban])) {
+                continue;
+            }
+            // Never the club's own account as payee (E-29), never a wrong check digit.
+            if (!Iban::istGueltig($iban) || $this->lieferanten->istVereinsIban($vault, $iban)) {
+                ++$verworfen;
+                continue;
+            }
+            $ibans[$iban] = true;
+        }
+        if ($ibans === []) {
+            return new Ueberweisung($posten, [], 'Beim Lieferanten ist keine gültige IBAN hinterlegt.', $verworfen);
+        }
+
+        // The supplier's single BIC fits only when it has a single IBAN at
+        // all - not when others were dropped (the BIC may be theirs).
+        $bic = count($alle) === 1 ? $lieferant->data->bic : '';
+        $codes = [];
+        foreach (array_keys($ibans) as $iban) {
+            try {
+                $codes[] = GiroCode::erstellen($lieferant->data->name, (string) $iban, $bic, $posten->offen, $posten->nummer);
+            } catch (\InvalidArgumentException $e) {
+                return new Ueberweisung($posten, [], $e->getMessage(), $verworfen);
+            }
+        }
+
+        return new Ueberweisung($posten, $codes, null, $verworfen);
     }
 
     /**

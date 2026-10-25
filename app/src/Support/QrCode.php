@@ -15,13 +15,14 @@ namespace App\Support;
  * small, exact protocol instead of adding a runtime dependency).
  *
  * Deliberately narrow: byte mode only, error correction level M, versions 1
- * through 6 (up to 106 bytes of payload). Version 7 and above additionally
- * require an 18-bit "version information" pattern printed twice into the
- * symbol - real extra surface for a mistake this class has no way to verify
- * against a real scanner, so it is left out and encode() throws instead of
- * silently producing a symbol nothing can read. In return, the setup page
- * always has a second way in: the secret is shown as plain Base32 text next
- * to the code (App\Service\Account\Totp::base32Encode()).
+ * through 13 (up to 331 bytes of payload - exactly the maximum an EPC069-12
+ * GiroCode may carry, App\Service\Bank\GiroCode, docs/spec/04 section 5
+ * "Stand Backlog: GiroCode").
+ * Larger versions are left out and encode() throws instead of silently
+ * producing a symbol nothing can read. The TOTP setup page always has a
+ * second way in: the secret is shown as plain Base32 text next to the code
+ * (App\Service\Account\Totp::base32Encode()); the GiroCode shows the same
+ * transfer data as text.
  *
  * The module-placement algorithm (finder/timing/alignment patterns, format
  * information, the zig-zag data walk and the eight mask patterns) follows
@@ -38,32 +39,53 @@ namespace App\Support;
 final class QrCode
 {
     /**
-     * Per version 1-6, error correction level M: number of Reed-Solomon
-     * blocks, total codewords per block, and data codewords per block (the
-     * remainder is the EC codewords per block). None of these versions split
-     * into two differently sized groups the way larger versions can.
+     * Per version 1-13, error correction level M: the Reed-Solomon block
+     * groups as [number of blocks, total codewords per block, data codewords
+     * per block] (the remainder is the EC codewords per block). From version
+     * 8 on a version splits into two groups whose blocks differ by one data
+     * codeword; the shorter group comes first.
      */
     private const array BLOCK_INFO = [
-        1 => ['blocks' => 1, 'total' => 26, 'data' => 16],
-        2 => ['blocks' => 1, 'total' => 44, 'data' => 28],
-        3 => ['blocks' => 1, 'total' => 70, 'data' => 44],
-        4 => ['blocks' => 2, 'total' => 50, 'data' => 32],
-        5 => ['blocks' => 2, 'total' => 67, 'data' => 43],
-        6 => ['blocks' => 4, 'total' => 43, 'data' => 27],
+        1 => [[1, 26, 16]],
+        2 => [[1, 44, 28]],
+        3 => [[1, 70, 44]],
+        4 => [[2, 50, 32]],
+        5 => [[2, 67, 43]],
+        6 => [[4, 43, 27]],
+        7 => [[4, 49, 31]],
+        8 => [[2, 60, 38], [2, 61, 39]],
+        9 => [[3, 58, 36], [2, 59, 37]],
+        10 => [[4, 69, 43], [1, 70, 44]],
+        11 => [[1, 80, 50], [4, 81, 51]],
+        12 => [[6, 58, 36], [2, 59, 37]],
+        13 => [[8, 59, 37], [1, 60, 38]],
     ];
 
     /**
-     * The single non-finder alignment pattern of versions 2-6 sits at
-     * (position, position). Version 1 has none.
+     * Alignment pattern centre coordinates per version (ISO/IEC 18004 Annex
+     * E); every combination of two of them carries a pattern unless it
+     * collides with a finder pattern.
      */
-    private const array ALIGNMENT_POSITION = [
-        1 => null,
-        2 => 18,
-        3 => 22,
-        4 => 26,
-        5 => 30,
-        6 => 34,
+    private const array ALIGNMENT_POSITIONS = [
+        1 => [],
+        2 => [6, 18],
+        3 => [6, 22],
+        4 => [6, 26],
+        5 => [6, 30],
+        6 => [6, 34],
+        7 => [6, 22, 38],
+        8 => [6, 24, 42],
+        9 => [6, 26, 46],
+        10 => [6, 28, 50],
+        11 => [6, 30, 54],
+        12 => [6, 32, 58],
+        13 => [6, 34, 62],
     ];
+
+    private const int MAX_VERSION = 13;
+
+    /** BCH(18,6) generator for the 18-bit version information, versions 7+ (ISO/IEC 18004 Annex D). */
+    private const int VERSION_GENERATOR = 0b1111100100101;
 
     private const int MODE_BYTE = 0b0100;
 
@@ -85,7 +107,12 @@ final class QrCode
      * `data:` URI needed - the CSP already allows inline SVG markup the same
      * way the recovery key page does not need one).
      */
-    public static function svg(string $data, int $moduleSize = 4, int $quietZone = 4): string
+    public static function svg(
+        string $data,
+        int $moduleSize = 4,
+        int $quietZone = 4,
+        string $label = 'QR-Code',
+    ): string
     {
         $matrix = self::encode($data);
         $size = count($matrix);
@@ -104,12 +131,13 @@ final class QrCode
 
         return sprintf(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %1$d %1$d" width="%1$d" height="%1$d"'
-            . ' role="img" aria-label="QR-Code zur Einrichtung des Authenticators">'
+            . ' role="img" aria-label="%3$s">'
             . '<rect width="%1$d" height="%1$d" fill="#ffffff"/>'
             . '<path d="%2$s" fill="#000000"/>'
             . '</svg>',
             $dimension,
             $path,
+            htmlspecialchars($label, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8'),
         );
     }
 
@@ -131,9 +159,11 @@ final class QrCode
         $version = self::selectVersion(strlen($data));
         $codewords = self::buildCodewords($data, $version);
         $blank = self::blankMatrix($version);
+        $scoringBlank = self::blankMatrix($version, test: true);
         $size = count($blank);
 
-        // Scored with the format-info strip blanked out (ISO/IEC 18004
+        // Scored with the format-info strip (and, from version 7, the
+        // version-info blocks) blanked out (ISO/IEC 18004
         // section 8.8.2): those modules encode the mask pattern itself, so
         // scoring them for real would make the penalty rules partly judge
         // the mask by its own signature instead of by the data pattern it
@@ -142,7 +172,7 @@ final class QrCode
         $bestPattern = 0;
         $bestScore = null;
         for ($pattern = 0; $pattern < 8; $pattern++) {
-            $matrix = $blank;
+            $matrix = $scoringBlank;
             self::placeFormatInfo($matrix, $size, $pattern, test: true);
             self::mapData($matrix, $size, $codewords, $pattern);
             $score = self::lostPoint($matrix, $size);
@@ -163,28 +193,40 @@ final class QrCode
 
     private static function selectVersion(int $byteLength): int
     {
-        foreach (self::BLOCK_INFO as $version => $info) {
-            if ($byteLength <= self::capacity($info)) {
+        foreach (array_keys(self::BLOCK_INFO) as $version) {
+            if ($byteLength <= self::capacity($version)) {
                 return $version;
             }
         }
 
         throw new \InvalidArgumentException(sprintf(
-            'QR payload of %d bytes exceeds what error correction level M supports up to version 6 (%d bytes).',
+            'QR payload of %d bytes exceeds what error correction level M supports up to version %d (%d bytes).',
             $byteLength,
-            self::capacity(self::BLOCK_INFO[6]),
+            self::MAX_VERSION,
+            self::capacity(self::MAX_VERSION),
         ));
     }
 
-    /**
-     * @param array{blocks: int, total: int, data: int} $info
-     */
-    private static function capacity(array $info): int
+    /** Payload bytes a version holds: data codewords minus mode indicator and count field. */
+    public static function capacity(int $version): int
     {
-        // Mode indicator (4 bits) + byte-mode character count (8 bits,
-        // versions 1-9) leave this many whole bytes of the data codewords for
-        // the payload itself.
-        return intdiv($info['blocks'] * $info['data'] * 8 - 12, 8);
+        return intdiv(self::dataCodewordCount($version) * 8 - 4 - self::countBits($version), 8);
+    }
+
+    private static function dataCodewordCount(int $version): int
+    {
+        $count = 0;
+        foreach (self::BLOCK_INFO[$version] as [$blocks, , $data]) {
+            $count += $blocks * $data;
+        }
+
+        return $count;
+    }
+
+    /** Byte-mode character count indicator: 8 bits up to version 9, 16 bits from version 10. */
+    private static function countBits(int $version): int
+    {
+        return $version <= 9 ? 8 : 16;
     }
 
     // ------------------------------------------------------- data encoding
@@ -194,10 +236,9 @@ final class QrCode
      */
     private static function buildCodewords(string $data, int $version): array
     {
-        $info = self::BLOCK_INFO[$version];
-        $bitLimit = $info['blocks'] * $info['data'] * 8;
+        $bitLimit = self::dataCodewordCount($version) * 8;
 
-        $bits = self::toBits(self::MODE_BYTE, 4) . self::toBits(strlen($data), 8);
+        $bits = self::toBits(self::MODE_BYTE, 4) . self::toBits(strlen($data), self::countBits($version));
         foreach (str_split($data) as $byte) {
             $bits .= self::toBits(ord($byte), 8);
         }
@@ -215,7 +256,7 @@ final class QrCode
 
         $dataCodewords = array_map(bindec(...), str_split($bits, 8));
 
-        return self::interleave($dataCodewords, $info);
+        return self::interleave($dataCodewords, $version);
     }
 
     private static function toBits(int $value, int $width): string
@@ -224,25 +265,37 @@ final class QrCode
     }
 
     /**
+     * Splits the data codewords into the version's blocks, appends each
+     * block's EC codewords, and interleaves both column by column - a block
+     * of the longer group simply contributes one more data codeword at the
+     * end of the data part.
+     *
      * @param list<int> $dataCodewords
-     * @param array{blocks: int, total: int, data: int} $info
      * @return list<int>
      */
-    private static function interleave(array $dataCodewords, array $info): array
+    private static function interleave(array $dataCodewords, int $version): array
     {
-        $dataPerBlock = $info['data'];
-        $ecPerBlock = $info['total'] - $info['data'];
+        $blocks = [];
+        $ecBlocks = [];
+        $offset = 0;
+        foreach (self::BLOCK_INFO[$version] as [$count, $total, $data]) {
+            for ($i = 0; $i < $count; $i++) {
+                $block = array_slice($dataCodewords, $offset, $data);
+                $offset += $data;
+                $blocks[] = $block;
+                $ecBlocks[] = self::reedSolomonRemainder($block, $total - $data);
+            }
+        }
 
-        $blocks = array_chunk($dataCodewords, $dataPerBlock);
-        $ecBlocks = array_map(
-            static fn(array $block): array => self::reedSolomonRemainder($block, $ecPerBlock),
-            $blocks,
-        );
+        $maxData = max(array_map(count(...), $blocks));
+        $ecPerBlock = count($ecBlocks[0]);
 
         $result = [];
-        for ($i = 0; $i < $dataPerBlock; $i++) {
+        for ($i = 0; $i < $maxData; $i++) {
             foreach ($blocks as $block) {
-                $result[] = $block[$i];
+                if (isset($block[$i])) {
+                    $result[] = $block[$i];
+                }
             }
         }
         for ($i = 0; $i < $ecPerBlock; $i++) {
@@ -373,7 +426,7 @@ final class QrCode
     /**
      * @return list<list<bool|null>>
      */
-    private static function blankMatrix(int $version): array
+    private static function blankMatrix(int $version, bool $test = false): array
     {
         $size = $version * 4 + 17;
         $modules = array_fill(0, $size, array_fill(0, $size, null));
@@ -383,6 +436,7 @@ final class QrCode
         self::placeFinder($modules, 0, $size - 7, $size);
         self::placeAlignment($modules, $version, $size);
         self::placeTiming($modules, $size);
+        self::placeVersionInfo($modules, $version, $size, $test);
 
         return $modules;
     }
@@ -418,16 +472,13 @@ final class QrCode
      */
     private static function placeAlignment(array &$modules, int $version, int $size): void
     {
-        $position = self::ALIGNMENT_POSITION[$version];
-        if ($position === null) {
-            return;
-        }
+        $positions = self::ALIGNMENT_POSITIONS[$version];
 
-        // The Cartesian product of {6, position} covers four spots; three
-        // fall inside a finder pattern and are skipped because that cell is
-        // already assigned.
-        foreach ([6, $position] as $row) {
-            foreach ([6, $position] as $col) {
+        // Every pair of positions is a candidate centre; those inside a
+        // finder pattern are skipped because that cell is already assigned
+        // (the timing row/column is drawn afterwards, so it never blocks one).
+        foreach ($positions as $row) {
+            foreach ($positions as $col) {
                 if ($modules[$row][$col] !== null) {
                     continue;
                 }
@@ -438,6 +489,34 @@ final class QrCode
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * The 18-bit version information (version number + BCH(18,6)
+     * remainder), versions 7 and up only, written twice: a 6x3 block above
+     * the bottom-left finder and its transpose left of the top-right one
+     * (ISO/IEC 18004 section 8.10). Bit i goes to (i / 3, i % 3 + size - 11).
+     * $test blanks them for mask scoring, like placeFormatInfo().
+     *
+     * @param list<list<bool|null>> $modules
+     */
+    private static function placeVersionInfo(array &$modules, int $version, int $size, bool $test = false): void
+    {
+        if ($version < 7) {
+            return;
+        }
+
+        $remainder = $version << 12;
+        while (self::bitLength($remainder) - self::bitLength(self::VERSION_GENERATOR) >= 0) {
+            $remainder ^= self::VERSION_GENERATOR << (self::bitLength($remainder) - self::bitLength(self::VERSION_GENERATOR));
+        }
+        $bits = ($version << 12) | $remainder;
+
+        for ($i = 0; $i < 18; $i++) {
+            $dark = !$test && (($bits >> $i) & 1) === 1;
+            $modules[intdiv($i, 3)][$i % 3 + $size - 11] = $dark;
+            $modules[$i % 3 + $size - 11][intdiv($i, 3)] = $dark;
         }
     }
 
