@@ -128,6 +128,10 @@ GET /app/auswertung -> report.view
 GET /app/auswertung/geldfluss -> report.view
 GET /app/auswertung/geldfluss/posten -> report.view
 GET /app/auswertung/sphaeren -> report.view
+GET /app/auswertung/budget -> report.view
+GET /app/auswertung/budget.csv -> export.csv
+POST /app/auswertung/budget -> bank.book
+POST /app/auswertung/budget/{id:\d+}/loeschen -> bank.book
 GET /app/konten -> bank.view
 GET /app/konten/neu -> bank.book
 POST /app/konten -> bank.book
