@@ -147,7 +147,8 @@ final readonly class CategoryRepository
      * whether it may still be deleted. Today sub-categories, the default
      * category of suppliers (M6-2), the receipts of the review page
      * (`invoice`, M6-3), bookings (`bank_transaction`, M9-4) and rules for
-     * bookings (`assignment_rule`, M9-6) point here; every later table with
+     * bookings (`assignment_rule`, M9-6) and budgets (`budget`, issue #92)
+     * point here; every later table with
      * a `category_id` adds its count here and its foreign key with ON
      * DELETE RESTRICT (docs/spec/02-datenmodell.md "Kategorien").
      */
@@ -158,9 +159,10 @@ final readonly class CategoryRepository
                   + (SELECT COUNT(*) FROM supplier WHERE default_category_id = ?)
                   + (SELECT COUNT(*) FROM invoice WHERE category_id = ?)
                   + (SELECT COUNT(*) FROM bank_transaction WHERE category_id = ?)
-                  + (SELECT COUNT(*) FROM assignment_rule WHERE category_id = ?)',
+                  + (SELECT COUNT(*) FROM assignment_rule WHERE category_id = ?)
+                  + (SELECT COUNT(*) FROM budget WHERE category_id = ?)',
         );
-        $stmt->execute([$id, $id, $id, $id, $id]);
+        $stmt->execute([$id, $id, $id, $id, $id, $id]);
 
         return (int) $stmt->fetchColumn();
     }

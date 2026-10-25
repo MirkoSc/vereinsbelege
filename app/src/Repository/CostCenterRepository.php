@@ -149,6 +149,18 @@ final readonly class CostCenterRepository
     }
 
     /**
+     * Budgets of this cost center (issue #92) - RESTRICT like the receipts:
+     * a cost center with a budget is deactivated, not deleted.
+     */
+    public function budgetCount(int $id): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM budget WHERE cost_center_id = ?');
+        $stmt->execute([$id]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * @return array<int, int> cost center id => number of accounts assigned
      */
     public function userCounts(): array
