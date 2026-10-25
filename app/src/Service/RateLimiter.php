@@ -86,21 +86,7 @@ final readonly class RateLimiter
      */
     public function registerFailure(string $purpose, string $value, ?\DateTimeImmutable $now = null): void
     {
-        if ($value === '') {
-            return;
-        }
-
-        $key = $this->keyHash($purpose, $value);
-        $window = $this->windowStart($now ?? new \DateTimeImmutable());
-        $row = $this->rows->find($key);
-
-        if ($row === null || $row['windowStart'] !== $window) {
-            $this->rows->startWindow($key, $window);
-
-            return;
-        }
-
-        $this->rows->increment($key);
+        $this->registerMenge($purpose, $value, 1, $now);
     }
 
     /**

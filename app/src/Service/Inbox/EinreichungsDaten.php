@@ -10,6 +10,7 @@ use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\Vault;
+use App\Service\Submission\MailEinreichung;
 
 /**
  * The decrypted `submission.payload_enc` (docs/spec/02-datenmodell.md
@@ -33,7 +34,7 @@ final readonly class EinreichungsDaten
     /** Came in through the mail intake (issue #87/#243), not the form. */
     public function perMail(): bool
     {
-        return $this->kanal === 'mail';
+        return $this->kanal === MailEinreichung::KANAL;
     }
 
     private const string TABLE = 'submission';

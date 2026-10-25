@@ -180,6 +180,17 @@ final class MimeNachrichtTest extends TestCase
         }
     }
 
+    /** A quoted-printable line longer than a piece is cut before an `=XX`, never inside. */
+    public function testAQuotedPrintableLineLongerThanAPiece(): void
+    {
+        $daten = str_repeat("\xC3\xA4", 700 * 1024);
+        $text = str_repeat('=C3=A4', 700 * 1024);
+        foreach ([0, 1, 2] as $versatz) {
+            $roh = "From: x@y.de\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . str_repeat('a', $versatz) . $text;
+            self::assertSame(str_repeat('a', $versatz) . $daten, MimeNachricht::lesen($roh)->anhaenge[0]->inhalt, 'offset ' . $versatz);
+        }
+    }
+
     public function testTheMessageIdFromAHeaderAlone(): void
     {
         self::assertSame('a.b@c.de', MimeNachricht::messageIdAusKopf("Message-ID:\r\n <a.b@c.de>\r\n\r\n"));

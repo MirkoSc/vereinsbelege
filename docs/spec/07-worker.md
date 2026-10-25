@@ -626,7 +626,9 @@ Kopie wird nicht geöffnet. Damit bleibt die Spitze unter dem Dreifachen der
 Mailgröße (Kopie < 1×, Anhänge < 1×), auch bei ineinander kodierten
 Weiterleitungen (getestet). Der Idempotenz-Schlüssel ohne Message-ID wird
 inkrementell gehasht (keine Kopie der Mail). Das geholte Literal ist auf
-`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt.
+`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt; ein größeres wird
+stückweise gelesen und verworfen (die Verbindung bleibt im Takt, seine Bytes
+gelten nie als Serverantwort).
 
 **Mengengrenze des Webhosters (N-17).** Unabhängig von den Grenzen des
 Workers nimmt der Webhoster je Worker und Stunde höchstens
@@ -635,7 +637,8 @@ Workers nimmt der Webhoster je Worker und Stunde höchstens
 (`App\Service\Worker\MailEingangGrenze` auf `rate_limit`, Fenster
 `RateLimiter::SUBMISSION_WINDOW_SECONDS`). Bytes zählen beim Ausgeben des
 Upload-Tickets (vor dem Schreiben), Mails beim Einreichen; darüber 429
-`mail_limit`. Der Worker beendet dann den Abruf, nimmt die Marke zurück und
+`mail_limit`. Eine Datei, die größer ist als eine ganze Stunde erlaubt,
+bekommt 413 (die Mail wird abgelehnt statt stündlich erneut zu warten). Der Worker beendet dann den Abruf, nimmt die Marke zurück und
 meldet `mail_limit` im `mail_status`; die Mail wartet unmarkiert. Kein
 Admin-Formularfeld (Setting mit Vorgabe), die Admin-Seite zeigt die Werte.
 

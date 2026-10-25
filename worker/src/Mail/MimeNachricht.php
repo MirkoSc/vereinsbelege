@@ -282,6 +282,12 @@ final readonly class MimeNachricht
                 $zeilenEnde = strrpos($stueck, "\n");
                 if ($zeilenEnde !== false) {
                     $stueck = substr($stueck, 0, $zeilenEnde + 1);
+                } else {
+                    // A line longer than a piece: at least no `=XX` cut in two.
+                    $gleich = strrpos(substr($stueck, -2), '=');
+                    if ($gleich !== false) {
+                        $stueck = substr($stueck, 0, strlen($stueck) - 2 + $gleich);
+                    }
                 }
             }
             $pos += strlen($stueck);

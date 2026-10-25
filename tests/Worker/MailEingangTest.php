@@ -234,6 +234,18 @@ final class MailEingangTest extends WorkerTestCase
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
     }
 
+    /** IMAP flags are case-insensitive: a server that lower-cases them still counts. */
+    public function testAttemptMarksCountWhateverTheCase(): void
+    {
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->flags[$uid] = ['$vereinsbelegeversuch', '$VEREINSBELEGEVERSUCH2', '$vereinsbelegeVersuch3'];
+
+        $this->schleife->runde();
+
+        self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'three attempts: not fetched again');
+        self::assertSame([$uid], $this->postfach->messageIdAbgefragt);
+    }
+
     /**
      * A run that died while reading a mail (out of memory, killed) left the
      * attempt mark on it: the next run tries again rather than giving up
@@ -482,6 +494,16 @@ final class MailEingangTest extends WorkerTestCase
         self::assertSame(429, $zuViel->status);
         self::assertSame('mail_limit', self::daten($zuViel)['fehler']);
         self::assertSame(201, $ticket(300 * 1024)->status, 'what still fits');
+    }
+
+    /** A file larger than a whole hour allows can never pass: refused for good, not 429 forever. */
+    public function testAFileLargerThanTheHourlyLimitIsRefusedForGood(): void
+    {
+        $this->settings->set(\App\Service\Worker\MailEingangGrenze::SETTING_MB_STUNDE, '1');
+        $this->workers->heartbeat($this->workerId, 1, '2.0.0', WorkerFaehigkeit::cases(), new \DateTimeImmutable());
+        $antwort = $this->aufruf($this->signiert($this->workerId, $this->schluessel, '/api/worker/mail/uploads', json_encode(['schluessel' => hash('sha256', 'x'), 'groesse' => 1024 * 1024 + 1], JSON_THROW_ON_ERROR)), fn($r, $p, $w) => $this->mailApi->uploadAnlegen($r, $w));
+
+        self::assertSame(413, $antwort->status, 'the worker sets the mail aside');
     }
 
     private function einrichten(): void

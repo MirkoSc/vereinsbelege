@@ -37,6 +37,9 @@ final class ImapClient implements Postfach
      */
     public const array KEYWORDS_VERSUCH = ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2', '$VereinsbelegeVersuch3'];
 
+    /** Piece size for reading off a literal that is dropped. */
+    private const int STUECK = 65536;
+
     /** Largest Message-ID header block accepted. */
     private const int MAX_KOPF_LITERAL = 64 * 1024;
 
@@ -44,6 +47,13 @@ final class ImapClient implements Postfach
     private const int MAX_LITERAL = 96 * 1024 * 1024;
 
     private int $maxLiteral = self::MAX_LITERAL;
+
+    /**
+     * A literal of the last command was larger than allowed and was read
+     * off the stream and dropped - the answer is unusable, the connection
+     * stays in step (review of #243).
+     */
+    private bool $verworfen = false;
 
     private int $tag = 0;
 
@@ -156,6 +166,7 @@ final class ImapClient implements Postfach
         } finally {
             $this->maxLiteral = self::MAX_LITERAL;
         }
+        $this->nichtVerworfen();
         foreach ($antworten as [$text, $literale]) {
             if ($literale !== [] && preg_match('/BODY\[HEADER\.FIELDS \("?MESSAGE-ID"?\)\] \{\d+\+?\}/i', $text) === 1) {
                 return MimeNachricht::messageIdAusKopf($literale[0]);
@@ -174,6 +185,7 @@ final class ImapClient implements Postfach
         } finally {
             $this->maxLiteral = self::MAX_LITERAL;
         }
+        $this->nichtVerworfen();
         foreach ($antworten as [$text, $literale]) {
             if ($literale !== [] && preg_match('/\bUID ' . $uid . '\b/i', $text) === 1 && preg_match('/BODY\[\] \{\d+\+?\}/i', $text) === 1) {
                 return $literale[0];
@@ -368,6 +380,7 @@ final class ImapClient implements Postfach
     private function befehlTeile(array $teile): array
     {
         $tag = $this->naechsterTag();
+        $this->verworfen = false;
         $puffer = $tag;
         foreach ($teile as $teil) {
             if (is_string($teil)) {
@@ -432,15 +445,30 @@ final class ImapClient implements Postfach
         $zeile = $this->strom->zeile();
         while (preg_match('/\{(\d+)\+?\}\r?\n$/', $zeile, $t) === 1) {
             $laenge = (int) $t[1];
-            if ($laenge > $this->maxLiteral) {
-                throw new ImapFehler('imap_protokoll', 'Die Antwort des IMAP-Servers ist zu groß.');
-            }
             $text .= rtrim($zeile, "\r\n");
-            $literale[] = $this->strom->lesen($laenge);
+            if ($laenge > $this->maxLiteral) {
+                // No buffer for it - but read off and dropped piece by piece,
+                // else its bytes would be taken for the server's answers.
+                for ($rest = $laenge; $rest > 0; $rest -= self::STUECK) {
+                    $this->strom->lesen(min(self::STUECK, $rest));
+                }
+                $this->verworfen = true;
+                $literale[] = '';
+            } else {
+                $literale[] = $this->strom->lesen($laenge);
+            }
             $zeile = $this->strom->zeile();
         }
 
         return [$text . rtrim($zeile, "\r\n"), $literale];
+    }
+
+    /** @throws ImapFehler when the last answer had a literal that was dropped */
+    private function nichtVerworfen(): void
+    {
+        if ($this->verworfen) {
+            throw new ImapFehler('imap_protokoll', 'Die Antwort des IMAP-Servers ist zu groß.');
+        }
     }
 
     private function naechsterTag(): string

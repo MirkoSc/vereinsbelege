@@ -209,7 +209,8 @@ final class MailEingang
         }
         $kennung = $zugang->ordner . '|' . $uid;
         $bisher = $keywords
-            ? count(array_intersect(ImapClient::KEYWORDS_VERSUCH, $flags))
+            // Flags are case-insensitive (RFC 3501), some servers lower-case them.
+            ? count(array_intersect(array_map(strtolower(...), ImapClient::KEYWORDS_VERSUCH), array_map(strtolower(...), $flags)))
             : $this->versuche[$kennung] ?? 0;
         if ($bisher >= self::MAX_VERSUCHE) {
             $this->aufgeben($postfach, $zugang, $keywords, $uid);

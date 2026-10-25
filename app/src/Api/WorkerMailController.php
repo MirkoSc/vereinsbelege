@@ -91,7 +91,9 @@ final readonly class WorkerMailController
             if (!is_int($groesse) || $groesse < 1) {
                 return self::fehler(422, 'groesse_ungueltig', 'Ungültige Dateigröße.');
             }
-            if ($groesse > $this->einstellungen->maxDateiBytes()) {
+            // Larger than a whole hour allows: 413, so the worker sets the
+            // mail aside instead of waiting for it hour after hour.
+            if ($groesse > $this->einstellungen->maxDateiBytes() || $this->grenze->passtNie($groesse)) {
                 return self::fehler(413, 'zu_gross', 'Die Datei ist zu groß.');
             }
             if (!$this->grenze->mailErlaubt($worker->id) || !$this->grenze->bytesErlaubt($worker->id, $groesse)) {

@@ -71,7 +71,13 @@ final readonly class MailEingangGrenze
     /** Whether this worker may hand in one more mail this hour. */
     public function mailErlaubt(int $workerId, ?\DateTimeImmutable $jetzt = null): bool
     {
-        return $this->limiter->stand(self::ZWECK_MAILS, (string) $workerId, $jetzt) < $this->mailsStunde();
+        return !$this->limiter->isBlocked(self::ZWECK_MAILS, (string) $workerId, $this->mailsStunde(), $jetzt);
+    }
+
+    /** Bigger than a whole hour allows: it can never pass, so it is refused for good (413). */
+    public function passtNie(int $bytes): bool
+    {
+        return self::kib($bytes) > $this->mbStunde() * 1024;
     }
 
     /** Whether $bytes more fit into this worker's hour. */
