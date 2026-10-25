@@ -12,6 +12,8 @@
  * @var bool $passwortLoeschen the "clear password" box was ticked in a submission that failed validation
  * @var list<\App\Service\Mail\SmtpSecurity> $sicherheiten
  * @var list<\App\Domain\QueuedMail> $warteschlange
+ * @var int $erinnerungTage 0 = off (issue #249)
+ * @var list<int> $erinnerungIntervalle
  */
 
 // Masks a recipient for the queue table (spec 06 section 3: "Queue einsehen
@@ -139,6 +141,35 @@ $maskiere = static function (string $adresse): string {
         </p>
         <p class="knopfreihe">
             <button type="submit" class="knopf">Testmail senden</button>
+        </p>
+    </form>
+
+    <h3>Erinnerung an offene Belege</h3>
+    <form method="post" action="/admin/mail/erinnerung" class="formular">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <fieldset>
+            <legend>Abstand</legend>
+            <?php foreach ($erinnerungIntervalle as $tage): ?>
+                <label class="feld-ankreuz">
+                    <input type="radio" name="intervall" value="<?= e((string) $tage) ?>"
+                           <?= $tage === $erinnerungTage ? 'checked' : '' ?>>
+                    <?= e(match ($tage) {
+                        0 => 'Aus',
+                        1 => 'Täglich',
+                        7 => 'Wöchentlich',
+                        default => sprintf('Alle %d Tage', $tage),
+                    }) ?>
+                </label>
+            <?php endforeach; ?>
+        </fieldset>
+        <p class="feld-hilfe">
+            Wer Belege bearbeiten darf, bekommt morgens eine Mail mit der Zahl der offenen
+            Einreichungen im Posteingang und der Belege, die auf Prüfung warten – nur die Zahlen,
+            keine Inhalte. Ohne offene Belege geht keine Mail raus. Links enthält die Mail nur,
+            wenn oben die Adresse dieser Installation eingetragen ist.
+        </p>
+        <p class="knopfreihe">
+            <button type="submit" class="knopf">Erinnerung speichern</button>
         </p>
     </form>
 
