@@ -375,8 +375,12 @@ final class HostingCheckTest extends TestCase
             $t->same('htaccess', $group['id']);
             $t->same(1, count($group['rows']));
             $t->same(HC_STATUS_SKIP, $group['rows'][0]['status'], 'auf der Kommandozeile gibt es keinen Selbstaufruf');
-            $rest = array_values(array_diff(scandir(__DIR__ . '/../tools') ?: [], ['.', '..']));
-            $t->same(['hosting-check.php'], $rest, 'im Skript-Verzeichnis darf nichts zurückbleiben');
+            // tools/ also holds the other maintainer scripts (issue #241)
+            $rest = array_values(array_diff(
+                scandir(__DIR__ . '/../tools') ?: [],
+                ['.', '..', 'hosting-check.php', 'release-signatur.php'],
+            ));
+            $t->same([], $rest, 'im Skript-Verzeichnis darf nichts zurückbleiben');
         };
 
         $faelle['hc_outbound_targets prüft die Anbieter der Spec'] = static function (HcAssert $t): void {
