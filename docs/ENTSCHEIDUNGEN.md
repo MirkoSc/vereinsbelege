@@ -1845,10 +1845,14 @@ Settings mit konservativen Vorgaben. Selbst gesetzt:
   (Europe/Berlin), Pause unter 1024 MB freiem Speicher. Kein Budget liegt
   unter der größten erlaubten Datei, der Tag nie unter der Stunde – sonst
   würde jede Seite abgelehnt.
-- **Gezählt wird die angekündigte Größe beim Eröffnen** (`create`), nicht
-  die tatsächlich übertragenen Bytes: mehr nimmt der Upload nie an, und die
-  Grenze greift, bevor ein Byte fließt. Abbruch und Aufräumen geben nichts
-  zurück – das Budget misst, was geschickt werden durfte.
+- **Drei Zähler** (nach Koordinator-Review umgebaut): *offen* je Adresse
+  (Vorgabe 30 MB, angekündigte Größe, Rückgabe bei Abschluss/Abbruch/
+  Cron nach 24 h – begrenzt `var/tmp`), je Adresse und *Stunde*
+  (angekündigte Größe, ohne Rückgabe) und *je Tag* für alle – dieser nur
+  mit **gespeicherten** Bytes. Ankündigen allein darf den Tag nicht
+  verbrauchen, sonst sperren ~50 Anfragen ohne gesendetes Byte
+  `/einreichen` bis Mitternacht. Den Tag zu füllen kostet jetzt echte
+  500 MB Upload.
 - **Eigene Tabelle `upload_budget`** statt `rate_limit`: unterschiedliche
   Fensterlängen, und der Sweep von `rate_limit` würde einen Tageszähler
   nach zwei Stunden löschen. Prüfen und Zählen in einem bedingten `UPDATE`
@@ -1867,7 +1871,8 @@ Settings mit konservativen Vorgaben. Selbst gesetzt:
   prüfen jetzt auf denselben geöffneten Handles, weil sie dieselbe
   `UploadService`-Schnittstelle nutzen.
 
-Offen für Mirko: ob die Vorgaben zum Vereinsalltag passen (z. B. nach
+Offen für Mirko: ob ein Anteil je Präfix am Tagesbudget (z. B. 20 % je
+IPv6-/48) zusätzlich nötig ist; ob die Vorgaben zum Vereinsalltag passen (z. B. nach
 einem Turnier viele Belege an einem Abend aus dem Vereinsheim-WLAN – eine
 IP); ob das Budget auch für den Worker-Mail-Eingang gelten soll (N-17).
 

@@ -60,6 +60,7 @@ final readonly class Spamschutz
         FormTokenData $token,
         ?string $powLoesung,
         int $groesse,
+        string $uploadId,
         ?\DateTimeImmutable $now = null,
     ): ?EinreichungAbgelehnt {
         $now ??= new \DateTimeImmutable();
@@ -88,7 +89,7 @@ final readonly class Spamschutz
 
         // Last, so a request the checks above turn away costs no bytes
         // (issue #242); refused here, it costs no upload count either.
-        $budget = $this->budget->reservieren($ip, $groesse, $now);
+        $budget = $this->budget->reservieren($ip, $uploadId, $groesse, $now);
         if ($budget !== null) {
             return $budget;
         }
@@ -163,6 +164,26 @@ final readonly class Spamschutz
     public function pruefePause(): ?EinreichungAbgelehnt
     {
         return $this->einstellungen->pausiert ? EinreichungAbgelehnt::Pausiert : $this->budget->pruefeSpeicher();
+    }
+
+    /**
+     * The upload's open reservation goes back (issue #242): it was
+     * finished, aborted or thrown away.
+     */
+    public function uploadBeendet(string $uploadId): void
+    {
+        $this->budget->freigeben($uploadId);
+    }
+
+    /** Charges a page about to be stored to today's byte budget. */
+    public function uploadVerbuchen(int $bytes): ?EinreichungAbgelehnt
+    {
+        return $this->budget->verbuchen($bytes);
+    }
+
+    public function uploadZurueckbuchen(int $bytes): void
+    {
+        $this->budget->zurueckbuchen($bytes);
     }
 
     /** What every entry point checks first: pause, then proof of work. */

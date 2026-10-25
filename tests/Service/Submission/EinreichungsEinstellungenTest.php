@@ -41,6 +41,7 @@ final class EinreichungsEinstellungenTest extends DatabaseTestCase
         self::assertSame(100, $einstellungen->budgetIpMbStunde);
         self::assertSame(500, $einstellungen->budgetGesamtMbTag);
         self::assertSame(1024, $einstellungen->minFreiMb);
+        self::assertSame(30, $einstellungen->offenMbIp);
     }
 
     /**

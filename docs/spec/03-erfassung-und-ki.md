@@ -62,13 +62,13 @@ Feld-Fehlern je Angabe.
 `SubmissionService::einreichen()` bzw. vor jedem Seiten-Upload.
 
 **Stand #242** (Security-Review N-04, 01 §5, E-64): Ein Byte-Budget
-begrenzt, was `/einreichen` auf den Server bringen kann – je IP (IPv6: /64)
-und Stunde, insgesamt je Kalendertag, dazu eine Schwelle für freien Speicher
-in `shared/var`, unter der öffentliche Uploads pausieren
+begrenzt, was `/einreichen` auf den Server bringen kann – offene Uploads je
+IP (IPv6: /64), angekündigte Bytes je IP und Stunde, gespeicherte Bytes
+insgesamt je Kalendertag, dazu eine Schwelle für freien Speicher in
+`shared/var`, unter der öffentliche Uploads pausieren
 (`App\Service\Submission\UploadBudget`, einstellbar unter
-`/admin/einreichung`). Gezählt wird die angekündigte Größe beim Eröffnen,
-auch für nie abgesendete Uploads; angemeldete Erfassung und Worker-Mail-Eingang
-laufen nicht über das Budget.
+`/admin/einreichung`, Details 01 §5). Angemeldete Erfassung und
+Worker-Mail-Eingang laufen nicht über das Budget.
 
 **Stand M4-5** (issue #27): Posteingang unter `/app/posteingang`
 (`App\App\InboxController`, Fachlogik `App\Service\Inbox\Posteingang`).

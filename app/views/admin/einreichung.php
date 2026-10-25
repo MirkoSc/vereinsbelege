@@ -108,6 +108,11 @@
                    value="<?= e((string) $einstellungen->budgetIpMbStunde) ?>">
         </label>
 
+        <label for="einreichung-offen-ip" class="feld-kurz">Höchstens MB offene (nicht abgeschlossene) Uploads je Anschluss
+            <input type="text" id="einreichung-offen-ip" name="offen_mb_ip" inputmode="numeric"
+                   value="<?= e((string) $einstellungen->offenMbIp) ?>">
+        </label>
+
         <label for="einreichung-budget-gesamt" class="feld-kurz">Höchstens MB Uploads insgesamt je Tag
             <input type="text" id="einreichung-budget-gesamt" name="budget_gesamt_mb_tag" inputmode="numeric"
                    value="<?= e((string) $einstellungen->budgetGesamtMbTag) ?>">
@@ -119,8 +124,10 @@
         </label>
 
         <p class="feld-hilfe">
-            Die MB-Grenzen zählen jede hochgeladene Datei, auch wenn die
-            Einreichung nie abgesendet wird. Ein Anschluss ist eine IP-Adresse,
+            Je Anschluss und Stunde zählt jede angekündigte Datei, auch wenn sie
+            nie abgeschlossen wird; offene Uploads werden nach Abschluss,
+            Abbruch oder spätestens nach 24 Stunden wieder frei. Das Tagesbudget
+            zählt nur tatsächlich gespeicherte Dateien. Ein Anschluss ist eine IP-Adresse,
             bei IPv6 der ganze /64-Bereich. Keine Grenze liegt unter der
             größten erlaubten Datei. Kann der Hoster den freien Speicher nicht
             nennen, gilt allein das Tagesbudget.

@@ -9,21 +9,26 @@ use App\Repository\UploadBudgetRepository;
 /**
  * How many bytes the public upload may put on the server (security review
  * N-04, issue #242, docs/spec/01-sicherheit.md section 5) - the rate limit
- * counts uploads, this counts what they weigh.
+ * counts uploads, this counts what they weigh. Three budgets, all keyed by
+ * a hash only:
  *
- *   - per IP address and hour; an IPv6 address counts as its /64, since one
- *     connection usually gets a whole /64 and can rotate within it freely;
- *   - for all public uploads together per calendar day (Europe/Berlin);
- *   - and while the free space of `shared/var` is below a threshold, public
- *     uploads pause altogether (App\Service\Submission\FreierSpeicher -
- *     when the host does not tell, the daily budget is the only bound).
+ *   - **open** per address: what is announced but not finished yet - the
+ *     bound on `var/tmp`. Reserved with the size create() announces
+ *     (App\Service\Upload\UploadService never accepts more for an
+ *     upload) and given back on finish, abort, or by the cron once it gives
+ *     up on the upload (App\Service\Cron\UploadBudgetCleanupTask);
+ *   - per address and **hour**: what one address may send, announced size,
+ *     not given back;
+ *   - for everybody per calendar **day** (Europe/Berlin): only bytes that
+ *     were actually stored, charged when an upload becomes a blob. Announcing
+ *     alone never touches it - closing the form for everybody has to cost
+ *     real bytes, not a few cheap requests (coordinator review of #242).
  *
- * Reserved is the size create() announces, before a single byte arrives:
- * App\Service\Upload\UploadService never accepts more than that for an
- * upload, so the reservation bounds both the chunks in `var/tmp` and the
- * blob that becomes of them. Nothing is given back on abort or once the
- * cron removes an unclaimed upload - the budget is what was sent, not what
- * stayed.
+ * An IPv6 address counts as its /64, since one connection usually gets a
+ * whole /64 and can rotate within it freely. While the free space of
+ * `shared/var` is below a threshold, public uploads pause altogether
+ * (App\Service\Submission\FreierSpeicher - when the host does not tell,
+ * the budgets are the only bound).
  *
  * Signed-in functions never pass through here, so they keep working when
  * the budget or the disk runs out.
@@ -31,6 +36,7 @@ use App\Repository\UploadBudgetRepository;
 final readonly class UploadBudget
 {
     public const string PURPOSE_IP = 'einreichung_bytes_ip';
+    public const string PURPOSE_OFFEN = 'einreichung_bytes_offen';
     public const string PURPOSE_GESAMT = 'einreichung_bytes_gesamt';
 
     private const string GLOBAL_VALUE = 'global';
@@ -45,10 +51,11 @@ final readonly class UploadBudget
     }
 
     /**
-     * Counts $bytes against both budgets, or neither: null when the upload
-     * may start, otherwise why not.
+     * Before upload $uploadId is opened: null when it may start (its
+     * reservation is then held until freigeben()), otherwise why not -
+     * and then nothing is counted.
      */
-    public function reservieren(string $ip, int $bytes, ?\DateTimeImmutable $now = null): ?EinreichungAbgelehnt
+    public function reservieren(string $ip, string $uploadId, int $bytes, ?\DateTimeImmutable $now = null): ?EinreichungAbgelehnt
     {
         $now ??= new \DateTimeImmutable();
 
@@ -63,24 +70,62 @@ final readonly class UploadBudget
             return null;
         }
 
-        // No address (the command line) is no shared counter for everybody -
-        // the same rule as App\Service\RateLimiter; the day still counts.
-        $ipSchluessel = $ip === '' ? null : self::schluessel(self::PURPOSE_IP, self::ipBereich($ip));
-        [$ipStart, $ipEnde] = self::stundenFenster($now);
-        if ($ipSchluessel !== null && !$this->rows->reservieren($ipSchluessel, $ipStart, $ipEnde, $bytes, $this->einstellungen->budgetIpBytes())) {
-            return EinreichungAbgelehnt::BudgetIp;
-        }
-
-        [$tagStart, $tagEnde] = self::tagesFenster($now);
-        if (!$this->rows->reservieren(self::globalerSchluessel(), $tagStart, $tagEnde, $bytes, $this->einstellungen->budgetGesamtBytes())) {
-            if ($ipSchluessel !== null) {
-                $this->rows->freigeben($ipSchluessel, $bytes);
-            }
-
+        // A day that is already full turns the upload away before it
+        // starts; charged is the day only once bytes are stored (verbuchen()).
+        [$tagStart] = self::tagesFenster($now);
+        if ($this->rows->verbraucht(self::globalerSchluessel(), $tagStart) + $bytes > $this->einstellungen->budgetGesamtBytes()) {
             return EinreichungAbgelehnt::BudgetGesamt;
         }
 
+        // No address (the command line) is no shared counter for everybody -
+        // the same rule as App\Service\RateLimiter; the day still counts.
+        if ($ip === '') {
+            return null;
+        }
+
+        $bereich = self::ipBereich($ip);
+        $stunde = self::schluessel(self::PURPOSE_IP, $bereich);
+        [$ipStart, $ipEnde] = self::stundenFenster($now);
+        if (!$this->rows->reservieren($stunde, $ipStart, $ipEnde, $bytes, $this->einstellungen->budgetIpBytes())) {
+            return EinreichungAbgelehnt::BudgetIp;
+        }
+
+        $offen = self::schluessel(self::PURPOSE_OFFEN, $bereich);
+        if (!$this->rows->offenReservieren($uploadId, $offen, $bytes, $this->einstellungen->offenIpBytes(), $now)) {
+            $this->rows->freigeben($stunde, $bytes);
+
+            return EinreichungAbgelehnt::BudgetIp;
+        }
+
         return null;
+    }
+
+    /**
+     * Gives the open reservation of an upload back - it was finished,
+     * aborted or thrown away. Idempotent.
+     */
+    public function freigeben(string $uploadId): void
+    {
+        $this->rows->offenFreigeben($uploadId);
+    }
+
+    /**
+     * Charges the bytes of an upload that is about to become a blob to
+     * today's budget - null when they fit.
+     */
+    public function verbuchen(int $bytes, ?\DateTimeImmutable $now = null): ?EinreichungAbgelehnt
+    {
+        [$tagStart, $tagEnde] = self::tagesFenster($now ?? new \DateTimeImmutable());
+
+        return $this->rows->reservieren(self::globalerSchluessel(), $tagStart, $tagEnde, max(1, $bytes), $this->einstellungen->budgetGesamtBytes())
+            ? null
+            : EinreichungAbgelehnt::BudgetGesamt;
+    }
+
+    /** Takes a charge of verbuchen() back - storing the blob failed after all. */
+    public function zurueckbuchen(int $bytes): void
+    {
+        $this->rows->freigeben(self::globalerSchluessel(), max(1, $bytes));
     }
 
     /**

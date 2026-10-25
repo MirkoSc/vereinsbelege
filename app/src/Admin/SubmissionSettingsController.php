@@ -39,6 +39,7 @@ final readonly class SubmissionSettingsController
         'budget_ip_mb_stunde',
         'budget_gesamt_mb_tag',
         'min_frei_mb',
+        'offen_mb_ip',
     ];
 
     /**
@@ -79,6 +80,7 @@ final readonly class SubmissionSettingsController
             budgetIpMbStunde: self::zahl($request, 'budget_ip_mb_stunde'),
             budgetGesamtMbTag: self::zahl($request, 'budget_gesamt_mb_tag'),
             minFreiMb: self::zahl($request, 'min_frei_mb'),
+            offenMbIp: self::zahl($request, 'offen_mb_ip'),
         );
 
         if (self::hatUngueltigenWert($request)) {
@@ -97,6 +99,7 @@ final readonly class SubmissionSettingsController
             'budget_ip_mb_stunde' => $gespeichert->budgetIpMbStunde,
             'budget_gesamt_mb_tag' => $gespeichert->budgetGesamtMbTag,
             'min_frei_mb' => $gespeichert->minFreiMb,
+            'offen_mb_ip' => $gespeichert->offenMbIp,
         ]);
         $this->session->flash('Einstellungen gespeichert.');
 

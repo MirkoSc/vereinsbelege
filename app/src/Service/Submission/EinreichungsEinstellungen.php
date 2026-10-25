@@ -36,6 +36,8 @@ final readonly class EinreichungsEinstellungen
      */
     public const int BUDGET_IP_MB_STUNDE_DEFAULT = 100;
     public const int BUDGET_GESAMT_MB_TAG_DEFAULT = 500;
+    /** Announced but unfinished uploads per address: three full files. */
+    public const int OFFEN_MB_IP_DEFAULT = 30;
     public const int MIN_FREI_MB_DEFAULT = 1024;
 
     /** A page count above this is not a receipt anymore, whatever an admin types in. */
@@ -50,6 +52,7 @@ final readonly class EinreichungsEinstellungen
     public const string SETTING_BUDGET_IP_MB_STUNDE = 'einreichung_budget_ip_mb_stunde';
     public const string SETTING_BUDGET_GESAMT_MB_TAG = 'einreichung_budget_gesamt_mb_tag';
     public const string SETTING_MIN_FREI_MB = 'einreichung_min_frei_mb';
+    public const string SETTING_OFFEN_MB_IP = 'einreichung_offen_mb_ip';
 
     private const int MIB = 1024 * 1024;
 
@@ -63,6 +66,7 @@ final readonly class EinreichungsEinstellungen
         public int $budgetIpMbStunde = self::BUDGET_IP_MB_STUNDE_DEFAULT,
         public int $budgetGesamtMbTag = self::BUDGET_GESAMT_MB_TAG_DEFAULT,
         public int $minFreiMb = self::MIN_FREI_MB_DEFAULT,
+        public int $offenMbIp = self::OFFEN_MB_IP_DEFAULT,
     ) {
     }
 
@@ -84,6 +88,7 @@ final readonly class EinreichungsEinstellungen
             budgetIpMbStunde: $budgetIp,
             budgetGesamtMbTag: max($budgetIp, self::positiv($settings->get(self::SETTING_BUDGET_GESAMT_MB_TAG), self::BUDGET_GESAMT_MB_TAG_DEFAULT)),
             minFreiMb: self::positiv($settings->get(self::SETTING_MIN_FREI_MB), self::MIN_FREI_MB_DEFAULT),
+            offenMbIp: self::budgetIpMb(self::positiv($settings->get(self::SETTING_OFFEN_MB_IP), self::OFFEN_MB_IP_DEFAULT), $maxDateiMb),
         );
     }
 
@@ -109,6 +114,12 @@ final readonly class EinreichungsEinstellungen
         return max($this->budgetGesamtMbTag * self::MIB, $this->budgetIpBytes());
     }
 
+    /** Never below one file, for the same reason as budgetIpBytes(). */
+    public function offenIpBytes(): int
+    {
+        return self::budgetIpMb($this->offenMbIp, $this->maxDateiMb) * self::MIB;
+    }
+
     public function minFreiBytes(): int
     {
         return $this->minFreiMb * self::MIB;
@@ -132,6 +143,7 @@ final readonly class EinreichungsEinstellungen
         $settings->set(self::SETTING_BUDGET_IP_MB_STUNDE, (string) $budgetIp);
         $settings->set(self::SETTING_BUDGET_GESAMT_MB_TAG, (string) max($budgetIp, $this->budgetGesamtMbTag));
         $settings->set(self::SETTING_MIN_FREI_MB, (string) max(1, $this->minFreiMb));
+        $settings->set(self::SETTING_OFFEN_MB_IP, (string) self::budgetIpMb($this->offenMbIp, $maxDateiMb));
     }
 
     public static function setzePausiert(SettingRepository $settings, bool $pausiert): void

@@ -89,6 +89,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
             'budget_ip_mb_stunde' => '40',
             'budget_gesamt_mb_tag' => '300',
             'min_frei_mb' => '2048',
+            'offen_mb_ip' => '25',
         ]);
         self::assertSame(302, $antwort->status);
         self::assertSame('/admin/einreichung', $antwort->headers['Location'] ?? null);
@@ -102,6 +103,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
         self::assertSame(40, $gespeichert->budgetIpMbStunde);
         self::assertSame(300, $gespeichert->budgetGesamtMbTag);
         self::assertSame(2048, $gespeichert->minFreiMb);
+        self::assertSame(25, $gespeichert->offenMbIp);
 
         $eintrag = new AuditLogRepository($this->pdo())->page(new AuditFilter(), null, 1)[0];
         self::assertSame(AuditAction::EinstellungEinreichung->value, $eintrag->action);
@@ -119,6 +121,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
             'budget_ip_mb_stunde' => '40',
             'budget_gesamt_mb_tag' => '300',
             'min_frei_mb' => '2048',
+            'offen_mb_ip' => '25',
         ]);
 
         self::assertSame(422, $antwort->status);

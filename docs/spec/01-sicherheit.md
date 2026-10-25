@@ -741,18 +741,27 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
     `App\Service\Upload\UploadService::MAX_FILE_BYTES` nur unterschreiten,
     nie überschreiten.
   - **Byte-Budget** (issue #242, Befund N-04, E-64,
-    `App\Service\Submission\UploadBudget`): `create()` reserviert die
-    angekündigte Dateigröße – mehr nimmt `UploadService` für den Upload nie
-    an, die Reservierung deckt also Chunks in `var/tmp` und den späteren
-    Blob – gegen zwei Budgets: je IP und Stunde (IPv6 zusammengefasst auf
-    das /64, IPv4-mapped als IPv4; Vorgabe 100 MB,
-    `einreichung_budget_ip_mb_stunde`) und für alle öffentlichen Uploads
-    zusammen je Kalendertag (Vorgabe 500 MB,
-    `einreichung_budget_gesamt_mb_tag`). Prüfen und Zählen ist **ein**
-    bedingtes `UPDATE` (Tabelle `upload_budget`, Schlüssel nur als SHA-256
-    über Zweck und Adresse, Zeile gelöscht, sobald ihr Fenster endet –
-    `Cron\UploadBudgetCleanupTask`). Kein Budget liegt unter der größten
-    erlaubten Datei. Abbruch oder Aufräumen gibt nichts zurück. Ablehnung
+    `App\Service\Submission\UploadBudget`), drei Zähler, Adressen je IP
+    (IPv6 zusammengefasst auf das /64, IPv4-mapped als IPv4):
+    - **offen** je Adresse (Vorgabe 30 MB, `einreichung_offen_mb_ip`):
+      `create()` reserviert die angekündigte Größe – mehr nimmt
+      `UploadService` nie an –, Rückgabe bei Abschluss, Abbruch oder durch
+      den Cron, sobald auch das Upload-Aufräumen aufgibt (24 h). Begrenzt
+      `var/tmp`.
+    - je Adresse und **Stunde** (Vorgabe 100 MB,
+      `einreichung_budget_ip_mb_stunde`): angekündigte Größe, ohne Rückgabe.
+    - **je Kalendertag** für alle zusammen (Vorgabe 500 MB,
+      `einreichung_budget_gesamt_mb_tag`): nur **tatsächlich gespeicherte**
+      Bytes, gebucht beim Abschluss direkt vor dem Speichern; ein voller Tag
+      lehnt schon `create()` ab. Ankündigen allein berührt ihn nie – sonst
+      sperrten wenige Anfragen ohne ein gesendetes Byte `/einreichen` für
+      alle bis Mitternacht (Koordinator-Review zu #242).
+
+    Prüfen und Zählen ist je Zähler **ein** bedingtes `UPDATE` (Tabellen
+    `upload_budget`, `upload_offen`, `upload_reservierung`; Schlüssel nur
+    als SHA-256 über Zweck und Adresse; Zeilen gelöscht, sobald ihr Fenster
+    endet bzw. der Zähler leer ist – `Cron\UploadBudgetCleanupTask`). Kein
+    Budget liegt unter der größten erlaubten Datei. Ablehnung
     mit 429 und „Es wurden zu viele Dateien hochgeladen …“, ohne Log-Eintrag
     (ein Log je abgewiesener Anfrage wäre selbst ein Weg, die Platte zu
     füllen); ein abgewiesener Upload kostet kein Upload-Kontingent.

@@ -77,7 +77,7 @@ final readonly class UploadService
      * @throws UploadException when the announced size is empty or too large -
      *                         before a single byte was transferred
      */
-    public function create(int $groesse, ?\DateTimeImmutable $now = null): UploadTicket
+    public function create(int $groesse, ?\DateTimeImmutable $now = null, ?string $id = null): UploadTicket
     {
         if ($groesse < 1) {
             throw new UploadException(UploadError::EmptyFile);
@@ -87,7 +87,11 @@ final readonly class UploadService
             throw new UploadException(UploadError::TooLarge);
         }
 
-        $id = bin2hex(random_bytes(16));
+        if ($id !== null && preg_match(self::ID_PATTERN, $id) !== 1) {
+            throw new \InvalidArgumentException('Not an upload id.');
+        }
+
+        $id ??= self::neueId();
         $chunks = (int) ceil($groesse / $this->chunkBytes);
         $dir = $this->uploadDir . '/' . $id;
 
@@ -108,6 +112,15 @@ final readonly class UploadService
         }
 
         return $ticket;
+    }
+
+    /**
+     * A fresh upload id - for a caller that has to know it before create()
+     * (the public upload's byte budget, issue #242, reserves under it).
+     */
+    public static function neueId(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 
     /**

@@ -98,14 +98,128 @@ final readonly class UploadBudgetRepository
     }
 
     /**
+     * Holds $bytes of $keyHash's open-upload counter for $uploadId - true
+     * when they fit under $limit, false when nothing changed. Counter and
+     * reservation row are written together or not at all.
+     */
+    public function offenReservieren(string $uploadId, string $keyHash, int $bytes, int $limit, \DateTimeImmutable $now): bool
+    {
+        return $this->inTransaktion(function () use ($uploadId, $keyHash, $bytes, $limit, $now): bool {
+            $anlegen = $this->pdo->prepare('INSERT IGNORE INTO upload_offen (key_hash, bytes) VALUES (?, 0)');
+            $anlegen->bindValue(1, $keyHash, \PDO::PARAM_LOB);
+            $anlegen->execute();
+
+            $zaehlen = $this->pdo->prepare('UPDATE upload_offen SET bytes = bytes + ? WHERE key_hash = ? AND bytes + ? <= ?');
+            $zaehlen->bindValue(1, $bytes, \PDO::PARAM_INT);
+            $zaehlen->bindValue(2, $keyHash, \PDO::PARAM_LOB);
+            $zaehlen->bindValue(3, $bytes, \PDO::PARAM_INT);
+            $zaehlen->bindValue(4, $limit, \PDO::PARAM_INT);
+            $zaehlen->execute();
+            if ($zaehlen->rowCount() !== 1) {
+                return false;
+            }
+
+            $merken = $this->pdo->prepare('INSERT INTO upload_reservierung (upload_id, key_hash, bytes, created_at) VALUES (?, ?, ?, ?)');
+            $merken->bindValue(1, $uploadId);
+            $merken->bindValue(2, $keyHash, \PDO::PARAM_LOB);
+            $merken->bindValue(3, $bytes, \PDO::PARAM_INT);
+            $merken->bindValue(4, self::utc($now));
+            $merken->execute();
+
+            return true;
+        });
+    }
+
+    /**
+     * Gives an upload's reservation back. Idempotent: the row is the
+     * receipt, so finish, abort and the cron can run into each other.
+     */
+    public function offenFreigeben(string $uploadId): void
+    {
+        $this->inTransaktion(function () use ($uploadId): bool {
+            $lesen = $this->pdo->prepare('SELECT key_hash, bytes FROM upload_reservierung WHERE upload_id = ? FOR UPDATE');
+            $lesen->execute([$uploadId]);
+            $zeile = $lesen->fetch();
+            if (!is_array($zeile)) {
+                return false;
+            }
+
+            $this->pdo->prepare('DELETE FROM upload_reservierung WHERE upload_id = ?')->execute([$uploadId]);
+            $bytes = (int) $zeile['bytes'];
+            $zurueck = $this->pdo->prepare('UPDATE upload_offen SET bytes = IF(bytes > ?, bytes - ?, 0) WHERE key_hash = ?');
+            $zurueck->bindValue(1, $bytes, \PDO::PARAM_INT);
+            $zurueck->bindValue(2, $bytes, \PDO::PARAM_INT);
+            $zurueck->bindValue(3, (string) $zeile['key_hash'], \PDO::PARAM_LOB);
+            $zurueck->execute();
+
+            return true;
+        });
+    }
+
+    /**
+     * Upload ids whose reservation is older than $vor - uploads the cron
+     * gives up on.
+     *
+     * @return list<string>
+     */
+    public function abgelaufeneReservierungen(\DateTimeImmutable $vor): array
+    {
+        $stmt = $this->pdo->prepare('SELECT upload_id FROM upload_reservierung WHERE created_at < ?');
+        $stmt->execute([self::utc($vor)]);
+
+        return array_map(strval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /** Bytes $keyHash holds in open uploads right now. */
+    public function offen(string $keyHash): int
+    {
+        $stmt = $this->pdo->prepare('SELECT bytes FROM upload_offen WHERE key_hash = ?');
+        $stmt->bindValue(1, $keyHash, \PDO::PARAM_LOB);
+        $stmt->execute();
+        $wert = $stmt->fetchColumn();
+
+        return $wert === false ? 0 : (int) $wert;
+    }
+
+    /**
      * @return int how many rows the sweep removed
      */
     public function deleteExpired(\DateTimeImmutable $now): int
     {
         $stmt = $this->pdo->prepare('DELETE FROM upload_budget WHERE window_end <= ?');
         $stmt->execute([self::utc($now)]);
+        $entfernt = $stmt->rowCount();
 
-        return $stmt->rowCount();
+        // Counters back at zero hold no information - only a hashed
+        // address kept for nothing.
+        $leer = $this->pdo->prepare('DELETE FROM upload_offen WHERE bytes = 0');
+        $leer->execute();
+
+        return $entfernt + $leer->rowCount();
+    }
+
+    /**
+     * @template T
+     * @param \Closure(): T $arbeit
+     * @return T
+     */
+    private function inTransaktion(\Closure $arbeit): mixed
+    {
+        if ($this->pdo->inTransaction()) {
+            return $arbeit();
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $ergebnis = $arbeit();
+            $this->pdo->commit();
+
+            return $ergebnis;
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+
+            throw $e;
+        }
     }
 
     private static function utc(\DateTimeImmutable $zeit): string
