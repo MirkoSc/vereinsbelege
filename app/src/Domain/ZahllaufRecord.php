@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain;
 
 /**
- * One `payment_run` row as stored (issue #85, migrations/042_payment_run.sql):
+ * One `payment_run` row as stored (issue #85, migrations/043_payment_run.sql):
  * plaintext structure, the sealed data key and the ciphertext, plus two
  * counts the query derives - how many receipts the run holds, how many of
  * them are still open (not settled) and how many got an allocation since

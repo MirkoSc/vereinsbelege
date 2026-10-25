@@ -12,7 +12,7 @@ use App\Domain\Zugriffsbereich;
 
 /**
  * The tables `payment_run` and `payment_run_item` (issue #85,
- * migrations/042_payment_run.sql, E-42). SQL only - building, encrypting
+ * migrations/043_payment_run.sql, E-42). SQL only - building, encrypting
  * and the rules live in App\Service\Bank\Zahllaeufe.
  *
  * A run is visible within a scope only if EVERY receipt it holds lies in

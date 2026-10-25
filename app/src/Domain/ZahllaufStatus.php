@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain;
 
 /**
- * `payment_run.status` (issue #85, migrations/042_payment_run.sql, E-42).
+ * `payment_run.status` (issue #85, migrations/043_payment_run.sql, E-42).
  * Whether a run is settled is not a status of its own: it is derived from
  * its receipts once the matching has found the bookings
  * (App\Service\Bank\Zahllauf::ausgeglichen()).

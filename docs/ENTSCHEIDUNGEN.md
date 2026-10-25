@@ -430,7 +430,7 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   Erkennung beim Import auf den Zugriffsbereich des Importierenden
   beschränkt werden soll.
 ## E-42 ❓ SEPA-Zahllauf für Erstattungen: pain.001.001.09, nur Eindeutiges, Datei nie gespeichert (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
-*Betrifft: issue #85 (Migration 042), 02 „Fachdaten“, 04 §5 „Stand SEPA-Zahllauf“*
+*Betrifft: issue #85 (Migration 043), 02 „Fachdaten“, 04 §5 „Stand SEPA-Zahllauf“*
 
 - **Format pain.001.001.09** nach DK (DFÜ-Abkommen Anlage 3): eine
   `PmtInf` je Lauf, Service-Level `SEPA`, `SLEV`, nur EUR, IBAN-only beim
