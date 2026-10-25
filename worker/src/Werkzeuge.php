@@ -25,7 +25,7 @@ interface Werkzeuge
     /**
      * @param \Closure(): void $puls
      *
-     * @throws WerkzeugFehler
+     * @throws JobFehler
      */
     public function seitenzahl(string $pdfDatei, \Closure $puls): int;
 
@@ -36,7 +36,7 @@ interface Werkzeuge
      *
      * @param \Closure(): void $puls
      *
-     * @throws WerkzeugFehler
+     * @throws JobFehler
      */
     public function seiteRendern(string $pdfDatei, int $seite, int $dpi, ?int $laengsteSeite, int $qualitaet, string $zielDatei, \Closure $puls): void;
 
@@ -47,7 +47,7 @@ interface Werkzeuge
      *
      * @param \Closure(): void $puls
      *
-     * @throws WerkzeugFehler
+     * @throws JobFehler
      */
     public function ocr(string $eingabe, bool $istBild, string $pdfaZiel, string $textZiel, \Closure $puls): void;
 
@@ -56,7 +56,7 @@ interface Werkzeuge
      *
      * @param \Closure(): void $puls
      *
-     * @throws WerkzeugFehler
+     * @throws JobFehler
      */
     public function bildText(string $bildDatei, \Closure $puls): string;
 }

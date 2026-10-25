@@ -101,6 +101,49 @@ final class ApiClientTest extends TestCase
         self::assertNotSame($http->anfragen[0]['header']['x-worker-nonce'], $http->anfragen[1]['header']['x-worker-nonce']);
     }
 
+    public function testTheClockIsCorrectedAgainWhenItJumpsLater(): void
+    {
+        $http = new SkriptHttp([
+            new HttpAntwort(401, ['date' => gmdate('D, d M Y H:i:s \G\M\T', $this->zeit + 3600)], '{}'),
+            SkriptHttp::json(200, []),
+            // NTP set the local clock right meanwhile: our offset is now wrong.
+            new HttpAntwort(401, ['date' => gmdate('D, d M Y H:i:s \G\M\T', $this->zeit)], '{}'),
+            SkriptHttp::json(200, []),
+        ]);
+        $api = $this->client($http, festeUhr: true);
+
+        $api->json('POST', '/heartbeat', []);
+        $api->json('POST', '/heartbeat', []);
+
+        self::assertSame(0, $api->versatz());
+        self::assertSame($this->zeit, (int) $http->anfragen[3]['header']['x-worker-timestamp']);
+    }
+
+    public function testARedirectIsAnError(): void
+    {
+        $http = new SkriptHttp([new HttpAntwort(301, ['location' => 'https://www.belege.test/api/worker/jobs/1/complete'], '')]);
+
+        try {
+            $this->client($http)->json('POST', '/jobs/1/complete', ['lock' => 'x']);
+            self::fail('expected an ApiFehler');
+        } catch (ApiFehler $e) {
+            self::assertSame(301, $e->status);
+        }
+        self::assertCount(1, $http->anfragen);
+    }
+
+    public function testARequestThatMustNotRepeatIsSentOnce(): void
+    {
+        $http = new SkriptHttp([new HttpFehler('Zeitüberschreitung.', zeitueberschreitung: true)]);
+
+        try {
+            $this->client($http)->json('POST', '/jobs/claim', ['max' => 1], wiederholen: false);
+            self::fail('expected an HttpFehler');
+        } catch (HttpFehler) {
+        }
+        self::assertCount(1, $http->anfragen, 'a lost claim answer must not claim a second job');
+    }
+
     public function testTheHeartbeatsServerTimeSetsTheOffset(): void
     {
         $http = new SkriptHttp([SkriptHttp::json(200, [])]);

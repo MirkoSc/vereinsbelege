@@ -20,6 +20,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/worker/autoload.php';
 
 date_default_timezone_set('Europe/Berlin');
 // As on the web host (CLAUDE.md section 4): no arguments in stack traces.

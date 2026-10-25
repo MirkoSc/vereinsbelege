@@ -6,6 +6,7 @@ namespace App\Tests\Worker;
 
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerProtokoll;
+use App\Tests\Worker\Support\FakeWerkzeuge;
 use App\Tests\Worker\Support\SkriptHttp;
 use App\Worker\Abbruch;
 use App\Worker\ApiClient;
@@ -15,6 +16,7 @@ use App\Worker\Identitaet;
 use App\Worker\KiKonfiguration;
 use App\Worker\Log;
 use App\Worker\Schleife;
+use App\Worker\Schritt\SeitenRendern;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -100,6 +102,28 @@ final class SchleifeTest extends TestCase
         self::assertSame(['lock' => 'w1-abc', 'fehler' => 'JobTypNichtUnterstuetzt', 'endgueltig' => true], json_decode($http->anfragen[2]['body'], true, flags: JSON_THROW_ON_ERROR));
     }
 
+    public function testAnOriginalWithoutGrantEndsTheJobForGoodWithoutAsking(): void
+    {
+        $http = new SkriptHttp([
+            $this->herzschlag('aktiv', 1),
+            SkriptHttp::json(200, ['jobs' => [['id' => 6, 'typ' => 'render_pages', 'versuch' => 1, 'lock' => 'w1-def']]]),
+            SkriptHttp::json(200, [
+                'dokument' => ['id' => 2, 'blobs' => [11], 'kontext' => null, 'originale' => [10, 11], 'verarbeitet' => [null, null], 'pdf' => null],
+                'tresor' => ['version' => 1, 'public_key' => base64_encode(sodium_crypto_box_publickey(sodium_crypto_box_keypair()))],
+                'artefakte' => ['page_image'],
+                'stammdaten' => ['kategorien' => [], 'kostenstellen' => []],
+            ]),
+            SkriptHttp::json(200, ['status' => 'fehler']),
+        ]);
+        $schleife = $this->schleife($http, schritte: [new SeitenRendern(new FakeWerkzeuge())]);
+
+        $schleife->runde();
+
+        self::assertCount(4, $http->anfragen, 'no blob request for an original without grant');
+        self::assertStringEndsWith('/api/worker/jobs/6/fail', $http->anfragen[3]['url']);
+        self::assertSame(['lock' => 'w1-def', 'fehler' => 'KeinGrant', 'endgueltig' => true], json_decode($http->anfragen[3]['body'], true, flags: JSON_THROW_ON_ERROR));
+    }
+
     public function testAnEmptyConfigurationFromTheHeartbeatDropsTheKeys(): void
     {
         $http = new SkriptHttp([
@@ -127,7 +151,8 @@ final class SchleifeTest extends TestCase
         self::assertSame([], $http->anfragen);
     }
 
-    private function schleife(SkriptHttp $http, ?Abbruch $abbruch = null): Schleife
+    /** @param list<\App\Worker\Schritt\Schritt> $schritte */
+    private function schleife(SkriptHttp $http, ?Abbruch $abbruch = null, array $schritte = []): Schleife
     {
         $abbruch ??= new Abbruch();
         $identitaet = new Identitaet(1, str_repeat('s', 32), $this->paar, 'https://belege.test', 'Pi');
@@ -139,7 +164,7 @@ final class SchleifeTest extends TestCase
             $identitaet,
             $this->ki,
             new Arbeitsverzeichnis($this->basis, 'tmpfs ' . realpath($this->basis) . " tmpfs rw 0 0\n"),
-            [],
+            $schritte,
             ['ocr', 'render', 'ai'],
             '1.2.3',
             $abbruch,

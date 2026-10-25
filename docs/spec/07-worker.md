@@ -362,8 +362,10 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 ## 8. Worker-Programm (`bin/worker.php`)
 
 **Stand M7b-4 (issue #54, E-50).** Einstieg `bin/worker.php` (nur CLI),
-Code in `worker/src/` (Namespace `App\Worker`, Composer-Autoload), der
-**nicht** ins Release-ZIP kommt. Er nutzt die gemeinsamen Klassen der
+Code in `worker/src/` (Namespace `App\Worker`, eigener Autoloader
+`worker/autoload.php` – bewusst nicht in `composer.json`, damit die
+Classmap des Webhosters ihn nicht kennt). `worker/` und `bin/worker.php`
+kommen **nicht** ins Release-ZIP (`release.yml`: `-x bin/worker.php`). Er nutzt die gemeinsamen Klassen der
 Web-App: `WorkerProtokoll` (Signatur), `WorkerKrypto` (Grants, Kontext,
 Versiegeln an `VK_pub`), `BlobCipher`/`FieldCipher`, `Service/Processing`
 (`Auslesung`, `Textlayer`, `PdfTextlayer`, E-Rechnung, `PngZuJpeg`,

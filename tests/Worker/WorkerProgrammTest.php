@@ -36,6 +36,7 @@ use App\Worker\Abbruch;
 use App\Worker\ApiClient;
 use App\Worker\Arbeitsverzeichnis;
 use App\Worker\Identitaet;
+use App\Worker\JobFehler;
 use App\Worker\KiKonfiguration;
 use App\Worker\Kopplung;
 use App\Worker\Log;
@@ -227,6 +228,42 @@ final class WorkerProgrammTest extends WorkerTestCase
         self::assertSame([], $this->llm->anfragen[0]['anfrage']->bilder, 'a usable text replaces the images, as in the session');
         self::assertStringContainsString('Sportartikel Müller GmbH', $this->llm->anfragen[0]['anfrage']->text);
         $this->assertArbeitsverzeichnisLeer();
+    }
+
+    public function testAPdfPageThatCannotBeRenderedStaysOutOfTheAiRequest(): void
+    {
+        $profil = $this->anbieter->insert('Standard', 'https://ki.test/v1', 'gpt-6-luna', new KiFaehigkeiten(true, true, 4, 4096), 60, true, 'sk-test');
+        $this->anbieter->setDefault($profil);
+        $doc = $this->dokument([[FakeJpeg::bauen(800, 600), MagicBytes::JPEG], ['%PDF-1.4 kaputt', MagicBytes::PDF]], DocumentStatus::BereitZurAuswertung);
+        $jobId = $this->anWorker('ai_extract', $doc, JobExecutor::Session);
+        $this->werkzeuge->ocrDa = false;
+        $this->werkzeuge->seiten = 1;
+        $werkzeuge = $this->werkzeuge;
+        $this->werkzeuge->danach = static function () use ($werkzeuge): void {
+            if (str_starts_with((string) end($werkzeuge->aufrufe), 'seite:')) {
+                throw new JobFehler('PdfRasterungFehlgeschlagen', true);
+            }
+        };
+
+        $this->schleife->runde();
+
+        self::assertSame(JobStatus::Fertig, $this->jobs->find($jobId)?->status);
+        self::assertCount(1, $this->llm->anfragen[0]['anfrage']->bilder, 'the photo still goes');
+    }
+
+    public function testOwnOcrTextIsOnlyUsedWhenItCoversEveryOriginal(): void
+    {
+        $profil = $this->anbieter->insert('Standard', 'https://ki.test/v1', 'gpt-6-luna', new KiFaehigkeiten(true, true, 4, 4096), 60, true, 'sk-test');
+        $this->anbieter->setDefault($profil);
+        // A HEIC without processed scan has no page for Tesseract.
+        $doc = $this->dokument([[FakeJpeg::bauen(800, 600), MagicBytes::JPEG], ["\x00\x00\x00\x18ftypheic\x00\x00\x00\x00", MagicBytes::HEIC]], DocumentStatus::BereitZurAuswertung);
+        $this->anWorker('ai_extract', $doc, JobExecutor::Session);
+
+        $this->schleife->runde();
+
+        self::assertSame(['bildtext'], $this->werkzeuge->aufrufe);
+        self::assertCount(1, $this->llm->anfragen[0]['anfrage']->bilder, 'half a text is no text: the image goes');
+        self::assertStringNotContainsString('Sportartikel', $this->llm->anfragen[0]['anfrage']->text);
     }
 
     public function testWithoutAiProfileTheSessionReadsTheReceipt(): void

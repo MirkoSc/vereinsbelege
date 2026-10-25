@@ -1242,16 +1242,21 @@ Getroffen ohne Rückfrage:
 
 - **Abgrenzung des Verbots von Prozess-Aufrufen** (CLAUDE.md §1): Es gilt
   weiter für alles, was auf dem Webhoster läuft. Der Worker-Code liegt in
-  `worker/src/` (Namespace `App\Worker`) und damit **nicht** im
+  `worker/src/` (Namespace `App\Worker`, eigener Autoloader
+  `worker/autoload.php`, nicht in `composer.json`) und damit **nicht** im
   Release-ZIP; `bin/worker.php` ist nur der Einstieg (ohne eigene
-  Prozess-Aufrufe, verweigert alles außer CLI). Programme startet genau
+  Prozess-Aufrufe, verweigert alles außer CLI) und wird beim Packen
+  ebenfalls ausgenommen. Programme startet genau
   **eine** Datei, `worker/src/Prozess.php`: nur `proc_open()` mit
   Argumentliste (keine Shell), stdin `/dev/null`, Umgebung auf `PATH`,
   `HOME`, `TMPDIR`, `LANG` reduziert, Zeitlimit, Abbruch per SIGTERM →
   SIGKILL. `exec`, `shell_exec`, `system`, `passthru`, `popen`, Backticks
   bleiben auch im Worker verboten. Geprüft von `NoShellExecutionTest`
   (scannt jetzt auch `worker/`) und `WorkerProzessGrenzeTest` (kein Web-Code
-  nennt `App\Worker`, `worker/` nicht im ZIP, Argumentliste).
+  nennt `App\Worker`, `worker/` und `bin/worker.php` nicht im ZIP,
+  `composer.json` ohne Worker, Argumentliste). Diese Ausnahme steht jetzt
+  auch in CLAUDE.md §1 – eine harte Regel, deshalb ausdrücklich zur
+  Bestätigung.
   `ProcessingArchitectureTest` prüft `worker/src/` wie `Service/Processing`.
 - **Job-Kontext um Rollen der Blobs erweitert:** `GET /jobs/{id}/context`
   liefert zusätzlich `dokument.originale` (IDs in Seitenreihenfolge),

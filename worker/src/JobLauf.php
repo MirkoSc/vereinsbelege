@@ -105,6 +105,11 @@ final class JobLauf
     public function blob(int $blobId): string
     {
         $this->puls();
+        // A blob without grant (an original that was incomplete when the
+        // job was routed) never opens: no use asking the web host again.
+        if (!in_array($blobId, $this->kontext()->blobs, true)) {
+            throw new JobFehler('KeinGrant', true);
+        }
         $antwort = $this->api->datei('/blobs/' . $blobId);
         $grant = base64_decode((string) $antwort->kopf('x-worker-dek'), true);
         $header = base64_decode((string) $antwort->kopf('x-blob-header'), true);

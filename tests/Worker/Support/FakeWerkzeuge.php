@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Worker\Support;
 
 use App\Tests\Support\FakeJpeg;
-use App\Worker\WerkzeugFehler;
+use App\Worker\JobFehler;
 use App\Worker\Werkzeuge;
 
 /**
@@ -34,7 +34,7 @@ final class FakeWerkzeuge implements Werkzeuge
 
     public string $text = self::TEXT;
 
-    public ?WerkzeugFehler $fehler = null;
+    public ?JobFehler $fehler = null;
 
     /** @var list<string> */
     public array $aufrufe = [];

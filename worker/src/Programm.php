@@ -59,6 +59,12 @@ final class Programm
             $ausgabe('Webhoster nicht erreichbar: ' . $e->getMessage() . "\n");
 
             return 1;
+        } catch (\RuntimeException $e) {
+            // The worker's own setup checks (working directory not in RAM,
+            // unreadable identity file): their German message, no trace.
+            $ausgabe('Fehler: ' . $e->getMessage() . "\n");
+
+            return 1;
         }
     }
 

@@ -34,8 +34,8 @@ aktuelle Issue verlinkt**, nicht alle.
   den Quellcode – ein Verstoß fällt in den Tests auf, nicht erst im Betrieb.
   Einzige Ausnahme: der optionale Worker (eigener Container, nie auf dem
   Webhoster) startet Poppler/OCRmyPDF – nur über `worker/src/Prozess.php`
-  (`proc_open` mit Argumentliste), `worker/` ist nicht im Release-ZIP
-  (07 §8, E-50).
+  (`proc_open` mit Argumentliste), `worker/` und `bin/worker.php` sind
+  nicht im Release-ZIP (07 §8, E-50).
 - Deployment ausschließlich über Release-ZIPs (GitHub Releases) +
   `setup.php`/Self-Updater – **übernommen aus `MirkoSc/vereinskalender`**.
 - **PHP 8.5**, fehler- und deprecation-frei; Enums, readonly, Promotion,

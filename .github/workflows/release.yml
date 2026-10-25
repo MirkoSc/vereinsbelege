@@ -33,11 +33,14 @@ jobs:
       # The root .htaccess denies all access to the release directory, i.e.
       # to current/ once it is switched in (issue #101); DenyHtaccessTest
       # keeps it identical to DenyHtaccess::CONTENT.
+      # The optional worker (worker/, bin/worker.php) runs in its own
+      # container and stays out (docs/spec/07-worker.md section 8).
       - name: Build release ZIP
         run: |
           mkdir -p dist
           zip -r "dist/vereinsbelege-${GITHUB_REF_NAME}.zip" \
-            app public vendor bin migrations VERSION docker/web .htaccess
+            app public vendor bin migrations VERSION docker/web .htaccess \
+            -x bin/worker.php
 
       - name: Stage setup.php (exists from milestone M1-2 on)
         run: if [ -f setup.php ]; then cp setup.php dist/; fi

@@ -15,8 +15,10 @@ use PHPUnit\Framework\TestCase;
  *   - no code of the web app (app/src, app/views, public, setup.php) names
  *     anything of App\Worker - the worker uses the web app's code, never
  *     the other way round;
- *   - worker/ is not packed into the release ZIP, so the web host does not
- *     even receive it;
+ *   - worker/ and bin/worker.php are not packed into the release ZIP, so
+ *     the web host does not even receive them, and composer.json does not
+ *     name App\Worker (worker/autoload.php) - the web host's classmap
+ *     knows nothing of it;
  *   - Prozess passes an argument list to proc_open() (no shell).
  */
 final class WorkerProzessGrenzeTest extends TestCase
@@ -44,11 +46,20 @@ final class WorkerProzessGrenzeTest extends TestCase
     public function testTheWorkerProgramIsNotPartOfTheReleaseZip(): void
     {
         $workflow = (string) file_get_contents(dirname(__DIR__, 2) . '/.github/workflows/release.yml');
-        self::assertSame(1, preg_match('/zip -r "dist\/[^"]+" \\\\\s*\n\s*([^\n]+)/', $workflow, $treffer), 'release.yml packs the ZIP with zip -r');
+        self::assertSame(1, preg_match('/zip -r "dist\/[^"]+" \\\\\s*\n((?:[^\n]*\\\\\s*\n)*[^\n]*)/', $workflow, $treffer), 'release.yml packs the ZIP with zip -r');
 
-        $inhalt = preg_split('/\s+/', trim($treffer[1])) ?: [];
+        $inhalt = preg_split('/[\s\\\\]+/', trim($treffer[1])) ?: [];
         self::assertContains('app', $inhalt);
         self::assertNotContains('worker', $inhalt);
+        // bin/ goes along for the web host's scripts - the worker's entry point not.
+        $ausnahme = array_search('-x', $inhalt, true);
+        self::assertNotFalse($ausnahme, 'zip excludes the worker entry point');
+        self::assertContains('bin/worker.php', array_slice($inhalt, (int) $ausnahme + 1));
+    }
+
+    public function testComposerDoesNotKnowTheWorkerProgram(): void
+    {
+        self::assertStringNotContainsString('worker/', (string) file_get_contents(dirname(__DIR__, 2) . '/composer.json'));
     }
 
     public function testTheProcessClassPassesAnArgumentListWithoutShell(): void

@@ -26,7 +26,6 @@ use App\Worker\Identitaet;
 use App\Worker\JobFehler;
 use App\Worker\JobLauf;
 use App\Worker\KiKonfiguration;
-use App\Worker\WerkzeugFehler;
 use App\Worker\Werkzeuge;
 
 /**
@@ -153,9 +152,9 @@ final readonly class KiAuslesen implements Schritt
         // The pages that count: PDFs and images, no XML.
         $seitenOriginale = array_values(array_filter($originale, static fn(array $o): bool => in_array($o[2], [MagicBytes::PDF, MagicBytes::JPEG, MagicBytes::PNG, MagicBytes::HEIC], true)));
         $text = self::textlayer($seitenOriginale);
-        $seiten = $text === null ? $this->seiten($lauf, $verzeichnis, $seitenOriginale) : [];
+        $seiten = $text === null ? $this->seiten($lauf, $verzeichnis, $seitenOriginale, $bilderGrenze) : [];
         if ($text === null && $this->werkzeuge->kannOcr()) {
-            $text = $this->eigeneOcr($lauf, $verzeichnis, $seiten);
+            $text = $this->eigeneOcr($lauf, $verzeichnis, $seiten, count($seitenOriginale));
         }
 
         $bilder = [];
@@ -167,8 +166,9 @@ final readonly class KiAuslesen implements Schritt
                 }
                 try {
                     $jpeg = $bild();
-                } catch (ProcessingException) {
-                    // A PNG GD cannot read: that page stays out.
+                } catch (ProcessingException | JobFehler) {
+                    // A PNG GD cannot read, a PDF page Poppler cannot render
+                    // within the limits: that page stays out, the rest goes.
                     continue;
                 }
                 if ($bytes + strlen($jpeg) > self::BILDER_MAX_BYTES) {
@@ -234,7 +234,7 @@ final readonly class KiAuslesen implements Schritt
      *
      * @return list<array{int, \Closure(): string}>
      */
-    private function seiten(JobLauf $lauf, string $verzeichnis, array $originale): array
+    private function seiten(JobLauf $lauf, string $verzeichnis, array $originale, int $bilderGrenze): array
     {
         $kontext = $lauf->kontext();
         $seiten = [];
@@ -256,7 +256,7 @@ final readonly class KiAuslesen implements Schritt
                 $pdf = Quellen::datei($verzeichnis, 'ki-' . $index . '.pdf', $inhalt);
                 try {
                     $anzahl = min($this->werkzeuge->seitenzahl($pdf, $lauf->pulsGeber()), Quellen::MAX_SEITEN);
-                } catch (WerkzeugFehler) {
+                } catch (JobFehler) {
                     // A PDF Poppler cannot open: its pages stay out, as in the
                     // browser route; the text or the other pages may do.
                     continue;
@@ -269,8 +269,29 @@ final readonly class KiAuslesen implements Schritt
             }
             // A HEIC without a processed JPEG is no input for the model.
         }
+        // The pages that may go to the model are produced once, also when
+        // the OCR pass asked for them first.
+        foreach ($seiten as $i => [$index, $bild]) {
+            if ($i < $bilderGrenze) {
+                $seiten[$i] = [$index, self::einmal($bild)];
+            }
+        }
 
         return $seiten;
+    }
+
+    /**
+     * @param \Closure(): string $bild
+     *
+     * @return \Closure(): string
+     */
+    private static function einmal(\Closure $bild): \Closure
+    {
+        $wert = null;
+
+        return static function () use ($bild, &$wert): string {
+            return $wert ??= $bild();
+        };
     }
 
     /**
@@ -278,8 +299,11 @@ final readonly class KiAuslesen implements Schritt
      * original (Textlayer, the same rule as for a PDF's text layer).
      *
      * @param list<array{int, \Closure(): string}> $seiten
+     * @param int $originale how many page originals the receipt has - one
+     *        without any page (a PDF Poppler cannot open, a HEIC without
+     *        scan) means the text would not cover the receipt
      */
-    private function eigeneOcr(JobLauf $lauf, string $verzeichnis, array $seiten): ?string
+    private function eigeneOcr(JobLauf $lauf, string $verzeichnis, array $seiten, int $originale): ?string
     {
         if ($seiten === []) {
             return null;
@@ -296,7 +320,10 @@ final readonly class KiAuslesen implements Schritt
                 $jeOriginal[$index][] = $this->werkzeuge->bildText($datei, $lauf->pulsGeber());
                 unlink($datei);
             }
-        } catch (WerkzeugFehler) {
+        } catch (JobFehler) {
+            return null;
+        }
+        if (count($jeOriginal) !== $originale) {
             return null;
         }
         $texte = [];

@@ -41,8 +41,6 @@ final class ApiClient
     /** Seconds the web host's clock is ahead of ours. */
     private int $versatz = 0;
 
-    private bool $zeitKorrigiert = false;
-
     /**
      * @param \Closure(): int $uhr unix time (tests pass their own)
      * @param \Closure(float): bool $schlafen pauses between attempts; false = stop requested
@@ -87,7 +85,6 @@ final class ApiClient
     {
         if ($serverZeit > 0) {
             $this->versatz = $serverZeit - $lokaleZeit;
-            $this->zeitKorrigiert = true;
         }
     }
 
@@ -100,11 +97,11 @@ final class ApiClient
      *
      * @throws ApiFehler|HttpFehler|Abgebrochen
      */
-    public function json(string $methode, string $pfad, ?array $daten = null, bool $abbrechbar = true, ?int $zeitlimit = null): array
+    public function json(string $methode, string $pfad, ?array $daten = null, bool $abbrechbar = true, ?int $zeitlimit = null, bool $wiederholen = true): array
     {
         $body = $daten === null ? '' : json_encode($daten, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 
-        return self::auswerten($this->senden($methode, $pfad, $body, $daten === null ? null : 'application/json', $abbrechbar, $zeitlimit));
+        return self::auswerten($this->senden($methode, $pfad, $body, $daten === null ? null : 'application/json', $abbrechbar, $zeitlimit, $wiederholen));
     }
 
     /**
@@ -132,7 +129,7 @@ final class ApiClient
         return $antwort;
     }
 
-    private function senden(string $methode, string $pfad, string $body, ?string $typ, bool $abbrechbar, ?int $zeitlimit = null): HttpAntwort
+    private function senden(string $methode, string $pfad, string $body, ?string $typ, bool $abbrechbar, ?int $zeitlimit = null, bool $wiederholen = true): HttpAntwort
     {
         $pfad = self::PRAEFIX . $pfad;
         // The signature covers the path as the web host receives it: the
@@ -143,7 +140,11 @@ final class ApiClient
 
         $letzterFehler = null;
         // Shutting down: one attempt, no pauses (the job is given back).
-        $versuche = $this->abbruch->angefordert() ? 1 : self::VERSUCHE;
+        // Not repeatable (a claim): one attempt as well - a lost answer
+        // must not make the worker claim a second job while the first
+        // stays locked to it.
+        $versuche = $this->abbruch->angefordert() || !$wiederholen ? 1 : self::VERSUCHE;
+        $zeitKorrigiert = false;
         for ($versuch = 1; $versuch <= $versuche; ++$versuch) {
             if ($versuch > 1) {
                 if ($abbrechbar) {
@@ -176,8 +177,12 @@ final class ApiClient
                 continue;
             }
 
-            if ($antwort->status === 401 && $versuch < $versuche && !$this->zeitKorrigiert && $this->korrigiereZeit($antwort)) {
-                // Our clock was off: once more with the web host's time.
+            if ($antwort->status === 401 && !$zeitKorrigiert && $this->korrigiereZeit($antwort)) {
+                // Our clock was off (it may jump at any time - NTP on a Pi
+                // without battery clock): once more with the web host's
+                // time, one correction per request.
+                $zeitKorrigiert = true;
+                $versuche = max($versuche, $versuch + 1);
                 continue;
             }
             if (in_array($antwort->status, self::WIEDERHOLBAR, true) && $versuch < $versuche) {
@@ -200,7 +205,6 @@ final class ApiClient
             return false;
         }
         $versatz = $server - ($this->uhr)();
-        $this->zeitKorrigiert = true;
         if (abs($versatz - $this->versatz) < WorkerProtokoll::ZEITFENSTER_SEKUNDEN) {
             return false;
         }
@@ -218,7 +222,9 @@ final class ApiClient
     {
         $daten = json_decode($antwort->body, true);
         $daten = is_array($daten) ? $daten : [];
-        if ($antwort->status >= 400 || $antwort->status < 200) {
+        // A redirect is an error too: none is followed (it could lead the
+        // signed request elsewhere), and its body is no answer.
+        if ($antwort->status < 200 || $antwort->status >= 300) {
             throw new ApiFehler(
                 $antwort->status,
                 is_string($daten['fehler'] ?? null) ? $daten['fehler'] : 'http_' . $antwort->status,

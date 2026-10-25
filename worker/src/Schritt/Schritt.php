@@ -17,7 +17,7 @@ interface Schritt
     public function typ(): string;
 
     /**
-     * @throws \App\Worker\JobFehler|\App\Worker\WerkzeugFehler when the job cannot be done
+     * @throws \App\Worker\JobFehler when the job cannot be done
      */
     public function ausfuehren(JobLauf $lauf, string $verzeichnis): void;
 }

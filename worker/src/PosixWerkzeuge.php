@@ -32,10 +32,10 @@ final readonly class PosixWerkzeuge implements Werkzeuge
         $ergebnis = $this->starten(['pdfinfo', $pdfDatei], dirname($pdfDatei), 120, $puls, 'PdfInfoFehlgeschlagen');
         if (!$ergebnis->ok()) {
             // 1: cannot open, 3: encrypted - the file itself is the problem.
-            throw new WerkzeugFehler($ergebnis->exitCode === 3 ? 'PdfPasswortGeschuetzt' : 'PdfRasterungFehlgeschlagen', in_array($ergebnis->exitCode, [1, 3], true));
+            throw new JobFehler($ergebnis->exitCode === 3 ? 'PdfPasswortGeschuetzt' : 'PdfRasterungFehlgeschlagen', in_array($ergebnis->exitCode, [1, 3], true));
         }
         if (preg_match('/^Pages:\s+(\d+)\s*$/m', $ergebnis->stdout, $treffer) !== 1) {
-            throw new WerkzeugFehler('PdfRasterungFehlgeschlagen', true);
+            throw new JobFehler('PdfRasterungFehlgeschlagen', true);
         }
 
         return (int) $treffer[1];
@@ -50,7 +50,7 @@ final readonly class PosixWerkzeuge implements Werkzeuge
 
         $ergebnis = $this->starten($befehl, dirname($zielDatei), 600, $puls, 'PdfRasterungFehlgeschlagen');
         if (!$ergebnis->ok() || !is_file($praefix . '.jpg')) {
-            throw new WerkzeugFehler($ergebnis->exitCode === 3 ? 'PdfPasswortGeschuetzt' : 'PdfRasterungFehlgeschlagen', in_array($ergebnis->exitCode, [1, 3], true));
+            throw new JobFehler($ergebnis->exitCode === 3 ? 'PdfPasswortGeschuetzt' : 'PdfRasterungFehlgeschlagen', in_array($ergebnis->exitCode, [1, 3], true));
         }
         if ($praefix . '.jpg' !== $zielDatei) {
             rename($praefix . '.jpg', $zielDatei);
@@ -80,7 +80,7 @@ final readonly class PosixWerkzeuge implements Werkzeuge
         if (!$ergebnis->ok() || !is_file($pdfaZiel) || !is_file($textZiel)) {
             // ocrmypdf: 2 bad input file, 8 encrypted PDF - final; the rest
             // (missing dependency, PDF/A conversion, child process) may pass.
-            throw new WerkzeugFehler(match ($ergebnis->exitCode) {
+            throw new JobFehler(match ($ergebnis->exitCode) {
                 8 => 'PdfPasswortGeschuetzt',
                 2 => 'OcrEingabeUngueltig',
                 default => 'OcrFehlgeschlagen',
@@ -92,7 +92,7 @@ final readonly class PosixWerkzeuge implements Werkzeuge
     {
         $ergebnis = $this->starten(['tesseract', $bildDatei, 'stdout', '-l', self::SPRACHEN], dirname($bildDatei), 600, $puls, 'OcrFehlgeschlagen');
         if (!$ergebnis->ok()) {
-            throw new WerkzeugFehler('OcrFehlgeschlagen', false);
+            throw new JobFehler('OcrFehlgeschlagen', false);
         }
 
         return $ergebnis->stdout;
@@ -106,7 +106,7 @@ final readonly class PosixWerkzeuge implements Werkzeuge
         try {
             return Prozess::ausfuehren($befehl, $verzeichnis, $zeitlimit, $puls);
         } catch (ProzessFehler) {
-            throw new WerkzeugFehler($fehlercode, false);
+            throw new JobFehler($fehlercode, false);
         }
     }
 }

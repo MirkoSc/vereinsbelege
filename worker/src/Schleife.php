@@ -117,7 +117,7 @@ final class Schleife
                 return $poll;
             }
 
-            $jobs = $this->api->json('POST', '/jobs/claim', ['max' => 1])['jobs'] ?? [];
+            $jobs = $this->api->json('POST', '/jobs/claim', ['max' => 1], wiederholen: false)['jobs'] ?? [];
             $bearbeitet = 0;
             foreach (is_array($jobs) ? $jobs : [] as $job) {
                 if (is_array($job)) {
@@ -183,7 +183,7 @@ final class Schleife
             $this->log->ereignis('job_fertig', ['job' => $lauf->id, 'typ' => $lauf->typ, 'sekunden' => round(microtime(true) - $start, 1)]);
         } catch (Abgebrochen) {
             $this->zurueckgeben($lauf, 'WorkerBeendet', false);
-        } catch (JobFehler | WerkzeugFehler $e) {
+        } catch (JobFehler $e) {
             $this->zurueckgeben($lauf, $e->fehlercode, $e->endgueltig);
         } catch (ApiFehler $e) {
             if ($e->jobVerloren()) {

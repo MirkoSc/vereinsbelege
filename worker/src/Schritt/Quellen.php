@@ -8,7 +8,7 @@ use App\Service\Processing\JpegInfo;
 use App\Service\Processing\ProcessingException;
 use App\Service\Upload\MagicBytes;
 use App\Worker\JobLauf;
-use App\Worker\WerkzeugFehler;
+use App\Worker\JobFehler;
 use App\Worker\Werkzeuge;
 
 /**
@@ -58,7 +58,7 @@ final readonly class Quellen
     /**
      * Page $seite of the PDF at $pdfDatei as JPEG.
      *
-     * @throws WerkzeugFehler
+     * @throws JobFehler
      */
     public static function seitenbild(Werkzeuge $werkzeuge, string $pdfDatei, int $seite, string $verzeichnis, \Closure $puls): string
     {
@@ -71,7 +71,7 @@ final readonly class Quellen
             try {
                 $info = JpegInfo::aus($jpeg);
             } catch (ProcessingException) {
-                throw new WerkzeugFehler('PdfRasterungFehlgeschlagen', true);
+                throw new JobFehler('PdfRasterungFehlgeschlagen', true);
             }
             if ($info->width > self::MAX_PIXEL || $info->height > self::MAX_PIXEL) {
                 // A large page format: scaled down to the limit, same quality.
@@ -85,7 +85,7 @@ final readonly class Quellen
             }
         }
 
-        throw new WerkzeugFehler('SeiteZuGross', true);
+        throw new JobFehler('SeiteZuGross', true);
     }
 
     /** Writes $inhalt to a new file in $verzeichnis (tmpfs) and returns its path. */
