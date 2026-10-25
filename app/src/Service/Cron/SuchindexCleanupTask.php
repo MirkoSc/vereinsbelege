@@ -31,6 +31,6 @@ final readonly class SuchindexCleanupTask implements CronTask
 
     public function run(\DateTimeImmutable $now): int
     {
-        return $this->speicher->aufraeumen($now->modify(sprintf('-%d hours', self::KEEP_HOURS)));
+        return $this->speicher->aufraeumen($now->setTimestamp($now->getTimestamp() - self::KEEP_HOURS * 3600));
     }
 }

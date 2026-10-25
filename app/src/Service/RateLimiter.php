@@ -138,7 +138,8 @@ final readonly class RateLimiter
      */
     public function cleanup(?\DateTimeImmutable $now = null): int
     {
-        $cutoff = ($now ?? new \DateTimeImmutable())->modify(sprintf('-%d seconds', $this->windowSeconds * 2));
+        $jetzt = $now ?? new \DateTimeImmutable();
+        $cutoff = $jetzt->setTimestamp($jetzt->getTimestamp() - $this->windowSeconds * 2);
 
         return $this->rows->deleteOlderThan($cutoff);
     }
