@@ -30,7 +30,8 @@ use App\View\View;
  * download.
  *
  * Permission `export.csv` - on the user side, because the board, the
- * auditors and the tax advisor hold it without the admin area. The period
+ * auditors and the tax advisor hold it without the admin area - and, as
+ * the file holds every booking, `bank.view` as well (checked here). The period
  * scope of an external role applies to the booking date (in SQL). The
  * export decrypts, so it needs the unlocked vault of the session.
  *
@@ -56,6 +57,9 @@ final readonly class DatevController
     public function seite(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (!$this->darfBuchungenSehen()) {
+            return $this->ohneBuchungsrecht();
+        }
         $tresor = $this->tresor($request);
         $zeitraum = DatevZeitraum::ausFeldern($request->query, new \DateTimeImmutable('today'));
         $fehler = $zeitraum->fehler();
@@ -86,6 +90,9 @@ final readonly class DatevController
         $this->session->start();
         $zeitraum = DatevZeitraum::ausFeldern($request->post, new \DateTimeImmutable('today'));
         $zurueck = '/app/datev?' . http_build_query($zeitraum->alsFelder());
+        if (!$this->darfBuchungenSehen()) {
+            return $this->ohneBuchungsrecht();
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->zurueck($zurueck, 'Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
@@ -120,6 +127,26 @@ final readonly class DatevController
             'Cache-Control' => 'no-store, private',
             'X-Content-Type-Options' => 'nosniff',
         ], $datei);
+    }
+
+    /**
+     * The file shows every booking, so `export.csv` alone is not enough: a
+     * role made by hand with the export but without `bank.view` must not
+     * read the bookings through it. Every shipped role with `export.csv`
+     * also holds `bank.view` (docs/spec/01-sicherheit.md section 4).
+     */
+    private function darfBuchungenSehen(): bool
+    {
+        return $this->berechtigungen()->darf(Permission::BankView);
+    }
+
+    private function ohneBuchungsrecht(): ResponseInterface
+    {
+        return Response::html($this->view->render('error', [
+            'title' => 'Keine Berechtigung',
+            'message' => 'Der DATEV-Export enthält alle Buchungen. Dafür braucht Ihr Konto zusätzlich das Recht, Konten und Buchungen zu sehen.',
+            'startseite' => '/app',
+        ], Area::App), 403);
     }
 
     private function zurueck(string $ziel, string $meldung, FlashArt $art): ResponseInterface

@@ -19,7 +19,7 @@ final readonly class DatevPlan
      * @param array<int, int> $ohneGegenkonto category id (0 = no category) => bookings without a contra account
      * @param int $fremdwaehrung bookings not in EUR - not exported
      * @param int $nullbetraege bookings of 0,00 - DATEV refuses them, left out
-     * @param int $gegenbuchungen incoming halves of transfers - the outgoing half is the row
+     * @param int $gegenbuchungen incoming halves of transfers left out - the outgoing half is the row (no money-in-transit account)
      * @param array<int, string> $kontoNamen account id => name, for the page
      * @param array<int, string> $kategorieNamen category id => name, for the page
      */
@@ -51,12 +51,6 @@ final readonly class DatevPlan
     public function istExportierbar(): bool
     {
         return $this->kopf !== null && $this->zeilen !== [] && $this->fehlend() === 0 && !$this->zuGross();
-    }
-
-    /** Sum of the rows in cents, money in minus money out - for the preview. */
-    public function saldo(): int
-    {
-        return array_sum(array_map(static fn(DatevZeile $z): int => $z->betragCent, $this->zeilen));
     }
 
     public function datei(): string

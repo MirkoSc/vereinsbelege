@@ -447,9 +447,10 @@ DATEV-„Buchungsstapel“ für den Steuerberater. Abnahmekriterien und
 Begründungen: E-49.
 
 - **Seite** `/app/datev` (Anwenderseite – Steuerberater, Kassenprüfer und
-  Vorstand haben `export.csv`, aber keinen Admin-Bereich): Zeitraum
-  (Buchungsdatum, Default laufendes Jahr, höchstens ein Kalenderjahr),
-  Vorschau mit Anzahl, Saldo und allem, was fehlt. `POST /app/datev/datei`
+  Vorstand haben `export.csv`, aber keinen Admin-Bereich; der Controller
+  verlangt zusätzlich `bank.view`, sonst 403): Zeitraum (Buchungsdatum,
+  Default laufendes Jahr, höchstens ein Kalenderjahr), Vorschau mit Anzahl
+  und allem, was fehlt. `POST /app/datev/datei`
   (CSRF, entsperrter Tresor) liefert die Datei als Anhang
   `EXTF_Buchungsstapel_<Zeitraum>.csv`, `Cache-Control: no-store`, Audit
   `export.datev` (von, bis, Anzahl). Der Zeitraum-Scope externer Rollen
@@ -458,7 +459,8 @@ Begründungen: E-49.
 - **Einstellungen** `/admin/datev` (`admin.settings`, Audit
   `einstellung.datev` nur mit Anzahlen): Berater-/Mandantennummer,
   Sachkontenlänge (4–8, Default 4), Kontenrahmen (zwei Ziffern, optional),
-  Klärungskonto (optional), Sachkonto je Kategorie und je Bankkonto/Kasse.
+  Klärungskonto (optional), Geldtransitkonto (optional), Sachkonto je
+  Kategorie und je Bankkonto/Kasse.
   Setting `datev_einstellungen` (JSON, Klartext), gelesen von
   `App\Service\Export\DatevEinstellungen`; Unpassendes wird beim Lesen
   verworfen. Ohne Tresor zeigt die Seite Konten als „Bankkonto Nr. 3“.
@@ -467,8 +469,10 @@ Begründungen: E-49.
   Kategorie: Klärungskonto), Umsatz ohne Vorzeichen, „S“ bei Geldeingang,
   „H“ bei Ausgang; Belegdatum TTMM; Belegfeld 1 = Rechnungsnummer des
   ersten zugeordneten geprüften/festgeschriebenen Belegs im Scope;
-  Buchungstext = Kategoriename. Umbuchungen nur mit der abgehenden Hälfte
-  (Gegenkonto = empfangendes Konto). Keine Gegenseite, kein
+  Buchungstext = Kategoriename. Umbuchungen: mit Geldtransitkonto jede
+  Hälfte an ihrem Tag gegen dieses Konto; ohne nur die abgehende Hälfte
+  (Gegenkonto = empfangendes Konto, `TransferRepository::mitKontenFuer()`),
+  die eingehende fehlt immer. Keine Gegenseite, kein
   Verwendungszweck in der Datei.
 - **Sperren:** Konto/Kategorie ohne Sachkonto, Buchung nicht in EUR, mehr
   als 99 999 Zeilen oder fehlende Berater-/Mandantennummer → kein

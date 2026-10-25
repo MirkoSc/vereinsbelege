@@ -957,7 +957,6 @@ $datev = static function () use ($connections, $view, $auditFor): DatevControlle
         new SessionVault(),
         new DatevExport(
             new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings)),
-            $transaktionen,
             new TransferRepository($pdo),
             new AllocationRepository($pdo),
             new InvoiceRepository($pdo),

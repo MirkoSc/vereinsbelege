@@ -19,6 +19,7 @@ use App\Domain\InvoiceData;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
+use App\Domain\PermissionScope;
 use App\Domain\SystemRole;
 use App\Domain\UmbuchungMethode;
 use App\Domain\ZuordnungMethode;
@@ -141,7 +142,25 @@ final class DatevExportFlowTest extends DatabaseTestCase
             ['12,34', 'H', '1800', '6855', '3101', '', 'Bankgebühren'],
             ['20,00', 'H', '1000', '6815', '0102', 'RE2026/17', 'Büro & Verwaltung'],
         ], array_map(self::kurz(...), $plan->zeilen), 'by date; an unchecked receipt gives no number; April is outside');
-        self::assertSame(-8234, $plan->saldo());
+    }
+
+    public function testATransferAcrossThePeriodBoundaryIsBookedOnceOrOnItsOwnDays(): void
+    {
+        $this->einstellen();
+        $this->umbuchung('2026-03-31', '80,00', ankunft: '2026-04-01');
+        $zweitesQuartal = ['von' => '2026-04-01', 'bis' => '2026-06-30'];
+
+        self::assertSame([['80,00', 'H', '1800', '1000', '3103', '', 'Umbuchung']], array_map(self::kurz(...), $this->plan()->zeilen), 'in the period the money left');
+        $q2 = $this->plan($zweitesQuartal);
+        self::assertSame([], $q2->zeilen, 'never twice');
+        self::assertSame(1, $q2->gegenbuchungen);
+
+        // With a money-in-transit account each half is booked on its day.
+        $this->einstellen(geldtransitkonto: '1460');
+        self::assertSame([['80,00', 'H', '1800', '1460', '3103', '', 'Umbuchung']], array_map(self::kurz(...), $this->plan()->zeilen));
+        $mitTransit = $this->plan($zweitesQuartal);
+        self::assertSame([['80,00', 'S', '1000', '1460', '0104', '', 'Umbuchung']], array_map(self::kurz(...), $mitTransit->zeilen));
+        self::assertSame(0, $mitTransit->gegenbuchungen);
     }
 
     public function testWhatIsNotMappedHoldsTheExportBack(): void
@@ -241,6 +260,24 @@ final class DatevExportFlowTest extends DatabaseTestCase
         self::assertCount(1, $this->audits());
     }
 
+    public function testTheExportAloneDoesNotOpenTheBookings(): void
+    {
+        $rollen = new RoleRepository($this->pdo());
+        $rolle = $rollen->create('Nur Export', false, ['export.csv' => PermissionScope::Alle, 'admin.settings' => PermissionScope::Alle]);
+        $rollen->assignToUser($this->userId, [$rolle]);
+        $this->sitzung();
+        $this->einstellen();
+        $this->buchung($this->giro, '2026-01-15', '50,00', 'einnahme', 'Mitgliedsbeiträge');
+
+        self::assertSame(403, $this->get('/app/datev')->status);
+        self::assertSame(403, $this->post('/app/datev/datei', self::QUARTAL)->status);
+        self::assertSame([], $this->audits());
+        $einstellungen = $this->get('/admin/datev');
+        self::assertSame(200, $einstellungen->status);
+        self::assertStringNotContainsString('Girokonto', $einstellungen->body, 'no account names without bank.view');
+        self::assertStringContainsString('Bankkonto Nr. ' . $this->giro, $einstellungen->body);
+    }
+
     public function testTheAdminPageSavesTheMapping(): void
     {
         $this->anmelden(SystemRole::Admin);
@@ -274,7 +311,7 @@ final class DatevExportFlowTest extends DatabaseTestCase
 
         $einstellungen = $this->audits(AuditAction::EinstellungDatev);
         self::assertCount(1, $einstellungen);
-        self::assertSame(['vollstaendig' => true, 'sachkontenlaenge' => 4, 'kontenrahmen' => '49', 'kategorien' => 1, 'konten' => 2], $this->audit->details($einstellungen[0], $this->tresor));
+        self::assertSame(['vollstaendig' => true, 'sachkontenlaenge' => 4, 'kontenrahmen' => '49', 'kategorien' => 1, 'konten' => 2, 'geldtransit' => false], $this->audit->details($einstellungen[0], $this->tresor));
     }
 
     public function testAStoredValueThatNoLongerFitsIsDropped(): void
@@ -297,7 +334,7 @@ final class DatevExportFlowTest extends DatabaseTestCase
      * @param array<string, string>|null $kategorien category name => account
      * @param array<int, string>|null $konten account id => account
      */
-    private function einstellen(?array $kategorien = null, ?array $konten = null, string $klaerungskonto = ''): void
+    private function einstellen(?array $kategorien = null, ?array $konten = null, string $klaerungskonto = '', string $geldtransitkonto = ''): void
     {
         $kategorien ??= ['Mitgliedsbeiträge' => '2110', 'Bankgebühren' => '6855', 'Büro & Verwaltung' => '6815'];
         $konten ??= [$this->giro => '1800', $this->kasse => '1000'];
@@ -305,12 +342,13 @@ final class DatevExportFlowTest extends DatabaseTestCase
         foreach ($kategorien as $name => $konto) {
             $ids[$this->kategorie[$name]] = $konto;
         }
-        new DatevEinstellungen('29098', '55003', 4, '49', $klaerungskonto, $ids, $konten)->speichern(new SettingRepository($this->pdo()));
+        new DatevEinstellungen('29098', '55003', 4, '49', $klaerungskonto, $ids, $konten, $geldtransitkonto)->speichern(new SettingRepository($this->pdo()));
     }
 
-    private function plan(): DatevPlan
+    /** @param array<string, string> $zeitraum */
+    private function plan(array $zeitraum = self::QUARTAL): DatevPlan
     {
-        return $this->export()->vorbereiten($this->tresor, DatevZeitraum::ausFeldern(self::QUARTAL, new \DateTimeImmutable()), Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable());
+        return $this->export()->vorbereiten($this->tresor, DatevZeitraum::ausFeldern($zeitraum, new \DateTimeImmutable()), Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable());
     }
 
     /** @return list<string> */
@@ -328,7 +366,6 @@ final class DatevExportFlowTest extends DatabaseTestCase
 
         return new DatevExport(
             new Buchungen($pdo, $transaktionen, $konten, $kategorien),
-            $transaktionen,
             new TransferRepository($pdo),
             new AllocationRepository($pdo),
             new InvoiceRepository($pdo),
@@ -370,10 +407,10 @@ final class DatevExportFlowTest extends DatabaseTestCase
         return $id;
     }
 
-    private function umbuchung(string $datum, string $betrag): void
+    private function umbuchung(string $datum, string $betrag, ?string $ankunft = null): void
     {
         $ab = $this->buchung($this->giro, $datum, $betrag, 'ausgabe', 'Sonstiges');
-        $an = $this->buchung($this->kasse, $datum, $betrag, 'einnahme', 'Sonstige Einnahmen');
+        $an = $this->buchung($this->kasse, $ankunft ?? $datum, $betrag, 'einnahme', 'Sonstige Einnahmen');
         $transfers = new TransferRepository($this->pdo());
         $transfers->insert($ab, $an, UmbuchungMethode::Manuell, null, new \DateTimeImmutable());
         $transfers->markieren($ab, new \DateTimeImmutable());
@@ -413,6 +450,11 @@ final class DatevExportFlowTest extends DatabaseTestCase
             new UserRepository($this->pdo())->updateExpiry($this->userId, new \DateTimeImmutable('+30 days'));
         }
         $rollen->assignToUser($this->userId, [$id]);
+        $this->sitzung();
+    }
+
+    private function sitzung(): void
+    {
         new Session()->start();
         $jetzt = time();
         $_SESSION = ['user_id' => $this->userId, 'login_at' => $jetzt, 'last_seen_at' => $jetzt, 'session_epoch' => 0];

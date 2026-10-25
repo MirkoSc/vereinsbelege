@@ -20,9 +20,6 @@
  * @var bool $darfEinstellen holds `admin.settings`
  */
 
-use App\Service\Processing\Betrag;
-
-$betrag = static fn(int $cent): string => e(Betrag::format($cent)) . ' €';
 ?>
 <section>
     <h2>DATEV-Export</h2>
@@ -77,13 +74,14 @@ $betrag = static fn(int $cent): string => e(Betrag::format($cent)) . ' €';
                 <div class="karte">
                     <h4><code><?= e($zeitraum->dateiname()) ?></code></h4>
                     <p>
-                        <strong><?= e((string) count($plan->zeilen)) ?> Buchungen</strong>,
-                        Saldo <?= $betrag($plan->saldo()) ?>
+                        <strong><?= e((string) count($plan->zeilen)) ?> Buchungen</strong>
                     </p>
                     <?php if ($plan->gegenbuchungen > 0 || $plan->nullbetraege > 0): ?>
                         <p class="gedaempft">
                             <?php if ($plan->gegenbuchungen > 0): ?>
-                                <?= e((string) $plan->gegenbuchungen) ?> Umbuchung(en) zwischen eigenen Konten stehen je einmal in der Datei (mit dem empfangenden Konto als Gegenkonto).
+                                <?= e((string) $plan->gegenbuchungen) ?> eingehende Buchung(en) von Umbuchungen zwischen eigenen Konten fehlen bewusst:
+                                Eine Umbuchung steht einmal im Stapel – mit ihrer abgehenden Buchung, gegen das empfangende Konto,
+                                im Zeitraum, in dem das Geld abging. Mit einem Geldtransitkonto wird jede Hälfte an ihrem Tag gebucht.
                             <?php endif; ?>
                             <?php if ($plan->nullbetraege > 0): ?>
                                 <?= e((string) $plan->nullbetraege) ?> Buchung(en) über 0,00 € sind nicht enthalten – DATEV nimmt sie nicht an.

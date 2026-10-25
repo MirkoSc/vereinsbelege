@@ -115,6 +115,17 @@ $rahmen = $wert('kontenrahmen', $einstellungen->kontenrahmen);
                     </tbody>
                 </table>
             <?php endif; ?>
+
+            <label for="datev-transit" class="feld-kurz">Geldtransitkonto
+                <input type="text" id="datev-transit" name="geldtransitkonto" inputmode="numeric" maxlength="<?= DatevEinstellungen::SACHKONTENLAENGE_MAX ?>"
+                       value="<?= e($wert('geldtransitkonto', $einstellungen->geldtransitkonto)) ?>" autocomplete="off"<?= $ungueltig('geldtransitkonto') ?>>
+            </label>
+            <p class="feld-hilfe">
+                Optional. Mit Geldtransitkonto wird jede Hälfte einer Umbuchung zwischen eigenen
+                Konten an ihrem Tag gegen dieses Konto gebucht – richtig auch über Monats- und
+                Jahresgrenzen. Ohne steht eine Umbuchung einmal im Stapel, mit der abgehenden
+                Buchung gegen das empfangende Konto.
+            </p>
         </fieldset>
 
         <fieldset>

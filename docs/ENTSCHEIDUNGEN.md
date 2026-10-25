@@ -1155,7 +1155,10 @@ diese (konservativ):
 3. Belegfeld 1 = Belegnummer, Belegdatum = Buchungsdatum (TTMM),
    Buchungstext ohne personenbezogene Daten.
 4. Recht `export.csv` (Steuerberater, Kassenprüfer, Vorstand, Finanzen,
-   Admin), Zeitraum-Scope auf das Buchungsdatum in SQL.
+   Admin) – und zusätzlich `bank.view`, weil die Datei alle Buchungen
+   zeigt (alle mitgelieferten Rollen haben beides; eine selbst angelegte
+   Rolle nur mit `export.csv` bekommt 403). Zeitraum-Scope auf das
+   Buchungsdatum in SQL.
 5. Entschlüsselt nur in der Nutzer-Session; Datei entsteht im Speicher,
    nichts auf der Platte; ein kurzer Request (wie der SEPA-Zahllauf, E-42).
 6. Beträge in Integer-Cent, Ausgabe ohne Vorzeichen mit Komma; das
@@ -1172,9 +1175,14 @@ Entscheidungen dabei:
   Kein BU-Schlüssel, keine Steuer – Sphären sind aus (E-15); der
   Steuerberater kontiert Steuer selbst. **Offen für Mirko:** ob
   Steuerschlüssel/Sphären später mitgeliefert werden sollen.
-- **Umbuchungen** zwischen eigenen Konten (E-38) ergeben **eine** Zeile
-  (die abgehende Hälfte, Gegenkonto = Sachkonto des empfangenden Kontos),
-  nie zwei.
+- **Umbuchungen** zwischen eigenen Konten (E-38): Ohne Geldtransitkonto
+  ergeben sie **eine** Zeile – die abgehende Hälfte, Gegenkonto = Sachkonto
+  des empfangenden Kontos, im Zeitraum, in dem das Geld abging; die
+  eingehende Hälfte fehlt immer (auch wenn sie im nächsten Zeitraum liegt),
+  so bucht kein Stapel sie doppelt. Mit dem optionalen **Geldtransitkonto**
+  wird jede Hälfte an ihrem Tag gegen dieses Konto gebucht – richtig auch
+  über Monats-/Jahresgrenzen. **Offen für Mirko:** welche Variante der
+  Steuerberater will.
 - **Unvollständiges wird nicht exportiert:** Fehlt einem Konto oder einer
   Kategorie das Sachkonto, oder ist eine Buchung nicht in EUR, zeigt die
   Seite die Lücken und bietet keinen Download an (auch serverseitig

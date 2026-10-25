@@ -49,6 +49,7 @@ final readonly class DatevEinstellungen
         public string $klaerungskonto = '',
         public array $kategorien = [],
         public array $konten = [],
+        public string $geldtransitkonto = '',
     ) {
     }
 
@@ -88,6 +89,7 @@ final readonly class DatevEinstellungen
             klaerungskonto: $konto($text('klaerungskonto')),
             kategorien: $zuordnung($daten['kategorien'] ?? null),
             konten: $zuordnung($daten['konten'] ?? null),
+            geldtransitkonto: $konto($text('geldtransitkonto')),
         );
     }
 
@@ -133,9 +135,14 @@ final readonly class DatevEinstellungen
         $zuordnung = static function (mixed $liste, array $erlaubt, string $name) use ($text, $konto): array {
             $ergebnis = [];
             foreach (is_array($liste) ? $liste : [] as $id => $wert) {
+                // An id deleted meanwhile (or made up) is dropped before its
+                // value is looked at - it has no field on the page to fix.
                 $id = (int) $id;
+                if (!in_array($id, $erlaubt, true)) {
+                    continue;
+                }
                 $wert = $konto($text($wert), $name . '[' . $id . ']');
-                if ($wert !== '' && in_array($id, $erlaubt, true)) {
+                if ($wert !== '') {
                     $ergebnis[$id] = $wert;
                 }
             }
@@ -152,6 +159,7 @@ final readonly class DatevEinstellungen
             klaerungskonto: $konto($text($felder['klaerungskonto'] ?? null), 'klaerungskonto'),
             kategorien: $zuordnung($felder['kategorie'] ?? null, $kategorieIds, 'kategorie'),
             konten: $zuordnung($felder['konto'] ?? null, $kontoIds, 'konto'),
+            geldtransitkonto: $konto($text($felder['geldtransitkonto'] ?? null), 'geldtransitkonto'),
         );
     }
 
@@ -166,6 +174,7 @@ final readonly class DatevEinstellungen
             // Objects, so ids stay keys after a round trip.
             'kategorien' => (object) $this->kategorien,
             'konten' => (object) $this->konten,
+            'geldtransitkonto' => $this->geldtransitkonto,
         ], JSON_THROW_ON_ERROR));
     }
 
@@ -194,6 +203,16 @@ final readonly class DatevEinstellungen
         }
 
         return $this->kategorien[$kategorieId] ?? null;
+    }
+
+    /**
+     * The money-in-transit account: with it, each half of a transfer
+     * between own accounts is booked on its own day against it; without
+     * it, a transfer is one row (see App\Service\Export\DatevExport).
+     */
+    public function geldtransit(): ?string
+    {
+        return $this->geldtransitkonto === '' ? null : $this->geldtransitkonto;
     }
 
     public function finanzkonto(int $kontoId): ?string

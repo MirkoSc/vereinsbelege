@@ -7,6 +7,7 @@ namespace App\Admin;
 use App\Domain\AuditAction;
 use App\Domain\BankAccountRecord;
 use App\Domain\Category;
+use App\Domain\Permission;
 use App\Http\Cookie;
 use App\Http\Request;
 use App\Http\Response;
@@ -33,8 +34,8 @@ use App\View\View;
  * box.
  *
  * Permission: `admin.settings`, like the other export settings. Plaintext
- * setting; the page needs no vault - with it, the accounts show their
- * names, without it their kind and number.
+ * setting; the page needs no vault - with it (and `bank.view`), the
+ * accounts show their names, without it their kind and number.
  */
 final readonly class DatevSettingsController
 {
@@ -83,6 +84,7 @@ final readonly class DatevSettingsController
             'kontenrahmen' => $neu->kontenrahmen,
             'kategorien' => count($neu->kategorien),
             'konten' => count($neu->konten),
+            'geldtransit' => $neu->geldtransitkonto !== '',
         ]);
         $this->session->flash('DATEV-Einstellungen gespeichert.');
 
@@ -96,7 +98,11 @@ final readonly class DatevSettingsController
     {
         $namen = [];
         try {
-            $tresor = $this->sessionVault->unlock(Cookie::vaultKeyFrom($request));
+            // Account names are vault data the booking pages guard with
+            // `bank.view` - a settings-only role sees kind and number.
+            $tresor = $this->view->berechtigungen()?->darf(Permission::BankView) === true
+                ? $this->sessionVault->unlock(Cookie::vaultKeyFrom($request))
+                : null;
             foreach ($tresor === null ? [] : $this->konten->lesbare($tresor)['konten'] as $konto) {
                 $namen[$konto->id] = $konto->data->name;
             }

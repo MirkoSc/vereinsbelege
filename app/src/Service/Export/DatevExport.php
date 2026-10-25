@@ -9,7 +9,6 @@ use App\Domain\BankTransactionSetBy;
 use App\Domain\DocumentStatus;
 use App\Domain\Zugriffsbereich;
 use App\Repository\AllocationRepository;
-use App\Repository\BankTransactionRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\SettingRepository;
@@ -34,9 +33,12 @@ use App\Service\Invoice\Pruefung;
  *   Gegenkonto = the ledger account of its category (a booking without
  *   category: the clearing account, if set). The amount keeps its sign:
  *   money in is Soll on "Konto", money out Haben.
- * - A transfer between own accounts is one row - its outgoing half, with
- *   the receiving account as Gegenkonto; the incoming half is left out, so
- *   the transfer is never booked twice.
+ * - A transfer between own accounts: with a money-in-transit account set,
+ *   each half is its own row against it, on its own day - right across a
+ *   period or year boundary. Without one, the transfer is one row, its
+ *   outgoing half with the receiving account as Gegenkonto, in the period
+ *   of that outgoing half; the incoming half is always left out, so no
+ *   export of any period books the transfer twice.
  * - Belegfeld 1 = the invoice number of the first allocated receipt that
  *   is checked or locked and lies within the reader's scope - never an AI
  *   suggestion nobody confirmed.
@@ -57,7 +59,6 @@ final readonly class DatevExport
 
     public function __construct(
         private Buchungen $buchungen,
-        private BankTransactionRepository $transaktionen,
         private TransferRepository $umbuchungen,
         private AllocationRepository $zuordnungen,
         private InvoiceRepository $belege,
@@ -96,9 +97,17 @@ final readonly class DatevExport
         $nullbetraege = 0;
         $gegenbuchungen = 0;
 
+        $umbuchungen = $this->umbuchungen->mitKontenFuer(array_map(
+            static fn(BankTransaction $b): int => $b->id,
+            array_values(array_filter($buchungen, static fn(BankTransaction $b): bool => $b->docSource === BankTransactionSetBy::Umbuchung)),
+        ));
+        $geldtransit = $einstellungen->geldtransit();
+
         foreach ($buchungen as $buchung) {
-            $umbuchung = $buchung->docSource === BankTransactionSetBy::Umbuchung ? $this->umbuchungen->forTransaction($buchung->id) : null;
-            if ($umbuchung !== null && $umbuchung->einnahmeId === $buchung->id) {
+            // Marked as a transfer, but no pair (cannot happen with the
+            // foreign keys): booked like any booking, by its category.
+            $umbuchung = $umbuchungen[$buchung->id] ?? null;
+            if ($umbuchung !== null && $geldtransit === null && $umbuchung['umbuchung']->einnahmeId === $buchung->id) {
                 $gegenbuchungen++;
                 continue;
             }
@@ -116,11 +125,14 @@ final readonly class DatevExport
                 $ohneFinanzkonto[$buchung->accountId] = ($ohneFinanzkonto[$buchung->accountId] ?? 0) + 1;
             }
 
-            if ($umbuchung !== null) {
-                $partner = $this->transaktionen->find($umbuchung->einnahmeId);
-                $gegenkonto = $partner === null ? null : $einstellungen->finanzkonto($partner->accountId);
-                if ($partner !== null && $gegenkonto === null) {
-                    $ohneFinanzkonto[$partner->accountId] = ($ohneFinanzkonto[$partner->accountId] ?? 0) + 1;
+            if ($umbuchung !== null && $geldtransit !== null) {
+                $gegenkonto = $geldtransit;
+                $text = self::TEXT_UMBUCHUNG;
+            } elseif ($umbuchung !== null) {
+                $empfaenger = $umbuchung['einnahmeKonto'];
+                $gegenkonto = $einstellungen->finanzkonto($empfaenger);
+                if ($gegenkonto === null) {
+                    $ohneFinanzkonto[$empfaenger] = ($ohneFinanzkonto[$empfaenger] ?? 0) + 1;
                 }
                 $text = self::TEXT_UMBUCHUNG;
             } else {
