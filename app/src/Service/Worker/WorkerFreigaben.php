@@ -83,7 +83,7 @@ final readonly class WorkerFreigaben
         }
 
         $document = $item->document;
-        $bis = $now->modify(sprintf('+%d seconds', self::GUELTIG_SEKUNDEN));
+        $bis = $now->setTimestamp($now->getTimestamp() + self::GUELTIG_SEKUNDEN);
         // Sealed first: if anything about it fails, no grant is written.
         $einreichung = EinreichungsDaten::entschluesseln($item, $vault);
         $kontext = $einreichung !== null && ($einreichung->freitext !== '' || $einreichung->kostenstelleHinweis !== null)
@@ -130,7 +130,7 @@ final readonly class WorkerFreigaben
             $documentId,
             $blobId,
             WorkerKrypto::grantVersiegeln($dek, $worker->publicKey),
-            $now->modify(sprintf('+%d seconds', self::GUELTIG_SEKUNDEN)),
+            $now->setTimestamp($now->getTimestamp() + self::GUELTIG_SEKUNDEN),
             $now,
         );
 
@@ -148,7 +148,7 @@ final readonly class WorkerFreigaben
             $worker->id,
             $documentId,
             WorkerKrypto::kontextVersiegeln($freitext, $kostenstelleHinweis, $worker->publicKey),
-            $now->modify(sprintf('+%d seconds', self::GUELTIG_SEKUNDEN)),
+            $now->setTimestamp($now->getTimestamp() + self::GUELTIG_SEKUNDEN),
             $now,
         );
 
@@ -182,7 +182,7 @@ final readonly class WorkerFreigaben
     /** The cron's part: deadline and orphans. */
     public function aufraeumen(\DateTimeImmutable $now): int
     {
-        return $this->grants->aufraeumen($now, $now->modify(sprintf('-%d seconds', self::VERWAIST_SEKUNDEN)))
+        return $this->grants->aufraeumen($now, $now->setTimestamp($now->getTimestamp() - self::VERWAIST_SEKUNDEN))
             + $this->artefakte->aufraeumen($now);
     }
 

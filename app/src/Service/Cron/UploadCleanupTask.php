@@ -34,6 +34,6 @@ final readonly class UploadCleanupTask implements CronTask
 
     public function run(\DateTimeImmutable $now): int
     {
-        return $this->uploads->cleanup($now->modify(sprintf('-%d hours', self::KEEP_HOURS)));
+        return $this->uploads->cleanup($now->setTimestamp($now->getTimestamp() - self::KEEP_HOURS * 3600));
     }
 }
