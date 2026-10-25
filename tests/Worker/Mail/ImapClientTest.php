@@ -41,6 +41,27 @@ final class ImapClientTest extends TestCase
         self::assertContains('MOVE', $client->faehigkeiten());
     }
 
+    public function testPlaintextInjectedAfterStarttlsIsRefused(): void
+    {
+        $paar = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($paar);
+        [$client, $server] = $paar;
+        // The server's OK to STARTTLS with a forged answer glued on.
+        fwrite($server, "A0002 OK Begin TLS\r\nA0003 OK [CAPABILITY IMAP4rev1]\r\n");
+        $strom = SocketStrom::ausSocket($client, false);
+        self::assertSame("A0002 OK Begin TLS\r\n", $strom->zeile());
+
+        try {
+            $strom->tlsStarten();
+            self::fail('expected a refusal');
+        } catch (ImapFehler $e) {
+            self::assertSame('imap_tls', $e->fehlercode);
+        } finally {
+            fclose($server);
+            $strom->schliessen();
+        }
+    }
+
     public function testWithoutStarttlsOnOfferNothingIsSent(): void
     {
         $strom = new SkriptStrom(self::GRUSS . "* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\nA0001 OK\r\n");

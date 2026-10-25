@@ -85,11 +85,16 @@ final class ImapClient implements Postfach
         return true;
     }
 
-    public function offene(bool $mitKeywords): array
+    public function offene(bool $mitKeywords, ?string $seit = null): array
     {
         $kriterien = $mitKeywords
             ? 'UNKEYWORD ' . self::KEYWORD_ERLEDIGT . ' UNKEYWORD ' . self::KEYWORD_ABGELEHNT . ' UNDELETED'
             : 'UNSEEN UNDELETED';
+        $tag = $seit === null ? false : \DateTimeImmutable::createFromFormat('!Y-m-d', $seit);
+        if ($tag !== false) {
+            // IMAP dates: day-Mon-year with English month names.
+            $kriterien .= ' SINCE ' . $tag->format('j-M-Y');
+        }
         [$antworten] = $this->befehlOk('UID SEARCH ' . $kriterien);
         $uids = [];
         foreach ($antworten as [$text]) {

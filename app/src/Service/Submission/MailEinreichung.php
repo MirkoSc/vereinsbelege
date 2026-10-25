@@ -66,7 +66,11 @@ final readonly class MailEinreichung
         return preg_match(self::SCHLUESSEL_MUSTER, $schluessel) === 1;
     }
 
-    /** The binary `form_hash` of the mail with this key. */
+    /**
+     * The binary `form_hash` of the mail with this key - also the binding of
+     * its uploaded attachments in `submission_upload` (WorkerMailController
+     * via SubmissionUploadStore); einreichen() takes only blobs bound here.
+     */
     public static function formHash(string $schluessel): string
     {
         return hash('sha256', 'mail|' . $schluessel, true);
@@ -76,16 +80,6 @@ final readonly class MailEinreichung
     public function vorhanden(string $schluessel): ?string
     {
         return $this->submissions->findReferenzByFormHash(self::formHash($schluessel));
-    }
-
-    /**
-     * Binds an uploaded attachment to its mail - einreichen() takes only
-     * blobs recorded here; the rest the cron removes after 24 h
-     * (SubmissionUploadCleanupTask), as for the public form.
-     */
-    public function hochgeladen(int $blobId, string $schluessel, \DateTimeImmutable $now): void
-    {
-        $this->submissionUploads->record($blobId, self::formHash($schluessel), $now);
     }
 
     /**

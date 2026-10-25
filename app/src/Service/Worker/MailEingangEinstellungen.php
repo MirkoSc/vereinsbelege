@@ -42,6 +42,10 @@ final readonly class MailEingangEinstellungen
         public string $zielOrdner = '',
         public MailAbsenderListe $absender = new MailAbsenderListe(),
         public int $abrufMinuten = self::ABRUF_MINUTEN_STANDARD,
+        // Day the intake was switched on (Y-m-d): older mail in the folder
+        // is never handed in - pointing it at a mailbox with years of mail
+        // must not flood the inbox.
+        public ?string $aktivSeit = null,
     ) {
     }
 
@@ -60,7 +64,7 @@ final readonly class MailEingangEinstellungen
      * @return array{0: ?self, 1: array<string, string>} the settings, or
      *         null and German messages per field
      */
-    public static function ausFormular(array $post, self $bisher): array
+    public static function ausFormular(array $post, self $bisher, ?\DateTimeImmutable $heute = null): array
     {
         $fehler = [];
         $text = static fn(string $feld): string => is_string($post[$feld] ?? null) ? trim($post[$feld]) : '';
@@ -76,6 +80,15 @@ final readonly class MailEingangEinstellungen
         }
         $portText = $text('port');
         $port = $portText === '' ? ($sicherheit ?? ImapSicherheit::Ssl)->standardPort() : filter_var($portText, FILTER_VALIDATE_INT);
+        // The other encryption's usual port left in the field (it is
+        // pre-filled): that combination never works, take the right one.
+        if ($sicherheit !== null && is_int($port)) {
+            foreach (ImapSicherheit::cases() as $andere) {
+                if ($andere !== $sicherheit && $port === $andere->standardPort()) {
+                    $port = $sicherheit->standardPort();
+                }
+            }
+        }
         if (!is_int($port) || $port < 1 || $port > 65535) {
             $fehler['port'] = 'Der Port muss zwischen 1 und 65535 liegen.';
         }
@@ -118,7 +131,12 @@ final readonly class MailEingangEinstellungen
         }
         \assert($sicherheit !== null && is_int($port) && is_int($minuten) && $absender !== null);
 
-        return [new self($aktiv, $host, $port, $sicherheit, $benutzer, $passwort, $ordner, $zielOrdner, $absender, $minuten), []];
+        // Switching on (again) starts a new period; staying on keeps it.
+        $seit = $aktiv
+            ? ($bisher->aktiv && $bisher->aktivSeit !== null ? $bisher->aktivSeit : ($heute ?? new \DateTimeImmutable())->format('Y-m-d'))
+            : null;
+
+        return [new self($aktiv, $host, $port, $sicherheit, $benutzer, $passwort, $ordner, $zielOrdner, $absender, $minuten, $seit), []];
     }
 
     /**
@@ -140,10 +158,19 @@ final readonly class MailEingangEinstellungen
             'ziel_ordner' => $this->zielOrdner,
             'absender' => $this->absender->eintraege,
             'abruf_minuten' => $this->abrufMinuten,
+            'seit' => $this->aktivSeit,
             'max_seiten' => $maxSeiten,
             'max_datei_bytes' => $maxDateiBytes,
             'max_einreichung_bytes' => $maxEinreichungBytes,
         ];
+    }
+
+    /** A day as the intake stores it (Y-m-d), or null. */
+    public static function tagOderNull(mixed $wert): ?string
+    {
+        return is_string($wert) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $wert) === 1 && \DateTimeImmutable::createFromFormat('!Y-m-d', $wert) !== false
+            ? $wert
+            : null;
     }
 
     public static function hostGueltig(string $host): bool

@@ -15,11 +15,12 @@ interface Postfach
     public function auswaehlen(string $ordner): bool;
 
     /**
-     * UIDs of the mails not handled yet, ascending.
+     * UIDs of the mails not handled yet, ascending - with $seit (Y-m-d)
+     * only those that arrived on or after that day.
      *
      * @return list<int>
      */
-    public function offene(bool $mitKeywords): array;
+    public function offene(bool $mitKeywords, ?string $seit = null): array;
 
     /**
      * @param list<int> $uids

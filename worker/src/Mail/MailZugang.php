@@ -27,6 +27,8 @@ final readonly class MailZugang
         public int $maxSeiten,
         public int $maxDateiBytes,
         public int $maxEinreichungBytes,
+        /** Only mail that arrived on or after this day (Y-m-d), null = all. */
+        public ?string $seit = null,
     ) {
     }
 
@@ -59,6 +61,7 @@ final readonly class MailZugang
             maxSeiten: $zahl('max_seiten'),
             maxDateiBytes: $zahl('max_datei_bytes'),
             maxEinreichungBytes: $zahl('max_einreichung_bytes'),
+            seit: MailEingangEinstellungen::tagOderNull($daten['seit'] ?? null),
         );
     }
 

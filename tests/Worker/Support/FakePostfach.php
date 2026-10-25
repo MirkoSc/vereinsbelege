@@ -35,6 +35,9 @@ final class FakePostfach implements Postfach
 
     public ?ImapFehler $fehler = null;
 
+    /** @var list<int> UIDs whose FETCH the server cannot answer */
+    public array $kaputt = [];
+
     public function hinzufuegen(string $roh): int
     {
         $uid = $this->mails === [] ? 1 : max(array_keys($this->mails)) + 1;
@@ -54,8 +57,12 @@ final class FakePostfach implements Postfach
         return $this->keywords;
     }
 
-    public function offene(bool $mitKeywords): array
+    /** @var list<?string> the $seit of every search */
+    public array $seit = [];
+
+    public function offene(bool $mitKeywords, ?string $seit = null): array
     {
+        $this->seit[] = $seit;
         $offen = [];
         foreach ($this->mails as $uid => $roh) {
             if (isset($this->verschoben[$uid])) {
@@ -85,6 +92,10 @@ final class FakePostfach implements Postfach
 
     public function holen(int $uid): string
     {
+        if (in_array($uid, $this->kaputt, true)) {
+            throw new ImapFehler('imap_protokoll');
+        }
+
         return $this->mails[$uid];
     }
 

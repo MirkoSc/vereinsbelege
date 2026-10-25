@@ -32,6 +32,16 @@ final class SocketStrom implements ImapStrom
         $this->tls = $tls;
     }
 
+    /**
+     * An already connected socket (tests, and oeffnen() itself).
+     *
+     * @param resource $socket
+     */
+    public static function ausSocket($socket, bool $tls): self
+    {
+        return new self($socket, $tls);
+    }
+
     /** @throws ImapFehler */
     public static function oeffnen(string $host, int $port, ImapSicherheit $sicherheit, int $zeitlimit = 60): self
     {
@@ -117,6 +127,13 @@ final class SocketStrom implements ImapStrom
 
     public function tlsStarten(): void
     {
+        // Bytes already buffered after the server's STARTTLS answer came in
+        // the clear - an attacker on the line could have appended forged
+        // answers that would then pass as protected (STARTTLS response
+        // injection, CVE-2011-0411 style). Refuse instead of reading on.
+        if (stream_get_meta_data($this->socket)['unread_bytes'] > 0) {
+            throw new ImapFehler('imap_tls', 'Unerwartete Daten vor dem TLS-Start.');
+        }
         $ok = @stream_socket_enable_crypto($this->socket, true, self::TLS_METHODEN);
         if ($ok !== true) {
             throw new ImapFehler('imap_tls', 'TLS-Verbindung zum IMAP-Server fehlgeschlagen.');

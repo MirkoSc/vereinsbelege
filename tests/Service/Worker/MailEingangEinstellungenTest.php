@@ -44,6 +44,28 @@ final class MailEingangEinstellungenTest extends TestCase
         self::assertSame(['kasse@verein.de', '@stadtwerke.de'], $e->absender->eintraege);
     }
 
+    public function testThePortOfTheOtherEncryptionIsReplaced(): void
+    {
+        [$e] = MailEingangEinstellungen::ausFormular(self::formular(['port' => '993']), new MailEingangEinstellungen());
+        self::assertSame(143, $e?->port, 'STARTTLS on the IMAPS port never works');
+
+        [$e] = MailEingangEinstellungen::ausFormular(self::formular(['port' => '1143']), new MailEingangEinstellungen());
+        self::assertSame(1143, $e?->port, 'any other port is kept');
+    }
+
+    public function testTheStartDayIsKeptWhileTheIntakeStaysOn(): void
+    {
+        $tag = new \DateTimeImmutable('2026-10-01');
+        [$an] = MailEingangEinstellungen::ausFormular(self::formular(), new MailEingangEinstellungen(), $tag);
+        self::assertSame('2026-10-01', $an?->aktivSeit);
+
+        [$weiter] = MailEingangEinstellungen::ausFormular(self::formular(), $an, new \DateTimeImmutable('2026-10-20'));
+        self::assertSame('2026-10-01', $weiter?->aktivSeit);
+
+        [$aus] = MailEingangEinstellungen::ausFormular(self::formular(['aktiv' => '']), $weiter);
+        self::assertNull($aus?->aktivSeit);
+    }
+
     public function testThereIsNoPlaintextOption(): void
     {
         [$e, $fehler] = MailEingangEinstellungen::ausFormular(self::formular(['sicherheit' => 'keine']), new MailEingangEinstellungen());

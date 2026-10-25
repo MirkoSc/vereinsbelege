@@ -13,10 +13,10 @@ use App\Http\Response;
 use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\MailEinreichung;
 use App\Service\Submission\MailEinreichungErgebnis;
+use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadException;
 use App\Service\Upload\UploadService;
-use App\Service\Upload\UploadStore;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Worker\WorkerProtokoll;
 use App\Service\Worker\WorkerRouting;
@@ -27,7 +27,7 @@ use App\Support\FileLogger;
  * docs/spec/07-worker.md section 9). The worker read a mail from the
  * club's IMAP mailbox and hands its attachments in here, the way a member
  * hands in the public form: the web host encrypts them under fresh data
- * keys sealed to VK_pub on arrival (App\Service\Upload\UploadStore, the
+ * keys sealed to VK_pub on arrival (App\Service\Submission\SubmissionUploadStore, the
  * same as `/einreichen/upload`), then makes the receipt
  * (App\Service\Submission\MailEinreichung). The worker cannot read any of
  * it afterwards.
@@ -65,7 +65,7 @@ final readonly class WorkerMailController
         private MailEingangSpeicher $speicher,
         private WorkerRouting $routing,
         private UploadService $uploads,
-        private UploadStore $store,
+        private SubmissionUploadStore $store,
         private EinreichungsEinstellungen $einstellungen,
         private ?\Closure $linkBasis = null,
         private ?FileLogger $logger = null,
@@ -146,9 +146,10 @@ final readonly class WorkerMailController
 
                     return self::fehler(415, 'typ_nicht_erlaubt', 'Dieser Dateityp wird nicht angenommen.');
                 }
-                $blob = $this->store->store($this->uploads->chunks($id), new BlobMeta($typ, self::dateiname($daten['name'] ?? '')));
+                // Stored and bound to its mail in one step (submission_upload),
+                // so the cron finds it again if the mail never becomes a receipt.
+                $blob = $this->store->store($this->uploads->chunks($id), new BlobMeta($typ, self::dateiname($daten['name'] ?? '')), MailEinreichung::formHash($schluessel), new \DateTimeImmutable());
                 $this->uploads->discard($id);
-                $this->einreichung->hochgeladen($blob->id, $schluessel, new \DateTimeImmutable());
 
                 return Response::json(['blob_id' => $blob->id, 'groesse' => $blob->size, 'typ' => $typ], 201);
             });

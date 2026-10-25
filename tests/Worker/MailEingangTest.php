@@ -162,8 +162,46 @@ final class MailEingangTest extends WorkerTestCase
         $this->schleife->runde();
 
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+        $this->schleife->runde();
+        self::assertSame(1, $this->mailEingang->status()['eingereicht'] ?? null, 'counted once');
         self::assertContains('$Vereinsbelege', $this->postfach->flags[$erste], $this->log);
         self::assertContains('$Vereinsbelege', $this->postfach->flags[$zweite]);
+    }
+
+    public function testAPhotoSentInlineByAPhoneIsAReceiptALogoIsNot(): void
+    {
+        // Apple Mail: the photo inline with Content-ID, a megabyte-size JPEG.
+        $foto = "\xFF\xD8\xFF\xE0" . random_bytes(60 * 1024);
+        $roh = MimeNachrichtTest::mail(
+            "From: kasse@verein.de\nSubject: Quittung\nMessage-ID: <foto@iphone>\nContent-Type: multipart/mixed; boundary=b",
+            "--b\r\nContent-Type: image/jpeg; name=IMG_1234.jpeg\r\nContent-Disposition: inline; filename=IMG_1234.jpeg\r\nContent-Id: <x1>\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            . chunk_split(base64_encode($foto))
+            . "--b\r\nContent-Type: image/png\r\nContent-Disposition: inline; filename=logo.png\r\nContent-Id: <x2>\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            . chunk_split(base64_encode("\x89PNG\r\n\x1A\n" . random_bytes(20 * 1024))) . "--b--\r\n",
+        );
+        $uid = $this->postfach->hinzufuegen($roh);
+
+        $this->schleife->runde();
+
+        self::assertContains('$Vereinsbelege', $this->postfach->flags[$uid]);
+        $ids = json_decode((string) $this->pdo()->query('SELECT original_blob_ids FROM document')->fetchColumn(), true);
+        self::assertCount(1, $ids, 'the photo, not the logo');
+    }
+
+    public function testAMailThatAlwaysFailsDoesNotHoldUpTheOthers(): void
+    {
+        $kaputt = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->kaputt = [$kaputt];
+
+        for ($runde = 1; $runde <= 3; ++$runde) {
+            $gut = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-' . ($runde + 1) . '@', $this->rechnungsMail()));
+            $this->schleife->runde();
+            self::assertContains('$Vereinsbelege', $this->postfach->flags[$gut], 'later mail goes on in run ' . $runde);
+            $this->spaeter += 5 * 60;
+        }
+
+        self::assertSame(['$VereinsbelegeAbgelehnt'], $this->postfach->flags[$kaputt], 'set aside after three attempts');
+        self::assertStringContainsString('"grund":"unlesbar"', $this->log);
     }
 
     public function testRefusedMailsAreMarkedAndStay(): void
@@ -212,14 +250,17 @@ final class MailEingangTest extends WorkerTestCase
         }
 
         $this->schleife->runde();
-        self::assertCount(20, array_filter($this->postfach->flags));
+        self::assertCount(20, array_filter($this->postfach->flags), 'at most twenty per run');
         $this->schleife->runde();
-        self::assertCount(1, $this->verbindungen, 'not before the interval is over');
+        self::assertCount(2, $this->verbindungen, 'the rest follows in the next round');
+        self::assertCount(25, array_filter($this->postfach->flags));
 
+        $this->schleife->runde();
+        self::assertCount(2, $this->verbindungen, 'then not before the interval is over');
         $this->spaeter += 5 * 60;
         $this->schleife->runde();
-        self::assertCount(2, $this->verbindungen);
-        self::assertCount(25, array_filter($this->postfach->flags));
+        self::assertCount(3, $this->verbindungen);
+        self::assertSame(date('Y-m-d'), $this->postfach->seit[0], 'only mail since the intake was switched on');
     }
 
     public function testAnImapErrorReachesTheAdminPage(): void

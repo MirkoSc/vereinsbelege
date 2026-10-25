@@ -1559,3 +1559,6 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
   `MOVE` bleibt die Mail markiert liegen (kein Kopieren und Löschen).
   Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
   ist empfohlen.
+- **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
+  Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
+  nutzt den Archiv-Import oder lädt sie einzeln hoch.

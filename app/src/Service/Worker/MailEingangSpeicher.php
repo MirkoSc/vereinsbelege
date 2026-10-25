@@ -13,7 +13,7 @@ use App\Service\Crypto\ServerCrypto;
  * same way App\Service\Mail\MailSettingsRepository keeps the SMTP password:
  *
  * - `mail_eingang` - JSON of the plain operating data (server, port,
- *   encryption, user, folders, interval, switch).
+ *   encryption, user, folders, interval, switch and since when it is on).
  * - `mail_eingang_geheim_enc` - base64 of ServerCrypto::encrypt() over
  *   `{passwort, absender[]}`: the password and the sender allowlist
  *   (addresses of members and suppliers) never lie in the database in
@@ -69,6 +69,7 @@ final readonly class MailEingangSpeicher
             zielOrdner: $text('ziel_ordner'),
             absender: MailAbsenderListe::ausListe(is_array($geheim) && is_array($geheim['absender'] ?? null) ? $geheim['absender'] : []),
             abrufMinuten: max(MailEingangEinstellungen::ABRUF_MINUTEN_MIN, min(MailEingangEinstellungen::ABRUF_MINUTEN_MAX, $minuten)),
+            aktivSeit: MailEingangEinstellungen::tagOderNull($daten['aktiv_seit'] ?? null),
         );
     }
 
@@ -83,6 +84,7 @@ final readonly class MailEingangSpeicher
             'ordner' => $e->ordner,
             'ziel_ordner' => $e->zielOrdner,
             'abruf_minuten' => $e->abrufMinuten,
+            'aktiv_seit' => $e->aktivSeit,
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         $geheim = json_encode(['passwort' => $e->passwort, 'absender' => $e->absender->eintraege], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $this->settings->set(self::SETTING_GEHEIM, base64_encode($this->crypto->encrypt($geheim)));

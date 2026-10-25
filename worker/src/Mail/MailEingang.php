@@ -47,12 +47,29 @@ final class MailEingang
     /** Smaller images are signature logos and icons, not receipts. */
     public const int MIN_BILD_BYTES = 8 * 1024;
 
+    /**
+     * Inline images (Content-ID, not marked as attachment) count only from
+     * this size: Outlook logos are inline and tens of KiB, while Apple Mail
+     * sends attached photos inline as well - and those are megabytes.
+     */
+    public const int MIN_INLINE_BILD_BYTES = 50 * 1024;
+
+    /**
+     * One run stops handing in new mail after this long - the loop's
+     * heartbeat and jobs must not wait (online = heartbeat < 5 min); the
+     * rest follows in the next round.
+     */
+    public const int MAX_LAUF_SEKUNDEN = 120;
+
     /** A mail that breaks the worker this often is set aside as "abgelehnt". */
     private const int MAX_FEHLVERSUCHE = 3;
 
     private const array TYPEN = [MagicBytes::PDF, MagicBytes::JPEG, MagicBytes::PNG, MagicBytes::XML];
 
     private ?int $letzterAbruf = null;
+
+    /** The last run stopped early: the next round goes on at once. */
+    private bool $mehr = false;
 
     private ?MailZugang $zugang = null;
 
@@ -86,6 +103,7 @@ final class MailEingang
     public function faellig(MailZugang $zugang): bool
     {
         return $this->zugang !== $zugang
+            || $this->mehr
             || $this->letzterAbruf === null
             || ($this->uhr)() - $this->letzterAbruf >= $zugang->abrufMinuten * 60;
     }
@@ -115,14 +133,23 @@ final class MailEingang
         try {
             $postfach = ($this->verbinden)($zugang);
             $keywords = $postfach->auswaehlen($zugang->ordner);
-            $uids = $postfach->offene($keywords);
-            $neu = count($uids);
-            $uids = array_slice($uids, 0, min(self::MAX_JE_ABRUF, $this->restHeute()));
+            $alle = $postfach->offene($keywords, $zugang->seit);
+            $neu = count($alle);
+            $uids = array_slice($alle, 0, min(self::MAX_JE_ABRUF, $this->restHeute()));
+            $this->mehr = false;
             $groessen = $postfach->groessen($uids);
-            foreach ($uids as $uid) {
+            foreach ($uids as $i => $uid) {
                 $this->abbruch->pruefen();
-                $this->eineMail($postfach, $zugang, $keywords, $uid, $groessen[$uid] ?? 0);
+                if (microtime(true) - $start > self::MAX_LAUF_SEKUNDEN) {
+                    $this->mehr = true;
+                    break;
+                }
+                // A mail whose size the server did not report is not fetched blind.
+                $this->eineMail($postfach, $zugang, $keywords, $uid, $groessen[$uid] ?? PHP_INT_MAX);
                 ++$this->heute;
+                if ($i === count($uids) - 1 && count($alle) > count($uids) && $this->restHeute() > 0) {
+                    $this->mehr = true;
+                }
             }
         } catch (ImapFehler $e) {
             $fehler = $e->fehlercode;
@@ -151,11 +178,13 @@ final class MailEingang
     {
         $this->zugang = null;
         $this->letzterAbruf = null;
+        $this->mehr = false;
         $this->fehlversuche = [];
     }
 
     /**
-     * @throws ImapFehler|ApiFehler|HttpFehler|Abgebrochen
+     * @throws ImapFehler|ApiFehler|HttpFehler|Abgebrochen when the mailbox
+     *         or the web host as a whole fails - the run ends
      */
     private function eineMail(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, int $groesse): void
     {
@@ -164,30 +193,34 @@ final class MailEingang
 
             return;
         }
-        $kennung = $zugang->ordner . '|' . $uid;
         try {
             $roh = $postfach->holen($uid);
             $nachricht = MimeNachricht::lesen($roh);
             $schluessel = hash('sha256', $nachricht->messageId !== null ? 'mid|' . $nachricht->messageId : 'roh|' . $roh);
             unset($roh);
-            $grund = $this->pruefen($nachricht, $zugang);
-            if ($grund !== null) {
-                $this->ablehnen($postfach, $keywords, $uid, $grund);
-
-                return;
+            [$anhaenge, $grund] = $this->pruefen($nachricht, $zugang);
+            if ($grund === null) {
+                $grund = $this->einreichen($nachricht, $anhaenge, $schluessel);
             }
-            $grund = $this->einreichen($nachricht, $schluessel);
-        } catch (ImapFehler | ApiFehler | HttpFehler | Abgebrochen $e) {
+        } catch (MailFehlschlag $e) {
+            // This mail fails where others would not (a FETCH the server
+            // cannot answer, the web host refusing one attachment): try it
+            // again next time, set it aside after a few attempts - one bad
+            // mail must not hold up every later one.
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->getMessage());
+
+            return;
+        } catch (ImapFehler $e) {
+            if ($e->fehlercode !== 'imap_protokoll') {
+                throw $e;
+            }
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, $e->fehlercode);
+
+            return;
+        } catch (ApiFehler | HttpFehler | Abgebrochen $e) {
             throw $e;
         } catch (\Throwable $e) {
-            // Something in this mail breaks us: try again next time, set it
-            // aside after a few attempts. The class name only.
-            $this->fehlversuche[$kennung] = ($this->fehlversuche[$kennung] ?? 0) + 1;
-            $this->log->ereignis('mail_fehler', ['uid' => $uid, 'fehler' => (new \ReflectionClass($e))->getShortName()]);
-            if ($this->fehlversuche[$kennung] >= self::MAX_FEHLVERSUCHE) {
-                unset($this->fehlversuche[$kennung]);
-                $this->ablehnen($postfach, $keywords, $uid, 'unlesbar');
-            }
+            $this->fehlschlag($postfach, $zugang, $keywords, $uid, (new \ReflectionClass($e))->getShortName());
 
             return;
         }
@@ -198,30 +231,44 @@ final class MailEingang
         }
 
         $postfach->markieren($uid, $keywords ? [ImapClient::KEYWORD_ERLEDIGT, '\\Seen'] : ['\\Seen']);
-        ++$this->eingereicht;
+        unset($this->fehlversuche[$zugang->ordner . '|' . $uid]);
         if ($zugang->zielOrdner !== '' && !$postfach->verschieben($uid, $zugang->zielOrdner)) {
             $this->log->ereignis('mail_nicht_verschoben', ['uid' => $uid]);
         }
     }
 
-    /** Why the mail is not handed in, or null. */
-    private function pruefen(MimeNachricht $nachricht, MailZugang $zugang): ?string
+    private function fehlschlag(Postfach $postfach, MailZugang $zugang, bool $keywords, int $uid, string $fehler): void
+    {
+        $kennung = $zugang->ordner . '|' . $uid;
+        $this->fehlversuche[$kennung] = ($this->fehlversuche[$kennung] ?? 0) + 1;
+        $this->log->ereignis('mail_fehler', ['uid' => $uid, 'fehler' => $fehler, 'versuch' => $this->fehlversuche[$kennung]]);
+        if ($this->fehlversuche[$kennung] >= self::MAX_FEHLVERSUCHE) {
+            unset($this->fehlversuche[$kennung]);
+            $this->ablehnen($postfach, $keywords, $uid, 'unlesbar');
+        }
+    }
+
+    /**
+     * The attachments to hand in, or why the mail is not handed in.
+     *
+     * @return array{0: list<array{0: MimeAnhang, 1: string}>, 1: ?string}
+     */
+    private function pruefen(MimeNachricht $nachricht, MailZugang $zugang): array
     {
         if ($nachricht->spam) {
-            return 'spam';
+            return [[], 'spam'];
         }
         if (!$zugang->absender->erlaubt(filter_var($nachricht->absenderAdresse, FILTER_VALIDATE_EMAIL) === false ? null : $nachricht->absenderAdresse)) {
-            return 'absender_nicht_erlaubt';
+            return [[], 'absender_nicht_erlaubt'];
         }
-        [$anhaenge, $grund] = self::auswahl($nachricht, $zugang);
 
-        return $anhaenge === [] ? $grund : null;
+        return self::auswahl($nachricht, $zugang);
     }
 
     /**
      * The attachments that become pages: PDF, JPEG, PNG or an e-invoice
-     * XML by their magic bytes; no inline images, no tiny images, no
-     * duplicates.
+     * XML by their magic bytes; no small images (logos, icons - inline
+     * ones count only from MIN_INLINE_BILD_BYTES), no duplicates.
      *
      * @return array{0: list<array{0: MimeAnhang, 1: string}>, 1: ?string} attachments with their type, or [] and the reason
      */
@@ -236,7 +283,7 @@ final class MailEingang
                 continue;
             }
             $bild = $typ === MagicBytes::JPEG || $typ === MagicBytes::PNG;
-            if ($bild && ($anhang->inline || strlen($anhang->inhalt) < self::MIN_BILD_BYTES)) {
+            if ($bild && strlen($anhang->inhalt) < ($anhang->inline ? self::MIN_INLINE_BILD_BYTES : self::MIN_BILD_BYTES)) {
                 continue;
             }
             $hash = hash('sha256', $anhang->inhalt);
@@ -267,15 +314,19 @@ final class MailEingang
      * Hands the mail in. Null when it is in the inbox (now or before),
      * else the web host's reason for refusing it.
      *
-     * @throws ApiFehler|HttpFehler|Abgebrochen
+     * @param list<array{0: MimeAnhang, 1: string}> $anhaenge
+     *
+     * @throws ApiFehler|HttpFehler|Abgebrochen when the web host as a whole fails
+     * @throws MailFehlschlag when it fails for this mail only
      */
-    private function einreichen(MimeNachricht $nachricht, string $schluessel): ?string
+    private function einreichen(MimeNachricht $nachricht, array $anhaenge, string $schluessel): ?string
     {
-        \assert($this->zugang !== null);
         if (($this->api->json('POST', '/mail/pruefen', ['schluessel' => $schluessel])['vorhanden'] ?? false) === true) {
+            // Handed in before, only the mark got lost - not counted again.
             return null;
         }
-        [$anhaenge] = self::auswahl($nachricht, $this->zugang);
+        // The web host answered just now: what fails from here on is about
+        // this mail (an attachment it cannot store), unless the network goes.
         $blobs = [];
         try {
             foreach ($anhaenge as [$anhang]) {
@@ -288,13 +339,19 @@ final class MailEingang
                 'betreff' => $nachricht->betreff,
             ]);
         } catch (ApiFehler $e) {
-            // The mail itself is the problem (type, size, sender) - set it
-            // aside. Anything else (switched off, 5xx) ends the run.
+            // The mail itself is refused (type, size, sender): set it aside.
             if (in_array($e->status, [413, 415, 422], true)) {
                 return $e->fehler;
             }
+            // Switched off or not authenticated: the run ends, the mail waits.
+            if (in_array($e->status, [401, 403], true) || $e->fehler === 'mail_eingang_aus') {
+                throw $e;
+            }
 
-            throw $e;
+            throw new MailFehlschlag($e->fehler, $e);
+        }
+        if (($antwort['status'] ?? null) === 'eingereicht') {
+            ++$this->eingereicht;
         }
         $this->log->ereignis('mail_eingereicht', ['status' => is_string($antwort['status'] ?? null) ? $antwort['status'] : null]);
 

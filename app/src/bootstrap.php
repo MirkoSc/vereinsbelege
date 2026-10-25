@@ -1875,10 +1875,13 @@ $workerMail = static function () use ($connections, $workerRoutingFor, $einreich
         new MailEingangSpeicher(new SettingRepository($pdo), $serverCrypto),
         $workerRoutingFor($pdo),
         new UploadService($paths->uploadDir()),
-        new UploadStore(
-            new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
-            new VaultRepository($pdo),
-            new SettingRepository($pdo),
+        new SubmissionUploadStore(
+            new UploadStore(
+                new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir())),
+                new VaultRepository($pdo),
+                new SettingRepository($pdo),
+            ),
+            new SubmissionUploadRepository($pdo),
         ),
         $einstellungen,
         static fn(Request $r): ?string => PublicUrl::resolve($mailSettings->get(), $r->header('host') ?? '', Request::httpsFromGlobals()),

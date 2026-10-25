@@ -452,7 +452,8 @@ Datenquelle und -senke; ohne Worker gibt es keinen Mail-Eingang.
 1. Admin (`admin.settings`) richtet unter `/admin/worker` → „E-Mail-Eingang“
    Server, Port, Verschlüsselung (**nur** SSL/TLS oder STARTTLS), Benutzer,
    Passwort, Ordner, optional Zielordner, optional Absender-Allowlist und das
-   Abrufintervall ein. Passwort und Allowlist liegen nur unter dem
+   Abrufintervall ein. Eingereicht wird nur, was seit dem Einschalten
+   ankam. Passwort und Allowlist liegen nur unter dem
    Server-Schlüssel, das Passwort wird nie wieder angezeigt; Audit
    `einstellung.mail_eingang` nur mit Feldnamen.
 2. Der Zugang geht nur **an `W_pub` versiegelt** an den Worker (Feld
@@ -514,15 +515,22 @@ Nicht übernommene Uploads räumt `SubmissionUploadCleanupTask` nach 24 h ab.
 `ImapClient` über `SocketStrom` (keine Bibliothek, keine Prozesse; E-54),
 `MimeNachricht` (RFC 2045–2047/2231, `message/rfc822` wird geöffnet),
 `MailEingang` (Abruf je `abruf_minuten` aus der Schleife, Fehler bleiben
-dort). Auswahl der Anhänge: Typ nach Magic Bytes, Bilder nur ab 8 KiB und
-nicht inline (Signatur-Logos), Duplikate innerhalb der Mail einmal. Mails
+dort). Nur Mails, die seit dem Einschalten des Eingangs ankamen
+(`aktiv_seit` → IMAP `SINCE`; Altbestand eines Postfachs wird nie
+eingereicht). Auswahl der Anhänge: Typ nach Magic Bytes, Bilder ab 8 KiB,
+Inline-Bilder (Content-ID) erst ab 50 KiB (Signatur-Logos nein, von Apple
+Mail inline gesendete Fotos ja), Duplikate innerhalb der Mail einmal. Ein
+Abruf reicht höchstens 120 s lang ein (Heartbeat und Jobs warten nicht); der
+Rest folgt in der nächsten Runde. TLS nach STARTTLS startet nur ohne
+gepufferte Klartext-Bytes (STARTTLS-Antwort-Injektion). Mails
 größer als `max_einreichung_bytes · 4/3 + 1 MiB` werden nicht geladen.
 Markierung: Keywords `$Vereinsbelege` (+ `\Seen`) bzw.
 `$VereinsbelegeAbgelehnt`; erlaubt der Server keine eigenen Keywords,
 `\Seen` bzw. `\Seen \Flagged` und nur ungelesene Mails gelten als neu.
 Verschieben nur mit `MOVE` (RFC 6851), sonst bleibt die Mail markiert
 liegen. Eine Mail, an der der Worker dreimal scheitert, wird als abgelehnt
-markiert. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
+markiert; eine Mail, die nur für sich scheitert (FETCH nicht beantwortbar,
+Webhoster lehnt einen Anhang mit 5xx ab), hält spätere nicht auf. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
 
 ## Pflicht-Tests
 
@@ -549,7 +557,7 @@ leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
 Prozess-Aufrufe nur in `worker/src/Prozess.php`; E-Mail-Eingang (#87):
 STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
 (selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
-Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
+STARTTLS-Injektion abgelehnt, Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
 Ablehnungen markiert statt gelöscht, Grenzen, keine Mailinhalte im Log;
 Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
