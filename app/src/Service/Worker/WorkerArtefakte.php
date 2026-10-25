@@ -342,7 +342,7 @@ final readonly class WorkerArtefakte
     /** The cron: announcements never committed, and stray ciphertext directories. */
     public function aufraeumen(\DateTimeImmutable $now): int
     {
-        $vor = $now->modify(sprintf('-%d seconds', self::OFFEN_HOECHSTENS_SEKUNDEN));
+        $vor = $now->setTimestamp($now->getTimestamp() - self::OFFEN_HOECHSTENS_SEKUNDEN);
         $anzahl = 0;
         foreach ($this->uploads->aelterAls($vor, 200) as $upload) {
             $this->verwerfen($upload);

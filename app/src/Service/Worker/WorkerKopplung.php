@@ -70,7 +70,7 @@ final readonly class WorkerKopplung
         }
         $this->workers->neuerCode(
             $this->codeHash($code),
-            $now->modify(sprintf('+%d minutes', self::CODE_GUELTIG_MINUTEN)),
+            $now->setTimestamp($now->getTimestamp() + self::CODE_GUELTIG_MINUTEN * 60),
             $userId,
             $now,
         );
