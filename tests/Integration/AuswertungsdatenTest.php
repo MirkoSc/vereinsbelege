@@ -126,7 +126,11 @@ final class AuswertungsdatenTest extends DatabaseTestCase
 
         $jugend = new Zugriffsbereich([$this->jugend]);
         $nurJugend = $daten->grundlage($this->tresor, Grundlage::Buchungen, Zeitraum::jahr(2026), $jugend);
-        self::assertSame([$sammel], array_values(array_unique(array_map(static fn(Posten $p) => $p->buchungId, $nurJugend->posten))));
+        // Only the one part in scope leaves the loader - not the rest of the booking.
+        self::assertSame(
+            [[$sammel, $jugendBeleg, $this->jugend, 6000]],
+            array_map(static fn(Posten $p) => [$p->buchungId, $p->belegId, $p->kostenstelleId, $p->betrag], $nurJugend->posten),
+        );
         self::assertSame(6000, $daten->rechner()->summen($nurJugend, $jugend)->ausgaben);
         self::assertSame([$this->jugend], array_map(static fn($g) => $g->schluessel, $daten->rechner()->gruppiert($nurJugend, $jugend, Dimension::Kostenstelle)));
         self::assertSame([], $daten->grundlage($this->tresor, Grundlage::Buchungen, Zeitraum::jahr(2026), new Zugriffsbereich([$this->herren]))->posten);
@@ -137,6 +141,16 @@ final class AuswertungsdatenTest extends DatabaseTestCase
         $stand = $daten->rechner()->kontostaende($bewegungen['konten'], $bewegungen['bewegungen'], new \DateTimeImmutable('2026-12-31'), Zugriffsbereich::unbeschraenkt());
         self::assertSame([$giro => 100000 - 10000 + 25000 - 5000, $kasse => 5000], $stand);
         self::assertSame(['konten' => [], 'bewegungen' => [], 'unlesbar' => 0], $daten->kontobewegungen($this->tresor, Zeitraum::jahr(2026), $jugend));
+
+        // Period scope: bookings before the released period only as one carry-over per account.
+        $extern = new Zugriffsbereich(null, new \DateTimeImmutable('2026-01-15'), new \DateTimeImmutable('2026-12-31'));
+        $begrenzt = $daten->kontobewegungen($this->tresor, Zeitraum::jahr(2026), $extern);
+        self::assertSame(
+            [[$giro, '2026-01-14', -10000], [$giro, '2026-01-20', 25000], [$giro, '2026-02-01', -5000], [$kasse, '2026-02-01', 5000]],
+            self::bewegungen($begrenzt['bewegungen']),
+        );
+        $salden = $daten->rechner()->kontosalden($begrenzt['konten'], $begrenzt['bewegungen'], Zeitraum::jahr(2026), $extern);
+        self::assertSame([90000, 110000], [$salden[0]->anfang, $salden[0]->ende]);
     }
 
     public function testSpheresFollowTheSetting(): void
@@ -145,6 +159,19 @@ final class AuswertungsdatenTest extends DatabaseTestCase
         self::assertFalse($daten->sphaerenAktiv());
         new SettingRepository($this->pdo())->set(Auswertungsdaten::SETTING_SPHAEREN, '1');
         self::assertTrue($daten->sphaerenAktiv());
+    }
+
+    /**
+     * @param list<\App\Service\Report\Kontobewegung> $bewegungen
+     *
+     * @return list<array{0: int, 1: string, 2: int}> sorted by account, date
+     */
+    private static function bewegungen(array $bewegungen): array
+    {
+        $liste = array_map(static fn($b) => [$b->kontoId, $b->datum->format('Y-m-d'), $b->betrag], $bewegungen);
+        sort($liste);
+
+        return $liste;
     }
 
     private function daten(): Auswertungsdaten

@@ -1019,12 +1019,14 @@ von der Rechnung (KI/E-Rechnung) vorziehen.
   jedes Kostenstellen-Scopes (wie in den Repositories). In der
   Buchungssicht sieht ein Verantwortlicher daher nur die **zugeordneten
   Teile** von Buchungen an Belege seiner Kostenstellen – SQL lädt nur solche
-  Buchungen (`EXISTS` über `allocation`), der Service filtert jede Zeile
-  noch einmal per `Zugriffsbereich::erlaubt()`. Kontostände/-salden gibt es
+  Buchungen (`EXISTS` über `allocation`), und schon der Lader gibt nur
+  die Zeilen im Bereich heraus (`Zugriffsbereich::erlaubt()`) – nie den
+  Rest oder fremde Teile derselben Buchung; der Service prüft noch einmal. Kontostände/-salden gibt es
   für einen Kostenstellen-Scope nicht (Buchungen haben keine Kostenstelle).
 - **Zeitraum-Scope (externe Konten):** Der Zeitraum wird auf den
   freigegebenen Zeitraum begrenzt. Der Anfangssaldo eines Kontos zählt die
-  Buchungen davor mit – gezeigt wird nur die Summe, keine einzelne Buchung.
+  Buchungen davor mit; der Lader fasst sie je Konto zu einem Übertrag am
+  Vortag zusammen, keine einzelne Buchung davor verlässt ihn.
 - **Sphären** nur mit Setting `sphaeren_aktiv = 1`; sonst wirft eine
   Sphären-Auswertung (`DomainException`), statt still leer zu sein.
 - **Währung:** Zeilen in anderer Währung als EUR werden nicht mitgezählt,

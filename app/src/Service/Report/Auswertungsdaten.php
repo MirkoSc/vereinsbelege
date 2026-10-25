@@ -67,18 +67,33 @@ final readonly class Auswertungsdaten
             return new Auswertungsgrundlage($grundlage, $zeitraum, []);
         }
 
-        return match ($grundlage) {
+        $ergebnis = match ($grundlage) {
             Grundlage::Belege => $this->ausBelegen($vault, $zeitraum, $begrenzt, $bereich),
             Grundlage::Buchungen => $this->ausBuchungen($vault, $zeitraum, $begrenzt, $bereich),
         };
+
+        // A booking loaded for one in-scope allocation is split into all its
+        // parts: only the parts the reader may see leave the loader (01 §4).
+        return new Auswertungsgrundlage(
+            $ergebnis->grundlage,
+            $ergebnis->zeitraum,
+            array_values(array_filter(
+                $ergebnis->posten,
+                static fn(Posten $p): bool => $begrenzt->enthaelt($p->datum) && $bereich->erlaubt($p->kostenstelleId, $p->datum),
+            )),
+            $ergebnis->unlesbar,
+            $ergebnis->fremdwaehrung,
+        );
     }
 
     /**
      * The accounts and every booking up to the end of $zeitraum - what
      * ReportService::kontostaende()/kontosalden() need. Transfers included.
      * Bookings carry no cost center: nothing for a cost-center scope. A
-     * balance at the start of a period needs the bookings before it, also
-     * for a period-scoped reader; only sums of them are shown.
+     * balance at the start of a period needs the bookings before it; for a
+     * period-scoped reader they are summed per account into one carry-over
+     * movement on the day before the period, so no single booking outside
+     * the released period leaves the loader.
      *
      * A booking in another currency than its account's is counted as
      * unreadable rather than added to the balance.
@@ -94,7 +109,9 @@ final readonly class Auswertungsdaten
 
         ['konten' => $konten, 'unlesbar' => $unlesbar] = $this->konten->lesbare($vault);
         $bewegungen = [];
+        $ab = $bereich->von === null ? null : $bereich->von->format('Y-m-d');
         foreach ($konten as $konto) {
+            $uebertrag = null;
             foreach ($this->buchungen->between($konto->id, $konto->openingDate, $begrenzt->bis->modify('+1 day')) as $record) {
                 try {
                     $buchung = Buchungen::entschluesseln($vault, $record);
@@ -106,7 +123,14 @@ final readonly class Auswertungsdaten
                     ++$unlesbar;
                     continue;
                 }
+                if ($ab !== null && $buchung->bookingDate->format('Y-m-d') < $ab) {
+                    $uebertrag = ($uebertrag ?? 0) + $buchung->amount;
+                    continue;
+                }
                 $bewegungen[] = new Kontobewegung($konto->id, $buchung->bookingDate, $buchung->amount);
+            }
+            if ($uebertrag !== null && $bereich->von !== null) {
+                $bewegungen[] = new Kontobewegung($konto->id, (new \DateTimeImmutable($ab))->modify('-1 day'), $uebertrag);
             }
         }
 
