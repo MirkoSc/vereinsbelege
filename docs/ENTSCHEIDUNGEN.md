@@ -1460,3 +1460,48 @@ Getroffen ohne Rückfrage:
   2/4/8 s Pause, jeder mit neuem Nonce und Zeitstempel; die Schleife
   weicht bei Fehlern 5 s … 5 min (±20 %) zurück. `pair` wird nie
   wiederholt (der Code ist verbraucht).
+
+## E-53 ❓ Worker-Image: Basis, Tags, Ablauf der Veröffentlichung, End-to-End-Test (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #55/M7b-5, 07 §7; keine Migration*
+
+Getroffen ohne Rückfrage:
+
+- **Basis-Image `php:8.5.12-cli-trixie` statt `debian:trixie-slim` +
+  `php8.x-cli`:** Debian trixie liefert PHP 8.4, das Projekt verlangt
+  PHP 8.5 (CLAUDE.md §1, `composer.json`). Das offizielle PHP-Image ist
+  selbst Debian trixie; die Werkzeuge kommen weiter aus Debian. Gepinnt auf
+  die Patchversion (Tag, kein Digest); Updates des Basis-Images sind eine
+  bewusste Änderung im PR.
+- **Tags:** `vX.Y.Z` und `beta` bei jedem Tag-Push, nach bestandenem
+  End-to-End-Test. `stable` beim Hochstufen eines Pre-Release zum
+  vollwertigen Release (`release: released`), aber nur, wenn es laut
+  GitHub das neueste Release ist – ein nachträglich veröffentlichter
+  älterer Patch zieht `stable` nicht zurück. `stable` wird per
+  `imagetools create` auf das vorhandene `vX.Y.Z` gesetzt, nicht neu
+  gebaut. Kein `latest`-Tag (die Vorlage nutzt `stable`).
+- **Sichtbarkeit des Pakets:** Ein neues GHCR-Paket ist zunächst privat.
+  Damit ein Pi ohne Anmeldung `docker compose pull` kann, muss es einmalig
+  in den Paket-Einstellungen auf „public“ gestellt werden (offen, Mirko).
+- **`pcntl` hart geprüft:** `bin/worker.php run` beendet sich ohne `pcntl`
+  mit Fehlermeldung (bisher still ohne Signal-Handler); `pair`/`status`
+  gehen weiter ohne. Der Image-Build prüft zusätzlich alle nötigen
+  Erweiterungen und Werkzeuge inkl. der Tesseract-Sprachen `deu`, `eng`,
+  `osd`.
+- **Container-Härtung in der Vorlage:** Benutzer `worker` (UID 10001),
+  `read_only`, `cap_drop: ALL`, `no-new-privileges`, `tini` als PID 1,
+  `stop_grace_period: 30s`, `mem_limit: 2g` bei tmpfs 768 MB und
+  `WORKER_SPEICHER=512M` (tmpfs zählt zum Speicherlimit; für einen Pi mit
+  2 GB ggf. kleiner wählen – Anleitung #56).
+- **End-to-End-Test mit TLS statt Ausnahme für http://:** Die in E-50
+  offene Frage ist so gelöst: `run.sh` erzeugt je Lauf eine Test-CA und ein
+  Zertifikat für `webhoster`; der Worker vertraut nur dieser CA
+  (`curl.cainfo` im Test-Overlay), die Prüfung bleibt an. Die
+  Webhoster-Seite (Tresor anlegen, bestätigen, einreichen, Übernahme wie
+  in der Session) spielt ein CLI-Treiber im Webhoster-Container, nicht die
+  Browser-Oberfläche – die Admin-/Session-Seiten haben eigene Tests.
+  Der Scan wird direkt als Einreichung in den Posteingang gelegt und das
+  `ocr` so eingereiht, wie es `extract_text` tut.
+- **Wo der Test läuft:** in jedem PR (CI-Job `worker-e2e`, amd64) und vor
+  jedem Image-Push. Der Multi-Arch-Build (arm64 unter QEMU, langsam) läuft
+  in PRs nur, wenn Worker, Composer-Dateien oder der Workflow geändert
+  sind.

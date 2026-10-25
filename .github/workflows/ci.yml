@@ -73,3 +73,38 @@ jobs:
 
       - name: Run client-side JS tests
         run: node --test tests/js/*.test.js
+
+  # The worker end to end (docs/spec/07-worker.md "Pflicht-Tests", issue
+  # #55): the worker image (amd64, built here, never pushed) against a web
+  # host container over HTTPS - pairing, OCRmyPDF on a fixture scan, the
+  # result in the inbox. The multi-arch build is worker-image.yml's.
+  worker-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_mysql, zip, gd, sodium, curl, mbstring, fileinfo
+          coverage: none
+
+      - name: Install dependencies (the test's web host side)
+        run: composer install --no-interaction --no-progress
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build worker image (amd64, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          load: true
+          tags: vereinsbelege-worker:e2e
+          cache-from: type=gha,scope=worker-e2e
+          cache-to: type=gha,mode=max,scope=worker-e2e
+
+      - name: End-to-end test (web host + worker container)
+        run: tests/e2e/worker/run.sh
+        env:
+          WORKER_IMAGE_BAUEN: '0'
