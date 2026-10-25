@@ -170,16 +170,18 @@ Bedienung:
   Klartext, AV-Vertrag nach Art. 28 DSGVO für OpenAI/Anthropic, eigener
   llama.cpp-Server als datensparsame Option – 01 §1, E-08), Aufbewahrung
   und Löschung (Fristen als Platzhalter, mit Steuerberater zu klären –
-  E-10), Rechte, Cookies. Die Admin-Seite listet die aktiven KI-Profile
-  (Name, Host) als Erinnerung.
+  E-10), Rechte, Cookies. Die Admin-Seite listet die genutzten KI-Profile
+  (aktiv und mit Key – `KiAnbieter::nutzbar()`; Name, Host) als Erinnerung.
 - **Format:** `App\View\EinfachesMarkdown` – Absätze, Zeilenumbruch,
   `##`/`###`, `- ` Listen, `**fett**`, Links nur auf `https://`, `http://`,
   `mailto:`, `tel:` und eigene Pfade. Jedes Zeichen der Eingabe wird
   escaped, es gibt kein Roh-HTML; abgelehnte Links bleiben als Text sichtbar.
 - **Öffentlich ohne Session** (`Area::Oeffentlich`): `GET /impressum`,
   `GET /datenschutz`; jede Seite verlinkt beide im Fuß. Auf `/einreichen`
-  steht der Hinweis über der Checkbox, darunter Links auf beide Seiten
-  (neuer Tab, damit erfasste Seiten nicht verloren gehen).
+  steht der Hinweis über der Checkbox (mit Marke „Vorlage“, solange
+  unfertig), darunter Links auf beide Seiten. Auf öffentlichen Seiten
+  öffnen diese Links und die Links im Hinweis einen neuen Tab, damit auf
+  `/einreichen` erfasste Seiten nicht verloren gehen.
 
 ### HEIC (Issue #147, vorläufig)
 
@@ -1735,11 +1737,13 @@ liegt (CLAUDE.md §5, E-24).
 
 Rechtstexte (M13-3: `EinfachesMarkdownTest`: Überschriften/Listen/Absätze,
 nur eigene Tags und `href`, kein Skript/Event-Attribut/`javascript:`/
-`data:`/`//host`, Platzhalter-Erkennung; `RechtstexteFlowTest`: Seiten ohne
+`data:`/`//host`, Platzhalter-Erkennung auch langer Platzhalter, Links im neuen Tab;
+`RechtstexteFlowTest`: Seiten ohne
 Session mit Vorlage-Hinweis, Fuß-Links, Speichern escaped, unveränderte
 Vorlage nicht gespeichert, leeres Feld = Vorlage, zu lang → nichts
-gespeichert, CSRF, 403 ohne `admin.settings`, Audit nur bei Änderung,
-KI-Anbieter-Liste; `PublicSubmissionTest`: Hinweis escaped mit Links;
+gespeichert, Länge nach CRLF-Normalisierung, CSRF, 403 ohne
+`admin.settings`, Audit nur bei Änderung, nur nutzbare KI-Profile;
+`PublicSubmissionTest`: Hinweis escaped, Vorlage-Marke, Links im neuen Tab;
 `RoutePermissionMatrixTest`); Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
 Viereck-Auswahl); Eck-Editor (Standardrahmen, Anzeige-/Bildkoordinaten-
 Umrechnung, Eckpunkt-Verschieben mit Ablehnung entarteter Vierecke,

@@ -29,7 +29,11 @@ final class EinfachesMarkdown
 {
     private const string LINK = '/\[([^\[\]\n]+)\]\(([^()\s]*)\)/u';
 
-    public static function html(string $text): string
+    /**
+     * @param bool $neuerTab links open in a new tab - on /einreichen, where
+     *        leaving the page would lose the pages already captured
+     */
+    public static function html(string $text, bool $neuerTab = false): string
     {
         $zeilen = explode("\n", str_replace(["\r\n", "\r"], "\n", $text));
         $html = [];
@@ -65,18 +69,18 @@ final class EinfachesMarkdown
                 $absatzSchliessen();
                 $listeSchliessen();
                 $tag = strlen($m[1]) === 3 ? 'h4' : 'h3';
-                $html[] = '<' . $tag . '>' . self::inline(trim($m[2])) . '</' . $tag . '>';
+                $html[] = '<' . $tag . '>' . self::inline(trim($m[2]), $neuerTab) . '</' . $tag . '>';
                 continue;
             }
 
             if (preg_match('/^[-*]\s+(.+)$/u', $ohneEinzug, $m) === 1) {
                 $absatzSchliessen();
-                $liste[] = self::inline($m[1]);
+                $liste[] = self::inline($m[1], $neuerTab);
                 continue;
             }
 
             $listeSchliessen();
-            $absatz[] = self::inline($ohneEinzug);
+            $absatz[] = self::inline($ohneEinzug, $neuerTab);
         }
 
         $absatzSchliessen();
@@ -94,7 +98,7 @@ final class EinfachesMarkdown
     public static function platzhalter(string $text): array
     {
         $ohneLinks = preg_replace(self::LINK, '', $text) ?? $text;
-        preg_match_all('/\[([^\[\]\n]{1,80})\]/u', $ohneLinks, $treffer);
+        preg_match_all('/\[([^\[\]\n]{1,300})\]/u', $ohneLinks, $treffer);
 
         return array_values(array_unique(array_map(
             static fn(string $p): string => '[' . $p . ']',
@@ -102,7 +106,7 @@ final class EinfachesMarkdown
         )));
     }
 
-    private static function inline(string $text): string
+    private static function inline(string $text, bool $neuerTab): string
     {
         $teile = preg_split(self::LINK, $text, -1, PREG_SPLIT_DELIM_CAPTURE);
         if ($teile === false) {
@@ -119,7 +123,7 @@ final class EinfachesMarkdown
             $linktext = $teile[$i + 1];
             $ziel = $teile[$i + 2];
             $html .= self::zielErlaubt($ziel)
-                ? '<a href="' . e($ziel) . '">' . self::fett(e($linktext)) . '</a>'
+                ? '<a href="' . e($ziel) . '"' . ($neuerTab ? ' target="_blank" rel="noopener"' : '') . '>' . self::fett(e($linktext)) . '</a>'
                 : self::fett(e('[' . $linktext . '](' . $ziel . ')'));
         }
 

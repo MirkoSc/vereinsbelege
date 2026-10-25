@@ -43,28 +43,47 @@ final readonly class Rechtstexte
     }
 
     /**
-     * @throws \InvalidArgumentException when the text is longer than
-     *         Rechtstext::MAX_BYTES or not valid UTF-8
+     * Why a text cannot be stored, or null. Checked on the text as it
+     * will be stored (line breaks normalised - browsers send CRLF).
+     */
+    public static function fehler(Rechtstext $art, string $text): ?string
+    {
+        $text = self::normalisiert($text);
+        if (!mb_check_encoding($text, 'UTF-8')) {
+            return sprintf('„%s“ enthält ungültige Zeichen.', $art->titel());
+        }
+        if (strlen($text) > Rechtstext::MAX_BYTES) {
+            return sprintf(
+                '„%s“ ist zu lang (höchstens %s Byte, Umlaute zählen doppelt).',
+                $art->titel(),
+                number_format(Rechtstext::MAX_BYTES, 0, ',', '.'),
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * @throws \InvalidArgumentException with the message of fehler()
      */
     public function speichern(Rechtstext $art, string $text): void
     {
-        $text = str_replace(["\r\n", "\r"], "\n", $text);
-        if (!mb_check_encoding($text, 'UTF-8')) {
-            throw new \InvalidArgumentException('Der Text enthält ungültige Zeichen.');
+        $fehler = self::fehler($art, $text);
+        if ($fehler !== null) {
+            throw new \InvalidArgumentException($fehler);
         }
-        if (strlen($text) > Rechtstext::MAX_BYTES) {
-            throw new \InvalidArgumentException(sprintf(
-                '„%s“ ist zu lang (höchstens %s Zeichen).',
-                $art->titel(),
-                number_format(Rechtstext::MAX_BYTES, 0, ',', '.'),
-            ));
-        }
+        $text = self::normalisiert($text);
 
         // The unchanged template is not stored: saving the whole form after
         // editing one text must not freeze the others as the club's own.
         $istVorlage = trim($text) === ''
-            || trim($text) === trim(str_replace(["\r\n", "\r"], "\n", $this->vorlage($art)));
+            || trim($text) === trim(self::normalisiert($this->vorlage($art)));
 
         $this->settings->set($art->settingName(), $istVorlage ? '' : $text);
+    }
+
+    private static function normalisiert(string $text): string
+    {
+        return str_replace(["\r\n", "\r"], "\n", $text);
     }
 }

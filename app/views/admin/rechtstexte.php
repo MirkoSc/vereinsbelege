@@ -7,7 +7,7 @@
  *
  * @var string $csrf
  * @var list<array{art: \App\Service\Rechtstexte\Rechtstext, text: string, istVorlage: bool, platzhalter: list<string>}> $felder
- * @var list<\App\Service\Ki\KiAnbieter> $kiAnbieter active AI profiles
+ * @var list<\App\Service\Ki\KiAnbieter> $kiAnbieter usable AI profiles (active, with key)
  * @var ?string $fehler
  */
 ?>
@@ -26,7 +26,7 @@
     </p>
 
     <?php if ($kiAnbieter !== []): ?>
-        <h3>Aktive KI-Anbieter</h3>
+        <h3>Genutzte KI-Anbieter</h3>
         <p>Die Datenschutzerklärung sollte diese Anbieter nennen; mit Cloud-Anbietern (z. B. OpenAI, Anthropic)
             braucht der Verein einen Vertrag zur Auftragsverarbeitung (AV-Vertrag).</p>
         <ul>

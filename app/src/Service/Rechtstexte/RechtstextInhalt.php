@@ -21,9 +21,9 @@ final readonly class RechtstextInhalt
     }
 
     /** Safe HTML (App\View\EinfachesMarkdown escapes every input character). */
-    public function html(): string
+    public function html(bool $neuerTab = false): string
     {
-        return EinfachesMarkdown::html($this->text);
+        return EinfachesMarkdown::html($this->text, $neuerTab);
     }
 
     /** @return list<string> `[...]` placeholders still in the text */

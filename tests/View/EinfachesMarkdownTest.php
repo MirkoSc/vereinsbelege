@@ -65,10 +65,10 @@ final class EinfachesMarkdownTest extends TestCase
     #[DataProvider('boeseEingaben')]
     public function testNoInputProducesForeignMarkup(string $eingabe): void
     {
-        $html = EinfachesMarkdown::html($eingabe);
+        $html = EinfachesMarkdown::html($eingabe) . EinfachesMarkdown::html($eingabe, neuerTab: true);
 
         // Only the tags this class writes, and only href as attribute.
-        $ohneEigene = preg_replace('~</?(p|br|h3|h4|ul|li|strong)>|<a href="[^"<>]*">|</a>~', '', $html);
+        $ohneEigene = preg_replace('~</?(p|br|h3|h4|ul|li|strong)>|<a href="[^"<>]*"( target="_blank" rel="noopener")?>|</a>~', '', $html);
         self::assertIsString($ohneEigene);
         self::assertStringNotContainsString('<', $ohneEigene, $html);
         self::assertStringNotContainsString('>', $ohneEigene, $html);
@@ -90,6 +90,20 @@ final class EinfachesMarkdownTest extends TestCase
             EinfachesMarkdown::platzhalter("[Name des Vereins] in [Ort], [Ort]\n[Impressum](/impressum)"),
         );
         self::assertSame([], EinfachesMarkdown::platzhalter('Alles ausgefüllt. [Impressum](/impressum)'));
+    }
+
+    public function testLongPlaceholdersOfTheTemplatesAreFound(): void
+    {
+        $lang = '[Frist, z. B. 8 bzw. 10 Jahre nach Ende des Geschäftsjahres – mit dem Steuerberater zu klären, sehr ausführlich]';
+        self::assertSame([$lang], EinfachesMarkdown::platzhalter('Aufbewahrung: ' . $lang));
+    }
+
+    public function testLinksCanOpenInANewTab(): void
+    {
+        self::assertSame(
+            '<p><a href="/datenschutz" target="_blank" rel="noopener">Datenschutz</a></p>',
+            EinfachesMarkdown::html('[Datenschutz](/datenschutz)', neuerTab: true),
+        );
     }
 
     public function testEmptyTextGivesNoMarkup(): void

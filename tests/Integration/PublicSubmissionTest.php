@@ -128,12 +128,16 @@ final class PublicSubmissionTest extends DatabaseTestCase
     {
         $vorlage = $this->einreichung()->formular(new Request(HttpMethod::Get, '/einreichen'));
         self::assertStringContainsString('Auftragsverarbeitung', $vorlage->body);
+        self::assertStringContainsString('noch nicht vollständig ausgefüllt', $vorlage->body);
+        // Leaving the form would lose the pages: the notice's link opens a new tab.
+        self::assertStringContainsString('href="/datenschutz" target="_blank" rel="noopener"', $vorlage->body);
 
         new Rechtstexte(new SettingRepository($this->pdo()), dirname(__DIR__, 2) . '/app/data')
             ->speichern(Rechtstext::EinreichungHinweis, "Wir nutzen **KI-Dienst X**.\n\n<script>alert(1)</script>");
         $seite = $this->einreichung()->formular(new Request(HttpMethod::Get, '/einreichen'));
 
         self::assertStringContainsString('<strong>KI-Dienst X</strong>', $seite->body);
+        self::assertStringNotContainsString('noch nicht vollständig ausgefüllt', $seite->body);
         self::assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $seite->body);
         self::assertStringNotContainsString('<script>alert(1)', $seite->body);
         self::assertStringContainsString('href="/datenschutz"', $seite->body);

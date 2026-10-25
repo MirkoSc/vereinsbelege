@@ -145,8 +145,12 @@
             <?php endif; ?>
 
             <?php if (($datenschutzHinweis ?? null) !== null): ?>
+                <?php /* New tab for every link here: leaving the form would lose the pages already captured. */ ?>
                 <div class="feld-hilfe" id="einreichen-datenschutz-hinweis">
-                    <?= $datenschutzHinweis->html() ?>
+                    <?php if ($datenschutzHinweis->unfertig()): ?>
+                        <p><span class="marke marke-warnung">Vorlage</span> vom Verein noch nicht vollständig ausgefüllt</p>
+                    <?php endif; ?>
+                    <?= $datenschutzHinweis->html(neuerTab: true) ?>
                 </div>
             <?php endif; ?>
 
@@ -155,7 +159,6 @@
                 Ich habe den Datenschutz-Hinweis gelesen. Meine Angaben werden zur Bearbeitung dieser
                 Einreichung gespeichert.
             </label>
-            <?php /* New tab: the pages already taken would be lost on leaving the form. */ ?>
             <p class="feld-hilfe">
                 <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>
                 · <a href="/impressum" target="_blank" rel="noopener">Impressum</a>

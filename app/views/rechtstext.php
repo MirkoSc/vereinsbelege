@@ -10,7 +10,7 @@
  * @var \App\Service\Rechtstexte\RechtstextInhalt $inhalt
  */
 ?>
-<section class="schmal rechtstext">
+<section class="schmal">
     <h2><?= e($title) ?></h2>
 
     <?php if ($inhalt->unfertig()): ?>

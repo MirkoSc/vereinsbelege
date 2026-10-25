@@ -94,6 +94,8 @@ final class RechtstexteFlowTest extends DatabaseTestCase
 
         self::assertStringContainsString('href="/impressum"', $start);
         self::assertStringContainsString('href="/datenschutz"', $start);
+        // Public pages open them in a new tab (/einreichen keeps its pages).
+        self::assertStringContainsString('href="/impressum" target="_blank" rel="noopener"', $start);
     }
 
     public function testTheShippedTemplatesAreValidAndFullOfPlaceholders(): void
@@ -178,6 +180,19 @@ final class RechtstexteFlowTest extends DatabaseTestCase
         self::assertTrue($this->rechtstexte()->lesen(Rechtstext::Impressum)->istVorlage);
     }
 
+    /** Browsers send CRLF: the limit counts the text as it is stored. */
+    public function testTheLimitCountsNormalisedLineBreaks(): void
+    {
+        $this->anmeldenAls(SystemRole::Admin);
+        $text = str_repeat("Zeile\r\n", intdiv(Rechtstext::MAX_BYTES, 6));
+        self::assertGreaterThan(Rechtstext::MAX_BYTES, strlen($text));
+
+        $antwort = $this->post('/admin/rechtstexte', ['impressum' => $text, 'datenschutz' => '', 'einreichung_hinweis' => '']);
+
+        self::assertSame(302, $antwort->status);
+        self::assertFalse($this->rechtstexte()->lesen(Rechtstext::Impressum)->istVorlage);
+    }
+
     public function testWithoutCsrfNothingIsSaved(): void
     {
         $this->anmeldenAls(SystemRole::Admin);
@@ -198,14 +213,19 @@ final class RechtstexteFlowTest extends DatabaseTestCase
         self::assertTrue($this->rechtstexte()->lesen(Rechtstext::Impressum)->istVorlage);
     }
 
-    public function testTheAdminPageNamesTheActiveAiProviders(): void
+    public function testTheAdminPageNamesOnlyUsableAiProviders(): void
     {
         $this->anmeldenAls(SystemRole::Admin);
 
-        // Migration 024 ships the active profile "OpenAI".
+        // Migration 024 ships the active profile "OpenAI" without a key:
+        // never used, so the privacy policy need not name it.
+        $ohneKey = $this->dispatch(new Request(HttpMethod::Get, '/admin/rechtstexte'));
+        self::assertStringNotContainsString('Genutzte KI-Anbieter', $ohneKey->body);
+
+        $this->pdo()->exec("UPDATE ai_provider SET api_key_enc = 'x' WHERE name = 'OpenAI'");
         $seite = $this->dispatch(new Request(HttpMethod::Get, '/admin/rechtstexte'));
 
-        self::assertStringContainsString('Aktive KI-Anbieter', $seite->body);
+        self::assertStringContainsString('Genutzte KI-Anbieter', $seite->body);
         self::assertStringContainsString('OpenAI', $seite->body);
         self::assertStringContainsString('api.openai.com', $seite->body);
     }

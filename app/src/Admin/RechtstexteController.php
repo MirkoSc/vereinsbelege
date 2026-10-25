@@ -34,7 +34,7 @@ final readonly class RechtstexteController
         private Session $session,
         private Rechtstexte $rechtstexte,
         private AuditLog $audit,
-        /** For the reminder which AI providers the privacy policy must name. */
+        /** For the reminder which usable AI providers the privacy policy must name. */
         private ?AiProviderRepository $kiAnbieter = null,
     ) {
     }
@@ -69,13 +69,9 @@ final readonly class RechtstexteController
         // Check all before writing any: a too-long second text must not
         // leave the first one saved and the form showing an error.
         foreach (Rechtstext::cases() as $art) {
-            $text = $eingabe[$art->value];
-            if (!mb_check_encoding($text, 'UTF-8') || strlen($text) > Rechtstext::MAX_BYTES) {
-                return $this->formular($eingabe, sprintf(
-                    '„%s“ ist zu lang oder enthält ungültige Zeichen (höchstens %s Zeichen).',
-                    $art->titel(),
-                    number_format(Rechtstext::MAX_BYTES, 0, ',', '.'),
-                ), 422);
+            $fehler = Rechtstexte::fehler($art, $eingabe[$art->value]);
+            if ($fehler !== null) {
+                return $this->formular($eingabe, $fehler, 422);
             }
         }
 
@@ -117,7 +113,7 @@ final readonly class RechtstexteController
 
         $kiAnbieter = $this->kiAnbieter === null
             ? []
-            : array_values(array_filter($this->kiAnbieter->all(), static fn(KiAnbieter $a): bool => $a->active));
+            : array_values(array_filter($this->kiAnbieter->all(), static fn(KiAnbieter $a): bool => $a->nutzbar()));
 
         return Response::html($this->view->render('admin/rechtstexte', [
             'title' => 'Rechtstexte',
