@@ -79,7 +79,7 @@ enum Area: string
                 new NavItem('Buchungen', '/app/buchungen', recht: Permission::BankView),
                 new NavItem('Abgleich', '/app/abgleich', recht: Permission::MatchingEdit),
                 new NavItem('Offen', '/app/offen', recht: Permission::ReportView),
-                new NavItem('Auswertungen', meilenstein: 'M11', recht: Permission::ReportView),
+                new NavItem('Auswertungen', '/app/auswertung', recht: Permission::ReportView),
                 new NavItem('Kassenprüfung', '/app/auswertung/kassenpruefung', recht: Permission::ReportView),
                 new NavItem('Export', '/app/export', recht: Permission::ExportZip),
                 new NavItem('DATEV', '/app/datev', recht: Permission::ExportCsv),

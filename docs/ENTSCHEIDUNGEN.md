@@ -1505,3 +1505,44 @@ Offen für Mirko: ob „manuell zugeordnet“ auch bestätigte KI-/Abgleich-
 Vorschläge umfassen soll; ob der Standard-Zeitraum das Vorjahr bleiben
 soll; ob CSV-Downloads ins Audit-Log sollen; ob externe Prüfer den Beleg
 hinter einer Zuordnung auch außerhalb ihres Zeitraums sehen dürfen.
+
+## E-51 ❓ „Wohin fließt das Geld“: Seiten, Zeitraumfilter, Drilldown (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M11-3 (issue #73), 05 §1 „Stand M11-3“*
+
+- **Ort:** `/app/auswertung` leitet auf die erste Ansicht
+  `/app/auswertung/geldfluss` weiter; der Drilldown ist
+  `/app/auswertung/geldfluss/posten`. Navigation „Auswertungen“ zeigt auf
+  `/app/auswertung`, eine Reiterzeile (`partials/auswertung-reiter.php`)
+  nimmt weitere Ansichten auf. Recht `report.view` mit seinem Scope.
+- **Umfang:** Verteilung nach **Kategorie und Kostenstelle** auf einer
+  Seite (Balken + Tabelle, Betrag, Anteil, Anzahl Posten), wahlweise
+  **Ausgaben** (Standard) oder **Einnahmen**, Grundlage Buchungen (Standard)
+  oder Belege. Lieferant Top 20, Sphäre, Monatsverlauf,
+  Vorjahresvergleich und CSV sind nicht Teil des Issues (Folge-Issues).
+- **Zeitraum:** der gemeinsame Filter aus M11-4 (`ZeitraumAuswahl`,
+  `?art=jahr|quartal|monat|frei`, E-52), Standard wie das Dashboard
+  (laufendes Jahr bzw. Ende des Zeitraum-Scopes). Ein freier Zeitraum
+  umfasst hier höchstens 3 Jahre (ein Request entschlüsselt alles darin,
+  CLAUDE.md §1), sonst Standardjahr mit Hinweis. Die Kassenprüfung hat
+  diese Grenze nicht – Folge-Idee: sie in `ZeitraumAuswahl` selbst ziehen.
+- **Drilldown:** Gruppe → Einzelposten (Datum, Lieferant bzw. Gegenseite,
+  Rechnungsnummer/Zweck, andere Dimension, Betrag). URL nur Struktur:
+  Filter + `nach` (kategorie|kostenstelle) + `schluessel` (ID oder `ohne`);
+  alles andere 404. Der Beleg-Link führt auf die normale Belegseite
+  (Prüfansicht mit `document.edit`, sonst Posteingang mit `inbox.view`),
+  die Recht und Scope selbst prüft; der Buchungs-Link nur mit `bank.view`.
+  Gegenseite und Zweck einer Buchung ohne Beleg nur mit `bank.view` und
+  nur innerhalb von dessen Scope, sonst „Buchung ohne Beleg“.
+- **Gutschriften** mindern ihre Gruppe; ein negativer Gruppenbetrag hat
+  keinen Anteil („–“) und keinen Balken. Balken relativ zur größten Gruppe,
+  Anteil relativ zur Summe der nicht negativen Gruppen (gerundet auf
+  0,1 %), damit die Anteile nie über 100 % steigen.
+- **Balken:** SVG-`<rect>` mit `width`-Attribut (CSP erlaubt keine
+  Inline-Styles), Wert immer als Text. Beide Tabellen sind
+  `.tabelle-karten`: auf dem Handy eine Karte je Zeile, der Balken unter
+  dem Namen.
+
+Offen für Mirko: ob Ausgaben und Einnahmen gleichzeitig (statt
+umschaltbar) gezeigt werden sollen; ob der Drilldown eine zweite Ebene
+(Kostenstelle → Kategorie → Beleg) braucht; ob Buchungen ohne Beleg im
+Drilldown auch ohne `bank.view` Gegenseite/Zweck zeigen sollen.

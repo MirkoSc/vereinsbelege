@@ -298,6 +298,25 @@ final readonly class BankTransactionRepository
     }
 
     /**
+     * Several bookings by id, in no particular order (the report drilldown,
+     * issue #73) - one query instead of one per booking.
+     *
+     * @param list<int> $ids
+     *
+     * @return list<BankTransactionRecord>
+     */
+    public function nachIds(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $stmt = $this->pdo->prepare('SELECT * FROM bank_transaction WHERE id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ')');
+        $stmt->execute(array_values($ids));
+
+        return array_map(self::hydrate(...), $stmt->fetchAll());
+    }
+
+    /**
      * Changes the structure of a manual booking; the caller writes the new
      * ciphertext with setCiphertext() in the same transaction. An imported
      * booking is never changed here.
