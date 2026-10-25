@@ -1922,3 +1922,40 @@ als unter „Admin“ passen; ob die KI-Neuanlage ohne gepflegte Vereinskennunge
 USt-IDs wirklich weglassen soll (sicherer, aber Stufe 1 greift für neue
 Lieferanten erst nach der Pflege); ob Konflikte als eigene Liste „Mögliche
 Doppelte“ unter „Lieferanten“ erscheinen sollen.
+
+## E-71 ❓ Erinnerungs-Mails und Mail-Schritt im Installer (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*issue #249*
+
+Die Spec nannte die Erinnerungs-Mails nur in einem Halbsatz (06 §4: „5
+Belege warten auf Prüfung“ – ohne Details) und den Mail-Schritt nur als
+Punkt 5 der Installer-Liste. Umgesetzt (Details 06 §1 und §4):
+- **Inhalt:** zwei Zahlen je Konto, in dessen Scope gezählt – Posteingang
+  „Offen“ und „Belege in Prüfung“, dieselben Zähler wie die Startseite.
+  Sonst nichts, Link nur mit eingestellter `oeffentliche_url`. Verworfen:
+  unbezahlte Rechnungen/Erstattungen mitzählen (die Spec nennt nur
+  „warten auf Prüfung“; Zahlungsstand ist Aufgabe der Auswertungen).
+- **Empfänger:** aktive Konten mit `document.edit` (wie die Mail zu neuen
+  Einreichungen). Vorstand/Kassenprüfer bekommen nichts.
+- **Abstand:** Einstellung für die ganze Installation auf `/admin/mail` –
+  aus, täglich, **wöchentlich (Standard)**, ab 7 Uhr; keine Mail, wenn
+  nichts offen ist. Wöchentlich, weil jede neue Einreichung ohnehin sofort
+  gemeldet wird; die Erinnerung soll Liegengebliebenes auffangen, nicht
+  nerven.
+- **Nicht je Benutzer abschaltbar:** Die Spec sieht keine
+  Benutzer-Einstellungen vor, und ein Schalter je Konto wäre eine neue
+  Spalte samt Profilseite. Bewusst weggelassen; Folge-Issue, falls gewünscht.
+- **Mail-Schritt im Installer** nach der Schlüssel-Bestätigung, vor
+  `config.php`: speichert sofort in `setting` (Passwort unter dem
+  Server-Schlüssel), Testmail an eine wählbare Adresse (vorbelegt mit der
+  des ersten Admins), überspringbar. `config.php` erst danach, weil der
+  Installer mit ihr endet. Folge: Wer den Browser im Mail-Schritt schließt,
+  steht wie bisher bei einem offenen Schlüssel-Schritt da (Sitzung weg →
+  „Neu beginnen“ ist nicht mehr erreichbar, die Datenbank muss geleert
+  werden).
+- **`WorkerFallbackTask`** im Cron ist mit CLAUDE.md §4 vereinbar: er
+  ändert nur Strukturfelder und löscht Grants/Uploads; entschlüsselt werden
+  nur Admin-Adressen (Server-Schlüssel). Kein Code geändert, Spec ergänzt.
+
+Offen für Mirko: ob wöchentlich der richtige Standard ist; ob ein Schalter
+je Benutzer gebraucht wird; ob weitere Zähler (unbezahlte Rechnungen,
+offene Erstattungen) in die Erinnerung gehören.
