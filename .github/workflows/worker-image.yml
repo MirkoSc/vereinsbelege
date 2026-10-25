@@ -1,0 +1,210 @@
+name: Worker image
+
+# The optional worker's Docker image (docs/spec/07-worker.md section 7,
+# issue #55, E-53): linux/arm64 (Raspberry Pi) + linux/amd64 (VPS) at
+# ghcr.io/mirkosc/vereinsbelege-worker.
+#
+#   tag vX.Y.Z           -> end-to-end test, then push `vX.Y.Z`, and `beta`
+#                           if it is the highest version tag (a back-ported
+#                           patch never moves a channel backwards)
+#   release promoted     -> `stable` points at that version's image
+#   ("latest" in the UI)    (only if it is the repository's latest release;
+#                           also set by the tag build when the release was
+#                           promoted before its image was pushed)
+#   pull request         -> multi-arch build only, nothing is pushed
+#
+# Pushes only with the workflow's own GITHUB_TOKEN (packages: write) - no
+# stored secret. The end-to-end test of every PR runs in ci.yml.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  release:
+    types: [released]
+  pull_request:
+    paths:
+      - 'worker/**'
+      - 'bin/worker.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/worker-image.yml'
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/mirkosc/vereinsbelege-worker
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  # Pull requests: multi-arch build only. Read-only token, no login, no push -
+  # the build runs the PR's own Dockerfile.
+  build-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build multi-arch image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: false
+          tags: ${{ env.IMAGE }}:pr
+          cache-from: type=gha,scope=worker-multiarch
+          cache-to: type=gha,mode=max,scope=worker-multiarch
+
+  # Tags: end-to-end test first, then push. Only here the token may write
+  # packages - tags are created by maintainers, never by a PR.
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Version from tag, channel tags
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          hoechster="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/tags" --jq '.[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1)"
+          tags="${IMAGE}:${GITHUB_REF_NAME}"
+          if [ "$hoechster" = "$GITHUB_REF_NAME" ]; then
+            tags="${tags},${IMAGE}:beta"
+          else
+            echo "::notice::${GITHUB_REF_NAME} is not the highest tag (${hoechster}) - beta stays where it is."
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      # The amd64 image, built exactly like the pushed one, against a web
+      # host container - nothing is pushed if this fails.
+      - name: Build amd64 image for the end-to-end test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: vereinsbelege-worker:release-test
+          build-args: WORKER_VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=worker-multiarch
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_mysql, zip, gd, sodium, curl, mbstring, fileinfo
+          coverage: none
+
+      - name: Install dependencies (the test's web host side)
+        run: composer install --no-interaction --no-progress
+
+      - name: End-to-end test (web host + worker container)
+        run: tests/e2e/worker/run.sh
+        env:
+          WORKER_IMAGE: vereinsbelege-worker:release-test
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build multi-arch image and push it
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.version.outputs.tags }}
+          build-args: WORKER_VERSION=${{ steps.version.outputs.value }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=worker-multiarch
+          cache-to: type=gha,mode=max,scope=worker-multiarch
+
+      # The release may have been promoted while this job still ran - the
+      # `stable` job then found no image. Catch up here.
+      - name: Tag as stable if this already is the latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          if [ "$latest" = "$GITHUB_REF_NAME" ]; then
+            docker buildx imagetools create --tag "${IMAGE}:stable" "${IMAGE}:${GITHUB_REF_NAME}"
+          fi
+
+  # Promoting a pre-release to a full ("latest") release in the GitHub UI
+  # moves `stable` to the image of that tag - nothing is rebuilt, the
+  # tested and pushed `vX.Y.Z` manifest list gets one more tag.
+  stable:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Only the latest release becomes stable
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          if [ "$latest" = "$TAG" ]; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG is not the latest release ($latest) - stable stays where it is."
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.latest.outputs.ok == '1'
+
+      - name: Log in to GHCR
+        if: steps.latest.outputs.ok == '1'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag ${{ github.event.release.tag_name }} as stable
+        if: steps.latest.outputs.ok == '1'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # The tag's build (test + arm64 under QEMU) may still be running;
+          # if it ends after this job, it sets `stable` itself.
+          for _ in $(seq 1 30); do
+            if docker buildx imagetools inspect "${IMAGE}:${TAG}" > /dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for ${IMAGE}:${TAG} ..."
+            sleep 60
+          done
+          docker buildx imagetools inspect "${IMAGE}:${TAG}" > /dev/null
+          docker buildx imagetools create --tag "${IMAGE}:stable" "${IMAGE}:${TAG}"
+          docker buildx imagetools inspect "${IMAGE}:stable"
