@@ -57,6 +57,12 @@ final readonly class UploadBudget
             return $knapp;
         }
 
+        // An empty file costs nothing; UploadService refuses it with its own
+        // message right after.
+        if ($bytes < 1) {
+            return null;
+        }
+
         // No address (the command line) is no shared counter for everybody -
         // the same rule as App\Service\RateLimiter; the day still counts.
         $ipSchluessel = $ip === '' ? null : self::schluessel(self::PURPOSE_IP, self::ipBereich($ip));

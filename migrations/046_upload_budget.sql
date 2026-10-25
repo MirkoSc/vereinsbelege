@@ -15,6 +15,8 @@ CREATE TABLE upload_budget (
     -- SHA-256 over "<purpose>:<value>", as in `rate_limit`: the address
     -- never reaches the table in the clear.
     key_hash BINARY(32) NOT NULL PRIMARY KEY,
+    -- Both in UTC (App\Repository\UploadBudgetRepository): local time
+    -- repeats an hour at the autumn clock change.
     window_start DATETIME NOT NULL,
     window_end DATETIME NOT NULL,
     bytes BIGINT UNSIGNED NOT NULL DEFAULT 0

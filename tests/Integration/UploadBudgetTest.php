@@ -82,6 +82,33 @@ final class UploadBudgetTest extends DatabaseTestCase
         self::assertSame(1, $task->run(new \DateTimeImmutable('2026-10-21 00:00:00')), 'the day');
     }
 
+    /**
+     * 2026-10-25: 02:00-03:00 happens twice. Each of the two hours is a
+     * window of its own and ends an hour after it starts.
+     */
+    public function testTheHourWindowsSurviveTheAutumnClockChange(): void
+    {
+        $budget = $this->budget(new EinreichungsEinstellungen(maxDateiMb: 1, budgetIpMbStunde: 1));
+        $berlin = new \DateTimeZone('Europe/Berlin');
+        $sommerzeit = new \DateTimeImmutable('2026-10-25 00:30:00', new \DateTimeZone('UTC'))->setTimezone($berlin);
+        $winterzeit = new \DateTimeImmutable('2026-10-25 01:10:00', new \DateTimeZone('UTC'))->setTimezone($berlin);
+        self::assertSame('02:30 02:10', $sommerzeit->format('H:i') . ' ' . $winterzeit->format('H:i'));
+        $task = new UploadBudgetCleanupTask(new UploadBudgetRepository($this->pdo()));
+
+        self::assertNull($budget->reservieren('198.51.100.7', self::MB, $sommerzeit));
+        self::assertSame(0, $task->run($sommerzeit->modify('+29 minutes')), 'nothing swept inside the window');
+        self::assertSame(EinreichungAbgelehnt::BudgetIp, $budget->reservieren('198.51.100.7', 1, $sommerzeit->modify('+29 minutes')));
+        self::assertNull($budget->reservieren('198.51.100.7', self::MB, $winterzeit), 'the second 02:00 hour is a new window');
+    }
+
+    public function testAnEmptyFileReservesNothing(): void
+    {
+        $budget = $this->budget(new EinreichungsEinstellungen());
+
+        self::assertNull($budget->reservieren('198.51.100.7', 0));
+        self::assertSame(0, $budget->stand()->verbrauchtHeute);
+    }
+
     public function testAnIpv6AddressCountsAsItsSlash64(): void
     {
         self::assertSame('20010db800010002/64', UploadBudget::ipBereich('2001:db8:1:2::1'));

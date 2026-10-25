@@ -151,7 +151,7 @@ final class SystemCheckTest extends TestCase
         $offen = $check->uploadBudget(new UploadBudgetStand(10 * $mib, 500 * $mib, 10 * $mib, 5000 * $mib, 1024 * $mib));
         self::assertSame(CheckStatus::Ok, $offen->status);
         self::assertSame('upload_budget', $offen->key);
-        self::assertSame('10 MB heute, 5.000 MB frei', $offen->actual);
+        self::assertSame('10 MiB heute, 4,9 GiB frei', $offen->actual);
 
         $voll = $check->uploadBudget(new UploadBudgetStand(495 * $mib, 500 * $mib, 10 * $mib, null, 1024 * $mib));
         self::assertSame(CheckStatus::Warn, $voll->status);
@@ -167,6 +167,9 @@ final class SystemCheckTest extends TestCase
             new SystemCheck(uploadBudget: static fn(): UploadBudgetStand => new UploadBudgetStand(0, 1, 1, null, 1))->all(),
         );
         self::assertSame('upload_budget', end($keys));
+
+        $kaputt = new SystemCheck(uploadBudget: static fn(): never => throw new \PDOException('no table'))->all();
+        self::assertSame(CheckStatus::Warn, end($kaputt)->status, 'an unreadable budget does not take the page down');
     }
 
     public function testArgon2idFollowsWhatPasswordHashCanDo(): void

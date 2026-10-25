@@ -134,9 +134,19 @@ final readonly class SubmissionSettingsController
             'csrf' => $this->session->csrfToken(),
             'flash' => $this->session->pullFlash(),
             'einstellungen' => $einstellungen,
-            'budget' => $this->uploadBudget !== null ? ($this->uploadBudget)() : null,
+            'budget' => $this->budgetStand(),
             'fehler' => $fehler,
         ], Area::Admin), $status);
+    }
+
+    /** Today's usage, or nothing when it cannot be read - the form must stay usable. */
+    private function budgetStand(): ?UploadBudgetStand
+    {
+        try {
+            return $this->uploadBudget !== null ? ($this->uploadBudget)() : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private static function zahl(Request $request, string $feld): int

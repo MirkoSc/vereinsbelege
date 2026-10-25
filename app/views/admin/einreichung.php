@@ -36,7 +36,7 @@
     </p>
 
     <?php if ($budget !== null): ?>
-        <?php $mb = static fn(int $bytes): string => number_format($bytes / 1048576, 0, ',', '.') . ' MB'; ?>
+        <?php $mb = \App\Service\SystemCheck\SystemCheck::formatBytes(...); ?>
         <p>
             Heute hochgeladen: <?= e($mb($budget->verbrauchtHeute)) ?> von <?= e($mb($budget->budgetHeute)) ?>
             <?php if ($budget->freiBytes !== null): ?>

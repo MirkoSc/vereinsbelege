@@ -19,6 +19,13 @@ final readonly class UploadBudgetRepository
 {
     private const string FORMAT = 'Y-m-d H:i:s';
 
+    /**
+     * Stored in UTC: in local time the hour before and after the autumn
+     * clock change would both read 02:00, and a window would end where it
+     * starts.
+     */
+    private const string ZONE = 'UTC';
+
     public function __construct(private \PDO $pdo)
     {
     }
@@ -46,8 +53,8 @@ final readonly class UploadBudgetRepository
                  window_start = GREATEST(window_start, VALUES(window_start))',
         );
         $oeffnen->bindValue(1, $keyHash, \PDO::PARAM_LOB);
-        $oeffnen->bindValue(2, $start->format(self::FORMAT));
-        $oeffnen->bindValue(3, $ende->format(self::FORMAT));
+        $oeffnen->bindValue(2, self::utc($start));
+        $oeffnen->bindValue(3, self::utc($ende));
         $oeffnen->execute();
 
         $zaehlen = $this->pdo->prepare(
@@ -83,7 +90,7 @@ final readonly class UploadBudgetRepository
     {
         $stmt = $this->pdo->prepare('SELECT bytes FROM upload_budget WHERE key_hash = ? AND window_start = ?');
         $stmt->bindValue(1, $keyHash, \PDO::PARAM_LOB);
-        $stmt->bindValue(2, $start->format(self::FORMAT));
+        $stmt->bindValue(2, self::utc($start));
         $stmt->execute();
         $wert = $stmt->fetchColumn();
 
@@ -96,8 +103,13 @@ final readonly class UploadBudgetRepository
     public function deleteExpired(\DateTimeImmutable $now): int
     {
         $stmt = $this->pdo->prepare('DELETE FROM upload_budget WHERE window_end <= ?');
-        $stmt->execute([$now->format(self::FORMAT)]);
+        $stmt->execute([self::utc($now)]);
 
         return $stmt->rowCount();
+    }
+
+    private static function utc(\DateTimeImmutable $zeit): string
+    {
+        return $zeit->setTimezone(new \DateTimeZone(self::ZONE))->format(self::FORMAT);
     }
 }

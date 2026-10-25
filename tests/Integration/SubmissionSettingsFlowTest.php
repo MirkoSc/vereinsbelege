@@ -75,7 +75,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
         self::assertSame(200, $seite->status);
         self::assertStringContainsString('value="10"', $seite->body, 'limit per IP');
         self::assertStringContainsString('Aktiv', $seite->body);
-        self::assertStringContainsString('Heute hochgeladen: 0 MB von 500 MB', $seite->body, 'issue #242');
+        self::assertStringContainsString('Heute hochgeladen: 0 B von 500 MiB', $seite->body, 'issue #242');
     }
 
     public function testSavingTheLimitsPersistsAndAudits(): void

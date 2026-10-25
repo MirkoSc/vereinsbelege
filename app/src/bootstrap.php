@@ -373,17 +373,20 @@ $einreichungEinstellungenFor = static fn(\PDO $pdo): EinreichungsEinstellungen =
 );
 // The byte budget of the public upload and its free-space threshold (issue
 // #242): counters in `upload_budget`, free space of shared/var.
-$uploadBudgetFor = static fn(\PDO $pdo): UploadBudget => new UploadBudget(
+$uploadBudgetFor = static fn(\PDO $pdo, ?EinreichungsEinstellungen $einstellungen = null): UploadBudget => new UploadBudget(
     new UploadBudgetRepository($pdo),
-    $einreichungEinstellungenFor($pdo),
+    $einstellungen ?? $einreichungEinstellungenFor($pdo),
     new FreierSpeicher($paths->varDir()),
 );
 $spamschutzFor = static function (\PDO $pdo) use ($proofOfWork, $einreichungEinstellungenFor, $uploadBudgetFor): Spamschutz {
+    // One read of the settings for both, so they never disagree.
+    $einstellungen = $einreichungEinstellungenFor($pdo);
+
     return new Spamschutz(
         new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
         $proofOfWork,
-        $einreichungEinstellungenFor($pdo),
-        $uploadBudgetFor($pdo),
+        $einstellungen,
+        $uploadBudgetFor($pdo, $einstellungen),
     );
 };
 

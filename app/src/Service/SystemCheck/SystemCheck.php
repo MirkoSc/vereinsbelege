@@ -58,6 +58,8 @@ final readonly class SystemCheck
         'curl' => 'Ausgehende Aufrufe: KI-Anbieter, Update-Suche, Mail.',
     ];
 
+    private const string UPLOAD_BUDGET_LABEL = 'Öffentliche Uploads (Tagesbudget, freier Speicher)';
+
     /** Where shared/config.php would be if a domain pointed one level above web/. */
     public const string CONFIG_PROBE_PATH = '/shared/config.php';
 
@@ -119,7 +121,20 @@ final readonly class SystemCheck
         }
 
         if ($this->uploadBudget !== null) {
-            $results[] = $this->uploadBudget(($this->uploadBudget)());
+            try {
+                $results[] = $this->uploadBudget(($this->uploadBudget)());
+            } catch (\Throwable) {
+                // E.g. migration 046 not run yet: the page that diagnoses
+                // such a state must not fail on it.
+                $results[] = new CheckResult(
+                    key: 'upload_budget',
+                    label: self::UPLOAD_BUDGET_LABEL,
+                    expected: 'lesbar',
+                    actual: 'nicht lesbar',
+                    status: CheckStatus::Warn,
+                    detail: 'Der Stand des Upload-Budgets ließ sich nicht lesen – Datenbank und Migrationen prüfen.',
+                );
+            }
         }
 
         return $results;
@@ -359,7 +374,7 @@ final readonly class SystemCheck
      */
     public function uploadBudget(UploadBudgetStand $stand): CheckResult
     {
-        $mb = static fn(int $bytes): string => number_format($bytes / self::MIB, 0, ',', '.') . ' MB';
+        $mb = self::formatBytes(...);
         $frei = $stand->freiBytes === null ? 'freier Speicher nicht ermittelbar' : $mb($stand->freiBytes) . ' frei';
 
         [$status, $detail] = match (true) {
@@ -381,7 +396,7 @@ final readonly class SystemCheck
 
         return new CheckResult(
             key: 'upload_budget',
-            label: 'Öffentliche Uploads (Tagesbudget, freier Speicher)',
+            label: self::UPLOAD_BUDGET_LABEL,
             expected: 'unter ' . $mb($stand->budgetHeute) . ' am Tag, mindestens ' . $mb($stand->minFreiBytes) . ' frei',
             actual: $mb($stand->verbrauchtHeute) . ' heute, ' . $frei,
             status: $status,
