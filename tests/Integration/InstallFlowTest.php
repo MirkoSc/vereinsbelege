@@ -414,8 +414,8 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertNotSame('', $gespeichert);
         self::assertStringNotContainsString('smtp-geheim-4711', $gespeichert);
 
-        // Finishing with an empty password field keeps the saved one.
-        $fertig = $this->mailStep([...self::mailPost('abschliessen'), 'passwort' => '']);
+        // Finishing with a blank password field keeps the saved one.
+        $fertig = $this->mailStep([...self::mailPost('abschliessen'), 'passwort' => '  ']);
         self::assertSame(200, $fertig->status);
         self::assertStringContainsString('Installation abgeschlossen', $fertig->body);
         self::assertStringNotContainsString('Mail ist noch nicht eingerichtet', $fertig->body);
@@ -426,6 +426,31 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertSame('smtp-geheim-4711', $serverKey->decrypt((string) base64_decode($settings->get('mail_smtp_passwort_enc'), true)));
         self::assertSame('mail.example.test', $settings->get('mail_smtp_host'));
         self::assertSame('https://belege.example.test', $settings->get('oeffentliche_url'));
+    }
+
+    public function testSkippingAfterASuccessfulTestKeepsTheSettingsAndSaysSo(): void
+    {
+        mkdir($this->paths()->sharedDir(), 0775, true);
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+        $this->mailStep(self::mailPost('testen'), new FakeMailTransport([true]));
+
+        $fertig = $this->mailStep(['aktion' => 'ueberspringen']);
+        self::assertStringContainsString('Installation abgeschlossen', $fertig->body);
+        self::assertStringNotContainsString('Mail ist noch nicht eingerichtet', $fertig->body);
+        self::assertSame('mail.example.test', new SettingRepository($this->pdo())->get('mail_smtp_host'));
+    }
+
+    public function testAStaleRestartAfterTheConfirmationRemovesNothing(): void
+    {
+        mkdir($this->paths()->sharedDir(), 0775, true);
+        $gruppen = $this->extractGroups($this->submit($this->validPost())->body);
+        $this->confirmKey($gruppen[6], mailSchritt: true);
+
+        $antwort = $this->restart();
+        self::assertStringContainsString('Mail-Versand (optional)', $antwort->body);
+        self::assertSame(1, $this->userCount());
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM vault')->fetchColumn());
     }
 
     public function testAFailedTestMailIsShownAndTheStepStaysOpen(): void

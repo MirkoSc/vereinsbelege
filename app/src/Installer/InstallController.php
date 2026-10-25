@@ -329,7 +329,8 @@ final readonly class InstallController
 
         $aktion = (string) ($request->post['aktion'] ?? '');
         if ($aktion === 'ueberspringen') {
-            return $this->finishFresh($stand, false);
+            // Saves nothing more; what an earlier test saved stays.
+            return $this->finishFresh($stand, $this->mailVollstaendig($stand));
         }
         if ($aktion !== 'testen' && $aktion !== 'abschliessen') {
             return $this->renderMail($stand, ['mail' => 'Unbekannte Aktion.'], 422);
@@ -357,7 +358,11 @@ final readonly class InstallController
             $fehler = 'Bitte eine gültige Empfängeradresse für die Testmail angeben.';
         }
 
-        $pdo = $this->connect($stand['db']);
+        try {
+            $pdo = $this->connect($stand['db']);
+        } catch (\PDOException $e) {
+            return $this->renderMailOhneDb($e);
+        }
         $repo = $this->mailSettings($pdo, (string) $stand['server_key']);
         if ($fehler !== null) {
             // What was typed comes back - never the password.
@@ -385,7 +390,7 @@ final readonly class InstallController
             sicherheit: $sicherheit ?? SmtpSecurity::Starttls,
             benutzer: $benutzer,
             // Empty keeps a password saved by an earlier test in this step.
-            neuesPasswort: $passwort === '' ? null : $passwort,
+            neuesPasswort: trim($passwort) === '' ? null : $passwort,
             absender: $absender,
             antwortAn: $antwortAn,
             vereinsname: $vereinsname,
@@ -444,6 +449,13 @@ final readonly class InstallController
                 'errors' => [],
                 'values' => ['kanal' => $this->channelFromSetup()],
             ], 409);
+        }
+
+        if (($stand['phase'] ?? null) === self::PHASE_MAIL) {
+            // The key is confirmed - a stale "Neu beginnen" must not throw
+            // the confirmed vault away (and leave mail settings behind
+            // under a server key nobody will have).
+            return $this->renderMail($stand);
         }
 
         /** @var array<string, string> $dbValues */
@@ -793,7 +805,12 @@ final readonly class InstallController
         $db = $stand['db'];
         $adminEmail = (string) ($db['admin_email'] ?? '');
         if ($eingabe === null) {
-            $eingabe = $this->mailSettings($this->connect($db), (string) $stand['server_key'])->get();
+            try {
+                $pdo = $this->connect($db);
+            } catch (\PDOException $e) {
+                return $this->renderMailOhneDb($e);
+            }
+            $eingabe = $this->mailSettings($pdo, (string) $stand['server_key'])->get();
             if ($eingabe->absender === '' && !$eingabe->passwortGesetzt && $eingabe->host === '') {
                 // Nothing saved yet: the admin's address is the likeliest sender.
                 $eingabe = new MailSettings(
@@ -820,6 +837,32 @@ final readonly class InstallController
             'empfaenger' => $empfaenger ?? $adminEmail,
             'testergebnis' => $testergebnis,
         ], $status);
+    }
+
+    /** The database is gone mid-step: say so, and leave only "Überspringen". */
+    private function renderMailOhneDb(\PDOException $e): Response
+    {
+        // The PDO message names host and database, never the password.
+        return $this->render([
+            'schritt' => 'mail',
+            'errors' => ['mail' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()],
+            'values' => [],
+            'mail' => null,
+        ], 422);
+    }
+
+    /**
+     * Whether usable mail settings are stored - for the finished page.
+     *
+     * @param array<string, mixed> $stand $_SESSION['install_admin']
+     */
+    private function mailVollstaendig(array $stand): bool
+    {
+        try {
+            return $this->mailSettings($this->connect($stand['db']), (string) $stand['server_key'])->get()->istVollstaendig();
+        } catch (\PDOException) {
+            return false;
+        }
     }
 
     private function mailSettings(\PDO $pdo, string $serverKeyBase64): MailSettingsRepository

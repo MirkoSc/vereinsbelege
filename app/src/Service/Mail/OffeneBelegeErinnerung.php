@@ -30,7 +30,8 @@ use App\Service\Crypto\ServerCrypto;
  * the first cron call from ERST_AB_STUNDE o'clock on the day the interval
  * has passed since the last one; that day is written before anything is
  * queued, so a run cut off half way does not mail the first accounts twice.
- * An account with nothing waiting gets no mail.
+ * An account with nothing waiting gets no mail, and nobody does while the
+ * mail settings are incomplete.
  */
 final readonly class OffeneBelegeErinnerung
 {
@@ -60,9 +61,9 @@ final readonly class OffeneBelegeErinnerung
 
     public static function intervall(SettingRepository $settings): int
     {
-        $wert = (int) $settings->get(self::SETTING_INTERVALL, (string) self::STANDARD_TAGE);
+        $wert = $settings->get(self::SETTING_INTERVALL, (string) self::STANDARD_TAGE);
 
-        return in_array($wert, self::INTERVALLE, true) ? $wert : self::STANDARD_TAGE;
+        return ctype_digit($wert) && in_array((int) $wert, self::INTERVALLE, true) ? (int) $wert : self::STANDARD_TAGE;
     }
 
     public function faellig(\DateTimeImmutable $now): bool
@@ -85,11 +86,17 @@ final readonly class OffeneBelegeErinnerung
         if (!$this->faellig($now)) {
             return 0;
         }
+        $mail = $this->mailSettings->get();
+        if (!$mail->istVollstaendig()) {
+            // Mail not set up (the installer's step skipped): nothing that
+            // could only fail five times in the queue. Due again once it is.
+            return 0;
+        }
         $this->settings->set(self::SETTING_LETZTER_LAUF, $now->format('Y-m-d'));
 
         // Links only with the configured address: the cron has no request
         // whose host could be checked (App\Service\Mail\PublicUrl).
-        $eingestellt = $this->mailSettings->get()->oeffentlicheUrl;
+        $eingestellt = $mail->oeffentlicheUrl;
         $basis = $eingestellt === '' ? null : PublicUrl::normalize($eingestellt);
 
         $anzahl = 0;

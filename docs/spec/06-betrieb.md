@@ -99,16 +99,20 @@ Die Requests:
    `testen` speichert die Einstellungen und schickt die Testmail
    (`Mailer::sendeTestmail()`, Ergebnis auf der Seite, der Schritt bleibt
    offen), `abschliessen` speichert und schließt ab, `ueberspringen`
-   schließt ohne Mail-Einstellungen ab – die Abschlussseite weist dann auf
-   `/admin/mail` hin. Gespeichert wird sofort in `setting`, das Passwort mit
+   schließt ab, ohne (weiter) etwas zu speichern – was ein vorheriger Test
+   gespeichert hat, bleibt; fehlen vollständige Einstellungen, weist die
+   Abschlussseite auf `/admin/mail` hin. Fällt die Datenbank im Schritt
+   aus, bleibt nur „Überspringen“ (Meldung statt 500). Gespeichert wird sofort in `setting`, das Passwort mit
    dem Server-Schlüssel aus der Session verschlüsselt – genau die Zeilen,
    die `/admin/mail` später liest; in die Session kommt nichts davon. Ein
-   leeres Passwortfeld behält ein schon gespeichertes. Erst `abschliessen`
+   leeres (oder nur aus Leerzeichen bestehendes) Passwortfeld behält ein
+   schon gespeichertes. Erst `abschliessen`
    oder `ueberspringen` schreiben mit `ConfigWriter::write()` den
    Server-Schlüssel nach `config.php` – das schließt den Installer. Neu
    laden oder eine erneute Bestätigung zeigt wieder den Mail-Schritt.
 3. `POST /install/neu` („Neu beginnen“): für den Fall, dass der Browser vor
-   der Bestätigung geschlossen wurde – entfernt Admin und Tresor wieder
+   der Bestätigung geschlossen wurde (nach der Bestätigung, im Mail-Schritt,
+   entfernt er nichts mehr und zeigt den Mail-Schritt) – entfernt Admin und Tresor wieder
    (`FirstAdminSetup::remove()`, über die Fremdschlüssel aus
    `migrations/006_user.sql` kaskadierend), danach ist das Formular erneut
    nutzbar. Ein erneutes Absenden von `POST /install`, während ein Schritt
@@ -728,7 +732,9 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     `oeffentliche_url` (der Cron hat keinen Request-Host, §3). Wer nichts
     offen hat, bekommt keine Mail. Abstand über das Setting
     `erinnerung_intervall_tage` auf `/admin/mail`: `0` aus, `1` täglich,
-    `7` wöchentlich (Standard; unbekannte Werte zählen als 7). Fällig beim
+    `7` wöchentlich (Standard; unbekannte Werte zählen als 7). Solange die
+    Mail-Einstellungen unvollständig sind (`MailSettings::istVollstaendig()`),
+    wird nichts eingereiht und der Lauf nicht vermerkt. Fällig beim
     ersten Lauf ab 7 Uhr an dem Tag, an dem seit `erinnerung_letzter_lauf`
     (Y-m-d) der Abstand vergangen ist; der Tag wird **vor** dem Einreihen
     gesetzt, ein abgebrochener Lauf mailt also niemanden doppelt (er lässt

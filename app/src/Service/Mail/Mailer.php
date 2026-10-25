@@ -193,9 +193,10 @@ final readonly class Mailer
      */
     public function reiheErinnerungEin(string $empfaenger, int $posteingang, int $pruefung, ?string $basis, ?\DateTimeImmutable $now = null): void
     {
-        $settings = $this->settingsRepo->get();
+        // Only the name: the cron queues one of these per account, no need
+        // to open the SMTP password each time.
         $body = $this->templates->render('erinnerung-offen', [
-            'vereinsname' => $settings->vereinsname,
+            'vereinsname' => $this->settingsRepo->vereinsname(),
             'posteingang' => $posteingang,
             'pruefung' => $pruefung,
             'link' => $basis === null ? null : $basis . '/',

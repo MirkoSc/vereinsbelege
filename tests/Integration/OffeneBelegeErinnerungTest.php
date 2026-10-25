@@ -37,6 +37,25 @@ final class OffeneBelegeErinnerungTest extends DatabaseTestCase
         parent::setUp();
         new Migrator($this->pdo(), $this->migrationsDir())->migrate();
         $this->crypto = new ServerCrypto(str_repeat('e', ServerCrypto::KEY_BYTES));
+        // Complete mail settings - without them nothing is queued (below).
+        $settings = new SettingRepository($this->pdo());
+        $settings->set('mail_transport', 'php_mail');
+        $settings->set('mail_absender', 'belege@example.test');
+    }
+
+    public function testNothingIsQueuedWhileMailIsNotSetUp(): void
+    {
+        $this->konto('finanzen@example.test', SystemRole::Finanzen);
+        $this->beleg(DocumentStatus::InPruefung);
+        $settings = new SettingRepository($this->pdo());
+        $settings->set('mail_absender', '');
+
+        self::assertSame(0, $this->erinnerung()->ausfuehren(self::zeit('2026-10-26 08:00')));
+        self::assertSame([], $this->mails());
+        self::assertSame('', $settings->get(OffeneBelegeErinnerung::SETTING_LETZTER_LAUF), 'due again once mail works');
+
+        $settings->set('mail_absender', 'belege@example.test');
+        self::assertSame(1, $this->erinnerung()->ausfuehren(self::zeit('2026-10-26 09:00')));
     }
 
     public function testEveryActiveAccountWithDocumentEditGetsTheTwoCounts(): void
@@ -117,8 +136,10 @@ final class OffeneBelegeErinnerungTest extends DatabaseTestCase
 
         // An unknown value falls back to the weekly default instead of
         // mailing every minute.
-        $settings->set(OffeneBelegeErinnerung::SETTING_INTERVALL, '-3');
-        self::assertSame(OffeneBelegeErinnerung::STANDARD_TAGE, OffeneBelegeErinnerung::intervall($settings));
+        foreach (['-3', '3', 'abc', '', ' 1'] as $unbekannt) {
+            $settings->set(OffeneBelegeErinnerung::SETTING_INTERVALL, $unbekannt);
+            self::assertSame(OffeneBelegeErinnerung::STANDARD_TAGE, OffeneBelegeErinnerung::intervall($settings), $unbekannt);
+        }
     }
 
     public function testTheMailCarriesNoReceiptDataAndALinkOnlyWithTheConfiguredAddress(): void
