@@ -1592,3 +1592,37 @@ body.bereich-app:has(.pruefansicht) {
         border-color: #000;
     }
 }
+
+/* --- Wohin fließt das Geld (Issue #73/M11-3) --- */
+
+/* Balken als SVG: die Länge steht im width-Attribut des <rect> (kein
+   Inline-Style, den die CSP verwerfen würde). Der Wert steht immer als Text
+   daneben; der Balken wiederholt ihn nur. Die Tabellen sind .tabelle-karten:
+   auf dem Handy (360 px) eine Karte je Zeile, der Balken unter dem Namen;
+   leere Summenzellen fallen dort weg. */
+.balken {
+    display: block;
+    width: 100%;
+    height: 0.75rem;
+    background: var(--farbe-flaeche-still);
+    border-radius: var(--radius);
+}
+
+.balken-wert {
+    fill: var(--farbe-akzent);
+}
+
+.geldfluss td:empty {
+    display: none;
+}
+
+@media (min-width: 48rem) {
+    .geldfluss td:empty {
+        display: table-cell;
+    }
+
+    .geldfluss .geldfluss-balken-spalte {
+        width: 30%;
+        min-width: 5rem;
+    }
+}
