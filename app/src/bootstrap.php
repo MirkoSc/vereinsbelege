@@ -1405,7 +1405,7 @@ $integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritae
         $paths->releaseRoot,
         $paths->releaseChecksumsFile(),
         $paths->varDir(),
-        webDir: dirname($paths->releaseRoot) . '/web',
+        webDir: $paths->webDir(),
         configDatei: $paths->configFile(),
     ),
     $auditFor($connections->pdo()),

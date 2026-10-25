@@ -57,7 +57,7 @@ final readonly class CodeIntegritaet
     public const array ARTEN = ['geaendert', 'fehlend', 'zusaetzlich', 'umgebung'];
 
     /** Files the docroot holds by design (docs/spec/06-betrieb.md section 1). */
-    public const array DOCROOT_DATEIEN = ['index.php', '.htaccess', '.user.ini'];
+    public const array DOCROOT_DATEIEN = ['index.php', ...ReleaseSwitcher::DOCROOT_FILES];
 
     /**
      * Permission bits shared/config.php must not have: group write and
@@ -480,11 +480,51 @@ final readonly class CodeIntegritaet
                 continue;
             }
             $voll = $this->webDir . '/' . $name;
+            if ($name === '.well-known' && self::nurAcmeChallenge($voll)) {
+                continue;
+            }
             $fremd[] = 'web/' . $name . (!is_link($voll) && is_dir($voll) ? '/' : '') . ' – nicht Teil der Installation';
         }
         sort($fremd, SORT_STRING);
 
         return [...$befunde, ...$fremd];
+    }
+
+    /**
+     * Whether web/.well-known holds nothing but ACME challenge tokens - the
+     * files a host's Let's Encrypt validation puts there for a moment. Only
+     * plain token names (base64url, no extension) directly in
+     * acme-challenge/, no links: a script or a .htaccess in there is still
+     * a finding.
+     */
+    private static function nurAcmeChallenge(string $verzeichnis): bool
+    {
+        if (is_link($verzeichnis) || !is_dir($verzeichnis)) {
+            return false;
+        }
+        foreach (@scandir($verzeichnis) ?: [null] as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            if ($name !== 'acme-challenge') {
+                return false;
+            }
+            $challenge = $verzeichnis . '/acme-challenge';
+            if (is_link($challenge) || !is_dir($challenge)) {
+                return false;
+            }
+            foreach (@scandir($challenge) ?: [null] as $token) {
+                if ($token === '.' || $token === '..') {
+                    continue;
+                }
+                if ($token === null || preg_match('/^[A-Za-z0-9_-]+$/', $token) !== 1
+                    || is_link($challenge . '/' . $token) || !is_file($challenge . '/' . $token)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -526,19 +566,22 @@ final readonly class CodeIntegritaet
      * Whether $php is exactly what ConfigWriter writes in shape:
      * `<?php return <array of literals>;` plus comments and whitespace. Any
      * call, variable, include, eval, backtick or output outside the PHP
-     * block fails. Without ext-tokenizer the structure cannot be read and
-     * counts as fine - the permissions are still checked.
+     * block fails. Brackets only where an array literal may stand: "(" only
+     * right after `array`, "[" only where a value starts - so a string
+     * callable (`'system'('id')`) or an array callable is no value. Without
+     * ext-tokenizer the structure cannot be read and counts as fine - the
+     * permissions are still checked.
      */
     public static function nurWerte(string $php): bool
     {
         if (!function_exists('token_get_all')) {
             return true;
         }
-        $erlaubt = [
-            T_ARRAY, T_CONSTANT_ENCAPSED_STRING, T_LNUMBER, T_DNUMBER, T_DOUBLE_ARROW,
-        ];
-        $zeichen = ['(', ')', '[', ']', ',', '.', '-', '+'];
+        $werte = [T_CONSTANT_ENCAPSED_STRING, T_LNUMBER, T_DNUMBER, T_ARRAY, T_DOUBLE_ARROW];
+        // after these a new value starts (an array literal "[" may follow)
+        $wertBeginn = ['return', '(', '[', ',', '=>', '.', '-', '+'];
         $phase = 'start';
+        $vorher = '';
         foreach (token_get_all($php) as $token) {
             [$art, $text] = is_array($token) ? [$token[0], $token[1]] : [null, $token];
             if ($art === T_WHITESPACE || $art === T_COMMENT || $art === T_DOC_COMMENT) {
@@ -547,16 +590,21 @@ final readonly class CodeIntegritaet
             $ok = match ($phase) {
                 'start' => $art === T_OPEN_TAG,
                 'return' => $art === T_RETURN,
-                'werte' => $text === ';'
-                    || in_array($art, $erlaubt, true)
-                    || ($art === null && in_array($text, $zeichen, true))
-                    || ($art === T_STRING && in_array(strtolower($text), ['true', 'false', 'null'], true)),
+                'werte' => match (true) {
+                    $text === ';', $text === ')', $text === ']', $text === ',', $text === '.',
+                    $text === '-', $text === '+' => true,
+                    $text === '(' => $vorher === 'array',
+                    $text === '[' => in_array($vorher, $wertBeginn, true),
+                    $art === T_STRING => in_array(strtolower($text), ['true', 'false', 'null'], true),
+                    default => in_array($art, $werte, true),
+                },
                 'ende' => $art === T_CLOSE_TAG,
                 default => $art === T_INLINE_HTML && trim($text) === '',
             };
             if (!$ok) {
                 return false;
             }
+            $vorher = $art === T_ARRAY ? 'array' : ($art === T_RETURN ? 'return' : $text);
             $phase = match ($phase) {
                 'start' => 'return',
                 'return' => 'werte',

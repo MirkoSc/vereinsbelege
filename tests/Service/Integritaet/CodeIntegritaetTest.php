@@ -540,9 +540,42 @@ final class CodeIntegritaetTest extends TestCase
             'output after' => $echt . "?>\nhallo",
             'no return' => "<?php\n\$x = 1;",
             'include' => "<?php return include 'x.php';",
+            // a string or array callable is made of literals and brackets
+            'string callable' => "<?php return ['db' => 'system'('id')];",
+            'concatenated callable' => "<?php return ['sys' . 'tem'('id')];",
+            'array callable' => "<?php return [['A', 'b'][0]('x')];",
+            'callable after array' => "<?php return array ('a' => 1)('x');",
+            'index after string' => "<?php return ['abc'[0]];",
         ] as $fall => $php) {
             self::assertFalse(CodeIntegritaet::nurWerte($php), $fall);
         }
+    }
+
+    /**
+     * Let's Encrypt validation puts short-lived tokens into
+     * web/.well-known/acme-challenge/ - no finding; anything else in there
+     * (a script, a .htaccess) is one.
+     */
+    public function testAcmeChallengeTokensAreNoFindingButScriptsThereAre(): void
+    {
+        $web = $this->docroot();
+        mkdir($web . '/.well-known/acme-challenge', 0775, true);
+        file_put_contents($web . '/.well-known/acme-challenge/Abc-123_xyz', 'token');
+
+        self::assertTrue(CodeIntegritaet::unveraendert($this->durchlaufen($this->pruefungMit())));
+
+        file_put_contents($web . '/.well-known/acme-challenge/x.php', '<?php');
+        self::assertSame(
+            ['web/.well-known/ – nicht Teil der Installation'],
+            $this->durchlaufen($this->pruefungMit())['pfade']['umgebung'],
+        );
+
+        unlink($web . '/.well-known/acme-challenge/x.php');
+        file_put_contents($web . '/.well-known/security.txt', 'x');
+        self::assertSame(
+            ['web/.well-known/ – nicht Teil der Installation'],
+            $this->durchlaufen($this->pruefungMit())['pfade']['umgebung'],
+        );
     }
 
     /**

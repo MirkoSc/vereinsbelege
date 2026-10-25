@@ -235,6 +235,14 @@ final class ReleaseDownloaderTest extends TestCase
         yield 'other port' => ['https://github.com:8443/x.zip'];
         yield 'credentials' => ['https://user:pass@github.com/x.zip'];
         yield 'ftp' => ['ftp://github.com/x.zip'];
+        // any GitHub user can publish releases on the same hosts
+        yield 'other repository' => ['https://github.com/attacker/vereinsbelege/releases/download/v9/x.zip'];
+        yield 'other repository via the api' => ['https://api.github.com/repos/attacker/x/releases/latest'];
+        yield 'not a release asset' => ['https://github.com/MirkoSc/vereinsbelege/archive/main.zip'];
+        yield 'dot segments' => ['https://github.com/MirkoSc/vereinsbelege/releases/download/../../../attacker/x/y.zip'];
+        yield 'encoded path' => ['https://github.com/MirkoSc/vereinsbelege/releases/download/%2e%2e/x.zip'];
+        // the storage hosts are reached by GitHub's redirect only
+        yield 'storage host as start' => ['https://objects.githubusercontent.com/x.zip'];
     }
 
     /**

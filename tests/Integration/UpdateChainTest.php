@@ -509,7 +509,7 @@ final class UpdateChainTest extends DatabaseTestCase
         $this->service($antworten, publicKey: $paar['public'])->check();
         $this->service($antworten, publicKey: $paar['public'])->download();
 
-        file_put_contents($this->base . '/shared/var/update/checksums-v1.1.0.txt', "\n", FILE_APPEND);
+        file_put_contents($this->base . '/shared/var/update/liste-v1.1.0/checksums.txt', "\n", FILE_APPEND);
         $state = $this->service($antworten, publicKey: $paar['public'])->extract();
 
         self::assertStringContainsString('Signatur', (string) $state->fehler);
@@ -548,6 +548,51 @@ final class UpdateChainTest extends DatabaseTestCase
 
         self::assertStringContainsString('nicht erlaubt', (string) $state->fehler);
         self::assertFileDoesNotExist($this->base . '/shared/var/update/vereinsbelege-v1.1.0.zip');
+    }
+
+    /**
+     * Target and URLs live in update_state.json: pointing them at an older,
+     * genuinely published (and signed) release must not downgrade the
+     * installation to a known hole.
+     */
+    public function testATamperedStateCannotDowngrade(): void
+    {
+        $paar = ReleaseSignatur::erzeugeSchluesselpaar();
+        $neu = $this->buildReleaseZip('1.1.0');
+        $alt = $this->buildReleaseZip('0.9.0');
+        $antworten = [
+            ...$this->githubAnswers('1.1.0', $neu, $paar['secret']),
+            ...array_slice($this->githubAnswers('0.9.0', $alt, $paar['secret']), 1),
+        ];
+        $this->service($antworten, publicKey: $paar['public'])->check();
+
+        $datei = $this->paths()->updateStateFile();
+        $stand = (array) json_decode((string) file_get_contents($datei), true);
+        $stand['ziel_version'] = '0.9.0';
+        $stand['zip_url'] = self::DOWNLOAD . 'v0.9.0/vereinsbelege-v0.9.0.zip';
+        $stand['checksums_url'] = self::DOWNLOAD . 'v0.9.0/checksums.txt';
+        $stand['signatur_url'] = self::DOWNLOAD . 'v0.9.0/checksums.txt.sig';
+        file_put_contents($datei, json_encode($stand, JSON_THROW_ON_ERROR));
+
+        $state = $this->service($antworten, publicKey: $paar['public'])->download();
+
+        self::assertStringContainsString('nicht neuer', (string) $state->fehler);
+    }
+
+    /**
+     * A signed list of another release does not vouch for this one.
+     */
+    public function testTheListMustNameTheTargetVersion(): void
+    {
+        $zip = $this->buildReleaseZip('1.1.0');
+        $antworten = $this->githubAnswers('1.1.0', $zip);
+        $antworten[self::DOWNLOAD . 'v1.1.0/checksums.txt'] =
+            hash_file('sha256', $zip) . "  vereinsbelege-v1.2.0.zip\n";
+
+        $this->service($antworten)->check();
+        $state = $this->service($antworten)->download();
+
+        self::assertStringContainsString('gehört nicht zu Version 1.1.0', (string) $state->fehler);
     }
 
     /**

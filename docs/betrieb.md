@@ -507,6 +507,10 @@ plumpe Manipulationen. Jede Prüfung steht im Audit-Log.
   ändert.
 - **`config.php` mit zu weiten Rechten** (z. B. `0644`): per FTP-Programm
   auf `0600` setzen.
+- **Nach einem Rollback** können `web/index.php`, `.htaccess` und
+  `.user.ini` als Abweichung erscheinen: sie bleiben auf dem Stand des
+  neueren Releases. Das nächste vollständige Update bringt sie wieder in
+  Einklang.
 - **„Signatur ungültig“ oder „Liste fehlt“** ist ein Alarm, kein
   Bedienfehler: Admins informieren, Zugangsdaten beim Hoster ändern,
   Release neu einspielen (Update bzw. Neuinstallation mit Restore).

@@ -156,15 +156,13 @@ final class UpdateService
 
             $checksums = $this->downloader->fetchText((string) $state->checksumsUrl);
             $signatur = $state->signaturUrl === null ? null : $this->downloader->fetchText($state->signaturUrl);
-            $hinweis = $this->pruefeEchtheit($zipFile, $checksums, $signatur);
+            $hinweis = $this->pruefeEchtheit($version, $zipFile, $checksums, $signatur);
 
-            file_put_contents($this->listFile($version), $checksums, LOCK_EX);
-            $signaturDatei = $this->listFile($version) . '.sig';
-            if ($signatur !== null) {
-                file_put_contents($signaturDatei, $signatur, LOCK_EX);
-            } elseif (is_file($signaturDatei)) {
-                unlink($signaturDatei);
+            $listenDir = $this->listDir($version);
+            if (!is_dir($listenDir)) {
+                mkdir($listenDir, 0775, true);
             }
+            ReleaseDownloader::speichereListe($listenDir, $checksums, $signatur);
 
             return $state->mit(meldung: $hinweis === null
                 ? 'Release-ZIP geladen, Prüfsumme und Signatur bestätigt.'
@@ -184,13 +182,14 @@ final class UpdateService
     {
         return $this->step('extract', function (UpdateState $state): UpdateState {
             $version = (string) $state->zielVersion;
-            $listFile = $this->listFile($version);
+            $listFile = $this->listDir($version) . '/' . ReleaseDownloader::LISTE;
+            $signaturFile = $this->listDir($version) . '/' . ReleaseSignatur::ASSET;
             if (!is_file($listFile)) {
                 throw new \RuntimeException('Prüfsummenliste des Downloads fehlt – bitte den Download wiederholen.');
             }
             $checksums = (string) file_get_contents($listFile);
-            $signatur = is_file($listFile . '.sig') ? (string) file_get_contents($listFile . '.sig') : null;
-            $this->pruefeEchtheit($this->zipFile($version), $checksums, $signatur);
+            $signatur = is_file($signaturFile) ? (string) file_get_contents($signaturFile) : null;
+            $this->pruefeEchtheit($version, $this->zipFile($version), $checksums, $signatur);
 
             $target = dirname($this->paths->releaseRoot) . '/releases/v' . $version;
             $this->downloader->extractTo($this->zipFile($version), $target);
@@ -330,10 +329,18 @@ final class UpdateService
             $this->switcher->cleanupOldReleases();
 
             $version = (string) $state->zielVersion;
-            foreach ([$this->zipFile($version), $this->listFile($version), $this->listFile($version) . '.sig'] as $datei) {
+            $listenDir = $this->listDir($version);
+            foreach ([
+                $this->zipFile($version),
+                $listenDir . '/' . ReleaseDownloader::LISTE,
+                $listenDir . '/' . ReleaseSignatur::ASSET,
+            ] as $datei) {
                 if (is_file($datei)) {
                     unlink($datei);
                 }
+            }
+            if (is_dir($listenDir)) {
+                @rmdir($listenDir);
             }
 
             // One combined line on purpose: the admin page logs only the LAST
@@ -384,13 +391,27 @@ final class UpdateService
     }
 
     /**
-     * The ZIP matches its line in checksums.txt and the list is authentic.
+     * The target is newer than the running release, the list is the list
+     * of exactly that version, the ZIP matches its line, and the list is
+     * authentic. Target and URLs come from shared/update_state.json, which
+     * FTP access can edit - without the first two checks an older, validly
+     * signed release could be slipped in (a downgrade to a known hole).
      *
      * @return string|null warning when the authenticity could not be
      *         checked (no public key fixed yet)
      */
-    private function pruefeEchtheit(string $zipFile, string $checksums, ?string $signatur): ?string
+    private function pruefeEchtheit(string $version, string $zipFile, string $checksums, ?string $signatur): ?string
     {
+        if (!version_compare($version, $this->currentVersion, '>')) {
+            throw new \RuntimeException(sprintf(
+                'Version %s ist nicht neuer als die installierte Version %s – kein Update.',
+                $version,
+                $this->currentVersion,
+            ));
+        }
+        if (Pruefsummenliste::aus($checksums)->version !== $version) {
+            throw new \RuntimeException('Die Prüfsummenliste gehört nicht zu Version ' . $version . '.');
+        }
         $this->downloader->verifyChecksum($zipFile, $checksums);
 
         return ReleaseSignatur::pruefe($checksums, $signatur, $this->publicKey);
@@ -490,11 +511,11 @@ final class UpdateService
     }
 
     /**
-     * checksums.txt of a download, until the extract step moves it into the
-     * release; the signature next to it with ".sig".
+     * checksums.txt and its signature of a download, until the extract step
+     * puts them into the release.
      */
-    private function listFile(string $version): string
+    private function listDir(string $version): string
     {
-        return $this->paths->varDir() . '/update/checksums-v' . $version . '.txt';
+        return $this->paths->varDir() . '/update/liste-v' . $version;
     }
 }

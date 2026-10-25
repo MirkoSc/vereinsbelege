@@ -1852,7 +1852,9 @@ zeigen soll.
    drei, GitHub leitet Release-Downloads aber inzwischen auf den vierten
    um; ohne ihn bräche jedes Update. Nur `https`, Port 443, keine
    Zugangsdaten in der URL, jeder Weiterleitungs-Sprung einzeln geprüft
-   (höchstens 5). Der Selbsttest (eigene Startseite) ist ausgenommen.
+   (höchstens 5). Die Startadresse muss zusätzlich zu diesem Repository
+   gehören (sonst ginge jedes fremde GitHub-Release). Der Selbsttest
+   (eigene Startseite) ist ausgenommen.
 5. **Liste je Release** als `checksums.txt`/`checksums.txt.sig` im
    Release-Wurzelverzeichnis statt eines Ordners je Version in `shared/`:
    `rename()` tauscht sie dann atomar mit, auch beim Rollback, ohne
@@ -1871,6 +1873,10 @@ zeigen soll.
    festgelegtem Schlüssel – eine fehlende Liste verhindern die Prüfung und
    erscheinen rot; das Löschen der Liste soll die Prüfung nicht unbemerkt
    abschalten.
+8. **Kein Downgrade über `update_state.json`:** `download`/`extract`
+   prüfen erneut „Ziel neuer als laufende Version“ und „Liste nennt genau
+   die Zielversion“ – eine Signatur allein bindet kein Release an die
+   Version, die der Check gewählt hat.
 
 Offen für Mirko: Schlüsselpaar erzeugen, Secret `RELEASE_SIGNING_KEY`
 anlegen, `PUBLIC_KEY` committen (`docs/betrieb.md` §13); ob der vierte

@@ -966,12 +966,21 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   - jeder weitere Eintrag in `web/` ist „nicht Teil der Installation“
     (auch ein liegengebliebenes `setup.php`; Verzeichnisse mit `/`), ein
     Symlink statt einer der drei Dateien und ein fehlendes `web/` sind
-    Befunde;
+    Befunde. Ausnahme: `.well-known/`, solange es nur
+    `acme-challenge/` mit Token-Dateien (Name nur `[A-Za-z0-9_-]`, keine
+    Links) enthält – dort legt die Let's-Encrypt-Prüfung des Hosters kurz
+    Dateien ab; ein Skript oder eine `.htaccess` darin bleibt ein Befund;
+  - nach einem **Rollback** bleiben Shim, `.htaccess` und `.user.ini` auf
+    dem Stand des neueren Releases (der Rollback tauscht nur `current/`);
+    unterscheiden sie sich von den Vorlagen des älteren, erscheinen sie als
+    Befund, bis das nächste Update durchläuft;
   - `shared/config.php`: keine Inhaltsprüfung (individuell), aber ein
     Symlink, eine fehlende oder unlesbare Datei, Rechte mit Gruppen-Schreib-
     oder irgendeinem Recht für andere (erlaubt 0600 und 0640) und ein
     Aufbau, der mehr ist als `<?php return <Array aus Literalen>;` plus
-    Kommentare (Aufrufe, Variablen, `include`, Backticks, Konstanten,
+    Kommentare (Aufrufe – auch über einen String oder ein Array als
+    Callable, deshalb „(“ nur direkt nach `array` und „[“ nur, wo ein Wert
+    beginnt –, Variablen, `include`, Backticks, Konstanten,
     Ausgabe vor oder nach dem PHP-Block – per `token_get_all()`; ohne
     `ext-tokenizer` entfällt nur diese Teilprüfung). Die Datei wird dafür
     gelesen, nie ausgeführt; ihr Inhalt landet nirgends.
@@ -1038,5 +1047,7 @@ Befund; geänderter Shim, fehlende `.htaccess`, geänderte `.user.ini`,
 fremde Dateien/Verzeichnisse, Symlink-Shim und fehlendes `web/` erkannt;
 `config.php`-Rechte (0640 erlaubt, 0644 nicht), eingeschleuster Code,
 fehlende Datei; was `ConfigWriter` schreibt, besteht die Strukturprüfung,
-Code davor/danach, Interpolation, Backticks, Konstanten, Aufrufe, Ausgabe
-und `include` nicht; Prüfstand von vor dem Update läuft zu Ende.
+Code davor/danach, Interpolation, Backticks, Konstanten, Aufrufe (auch
+String-/Array-Callables), Ausgabe und `include` nicht; ACME-Token in
+`.well-known/acme-challenge/` kein Befund, ein Skript dort schon;
+Prüfstand von vor dem Update läuft zu Ende.

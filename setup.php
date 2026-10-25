@@ -138,7 +138,7 @@ final class ReleaseDownloader
      */
     public function fetchText(string $url): string
     {
-        self::pruefeUrl($url, $this->erlaubteHosts);
+        $this->pruefeQuelle($url);
 
         return ($this->httpGet)($url);
     }
@@ -174,6 +174,34 @@ final class ReleaseDownloader
                 $schema !== '' ? $schema : '?',
                 $host !== '' ? $host : '?',
             ));
+        }
+    }
+
+    /**
+     * The first URL of a request must name THIS repository: the API under
+     * /repos/MirkoSc/vereinsbelege/, an asset under
+     * /MirkoSc/vereinsbelege/releases/download/ - any GitHub user can
+     * publish releases on the same hosts. The storage hosts are only
+     * reached by GitHub's own redirect, never as a starting point. Hosts a
+     * test allows besides GitHub's are not subject to this.
+     */
+    private function pruefeQuelle(string $url): void
+    {
+        self::pruefeUrl($url, $this->erlaubteHosts);
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        if (!in_array($host, self::ERLAUBTE_HOSTS, true)) {
+            return;
+        }
+        $pfad = strtolower((string) parse_url($url, PHP_URL_PATH));
+        $repo = strtolower(self::REPO);
+        $erlaubt = match ($host) {
+            'api.github.com' => str_starts_with($pfad, '/repos/' . $repo . '/'),
+            'github.com' => str_starts_with($pfad, '/' . $repo . '/releases/download/'),
+            default => false,
+        };
+        if (!$erlaubt || str_contains($pfad, '/../') || str_contains($pfad, '%')) {
+            throw new \RuntimeException('Download-Adresse nicht erlaubt (nur Releases von ' . self::REPO . ').');
         }
     }
 
@@ -240,7 +268,7 @@ final class ReleaseDownloader
      */
     public function downloadTo(string $url, string $targetFile): void
     {
-        self::pruefeUrl($url, $this->erlaubteHosts);
+        $this->pruefeQuelle($url);
 
         $dir = dirname($targetFile);
         if (!is_dir($dir)) {
@@ -389,7 +417,7 @@ final class ReleaseDownloader
                 ? self::curlHop($hopUrl, null)
                 : self::streamHop($hopUrl, null);
 
-            return self::istWeiterleitung($status) ? $location : null;
+            return self::istWeiterleitung($status) ? self::ziel($location) : null;
         });
         // The message shape matters: findLatestRelease() recognises "no
         // release yet" by the "HTTP 404" in it.
@@ -421,7 +449,7 @@ final class ReleaseDownloader
                     ? self::curlHop($hopUrl, $target)
                     : self::streamHop($hopUrl, $target);
                 if (self::istWeiterleitung($status)) {
-                    return $location;
+                    return self::ziel($location);
                 }
                 if ($status >= 400) {
                     throw new \RuntimeException(sprintf('Download fehlgeschlagen (HTTP %d)', $status));
@@ -437,6 +465,19 @@ final class ReleaseDownloader
     private static function istWeiterleitung(int $status): bool
     {
         return in_array($status, [301, 302, 303, 307, 308], true);
+    }
+
+    /**
+     * A redirect without Location is an error - never the final answer,
+     * its body is no release file.
+     */
+    private static function ziel(?string $location): string
+    {
+        if ($location === null || trim($location) === '') {
+            throw new \RuntimeException('Weiterleitung ohne Ziel beim Download.');
+        }
+
+        return $location;
     }
 
     /**

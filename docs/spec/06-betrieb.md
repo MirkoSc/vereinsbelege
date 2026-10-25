@@ -147,12 +147,24 @@ N-02, N-18, N-19 aus `docs/security-checkliste.md`, E-63):
 - **Download-Adressen:** `ReleaseDownloader` fragt nur `https` an den
   Hosts `api.github.com`, `github.com`, `objects.githubusercontent.com`
   und `release-assets.githubusercontent.com` an (Port 443, keine
-  Zugangsdaten in der URL). Weiterleitungen folgt er selbst
+  Zugangsdaten in der URL). Die erste Adresse einer Anfrage muss zu
+  **diesem** Repository gehören (`/repos/MirkoSc/vereinsbelege/…` bzw.
+  `/MirkoSc/vereinsbelege/releases/download/…`, ohne `/../` und
+  `%`-Kodierung) – jeder GitHub-Nutzer kann auf denselben Hosts Releases
+  veröffentlichen; die Speicher-Hosts erreicht nur GitHubs eigene
+  Weiterleitung. Weiterleitungen folgt er selbst
   (`folgeWeiterleitungen()`, höchstens 5) und prüft **jeden** Sprung –
-  curl bzw. der Stream-Wrapper folgen nicht selbst. Die Asset-Adressen
+  curl bzw. der Stream-Wrapper folgen nicht selbst; eine Weiterleitung ohne
+  `Location` ist ein Fehler. Die Asset-Adressen
   laufen über `shared/update_state.json`; eine dort per FTP geänderte
   Adresse wird abgelehnt. Einzige Ausnahme ist der Selbsttest im
   `finish`-Schritt (`fetchSelbsttest()`), der die eigene Startseite abruft.
+- **Kein Unterschieben älterer Releases:** auch die Zielversion steht in
+  `update_state.json`. `download` und `extract` verlangen deshalb erneut,
+  dass sie neuer ist als die laufende Version und dass die Liste genau
+  diese Version nennt (Zeile `vereinsbelege-vX.Y.Z.zip`) – sonst ließe
+  sich ein älteres, echt signiertes Release mit bekannter Lücke
+  einspielen.
 - **Liste je Release:** `setup.php` und der Updater (Schritt `extract`,
   nach erneuter Prüfung von ZIP und Signatur – beides lag zwischen zwei
   Requests in `shared/var/update/`) legen `checksums.txt` und ggf.
@@ -190,7 +202,9 @@ Rollback, Aufräumen, Shim-Selbstheilung und -Rücknahme, Docroot-Dateien inkl.
 überspringen, fehlende Assets, Signatur-Asset optional, Prüfsummen erkennen
 und ablehnen, Dateiname des Assets, curl-Zweig, nur `https` zu den
 GitHub-Hosts – lokale Pfade, `file://`, `http`, fremde und ähnlich
-benannte Hosts, anderer Port, Zugangsdaten abgelehnt –, jeder
+benannte Hosts, anderer Port, Zugangsdaten, fremdes Repository, Pfad
+außerhalb der Release-Downloads, `/../`, `%`-Kodierung, Speicher-Host als
+Startadresse abgelehnt –, jeder
 Weiterleitungs-Sprung geprüft und der verbotene nie angefragt,
 Weiterleitungs-Schleife endet, Liste und Signatur ins Release, Selbsttest
 nicht auf GitHub beschränkt); `ReleaseSignaturTest` (Signatur gültig,
@@ -209,7 +223,8 @@ Version und räumt den Download weg, ohne Schlüssel unsigniert mit
 Hinweis, signiert bestätigt und Signatur im Release, mit Schlüssel
 unsigniert oder fremd signiert abgelehnt, nach dem Download getauschte
 Liste bzw. ZIP vor dem Entpacken erkannt, manipulierte Adresse in
-`update_state.json` abgelehnt, Stand ohne `signatur_url` läuft weiter);
+`update_state.json` abgelehnt, kein Downgrade über den Stand, Liste
+einer anderen Version abgelehnt, Stand ohne `signatur_url` läuft weiter);
 `InstallFlowTest` (Schema, `config.php` erst nach Bestätigung, Kanal-Übernahme,
 Zugriffssperre in `shared/` und `releases/` bzw. sichtbare Warnung,
 CSRF, abgelehnte Zugangsdaten, sieben Gruppen zu acht Zeichen, falsche letzte
