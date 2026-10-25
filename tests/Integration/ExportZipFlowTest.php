@@ -651,6 +651,38 @@ final class ExportZipFlowTest extends DatabaseTestCase
         self::assertSame(ExportRunStatus::Offen, new ExportRunRepository($this->pdo())->find($fremd)?->status);
     }
 
+    /**
+     * Security review (issue #78): the marking counts for the whole club,
+     * and external roles are read only (01 section 4, 05 section 2). Without
+     * a period scope a Kassenprüfer sees every run - but may neither confirm
+     * nor reset one, and the page offers neither.
+     */
+    public function testExternalRolesMayNotMarkOrResetARun(): void
+    {
+        $this->belege();
+        $offen = $this->laufAnlegen(self::ZEITRAUM);
+        $bestaetigt = $this->laufAnlegen(self::ZEITRAUM);
+        $this->bestaetigen($bestaetigt);
+
+        foreach ([SystemRole::Kassenpruefer, SystemRole::Steuerberater] as $rolle) {
+            $this->rolle($rolle);
+            foreach ([[$offen, 'bestaetigen'], [$bestaetigt, 'zuruecksetzen']] as [$lauf, $aktion]) {
+                $antwort = $this->post('/app/export/lauf/' . $lauf . '/' . $aktion, []);
+                self::assertInstanceOf(Response::class, $antwort);
+                self::assertSame(403, $antwort->status, $rolle->value . ' ' . $aktion);
+            }
+
+            $seite = $this->get('/app/export/lauf/' . $offen);
+            self::assertSame(200, $seite->status, 'reading the run stays allowed');
+            self::assertStringNotContainsString('/bestaetigen"', $seite->body);
+            self::assertStringNotContainsString('/zuruecksetzen"', $this->get('/app/export/lauf/' . $bestaetigt)->body);
+        }
+
+        $laeufe = new ExportRunRepository($this->pdo());
+        self::assertSame(ExportRunStatus::Offen, $laeufe->find($offen)?->status);
+        self::assertSame(ExportRunStatus::Bestaetigt, $laeufe->find($bestaetigt)?->status);
+    }
+
     public function testTheRunPageLeadsThroughDownloadAndConfirmation(): void
     {
         $this->belege();
