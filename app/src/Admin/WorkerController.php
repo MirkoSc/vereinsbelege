@@ -17,6 +17,11 @@ use App\Repository\DocumentArtifactRepository;
 use App\Repository\JobRepository;
 use App\Repository\SettingRepository;
 use App\Repository\WorkerRepository;
+use App\Domain\AuditAction;
+use App\Domain\ImapSicherheit;
+use App\Service\Audit\AuditLog;
+use App\Service\Worker\MailEingangEinstellungen;
+use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
@@ -38,7 +43,8 @@ use App\View\View;
  * status (online/offline, last heartbeat, version, capabilities), queue,
  * last errors, throughput and "OCR nachholen"; since issue #88 the OCR
  * backfill of the imported archive (start for one run or all, progress,
- * stop - App\Service\Worker\BestandsOcr).
+ * stop - App\Service\Worker\BestandsOcr). Since issue #87 (E-54) also the mail
+ * intake: the IMAP mailbox the worker reads receipts from.
  *
  * Switching the module on and "OCR nachholen" need an unlocked vault in
  * this session (E-43): from then on documents go to the worker, which can
@@ -71,7 +77,59 @@ final readonly class WorkerController
         private SessionVault $sessionVault,
         private BestandsOcr $bestandsOcr,
         private ArchiveImportRepository $imports,
+        private ?MailEingangSpeicher $mailEingang = null,
+        private ?AuditLog $audit = null,
     ) {
+    }
+
+    /**
+     * The mail intake's settings (issue #87, 07 section 9). No vault
+     * needed: the worker only writes to the inbox, like the public form.
+     * The password is never shown; an empty field keeps it.
+     */
+    public function mailEingang(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+        if ($this->mailEingang === null) {
+            throw new \LogicException('The mail intake is not wired into the worker page.');
+        }
+        $bisher = $this->mailEingang->laden();
+        [$neu, $fehler] = MailEingangEinstellungen::ausFormular($request->post, $bisher);
+        if ($neu === null) {
+            $this->session->flash(implode(' ', $fehler), FlashArt::Fehler);
+
+            return Response::redirect(self::SEITE . '#mail-eingang');
+        }
+        $this->mailEingang->speichern($neu);
+        $geaendert = [];
+        foreach (['aktiv', 'host', 'port', 'benutzer', 'ordner', 'zielOrdner', 'abrufMinuten'] as $feld) {
+            if ($neu->{$feld} !== $bisher->{$feld}) {
+                $geaendert[] = $feld;
+            }
+        }
+        if ($neu->sicherheit !== $bisher->sicherheit) {
+            $geaendert[] = 'sicherheit';
+        }
+        if (!hash_equals($bisher->passwort, $neu->passwort)) {
+            $geaendert[] = 'passwort';
+        }
+        if ($neu->absender->eintraege !== $bisher->absender->eintraege) {
+            $geaendert[] = 'absender';
+        }
+        // Field names only - never a value (the audit log is for everyone
+        // with audit.view).
+        $this->audit?->record(AuditAction::EinstellungMailEingang, $this->session->userId(), $request->ip, details: ['felder' => $geaendert]);
+
+        $hinweis = $neu->aktiv
+            ? 'E-Mail-Eingang gespeichert. Der Worker übernimmt die Zugangsdaten mit seiner nächsten Meldung'
+                . ($this->routing->modulAktiv() ? '.' : ', sobald das Worker-Modul eingeschaltet ist.')
+            : 'E-Mail-Eingang gespeichert (ausgeschaltet). Der Worker verwirft die Zugangsdaten mit seiner nächsten Meldung.';
+        $this->session->flash($hinweis);
+
+        return Response::redirect(self::SEITE . '#mail-eingang');
     }
 
     /** Module switch and fallback period (section 6). */
@@ -287,6 +345,9 @@ final readonly class WorkerController
             'nachholbar' => $this->uebergabe->nachholbar(),
             'ocrVerfuegbar' => $this->uebergabe->verfuegbar(WorkerUebergabe::OCR, $now),
             ...$this->bestand(),
+            'mailEingang' => $this->mailEingang?->laden(),
+            'mailStatus' => $this->mailEingang?->status(),
+            'sicherheiten' => ImapSicherheit::cases(),
         ], Area::Admin));
     }
 

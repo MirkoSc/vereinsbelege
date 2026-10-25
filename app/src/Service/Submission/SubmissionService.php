@@ -8,7 +8,6 @@ use App\Domain\AuditAction;
 use App\Domain\DocumentSource;
 use App\Domain\Erstattungsart;
 use App\Domain\Iban;
-use App\Domain\JobExecutor;
 use App\Domain\OcrStatus;
 use App\Repository\BlobRepository;
 use App\Repository\CostCenterRepository;
@@ -19,9 +18,6 @@ use App\Repository\SubmissionUploadRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\Vault;
-use App\Service\Document\Duplikatindex;
-use App\Service\Document\Texterkennung;
-use App\Service\Document\PdfErzeugung;
 use App\Service\Mail\EinreichungBenachrichtigung;
 use App\Service\Mail\Mailer;
 
@@ -108,31 +104,11 @@ final readonly class SubmissionService
 
             // Building the PDF working copy needs an unlocked vault, so it
             // runs as a session job (issue #26/M4-4), never here where the
-            // vault is locked (CLAUDE.md section 4). So does the content
-            // index of duplicate detection (issue #40/M6-6).
-            $this->jobs->enqueue(
-                PdfErzeugung::JOB_TYP,
-                JobExecutor::Session,
-                'document',
-                $documentId,
-                now: $now,
-            );
-            $this->jobs->enqueue(
-                Duplikatindex::JOB_TYP,
-                JobExecutor::Session,
-                'document',
-                $documentId,
-                now: $now,
-            );
-            // And the text layer of digital PDFs (issue #45/M7-3) - the
-            // document is inserted `ocr_status` `ausstehend` for it.
-            $this->jobs->enqueue(
-                Texterkennung::JOB_TYP,
-                JobExecutor::Session,
-                'document',
-                $documentId,
-                now: $now,
-            );
+            // vault is locked (CLAUDE.md section 4). So do the content index
+            // of duplicate detection (issue #40/M6-6) and the text layer of
+            // digital PDFs (issue #45/M7-3) - the document is inserted
+            // `ocr_status` `ausstehend` for it.
+            Eingangsjobs::einreihen($this->jobs, $documentId, $now);
 
             // Only what this submission claims: a version the scanner
             // superseded ("Zuschneiden", issue #34/M5-4) or a page removed

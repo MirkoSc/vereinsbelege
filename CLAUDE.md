@@ -219,6 +219,9 @@ zu erfinden.
   Ergebnisse verschlüsselt er an den Tresor-Public-Key.
 - Fällt der Worker aus, greift nach einer Frist automatisch der
   Browser-/Session-Weg.
+- Optional liest der Worker ein IMAP-Postfach des Vereins (nur TLS) und
+  reicht Mail-Anhänge wie die öffentliche Einreichung in den Posteingang ein;
+  Zugangsdaten nur an `W_pub` versiegelt (07 §9, E-54).
 
 ## 7. Übernahme aus dem Vereinskalender
 

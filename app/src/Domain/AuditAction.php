@@ -192,6 +192,8 @@ enum AuditAction: string
     case WorkerGekoppelt = 'worker.gekoppelt';
     case WorkerBestaetigt = 'worker.bestaetigt';
     case WorkerEntkoppelt = 'worker.entkoppelt';
+    /** Issue #87: IMAP access of the mail intake stored or changed (field names only). */
+    case EinstellungMailEingang = 'einstellung.mail_eingang';
 
     case UpdateUmgeschaltet = 'update.umgeschaltet';
     case UpdateZurueckgerollt = 'update.zurueckgerollt';
@@ -325,6 +327,7 @@ enum AuditAction: string
             self::WorkerGekoppelt => 'Worker gekoppelt',
             self::WorkerBestaetigt => 'Worker-Fingerabdruck bestätigt',
             self::WorkerEntkoppelt => 'Worker entkoppelt',
+            self::EinstellungMailEingang => 'E-Mail-Eingang geändert',
             self::UpdateUmgeschaltet => 'Update eingespielt',
             self::UpdateZurueckgerollt => 'Update zurückgerollt',
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
@@ -389,6 +392,7 @@ enum AuditAction: string
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
+            self::EinstellungMailEingang,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen,
             self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,

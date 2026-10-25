@@ -55,7 +55,41 @@ final class WorkerControllerTest extends WorkerTestCase
             new SessionVault(),
             new BestandsOcr($this->uebergabe, $this->documents, $this->jobs, new ArchiveImportRepository($this->pdo())),
             new ArchiveImportRepository($this->pdo()),
+            $this->mailEingang,
+            new \App\Service\Audit\AuditLog(new \App\Repository\AuditLogRepository($this->pdo()), new \App\Repository\VaultRepository($this->pdo()), $this->crypto),
         );
+    }
+
+    public function testTheMailIntakeKeepsThePasswordHiddenAndEncrypted(): void
+    {
+        $felder = [
+            'aktiv' => '1',
+            'host' => 'imap.verein.de',
+            'sicherheit' => 'ssl',
+            'port' => '993',
+            'benutzer' => 'belege@verein.de',
+            'passwort' => 'Sehr-Geheim-1',
+            'ordner' => 'INBOX',
+            'absender' => '@stadtwerke.de',
+        ];
+        $antwort = $this->controller->mailEingang($this->post('/admin/worker/mail-eingang', $felder));
+        self::assertSame(302, $antwort->status);
+        self::assertTrue($this->mailEingang->laden()->aktiv);
+
+        $seite = $this->controller->page(new Request(HttpMethod::Get, '/admin/worker'))->body;
+        self::assertStringContainsString('imap.verein.de', $seite);
+        self::assertStringNotContainsString('Sehr-Geheim-1', $seite, 'the password is never shown again');
+        $gespeichert = implode('|', $this->pdo()->query("SELECT value FROM setting WHERE name LIKE 'mail_eingang%'")->fetchAll(\PDO::FETCH_COLUMN));
+        self::assertStringNotContainsString('Sehr-Geheim-1', $gespeichert);
+        self::assertStringNotContainsString('stadtwerke', $gespeichert);
+        $audit = implode('|', $this->pdo()->query('SELECT action FROM audit_log')->fetchAll(\PDO::FETCH_COLUMN));
+        self::assertStringContainsString('einstellung.mail_eingang', $audit);
+
+        // An empty password field keeps the stored one; a plaintext option does not exist.
+        $this->controller->mailEingang($this->post('/admin/worker/mail-eingang', ['passwort' => ''] + $felder));
+        self::assertSame('Sehr-Geheim-1', $this->mailEingang->laden()->passwort);
+        $this->controller->mailEingang($this->post('/admin/worker/mail-eingang', ['sicherheit' => 'keine', 'host' => 'anders.example'] + $felder));
+        self::assertSame('imap.verein.de', $this->mailEingang->laden()->host, 'refused, nothing stored');
     }
 
     protected function tearDown(): void
