@@ -13,6 +13,7 @@
  * @var \App\Service\SystemCheck\CheckStatus $gesamt
  * @var list<\App\Service\SystemCheck\CheckResult> $ergebnisse
  * @var string $json
+ * @var ?string $cronUrl the cron URL with the token of shared/config.php (issue #244); never part of $json
  */
 
 use App\Service\SystemCheck\CheckStatus;
@@ -82,4 +83,18 @@ $markeKlasse = static fn(CheckStatus $status): string => match ($status) {
         <button type="button" id="systemcheck-kopieren" class="knopf" hidden>In die Zwischenablage kopieren</button>
         <span id="systemcheck-kopiert" class="gedaempft" role="status" aria-live="polite"></span>
     </p>
+
+    <?php if (is_string($cronUrl ?? null)): ?>
+        <h3>Cron-URL</h3>
+        <p class="gedaempft">
+            Diese Adresse ruft der Cronjob im Kundenmenü des Hosters jede Minute auf (Mailversand, Aufräumen). Nach
+            einer Wiederherstellung gilt ein neues Token – dann den Cronjob auf diese Adresse umstellen.
+        </p>
+        <details>
+            <summary>Cron-URL anzeigen</summary>
+            <label for="systemcheck-cron-url">Cron-URL (enthält das geheime Token – nicht in Issues oder Tickets kopieren)
+                <input type="text" id="systemcheck-cron-url" readonly spellcheck="false" autocomplete="off" value="<?= e($cronUrl) ?>">
+            </label>
+        </details>
+    <?php endif; ?>
 </section>

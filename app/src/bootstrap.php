@@ -1237,6 +1237,8 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
         // free-space threshold - counters and sizes only.
         static fn(): UploadBudgetStand => $uploadBudgetFor($connections->pdo())->stand(),
     ),
+    // Shown to admins with `admin.system` (issue #244), never logged.
+    $config->cronToken,
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the
