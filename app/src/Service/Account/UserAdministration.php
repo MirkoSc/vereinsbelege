@@ -61,7 +61,7 @@ final readonly class UserAdministration
         $this->users = new UserRepository($pdo);
         $this->userKeys = new UserKeyRepository($pdo);
         $this->grants = new VaultGrantRepository($pdo);
-        $this->vaults = new VaultRepository($pdo);
+        $this->vaults = new VaultRepository($pdo, $crypto->tresorAnker());
         $this->zugriff = new UserAccessRepository($pdo);
     }
 
@@ -193,7 +193,10 @@ final readonly class UserAdministration
      */
     public function ausstehend(?\DateTimeImmutable $now = null): array
     {
-        $aktuell = $this->vaults->current();
+        // Only the version number is needed here and below - nothing is
+        // sealed to it, so the user pages keep working while the vault
+        // anchor fails (issue #240); a grant seals the SESSION's vault.
+        $aktuell = $this->vaults->currentUngeprueft();
 
         return $aktuell === null ? [] : $this->grants->pendingUserIds($aktuell->version, $now ?? new \DateTimeImmutable());
     }
@@ -208,7 +211,7 @@ final readonly class UserAdministration
     public function freigeber(?\DateTimeImmutable $now = null): array
     {
         $now ??= new \DateTimeImmutable();
-        $aktuell = $this->vaults->current();
+        $aktuell = $this->vaults->currentUngeprueft();
         if ($aktuell === null) {
             return [];
         }
@@ -238,7 +241,7 @@ final readonly class UserAdministration
      */
     private function bleibtVerwaltbar(int $userId, \DateTimeImmutable $now): void
     {
-        $aktuell = $this->vaults->current();
+        $aktuell = $this->vaults->currentUngeprueft();
         $mitGrant = $aktuell === null ? [] : $this->grants->grantsFor($aktuell->version);
 
         $verwalter = false;

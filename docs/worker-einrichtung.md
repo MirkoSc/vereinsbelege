@@ -25,7 +25,9 @@ Raspberry Pi (Worker) ──fragt regelmäßig per https nach Arbeit──▶ We
   `/arbeit`), nie auf der SD-Karte. Der Worker startet gar nicht erst,
   wenn `/arbeit` nicht im Arbeitsspeicher liegt.
 - Dauerhaft gespeichert wird nur eine kleine Identitätsdatei (Worker-ID,
-  Zugangsschlüssel, Schlüsselpaar des Workers) im Docker-Volume `daten`.
+  Zugangsschlüssel, Schlüsselpaar des Workers) im Docker-Volume `daten` –
+  beim Mail-Eingang ohne eigene Schlagwörter dazu ein Versuchszähler
+  ohne Mailinhalte (Abschnitt 6.1).
 
 Inhalt:
 
@@ -35,6 +37,7 @@ Inhalt:
 4. [Compose-Vorlage holen und anpassen](#4-compose-vorlage-holen-und-anpassen)
 5. [Koppeln und Fingerabdruck vergleichen](#5-koppeln-und-fingerabdruck-vergleichen)
 6. [Worker starten und Modul einschalten](#6-worker-starten-und-modul-einschalten)
+   (mit [6.1 Mail-Eingang](#61-mail-eingang-optional))
 7. [Updates](#7-updates)
 8. [Logs ansehen](#8-logs-ansehen)
 9. [Anhalten, neu starten, entkoppeln](#9-anhalten-neu-starten-entkoppeln)
@@ -392,6 +395,60 @@ docker compose run --rm worker status
    auf der Admin-Seite erscheint die Aufgabe kurz und ist dann bei „In den
    letzten 24 Stunden erledigt“ mitgezählt.
 
+### 6.1 Mail-Eingang (optional)
+
+Der Worker kann zusätzlich ein **Postfach des Vereins** abrufen (z. B.
+`belege@mein-verein.de`) und jede Mail mit Rechnung als Beleg in den
+Posteingang legen – verschlüsselt wie eine Einreichung über das Formular.
+Ohne Worker gibt es keinen Mail-Eingang. Hintergrund:
+`docs/spec/07-worker.md` §9.
+
+1. **Eigenes Postfach anlegen** (beim Mail-Anbieter des Vereins), nur für
+   Belege. Der Worker markiert und verschiebt Mails, er löscht nie etwas –
+   in einem gemischten Postfach stören die Markierungen.
+2. Admin → „Worker“ → Abschnitt **„E-Mail-Eingang“** ausfüllen:
+   - IMAP-Server, Verschlüsselung **SSL/TLS** (Port 993) oder **STARTTLS**
+     (Port 143). Unverschlüsselt geht nicht; das Zertifikat muss gültig
+     sein (selbstsignierte werden abgelehnt).
+   - Benutzer und Passwort des Postfachs. Das Passwort wird verschlüsselt
+     gespeichert und nie wieder angezeigt.
+   - Abgerufener Ordner (meist `INBOX`), optional ein **Zielordner** für
+     erledigte Mails (muss im Postfach schon existieren).
+   - Optional **erlaubte Absender** (Adressen oder `@domain`, eine je
+     Zeile). Leer = jeder Absender. Der Absender einer Mail lässt sich
+     fälschen – die Liste hält Werbung ab, keinen gezielten Angriff.
+   - Abrufintervall (1–60 Minuten, Vorgabe 5).
+3. Haken **„E-Mail-Eingang aktiv“** und speichern. Eingereicht wird nur,
+   was **ab heute** im Postfach ankommt; ältere Mails bleiben unberührt.
+4. Test: eine Mail mit PDF-Anhang an das Postfach schicken. Nach dem
+   nächsten Abruf steht sie im Posteingang mit der Marke **„per E-Mail“**,
+   im Postfach ist sie markiert (bzw. in den Zielordner verschoben). Auf der
+   Admin-Seite stehen Zeit und Zähler des letzten Abrufs.
+
+**Was mit den Mails passiert** – sichtbar im Mailprogramm als Schlagwort
+(Keyword), sofern der Mailserver eigene Schlagwörter erlaubt:
+
+| Schlagwort | Bedeutung |
+|---|---|
+| `$Vereinsbelege` | Als Beleg eingereicht (zusätzlich gelesen). |
+| `$VereinsbelegeAbgelehnt` | Nicht übernommen: kein passender Anhang, zu groß, Spam, Absender nicht erlaubt oder nach drei Versuchen unlesbar. Die Mail bleibt im Ordner – bitte ansehen und den Beleg ggf. von Hand hochladen. |
+| `$VereinsbelegeVersuch`, `…Versuch2`, `…Versuch3` | Zähler der Versuche: Brach ein Abruf mitten in der Mail ab (Verbindung weg, Worker neu gestartet), wird die Mail beim nächsten Abruf erneut versucht – höchstens dreimal, danach „abgelehnt“. Eine schon eingereichte Mail wird dabei erkannt und nur als erledigt markiert, nie doppelt eingereicht. |
+
+Erlaubt der Server keine eigenen Schlagwörter, markiert der Worker
+eingereichte Mails nur als gelesen und abgelehnte als gelesen + Fähnchen
+(`\Flagged`); als neu gelten dann nur ungelesene Mails. Ein Fähnchen, das
+jemand von Hand gesetzt hat, lässt der Worker in Ruhe. Die Versuche zählt
+er in diesem Fall in der Datei `mail_versuche.json` im Volume `daten`
+(ohne Mailinhalte); sie übersteht auch einen harten Neustart.
+
+**Grenzen:** die der Einreichung (Seiten, Dateigröße, Gesamtgröße), höchstens
+20 Mails je Abruf und 200 je Tag. Zusätzlich nimmt der **Webhoster** je
+Worker und Stunde höchstens 60 Mails und 500 MB an (Einstellungen
+`mail_eingang_limit_stunde`, `mail_eingang_limit_mb_stunde`); darüber
+beendet der Worker den Abruf, die übrigen Mails bleiben unmarkiert liegen
+und folgen später. Die Admin-Seite zeigt dann „Mengengrenze je Stunde
+erreicht“.
+
 ## 7. Updates
 
 Das Image gibt es in drei Varianten („Tags“):
@@ -498,6 +555,11 @@ sie also gefahrlos weitergeben, wenn jemand bei der Fehlersuche hilft.
 | `webhoster_fehler` | Der Webhoster hat mit einem Fehler geantwortet (`status`, `fehler`). Siehe Abschnitt 10. |
 | `webhoster_nicht_erreichbar` | Keine Verbindung (Internet, DNS, Zertifikat, Uhrzeit). |
 | `rueckgabe_fehlgeschlagen` | Eine Aufgabe ließ sich beim Beenden nicht zurückgeben; der Webhoster bietet sie nach 30 Minuten selbst wieder an. |
+| `mail_abruf` | Ein Abruf des Postfachs (Mail-Eingang, Abschnitt 6.1): `neu`, `eingereicht`, `abgelehnt`, `fehler`, `sekunden`. |
+| `mail_eingereicht` | Eine Mail ist im Posteingang (`status` `eingereicht` oder `vorhanden` = war schon da). |
+| `mail_abgelehnt` | Eine Mail wurde nicht übernommen (`uid`, `grund`, z. B. `keine_anhaenge`, `spam`, `unlesbar`). |
+| `mail_fehler` | Ein Versuch an einer Mail ist gescheitert (`uid`, `fehler`, `versuch` 1–3). |
+| `mail_nicht_verschoben` | Der Server kann nicht verschieben (kein `MOVE`) – die Mail bleibt markiert im Ordner. |
 | `worker_ende` | Worker sauber beendet. |
 
 Bei Fehlern wartet der Worker erst 5 Sekunden, dann immer länger (bis
@@ -580,6 +642,9 @@ haben.
 | Logs: `status gekoppelt`, aber keine Aufgaben | Fingerabdruck im Admin noch nicht bestätigt (Abschnitt 5, Schritt 4). |
 | Admin: Status `aktiv`, aber keine Aufgaben kommen an | Haken „Worker-Modul aktiv“ fehlt (Abschnitt 6). |
 | Admin: `offline` | Worker läuft nicht (`docker compose ps`) oder erreicht den Webhoster nicht (Logs). Nach der eingestellten Frist übernimmt der Browser; nach 24 Stunden ohne Meldung geht eine Alarm-Mail an die Verwaltung. |
+| Admin, E-Mail-Eingang: „Anmeldung abgelehnt“ / „Server nicht erreichbar“ / „TLS fehlgeschlagen“ | Zugangsdaten, Servername und Port prüfen (Abschnitt 6.1). Manche Anbieter verlangen ein eigenes App-Passwort für IMAP. |
+| Admin, E-Mail-Eingang: „Mengengrenze je Stunde erreicht“ | Mehr Mails als die Grenze des Webhosters – der Rest folgt in der nächsten Stunde von selbst. |
+| Mail mit Schlagwort `$VereinsbelegeAbgelehnt`, Log `grund unlesbar` | Die Mail ließ sich dreimal nicht verarbeiten. Anhang speichern und über `/einreichen` hochladen. |
 | `job_fehler` mit `PdfPasswortGeschuetzt` | Die PDF-Datei ist passwortgeschützt – kein Fehler des Workers. |
 | Container startet ständig neu, `docker compose ps` zeigt `Restarting`, `docker inspect` zeigt `"OOMKilled": true` | Speicher zu knapp. Werte nach Abschnitt 4.2 anpassen (bei 2 GB: kleinere Werte und zram). |
 | `docker stats` zeigt bei LIMIT den ganzen Speicher statt `mem_limit` | Speicherbegrenzung ist aus → Abschnitt 2.3. |

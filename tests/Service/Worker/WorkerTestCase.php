@@ -12,6 +12,7 @@ use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\MailEinreichung;
 use App\Service\Upload\UploadStore;
 use App\Service\Submission\SubmissionUploadStore;
+use App\Service\Worker\MailEingangGrenze;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Domain\Worker;
 use App\Http\HttpMethod;
@@ -189,6 +190,7 @@ abstract class WorkerTestCase extends DatabaseTestCase
             new UploadService($this->tmp . '/upload'),
             new SubmissionUploadStore(new UploadStore($this->blobService, $vaults, $this->settings), new SubmissionUploadRepository($this->pdo())),
             $einstellungen,
+            new MailEingangGrenze(new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::SUBMISSION_WINDOW_SECONDS), $this->settings),
         );
     }
 

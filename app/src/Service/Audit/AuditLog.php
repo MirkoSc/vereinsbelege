@@ -74,7 +74,10 @@ final readonly class AuditLog
     ): AuditEntry {
         $ts = ($now ?? new \DateTimeImmutable())->format(self::FORMAT);
         $ipHash = $ip === '' ? null : $this->crypto->blindIndex()->forValue(self::IP_PURPOSE, $ip);
-        $vault = $details === [] ? null : $this->vaults->current();
+        // zumVersiegeln(): while the vault key is not anchored (issue #240)
+        // the details are not sealed to it, the row is written without them
+        // - an audit log that stopped with the alarm would hide what follows.
+        $vault = $details === [] ? null : $this->vaults->zumVersiegeln();
         $klartext = $details === [] ? null : json_encode($details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         for ($versuch = 1; ; ++$versuch) {

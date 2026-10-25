@@ -127,7 +127,7 @@ $kurz = static fn(string $text, int $max = 60): string => mb_strlen($text) > $ma
                             <?php if ($daten === null): ?>
                                 <td colspan="3"><span class="gedaempft">verschlüsselt</span></td>
                             <?php else: ?>
-                                <td><?= e($kurz($daten->name, 40)) ?></td>
+                                <td><?= e($kurz($daten->name, 40)) ?><?php if ($daten->perMail()): ?> <span class="marke">per E-Mail</span><?php endif; ?></td>
                                 <td><?= e($kurz($daten->freitext, 40)) ?></td>
                                 <td><?= e(match ($daten->erstattung) {
                                     \App\Domain\Erstattungsart::Ueberweisung => 'Überweisung',

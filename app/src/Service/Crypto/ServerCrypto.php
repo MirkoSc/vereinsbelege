@@ -103,6 +103,16 @@ final readonly class ServerCrypto
     }
 
     /**
+     * The key that anchors the vault public key (issue #240,
+     * docs/spec/01-sicherheit.md section 2): derived like the blind index,
+     * for the same reason - one secret, one primitive.
+     */
+    public function tresorAnker(): TresorAnker
+    {
+        return new TresorAnker(sodium_crypto_generichash('vault-anchor-v1', $this->key, TresorAnker::BYTES));
+    }
+
+    /**
      * @return array<string, string>
      */
     public function __debugInfo(): array

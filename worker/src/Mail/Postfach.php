@@ -11,8 +11,14 @@ namespace App\Worker\Mail;
  */
 interface Postfach
 {
+    /** Most bytes of a header block used for the idempotency key. */
+    public const int KOPF_BYTES = 64 * 1024;
+
     /** Selects $ordner; true when the server lets us set our own keywords. */
     public function auswaehlen(string $ordner): bool;
+
+    /** UIDVALIDITY of the selected folder (0: not reported) - UIDs are only unique with it. */
+    public function uidGueltigkeit(): int;
 
     /**
      * UIDs of the mails not handled yet, ascending - with $seit (Y-m-d)
@@ -23,19 +29,21 @@ interface Postfach
     public function offene(bool $mitKeywords, ?string $seit = null): array;
 
     /**
-     * UIDs among the open ones that still carry the attempt mark - the
-     * worker died while handling them.
+     * Size (RFC822.SIZE) and flags of each mail - the flags carry the
+     * attempt counter (ImapClient::KEYWORDS_VERSUCH).
      *
-     * @return list<int>
-     */
-    public function inArbeit(bool $mitKeywords, ?string $seit = null): array;
-
-    /**
      * @param list<int> $uids
      *
-     * @return array<int, int> uid => size in bytes (RFC822.SIZE)
+     * @return array<int, array{groesse: int, flags: list<string>}>
      */
-    public function groessen(array $uids): array;
+    public function angaben(array $uids): array;
+
+    /**
+     * The header block of the mail, at most KOPF_BYTES from its start
+     * (`BODY.PEEK[HEADER]<0.n>`), without the body - the idempotency key
+     * of a mail that is not fetched again (issue #243).
+     */
+    public function kopf(int $uid): string;
 
     /** The whole mail, without setting \Seen; refused when larger than $maxBytes. */
     public function holen(int $uid, int $maxBytes): string;
