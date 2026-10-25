@@ -96,3 +96,16 @@ test('the status line says where a key-less restore goes next', () => {
         'Fertig. Das Backup ist eingespielt – weiter zum Zugang …',
     );
 });
+
+test('a finished restore hands over the new cron URL, only as an http(s) address', () => {
+    const { cronUrlAusAntwort } = require('../../public/js/install.js');
+    assert.equal(
+        cronUrlAusAntwort({ fertig: true, cron_url: 'https://verein.example/cron?token=abc' }),
+        'https://verein.example/cron?token=abc',
+    );
+    assert.equal(cronUrlAusAntwort({ fertig: false, cron_url: 'https://verein.example/cron?token=abc' }), null);
+    assert.equal(cronUrlAusAntwort({ fertig: true }), null, 'a restore that waits for the access step has none yet');
+    assert.equal(cronUrlAusAntwort({ fertig: true, cron_url: 'javascript:alert(1)' }), null);
+    assert.equal(cronUrlAusAntwort({ fertig: true, cron_url: 42 }), null);
+    assert.equal(cronUrlAusAntwort(null), null);
+});
