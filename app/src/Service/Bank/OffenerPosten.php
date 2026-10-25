@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Bank;
 
+use App\Domain\Erstattungsart;
 use App\Domain\InvoiceRecord;
 
 /**
@@ -28,6 +29,8 @@ final readonly class OffenerPosten
         public bool $altbestand,
         public string $einreicher = '',
         public string $iban = '',
+        public ?Erstattungsart $erstattungsart = null,
+        public string $kontoinhaber = '',
     ) {
     }
 }

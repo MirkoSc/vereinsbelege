@@ -296,6 +296,8 @@ final readonly class Uebersichten
                 $zeile->altbestand,
                 ($einreichung?->name ?? '') !== '' ? $einreichung->name : ($einreichung?->kontoinhaber ?? ''),
                 $einreichung?->iban ?? '',
+                $einreichung?->erstattung,
+                $einreichung?->kontoinhaber ?? '',
             );
         }
 
