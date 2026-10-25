@@ -99,6 +99,12 @@ test('anything else (a page stored, a job finished, a stale task) asks again alm
     assert.equal(wartezeitRaster('unerwartet', true), 250);
 });
 
+test('naechsteAufgabe marks its poll as background so it does not extend the session (#78)', async () => {
+    const fake = fakeFetch([{ status: 'leer' }]);
+    await naechsteAufgabe({ csrf: 'x', fetch: fake.holen });
+    assert.equal(fake.aufrufe[0].optionen.headers['X-Hintergrund'], '1');
+});
+
 test('naechsteAufgabe maps 401/403 to anmeldung and a bad response to fehler', async () => {
     const fake = fakeFetch([{ httpStatus: 403 }]);
     assert.deepEqual(await naechsteAufgabe({ csrf: 'x', fetch: fake.holen }), { status: 'anmeldung' });

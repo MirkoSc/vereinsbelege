@@ -76,6 +76,7 @@ final readonly class BackupService
 
         try {
             $stream = fopen($dumpFile, 'wb');
+            self::nurFuerBesitzer($dumpFile);
             if ($stream === false) {
                 throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
             }

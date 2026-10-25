@@ -3,7 +3,11 @@ DirectoryIndex index.php
 
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # setifempty (Apache >= 2.4.7): pages that carry a token in their URL
+    # send their own "no-referrer" from PHP, and under FastCGI a plain "set"
+    # in the always table would overwrite it (security review, issue #78).
+    # The views add a <meta name="referrer"> as well, which holds either way.
+    Header always setifempty Referrer-Policy "strict-origin-when-cross-origin"
     # script-src 'self' without 'unsafe-inline' is the point of this header
     # (CLAUDE.md section 4): no inline <script>, no on* attributes, htmx
     # without hx-on. Every JS library is vendored under public/js/vendor/,

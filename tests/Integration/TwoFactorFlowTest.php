@@ -366,6 +366,27 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         self::assertNull(new Session()->userId(), 'the same code does not log in twice');
     }
 
+    /** The code that confirmed the setup does not open a login afterwards (#78). */
+    public function testDerEinrichtungscodeOeffnetKeineAnmeldung(): void
+    {
+        $jetzt = new \DateTimeImmutable();
+        $enrollment = $this->mfaEnrollment();
+        $secret = $enrollment->startTotp($this->userId, $jetzt);
+        $code = Totp::code($secret, $jetzt);
+        self::assertNotNull($enrollment->confirmTotp($this->userId, $code, $jetzt));
+
+        $mfa = new MfaService(
+            new MfaTotpRepository($this->pdo()),
+            new MfaEmailCodeRepository($this->pdo()),
+            new MfaBackupCodeRepository($this->pdo()),
+            new TrustedDeviceRepository($this->pdo()),
+            $this->crypto,
+            new RateLimiter(new RateLimitRepository($this->pdo()), MfaService::WINDOW_SECONDS),
+        );
+        self::assertFalse($mfa->verifyTotp($this->userId, $code, $jetzt), 'the setup spent this code');
+        self::assertTrue($mfa->verifyTotp($this->userId, Totp::code($secret, $jetzt->modify('+30 seconds')), $jetzt), 'the next one works');
+    }
+
     public function testEinNeuesTotpGeheimnisBeginntOhneVerbrauchtenSchritt(): void
     {
         $this->totpEinrichten();
@@ -538,7 +559,10 @@ final class TwoFactorFlowTest extends DatabaseTestCase
         $enrollment = $this->mfaEnrollment();
         $secret = $enrollment->startTotp($this->userId, $now);
         $now ??= new \DateTimeImmutable();
-        $codes = $enrollment->confirmTotp($this->userId, Totp::code($secret, $now), $now);
+        // The code of the step BEFORE now (inside the ±1 window): the setup
+        // spends its step (issue #78), and the tests log in with the
+        // current code right after.
+        $codes = $enrollment->confirmTotp($this->userId, self::vorigerCode($secret, $now), $now);
         self::assertNotNull($codes, 'Testvorbereitung: TOTP-Einrichtung muss gelingen.');
 
         return $secret;
@@ -551,10 +575,15 @@ final class TwoFactorFlowTest extends DatabaseTestCase
     {
         $enrollment = $this->mfaEnrollment();
         $secret = $enrollment->startTotp($this->userId);
-        $codes = $enrollment->confirmTotp($this->userId, Totp::code($secret, new \DateTimeImmutable()));
+        $codes = $enrollment->confirmTotp($this->userId, self::vorigerCode($secret, new \DateTimeImmutable()));
         self::assertNotNull($codes);
 
         return $codes;
+    }
+
+    private static function vorigerCode(string $secret, \DateTimeImmutable $now): string
+    {
+        return Totp::code($secret, $now->modify('-' . Totp::DEFAULT_PERIOD . ' seconds'));
     }
 
     private function emailMethodeEinrichten(): void

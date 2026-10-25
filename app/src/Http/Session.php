@@ -31,20 +31,23 @@ final class Session
     /**
      * Runtime options for session_start(), set here instead of trusting the
      * host's php.ini (security review, issue #78):
-     * - use_strict_mode: an id the server never issued is replaced instead
-     *   of adopted. The id is regenerated at login anyway; this closes the
-     *   window before it (planted ids, ASVS V3.2).
      * - cache_limiter "nocache": every page with a session (all of /app and
      *   /admin, i.e. every page showing decrypted data) carries
      *   `Cache-Control: no-store, no-cache, must-revalidate`, so a shared
      *   computer's browser cache does not keep decrypted receipts. That is
      *   PHP's default, but only a default - pinned here so a host setting
      *   cannot turn it off.
+     *
+     * Deliberately NOT use_strict_mode: the id is regenerated with
+     * session_regenerate_id(true) at login and on a password change, and a
+     * background poll of another tab still in flight with the old id would
+     * then be handed a fresh, empty session plus a Set-Cookie - which, if it
+     * lands last, logs the user out of every tab. Fixation is closed by the
+     * regeneration at login itself (login()).
      * use_only_cookies and use_trans_sid are not repeated: their safe values
      * are the defaults, and moving away from them is deprecated since PHP 8.4.
      */
     public const array OPTIONEN = [
-        'use_strict_mode' => '1',
         'cache_limiter' => 'nocache',
     ];
 

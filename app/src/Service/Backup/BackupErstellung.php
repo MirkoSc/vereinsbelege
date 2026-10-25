@@ -240,6 +240,7 @@ final readonly class BackupErstellung
         $dumpPfad = $this->arbeitsdatei($stand, 'dump.part');
         try {
             $strom = fopen($dumpPfad, 'w+b');
+            BackupService::nurFuerBesitzer($dumpPfad);
             if ($strom === false) {
                 throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
             }
@@ -489,6 +490,9 @@ final readonly class BackupErstellung
         if ($datei === false) {
             throw new \RuntimeException('Backup-Verzeichnis nicht beschreibbar: ' . $this->backupDir);
         }
+        // The work files carry the dump and, on request, config.php for as
+        // long as the chain runs - owner only, like the finished backup.
+        BackupService::nurFuerBesitzer($pfad);
         if (!ftruncate($datei, $laenge) || fseek($datei, $laenge) !== 0) {
             fclose($datei);
             throw new \RuntimeException('Die Arbeitsdatei des Backups ist beschädigt.');

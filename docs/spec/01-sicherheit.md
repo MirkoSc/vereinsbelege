@@ -129,12 +129,19 @@ unbekannte Version findet, sagt das, statt Unsinn zurückzugeben.
   `App\Service\Account\SessionTimeouts`); ein unbrauchbarer Wert fällt auf
   den Vorgabewert zurück, statt den Ablauf abzuschalten. Logout löscht
   beides – Sitzung und Cookie. Anfragen, die die Seite selbst stellt
-  (Job-Schleife `public/js/jobs.js`), tragen `X-Hintergrund: 1` und
-  verlängern die Leerlaufzeit nicht – sonst liefe eine vergessene Sitzung
-  mit offenem Tresor bis zur absoluten Grenze (Security-Review #78).
-  `session_start()` bekommt `use_strict_mode` und `cache_limiter=nocache`
-  fest mitgegeben (`Session::OPTIONEN`): keine untergeschobenen IDs, kein
-  Browser-Cache für Seiten mit entschlüsselten Daten.
+  (Job-Schleife `public/js/jobs.js`, Rasterungs-Schleife
+  `public/js/rasterung.js`), tragen `X-Hintergrund: 1` und verlängern die
+  Leerlaufzeit nicht – sonst liefe eine vergessene Sitzung mit offenem
+  Tresor bis zur absoluten Grenze (Security-Review #78). Bewusste Folge: eine
+  lange Job-Kette, bei der niemand klickt, hält nach dem Idle-Timeout an und
+  läuft nach der erneuten Anmeldung weiter (die Schritte sind idempotent).
+  `session_start()` bekommt `cache_limiter=nocache` fest mitgegeben
+  (`Session::OPTIONEN`): kein Browser-Cache für Seiten mit entschlüsselten
+  Daten. Bewusst **ohne** `use_strict_mode`: nach
+  `session_regenerate_id(true)` (Login, Passwortwechsel) bekäme ein noch
+  laufender Hintergrund-Poll eines anderen Tabs eine neue leere Sitzung samt
+  Cookie und meldete so alle Tabs ab; Fixation verhindert die neue ID beim
+  Login.
 - Ohne `__Host-vk` ist die Sitzung weiterhin angemeldet, kann aber nichts
   entschlüsseln. Das ist ein eigener Zustand, kein Fehler: Seiten zeigen
   dann einen Hinweis statt leerer Listen

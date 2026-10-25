@@ -201,11 +201,14 @@ final class RoutePermissionMatrixTest extends TestCase
         self::assertGreaterThan($vorher, $_SESSION['last_seen_at'], 'a request of the user is');
     }
 
-    public function testTheJobPollerMarksItselfAsBackground(): void
+    /** Both loops that poll for as long as a page is open. */
+    public function testThePollersMarkThemselvesAsBackground(): void
     {
-        $js = (string) file_get_contents(dirname(__DIR__, 2) . '/public/js/jobs.js');
+        foreach (['jobs.js', 'rasterung.js'] as $datei) {
+            $js = (string) file_get_contents(dirname(__DIR__, 2) . '/public/js/' . $datei);
 
-        self::assertStringContainsString("'X-Hintergrund': '1'", $js);
+            self::assertStringContainsString("'X-Hintergrund': '1'", $js, $datei);
+        }
     }
 
     public function testOnlyTheAllowlistIsPublic(): void

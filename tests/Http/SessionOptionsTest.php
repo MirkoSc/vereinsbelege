@@ -15,9 +15,14 @@ use PHPUnit\Framework\TestCase;
  */
 final class SessionOptionsTest extends TestCase
 {
-    public function testUnknownSessionIdsAreNotAdopted(): void
+    /**
+     * Not strict mode: with the id regenerated at login and password change,
+     * an in-flight poll carrying the old id would get a new empty session
+     * and a Set-Cookie that can log the user out of every tab.
+     */
+    public function testStrictModeIsNotForcedBecauseOfRegenerationRaces(): void
     {
-        self::assertSame('1', Session::OPTIONEN['use_strict_mode'] ?? null);
+        self::assertArrayNotHasKey('use_strict_mode', Session::OPTIONEN);
     }
 
     /**

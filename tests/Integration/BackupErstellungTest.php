@@ -162,6 +162,24 @@ final class BackupErstellungTest extends DatabaseTestCase
         self::assertSame(0600, fileperms($pfad) & 0777, 'a backup with the server key is readable by its owner only (#78)');
     }
 
+    /** Issue #78: the work files hold the dump (and config.php) while the chain runs. */
+    public function testTheWorkFilesAreReadableByTheOwnerOnly(): void
+    {
+        $erstellung = $this->erstellung();
+        $erstellung->starten(true);
+        $erstellung->schritt();
+
+        clearstatcache();
+        $dateien = array_filter(
+            glob($this->backupDir . '/erstellung_*.part') ?: [],
+            static fn(string $f): bool => !str_ends_with($f, '.liste.part'),
+        );
+        self::assertNotEmpty($dateien, 'Testvorbereitung: die Kette hat Arbeitsdateien angelegt.');
+        foreach ($dateien as $datei) {
+            self::assertSame(0600, fileperms($datei) & 0777, basename($datei));
+        }
+    }
+
     public function testManyBlobFilesAreAddedInPortions(): void
     {
         $anzahl = BackupErstellung::PORTION_DATEIEN + 5;

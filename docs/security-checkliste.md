@@ -33,7 +33,7 @@ eine in diesem PR behobene Zeile.
 |---|---|
 | `tests/Http/RoutePermissionMatrixTest` | jede Route × anonym × sechs Systemrollen gegen ihre Deklaration; Stichproben gegen die Rechte-Tabelle; Allowlist öffentlicher Routen; `/admin` nur mit `admin.*`; **jede** Deklaration gegen `routen-zugriff.txt` (#78) |
 | `tests/Http/CspComplianceTest` | CSP ohne `unsafe-inline`/`unsafe-eval`, kein externer Host, kein Inline-JS/`on*`/`hx-on` in Views, Security-Header vollständig (#78: XFO, Permissions-Policy, COOP) |
-| `tests/Http/SessionOptionsTest` | `use_strict_mode`, `cache_limiter=nocache` (#78) |
+| `tests/Http/SessionOptionsTest` | `cache_limiter=nocache`, kein `use_strict_mode` (#78) |
 | `tests/Http/KernelErrorLogTest`, `ExceptionArgsTest` | Fehlerseite ohne Trace, Log ohne Argumente |
 | `tests/Support/NoShellExecutionTest` | kein `exec` & Co. außerhalb von `worker/src/Prozess.php` |
 | `tests/Service/Account/PasswordHasherTest` | Dummy-Hash so teuer wie ein echter (#78) |
@@ -52,7 +52,7 @@ eine in diesem PR behobene Zeile.
 | A-07 | Kein Open Redirect über `weiter` | ✓ | `AuthController` (nur relative Pfade) |
 | A-08 | Tresor erst nach dem zweiten Faktor (PendingLogin, `__Host-2fa`) | ✓ | `PendingLogin`, `Http/Cookie` |
 | A-09 | TOTP RFC 6238, ±1 Schritt, `hash_equals` | ✓ | `Totp::matchingStep()` |
-| A-10 | TOTP-Code nur einmal je Zeitschritt (ASVS 2.8.4) | ✓ (#78) | `MfaService::verifyTotp()`, `MfaTotpRepository::claimStep()`, Migration 045 |
+| A-10 | TOTP-Code nur einmal je Zeitschritt (ASVS 2.8.4), auch der Code der Einrichtung | ✓ (#78) | `MfaService::verifyTotp()`, `MfaEnrollment::confirmTotp()`, `MfaTotpRepository::claimStep()`, Migration 045 |
 | A-11 | E-Mail-Code: 6 Ziffern, nur HMAC, 10 min, 5 Versuche, atomar verbraucht | ✓ (#78) | `MfaService::verifyEmailCode()`, `MfaEmailCodeRepository::consume()` |
 | A-12 | Backup-Codes: 10, gehasht, einmalig, atomar verbraucht | ✓ (#78) | `MfaBackupCodeRepository::markUsed()` (`AND used_at IS NULL`, `rowCount`) |
 | A-13 | 2FA-Rate-Limit (20 je IP, 8 je Konto) | ✓ | `MfaService::isBlocked()` |
@@ -62,7 +62,7 @@ eine in diesem PR behobene Zeile.
 | A-17 | Reset-Token 32 Byte, nur HMAC, 30 min, einmalig, ersetzt alte | ✓ | `PasswordReset`, `AuthTokenRepository` |
 | A-18 | Reset beendet alle Sitzungen (Epoche) | ✓ | `PasswordReset::complete()` |
 | A-19 | Reset/Einladung: gleiche Antwort für alle Fälle, Rate-Limit 10/IP, 3/Adresse | ✓ | `PasswordController`, `Invitation` |
-| A-20 | Seite mit Token in der URL sendet keinen Referer | ✓ (#78) | `<meta name="referrer">` in `layout.php`; der PHP-Header allein wird von `Header always set` überschrieben |
+| A-20 | Seite mit Token in der URL sendet keinen Referer | ✓ (#78) | `<meta name="referrer">` in `layout.php`; `.htaccess` setzt `Referrer-Policy` nur noch per `setifempty` (vorher überschrieb `Header always set` unter FastCGI den PHP-Header) |
 | A-21 | Link-Basis in Mails gegen Host-Header-Injection | ✓ | `Service/Mail/PublicUrl` |
 | A-22 | Passwortwechsel: altes Passwort, Rate-Limit, Umschlüsseln, andere Sitzungen enden | ✓ | `PasswordChange`, `Session::adoptEpoch()` |
 
@@ -71,12 +71,12 @@ eine in diesem PR behobene Zeile.
 | ID | Prüfung | Ergebnis | Fundstelle |
 |---|---|---|---|
 | B-01 | Session-Cookie `httponly`, `samesite=Lax`, `secure` aus dem Schema | ✓ | `Http/Session::start()` |
-| B-02 | `use_strict_mode`, kein Cache für Sitzungsseiten | ✓ (#78) | `Session::OPTIONEN` |
+| B-02 | Kein Cache für Sitzungsseiten; `use_strict_mode` bewusst aus (Regenerations-Race mit Pollern) | ✓ (#78) | `Session::OPTIONEN` |
 | B-03 | Tresor-, 2FA-, Geräte-Cookie mit `__Host-`-Präfix | ✓ | `Http/Cookie` |
 | B-04 | Session-Cookie mit `__Host-`-Namen | ✗ Härtung | heißt `PHPSESSID` → N-14 |
 | B-05 | Neue Session-ID bei Login, Rechte-/Passwortwechsel; CSRF-Token verworfen | ✓ | `Session::login()`, `adoptEpoch()` |
 | B-06 | Idle 30 min / absolut 12 h, Settings mit sicherem Rückfall | ✓ | `SessionTimeouts`, `Session::isExpired()` |
-| B-07 | Idle-Timeout greift auch bei offenem Tab (Hintergrund-Polling verlängert nicht) | ✓ (#78) | `LoginGuard::HINTERGRUND_HEADER`, `public/js/jobs.js` |
+| B-07 | Idle-Timeout greift auch bei offenem Tab (Hintergrund-Polling verlängert nicht) | ✓ (#78) | `LoginGuard::HINTERGRUND_HEADER`, `public/js/jobs.js`, `rasterung.js` – Folge: eine lange Job-Kette ohne Klick endet nach 30 min, weiter nach erneuter Anmeldung |
 | B-08 | Sperren/Ablauf/Reset beenden laufende Sitzungen sofort | ✓ | `LoginGuard` (Epoche) |
 | B-09 | Logout nur per POST + CSRF, löscht Sitzung und Tresor-Cookie | ✓ | `AuthController::logout()` |
 | B-10 | CSRF-Token auf allen schreibenden Session-Routen | ✓ | je Controller `checkCsrf()`; Ausnahmen gewollt: `/einreichen*` (Formular-Token), `/api/worker/*` (HMAC). Ein zentraler Test über alle POST-Routen fehlt → N-15 |
@@ -91,7 +91,7 @@ eine in diesem PR behobene Zeile.
 | C-02 | Alle Deklarationen gegen 01 §4 geprüft und festgeschrieben | ✓ (#78) | `tests/Http/routen-zugriff.txt` (292 Routen inkl. Budget #92) |
 | C-03 | `/admin/*` nur mit `admin.*` | ✓ | `RoutePermissionMatrixTest::testEveryAdminRouteNeedsAnAdminRight` |
 | C-04 | Keine zustandsändernden GETs | ✓ | GET-Downloads schreiben nur Audit-Zeilen |
-| C-05 | Externe Rollen ausschließlich lesend | ✓ (#78) | `ExportController::darfMarkieren()` – vorher konnten Kassenprüfer/Steuerberater Export-Läufe vereinsweit markieren/zurücksetzen |
+| C-05 | Externe Rollen ausschließlich lesend | ✓ (#78) | `ExportController::darfMarkieren()` – vorher konnten Kassenprüfer/Steuerberater Export-Läufe vereinsweit markieren/zurücksetzen. Geprüft über `istExtern()`, nicht über ein eigenes Recht → N-21 |
 | C-06 | Posteingang/Prüfung/Festschreibung: Scope je ID in SQL, fremde ID = 404 | ✓ | `DocumentRepository::inbox()/inboxItem()` |
 | C-07 | Blob gehört zum Dokument (`/datei/{blob}`) | ✓ | `Inbox/Posteingang`, `Invoice/Pruefung` |
 | C-08 | Buchungen, Abgleich, Erstattung, Zahllauf, GiroCode im Scope | ✓ | `Bank/Buchungen`, `Abgleich`, `Erstattungen`, `PaymentRunRepository` |
@@ -182,7 +182,7 @@ eine in diesem PR behobene Zeile.
 | ID | Prüfung | Ergebnis | Fundstelle |
 |---|---|---|---|
 | H-01 | Backups außerhalb der DocumentRoot, `shared/.htaccess` sperrt | ✓ | `bin/setup.template.php` |
-| H-02 | Backup-Dateien nur für den Besitzer lesbar (0600) | ✓ (#78) | `BackupService::nurFuerBesitzer()` |
+| H-02 | Backup-Dateien und ihre Arbeitsdateien nur für den Besitzer lesbar (0600) | ✓ (#78) | `BackupService::nurFuerBesitzer()`, `BackupErstellung::oeffnen()` |
 | H-03 | Download: `admin.system`, Namensmuster; mit `config.php` nur POST + CSRF + Passwort | ✓ | `Admin/BackupController` |
 | H-04 | Restore nur im Installer, kein Zip-Slip, `config.php` nie per `include` | ✓ | `Installer/RestoreService` |
 | H-05 | Backup-Echtheit (MAC/Signatur) | ✗ | Weg zu N-01 |
@@ -197,7 +197,7 @@ eine in diesem PR behobene Zeile.
 | H-14 | Prüfsummenliste nicht vom selben FTP-Angreifer änderbar | ⚠ | 01 §8 räumt es ein → N-19 |
 | H-15 | `config.php`: Schlüssel per `random_bytes`, 0600 | ✓ | `Installer/ConfigWriter` |
 | H-16 | Deny-`.htaccess` für `shared/`, `releases/`, `current/` | ✓ | `.htaccess`, `Update/DenyHtaccess`, Systemcheck |
-| H-17 | Keine Secrets im Repo | ✓ (#78) | Token in `tools/hosting-check.php` entfernt; übrige Werte sind gekennzeichnete Dev-/Test-Fixtures |
+| H-17 | Keine Secrets im Repo | ✓ (#78) | Token in `tools/hosting-check.php` entfernt (bleibt in der Git-Historie öffentlich – eine hochgeladene Kopie mit diesem Token muss vom Server); übrige Werte sind gekennzeichnete Dev-/Test-Fixtures |
 
 ## I – CSP und Security-Header
 
@@ -249,3 +249,4 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-18 | Härtung | Update-Download-URLs nicht auf github.com beschränkt |
 | N-19 | niedrig | Prüfsummenliste in `shared/` schreibbar (Spec räumt es ein) |
 | N-20 | Hinweis | Posteingang-Scope über `created_at`, Auswertung über Rechnungsdatum (spec-konform, Entscheidung offen) |
+| N-21 | Hinweis | Export-Markierung an „extern" statt an einem eigenen Recht (`export.mark`); eine eigene interne Nur-Lese-Rolle mit `export.zip` darf weiterhin markieren |
