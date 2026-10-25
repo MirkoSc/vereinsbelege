@@ -16,6 +16,7 @@ $root = dirname(__DIR__);
 // All of them live in App\Service\Update and depend on nothing else.
 $classFiles = [
     $root . '/app/src/Service/Update/ReleaseDownloader.php',
+    $root . '/app/src/Service/Update/ReleaseSignatur.php',
     $root . '/app/src/Service/Update/DenyHtaccess.php',
 ];
 $templateFile = __DIR__ . '/setup.template.php';

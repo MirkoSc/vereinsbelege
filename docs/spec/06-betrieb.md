@@ -59,7 +59,8 @@ Erweiterungen im `/install`-Flow:
 6. „Frische Installation" oder „Backup einspielen"
 
 Stand M3-2 (issue #15): Schritt 1, 3, 4 und 6 sind umgesetzt, dazu alle
-Migrationen ab 0 und der Release-Kanal. 5 kommt mit M3-1 (Mail) – Schritt 2,
+Migrationen ab 0 und der Release-Kanal. Schritt 5 kam mit issue #249 (siehe
+„Mail-Schritt“ unten). Schritt 2,
 den Server-Schlüssel, erzeugt der fertige Flow schon eine Anfrage vor Schritt
 3, weil `ServerCrypto` das Sperren der E-Mail-Adresse des ersten Admins
 braucht, bevor `config.php` geschrieben werden darf (siehe unten). Den Kanal
@@ -77,7 +78,8 @@ Klartext auf Platte liegen – auch nicht in der PHP-Session-Datei. Deshalb
 schreibt schon das Absenden des Formulars Tresor, ersten Admin, `user_key`
 und `vault_grant` in die Datenbank; `config.php` und damit der Abschluss
 kommen erst, wenn die letzte Gruppe des angezeigten Wiederherstellungs-
-schlüssels bestätigt ist. Drei Requests:
+schlüssels bestätigt und der Mail-Schritt erledigt oder übersprungen ist.
+Die Requests:
 1. `POST /install` (`modus=frisch`): Migrationen, Kanal-Setting, `Vault::create()`,
    `UserKeyPair::create()`, `UserKey::wrap()`, `VaultGrant::seal()`,
    `password_hash()` (`PASSWORD_ARGON2ID`, Fallback `PASSWORD_BCRYPT`, 01 §3).
@@ -86,11 +88,31 @@ schlüssels bestätigt ist. Drei Requests:
    (`$_SESSION['install_admin']`, wie schon `install_restore` bei der
    Wiederherstellung). Die Seite zeigt den Schlüssel **einmalig**.
 2. `POST /install/schluessel`: stimmt die eingetippte Gruppe (verglichen als
-   Hash, über `RecoveryKey::normalizeGroup()`), schreibt `ConfigWriter::write()`
-   den Server-Schlüssel nach `config.php` – das schließt den Installer. Sonst
-   422, der Schlüssel wird nicht erneut angezeigt.
+   Hash, über `RecoveryKey::normalizeGroup()`), setzt sie
+   `$_SESSION['install_admin']['phase'] = 'mail'`, verwirft den Hash und
+   zeigt den Mail-Schritt (bis issue #249 schrieb schon dieser Request
+   `config.php`). Sonst 422, der Schlüssel wird nicht erneut angezeigt.
+2a. `POST /install/mail` (**Mail-Schritt**, issue #249, E-71): dieselben
+   Felder wie `/admin/mail` (geprüft von `MailSettings::eingabeFehler()`,
+   das beide teilen) plus „Testmail an“ (vorbelegt mit der Adresse des
+   ersten Admins, die auch als Absender vorgeschlagen wird). `aktion`:
+   `testen` speichert die Einstellungen und schickt die Testmail
+   (`Mailer::sendeTestmail()`, Ergebnis auf der Seite, der Schritt bleibt
+   offen), `abschliessen` speichert und schließt ab, `ueberspringen`
+   schließt ab, ohne (weiter) etwas zu speichern – was ein vorheriger Test
+   gespeichert hat, bleibt; fehlen vollständige Einstellungen, weist die
+   Abschlussseite auf `/admin/mail` hin. Fällt die Datenbank im Schritt
+   aus, bleibt nur „Überspringen“ (Meldung statt 500). Gespeichert wird sofort in `setting`, das Passwort mit
+   dem Server-Schlüssel aus der Session verschlüsselt – genau die Zeilen,
+   die `/admin/mail` später liest; in die Session kommt nichts davon. Ein
+   leeres (oder nur aus Leerzeichen bestehendes) Passwortfeld behält ein
+   schon gespeichertes. Erst `abschliessen`
+   oder `ueberspringen` schreiben mit `ConfigWriter::write()` den
+   Server-Schlüssel nach `config.php` – das schließt den Installer. Neu
+   laden oder eine erneute Bestätigung zeigt wieder den Mail-Schritt.
 3. `POST /install/neu` („Neu beginnen“): für den Fall, dass der Browser vor
-   der Bestätigung geschlossen wurde – entfernt Admin und Tresor wieder
+   der Bestätigung geschlossen wurde (nach der Bestätigung, im Mail-Schritt,
+   entfernt er nichts mehr und zeigt den Mail-Schritt) – entfernt Admin und Tresor wieder
    (`FirstAdminSetup::remove()`, über die Fremdschlüssel aus
    `migrations/006_user.sql` kaskadierend), danach ist das Formular erneut
    nutzbar. Ein erneutes Absenden von `POST /install`, während ein Schritt
@@ -120,10 +142,68 @@ verändert. Er läuft noch mit dem Code des alten Releases – das Update von
 einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
-Der Updater speichert die `checksums.txt` des Releases als
-`shared/release_checksums.txt` für den Code-Integritätscheck (01 §8); seit
-M13-2 enthält sie neben den Assets je Datei des Releases eine Zeile
-`release/<pfad>` (vom Release-Workflow erzeugt).
+Die `checksums.txt` des Releases enthält seit M13-2 neben den Assets je
+Datei des Releases eine Zeile `release/<pfad>` (vom Release-Workflow
+erzeugt); der Code-Integritätscheck (01 §8) vergleicht dagegen.
+
+**Echtheit, Download-Adressen, Liste je Release** (issue #241, Befunde
+N-02, N-18, N-19 aus `docs/security-checkliste.md`, E-63):
+
+- **Signatur:** Der Release-Workflow signiert die `checksums.txt` mit
+  Ed25519 (libsodium, abgetrennte Signatur, base64) und veröffentlicht sie
+  als Asset `checksums.txt.sig` – sofern das Secret `RELEASE_SIGNING_KEY`
+  existiert (`tools/release-signatur.php signieren`). Die Liste nennt den
+  SHA-256 des ZIP und jeder Datei darin; eine Signatur deckt also Download
+  und Integritätscheck ab. Updater (Schritt `download`, erneut in
+  `extract`) und `setup.php` prüfen sie mit
+  `App\Service\Update\ReleaseSignatur::pruefe()` gegen den **im Code**
+  festgelegten öffentlichen Schlüssel `ReleaseSignatur::PUBLIC_KEY`
+  (dependency-frei, von `bin/build_setup.php` wie der `ReleaseDownloader`
+  eingebettet). Solange der leer ist: Hinweis im Update-Log bzw. auf einer
+  Zwischenseite von `setup.php`, keine Sperre. Ist er gesetzt: fehlende,
+  kaputte oder falsche Signatur bricht ab, und der Workflow bricht ab, wenn
+  das Secret fehlt oder nicht zum Schlüssel passt. Geprüft wird immer mit
+  dem Schlüssel des **laufenden** Releases – das Update von einer Version
+  ohne Signaturprüfung auf eine mit funktioniert deshalb ohne Weiteres.
+  Einrichtung und Schlüsselwechsel: `docs/betrieb.md` §13.
+- **Download-Adressen:** `ReleaseDownloader` fragt nur `https` an den
+  Hosts `api.github.com`, `github.com`, `objects.githubusercontent.com`
+  und `release-assets.githubusercontent.com` an (Port 443, keine
+  Zugangsdaten in der URL). Die erste Adresse einer Anfrage muss zu
+  **diesem** Repository gehören (`/repos/MirkoSc/vereinsbelege/…` bzw.
+  `/MirkoSc/vereinsbelege/releases/download/…`, ohne `/../` und
+  `%`-Kodierung) – jeder GitHub-Nutzer kann auf denselben Hosts Releases
+  veröffentlichen; die Speicher-Hosts erreicht nur GitHubs eigene
+  Weiterleitung. Weiterleitungen folgt er selbst
+  (`folgeWeiterleitungen()`, höchstens 5) und prüft **jeden** Sprung –
+  curl bzw. der Stream-Wrapper folgen nicht selbst; eine Weiterleitung ohne
+  `Location` ist ein Fehler. Die Asset-Adressen
+  laufen über `shared/update_state.json`; eine dort per FTP geänderte
+  Adresse wird abgelehnt. Einzige Ausnahme ist der Selbsttest im
+  `finish`-Schritt (`fetchSelbsttest()`), der die eigene Startseite abruft.
+- **Kein Unterschieben älterer Releases:** auch die Zielversion steht in
+  `update_state.json`. `download` und `extract` verlangen deshalb erneut,
+  dass sie neuer ist als die laufende Version und dass die Liste genau
+  diese Version nennt (Zeile `vereinsbelege-vX.Y.Z.zip`) – sonst ließe
+  sich ein älteres, echt signiertes Release mit bekannter Lücke
+  einspielen.
+- **Liste je Release:** `setup.php` und der Updater (Schritt `extract`,
+  nach erneuter Prüfung von ZIP und Signatur – beides lag zwischen zwei
+  Requests in `shared/var/update/`) legen `checksums.txt` und ggf.
+  `checksums.txt.sig` ins Wurzelverzeichnis des entpackten Releases. Damit
+  wandern sie bei jedem `rename()` mit – nach einem Rollback oder einem
+  vor dem Umschalten abgebrochenen Update passt die Liste in `current/`
+  weiter zu `current/`. `shared/release_checksums.txt` schreibt keine
+  Version mehr; das Update, das #241 bringt, lädt aber noch mit dem Code
+  des Vorgängers herunter, deshalb übernimmt der `finish`-Schritt diese
+  Datei einmalig nach `current/`, wenn das Release keine eigene Liste hat
+  und die Datei genau diese Version nennt (ohne Signatur – die hat der
+  Vorgänger nicht geladen). Der `finish`-Schritt räumt ZIP, Liste und
+  Signatur in `shared/var/update/` weg.
+- **Rechte des Release-Workflows:** Standard `contents: read`; der Job
+  `build` (Composer, ZIP, Prüfsummen) läuft ohne Secret und Schreibrecht,
+  nur der Job `publish` hat `contents: write` und sieht
+  `RELEASE_SIGNING_KEY`.
 
 Während der Wartungsmodus gesetzt ist, lässt der Shim außer `/admin` auch
 `/css/` und `/js/` durch: sonst käme genau die Seite, die die Wartung beendet
@@ -141,11 +221,32 @@ statt eigene Kopien zu führen); `ReleaseSwitcherTest` (Umschalten,
 Idempotenz, Reparatur nach Absturz zwischen den `rename()`-Aufrufen,
 Rollback, Aufräumen, Shim-Selbstheilung und -Rücknahme, Docroot-Dateien inkl.
 „von Hand geändert bleibt stehen"); `ReleaseDownloaderTest` (Kanäle, Entwürfe
-überspringen, fehlende Assets, Prüfsummen erkennen und ablehnen, Dateiname
-des Assets, curl-Zweig); `MaintenanceModeTest`; `ConfigWriterTest`
+überspringen, fehlende Assets, Signatur-Asset optional, Prüfsummen erkennen
+und ablehnen, Dateiname des Assets, curl-Zweig, nur `https` zu den
+GitHub-Hosts – lokale Pfade, `file://`, `http`, fremde und ähnlich
+benannte Hosts, anderer Port, Zugangsdaten, fremdes Repository, Pfad
+außerhalb der Release-Downloads, `/../`, `%`-Kodierung, Speicher-Host als
+Startadresse abgelehnt –, jeder
+Weiterleitungs-Sprung geprüft und der verbotene nie angefragt,
+Weiterleitungs-Schleife endet, Liste und Signatur ins Release, Selbsttest
+nicht auf GitHub beschränkt); `ReleaseSignaturTest` (Signatur gültig,
+geänderte Liste/fremder Schlüssel/fehlend/kaputt abgelehnt, ohne Schlüssel
+nur Hinweis, ungültiger Schlüssel im Code, `PUBLIC_KEY` leer oder gültig,
+Werkzeug: Schlüsselpaar mit geheimem Teil nur in der Datei, ohne Secret
+nur Warnung, mit Secret gültige Signatur; `setup.php` bettet die Klasse
+ein und prüft vor dem Entpacken; Release-Workflow: Secret nur im
+`publish`-Job, Standardrecht `contents: read`); `MaintenanceModeTest`; `ConfigWriterTest`
 (Server-Schlüssel, je Installation eigene Geheimnisse); `UpdateChainTest`
 (ganze Kette gegen ein lokales Release-ZIP, manipuliertes ZIP, falsche
-`VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück);
+`VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück; seit
+#241: Liste wandert mit dem Release und bleibt nach Rollback passend,
+`finish` übernimmt die `shared/`-Liste des Vorgängers nur bei passender
+Version und räumt den Download weg, ohne Schlüssel unsigniert mit
+Hinweis, signiert bestätigt und Signatur im Release, mit Schlüssel
+unsigniert oder fremd signiert abgelehnt, nach dem Download getauschte
+Liste bzw. ZIP vor dem Entpacken erkannt, manipulierte Adresse in
+`update_state.json` abgelehnt, kein Downgrade über den Stand, Liste
+einer anderen Version abgelehnt, Stand ohne `signatur_url` läuft weiter);
 `InstallFlowTest` (Schema, `config.php` erst nach Bestätigung, Kanal-Übernahme,
 Zugriffssperre in `shared/` und `releases/` bzw. sichtbare Warnung,
 CSRF, abgelehnte Zugangsdaten, sieben Gruppen zu acht Zeichen, falsche letzte
@@ -153,7 +254,10 @@ Gruppe verrät den Schlüssel nicht erneut, Admin-Zeile per Server-Schlüssel
 verschlüsselt und über den Blind Index auffindbar, `vault_grant` öffnet mit
 dem Passwort denselben Tresor wie `vault.public_key`, der
 Wiederherstellungsschlüssel ebenso und landet in keiner Spalte, erneutes
-Absenden legt keinen zweiten Admin an, „Neu beginnen“ räumt auf, bereits
+Absenden legt keinen zweiten Admin an, „Neu beginnen“ räumt auf, Mail-Schritt
+nach der Bestätigung: überspringbar, Testmail speichert und bleibt offen,
+Fehler behält Eingaben ohne Passwort, SMTP-Passwort nie in der Session und mit
+dem Server-Schlüssel aus `config.php` lesbar, ohne bestätigten Schlüssel 409, bereits
 vorhandener Tresor wird abgelehnt, ungültige E-Mail/zu kurzes/bekanntes/nicht
 übereinstimmendes Passwort); `PasswordPolicyTest` (Mindestlänge in Zeichen
 nicht Bytes, Liste vorhanden); `tests/js/update.test.js` (Reihenfolge der
@@ -631,7 +735,7 @@ versteckte und fehlende Datei → 422 ohne Restore-Stand); `ServerBackupsTest`; 
   `mail_antwort_an`, `mail_vereinsname`). SPF/DKIM beim Hoster einrichten
   (Anleitung für den Verein: `docs/betrieb.md` §4).
 - Admin: Testmail senden, Queue einsehen (Empfänger maskiert, Betreff wird
-  gar nicht angezeigt).
+  gar nicht angezeigt), Abstand der Erinnerungs-Mails (§4) wählen.
 
   **Stand M3-1** (issue #14): kein SMTP-Paket als Abhängigkeit – ein
   Roh-Socket-Client (`App\Service\Mail\SmtpTransport` +
@@ -745,6 +849,34 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
     Session-Indexe der Volltextsuche unter `shared/var/tmp/suche/`, deren
     neueste Datei älter als 24 h ist – Sessions, die ohne Abmelden endeten.
     Nur Dateizeiten, kein Tresor, keine DB.
+  - *Rückfall vom Worker* (07 §6, issue #53): `WorkerFallbackTask`
+    (`worker_fallback`, in `jedesMal`) ist mit dieser Regel vereinbar
+    (geprüft in issue #249): er setzt nur Strukturfelder freier Worker-Jobs
+    um (`executor`, `status`, Schritt/Zustand/Versuche), löscht Grants und
+    nicht festgeschriebene Uploads und markiert Artefakte – nichts davon
+    wird gelesen oder entschlüsselt. Geöffnet werden nur die Mail-Adressen
+    der Admins für die Alarm-Mail (Server-Schlüssel, Betriebsdaten).
+  - *Erinnerungs-Mails* (issue #249, E-71): `ErinnerungTask`
+    (`erinnerung_offene_belege`, in `jedesMal`, **vor** `mail_versenden`,
+    damit die Mail im selben Lauf rausgeht; App\Service\Mail\
+    OffeneBelegeErinnerung). Empfänger: alle anmeldefähigen Konten mit
+    `document.edit` (wie die Mail zur neuen Einreichung, 03 §1). Inhalt:
+    genau zwei Zahlen, je Konto in dessen Scope in SQL gezählt – Posteingang
+    „Offen“ (`eingegangen` und fällige Wiedervorlagen, nur mit
+    `inbox.view`) und „Belege in Prüfung“ (`DocumentStatus::pruefbare()`),
+    dieselben Zähler wie die Startseite (05). Keine Referenz, kein Name,
+    kein Betrag, kein Datum; ein Link nur mit eingestellter
+    `oeffentliche_url` (der Cron hat keinen Request-Host, §3). Wer nichts
+    offen hat, bekommt keine Mail. Abstand über das Setting
+    `erinnerung_intervall_tage` auf `/admin/mail`: `0` aus, `1` täglich,
+    `7` wöchentlich (Standard; unbekannte Werte zählen als 7). Solange die
+    Mail-Einstellungen unvollständig sind (`MailSettings::istVollstaendig()`),
+    wird nichts eingereiht und der Lauf nicht vermerkt. Fällig beim
+    ersten Lauf ab 7 Uhr an dem Tag, an dem seit `erinnerung_letzter_lauf`
+    (Y-m-d) der Abstand vergangen ist; der Tag wird **vor** dem Einreihen
+    gesetzt, ein abgebrochener Lauf mailt also niemanden doppelt (er lässt
+    eher eine Erinnerung aus). Nicht je Benutzer abschaltbar – die Spec
+    sieht keine Benutzer-Einstellungen vor (E-71).
   - *Wartungsmodus:* der Shim lässt `/cron` nicht durch (nur `/admin`, `/css/`,
     `/js/`); der Aufruf bekommt 503 und der nächste Minutenlauf holt nach.
   - *Antwort:* JSON `status` (`ok`/`fehler`/`laeuft_bereits`), `aufgaben`,
@@ -765,7 +897,12 @@ Weil Entschlüsseln nur in einer Nutzer-Session möglich ist (01, Abschnitt 2):
   abgelaufene Sperre wird übernommen, Sperre nach Absturz frei, fremde Sperre
   bleibt bei `release`, Aufräumen einmal je Intervall und konfigurierbar,
   fehlschlagender Task ohne Meldung in der Antwort); `CronTokenTest`
-  (Token-Prüfung ohne Datenbank).
+  (Token-Prüfung ohne Datenbank); `OffeneBelegeErinnerungTest` (nur aktive
+  Konten mit `document.edit`, beide Zähler, Wiedervorlage erst ab Datum,
+  ohne Offenes keine Mail, wöchentlich/täglich/aus, nicht vor 7 Uhr, höchstens
+  einmal am Tag, kein Link ohne `oeffentliche_url`, keine Belegdaten,
+  unlesbare Adresse wird übersprungen); `MailControllerTest` (Abstand
+  speichern, unbekannter Wert und fehlendes CSRF ändern nichts).
 
   **Stand M4-7 (issue #29):** der Browser-Worker treibt `executor=session`-
   Jobs an, solange eine angemeldete Person eine Seite offen hat.

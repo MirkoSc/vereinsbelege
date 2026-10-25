@@ -21,15 +21,22 @@ use App\Domain\SupplierData;
  *   "SPORTHAUS BEISPIEL GmbH" teaches "Sporthaus Beispiel" nothing.
  * - Creditor id: valid and only when the supplier has none; a different one
  *   is reported, not replaced (one of the two is wrong).
+ * - VAT id (issue #245): like the creditor id - valid (the form's rule)
+ *   and only when the supplier has none; a different one is reported, not
+ *   replaced (more likely a misread than a second id). No tax number: the
+ *   same one is written in two forms (local "FF/BBB/UUUUP" and the 13-digit
+ *   ELSTER one with a state prefix), so neither the club's own nor another
+ *   supplier's could be recognised reliably (E-67).
  * - Mandate reference: only together with the supplier's creditor id (or
  *   the one learnt now) - without it, it says nothing about who collects.
  * - At most SupplierService::LIST_MAX per list, like the form.
  *
- * Whether an IBAN, creditor id or the name belongs to another supplier
+ * Whether an IBAN, creditor id, VAT id or the name belongs to another supplier
  * needs the blind indexes - SupplierService::lernbar() checks that on top.
  */
 final class LieferantenMerkmale
 {
+
     private function __construct()
     {
         // Static utility, no instances.
@@ -92,6 +99,38 @@ final class LieferantenMerkmale
             }
         }
 
-        return new Merkmale($iban, $alias, $neueGlaeubigerId, $neuesMandat, $hinweise);
+        $ustId = SupplierKeys::kennung($wert('vat_id'));
+        $neueUstId = self::einmalig(
+            preg_match(SupplierService::USTID_MUSTER, $ustId) === 1 ? $ustId : '',
+            $lieferant->vatId,
+            SupplierKeys::kennung(...),
+            'die USt-ID',
+            $hinweise,
+        );
+
+        return new Merkmale($iban, $alias, $neueGlaeubigerId, $neuesMandat, $hinweise, vatId: $neueUstId);
+    }
+
+    /**
+     * A single id the supplier may have only one of: $neu ('' = none or
+     * invalid) when the supplier has none, null otherwise - with a hint
+     * when the two differ ($normal: how its key compares them).
+     *
+     * @param \Closure(string): string $normal
+     * @param list<string> $hinweise
+     */
+    private static function einmalig(string $neu, string $vorhanden, \Closure $normal, string $was, array &$hinweise): ?string
+    {
+        if ($neu === '') {
+            return null;
+        }
+        if ($normal($vorhanden) === '') {
+            return $neu;
+        }
+        if ($normal($vorhanden) !== $normal($neu)) {
+            $hinweise[] = sprintf('Der Beleg nennt %s %s, beim Lieferanten steht %s – nicht übernommen.', $was, $neu, $vorhanden);
+        }
+
+        return null;
     }
 }
