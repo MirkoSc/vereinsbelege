@@ -540,6 +540,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Steuerberater, HttpMethod::Get, '/admin', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/api/upload', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app', true],
+            // Kassenprüfung (issue #74/M11-4): the page `report.view`, its
+            // CSV downloads `export.csv` (the controller adds `bank.view`).
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/kassenpruefung', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/kassenpruefung/buchungen.csv', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/auswertung/kassenpruefung/salden.csv', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/kassenpruefung', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/kassenpruefung/buchungen.csv', false],
             // audit.view (M3-8): in /app so that Vorstand and Kassenprüfer,
             // who hold no admin.* right, reach it.
             [SystemRole::Admin, HttpMethod::Get, '/app/audit', true],
@@ -842,6 +849,8 @@ final class RoutePermissionMatrixTest extends TestCase
             rechtstexteAdmin: $stellvertreter,
             // The dashboard on /app (issue #72/M11-2), optional.
             dashboard: $stellvertreter,
+            // The Kassenprüfung (issue #74/M11-4), optional.
+            kassenpruefung: $stellvertreter,
         );
 
         return $router;
