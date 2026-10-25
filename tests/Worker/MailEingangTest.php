@@ -26,6 +26,7 @@ use App\Worker\Log;
 use App\Worker\Mail\ImapFehler;
 use App\Worker\Mail\MailEingang;
 use App\Worker\Mail\MailZugang;
+use App\Worker\Mail\VersuchsSpeicher;
 use App\Worker\Schleife;
 
 /**
@@ -61,6 +62,12 @@ final class MailEingangTest extends WorkerTestCase
 
     private string $schluessel = '';
 
+    private ApiClient $apiClient;
+
+    private Abbruch $abbruch;
+
+    private Log $workerLog;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -69,13 +76,13 @@ final class MailEingangTest extends WorkerTestCase
         $arbeit = $this->tmp . '/arbeit';
         mkdir($arbeit, 0700);
         $this->uhr = time();
-        $abbruch = new Abbruch();
-        $log = new Log(function (string $zeile): void {
+        $abbruch = $this->abbruch = new Abbruch();
+        $log = $this->workerLog = new Log(function (string $zeile): void {
             $this->log .= $zeile;
         });
         $uhr = fn(): int => $this->uhr;
         $schlafen = static fn(float $s): bool => true;
-        $api = new ApiClient(new InProzessHttp($this->auth, $this->api, $this->mailApi), $identitaet, $abbruch, $uhr, $schlafen);
+        $api = $this->apiClient = new ApiClient(new InProzessHttp($this->auth, $this->api, $this->mailApi), $identitaet, $abbruch, $uhr, $schlafen);
         $this->postfach = new FakePostfach();
         $this->ki = new KiKonfiguration();
         $this->schleife = new Schleife(
@@ -90,12 +97,7 @@ final class MailEingangTest extends WorkerTestCase
             $log,
             $uhr,
             $schlafen,
-            new MailEingang($api, function (MailZugang $z): FakePostfach {
-                $this->verbindungen[] = $z;
-                ++$this->postfach->anmeldungen;
-
-                return $this->postfach;
-            }, $abbruch, $log, fn(): int => $this->uhr + $this->spaeter),
+            $this->neuerEingang(),
         );
         $this->einrichten();
     }
@@ -204,22 +206,112 @@ final class MailEingangTest extends WorkerTestCase
         self::assertStringContainsString('"grund":"unlesbar"', $this->log);
     }
 
-    public function testAMailTheWorkerDiedOnIsSetAsideNotFetchedAgain(): void
+    /**
+     * Issue #243: a broken connection mid-mail counts as one attempt - kept
+     * as keyword at the mail - and the mail is tried again, three times in
+     * all; only then is it set aside, and without being fetched once more.
+     */
+    public function testAMailIsTriedThreeTimesWhenTheConnectionBreaksThenSetAside(): void
     {
-        $gut = $this->postfach->hinzufuegen($this->rechnungsMail());
-        // Left over from a run that died while reading this mail (out of
-        // memory, killed): the attempt mark is still on it.
-        $tot = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-9@', $this->rechnungsMail()));
-        $this->postfach->flags[$tot] = ['$VereinsbelegeVersuch'];
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->beimHolen = static fn(int $u) => throw new ImapFehler('imap_verbindung');
+
+        $erwartet = [
+            ['$VereinsbelegeVersuch'],
+            ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2'],
+            ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2', '$VereinsbelegeVersuch3'],
+        ];
+        foreach ($erwartet as $versuch => $marken) {
+            $this->schleife->runde();
+            self::assertSame($marken, $this->postfach->flagsBeimHolen[$uid], 'attempt ' . ($versuch + 1) . ' is counted before the fetch');
+            self::assertSame($marken, $this->postfach->flags[$uid], 'and stays when the connection is gone');
+            $this->spaeter += 5 * 60;
+        }
+        $this->postfach->beimHolen = null;
+        $this->schleife->runde();
+
+        self::assertSame(3, $this->postfach->geholt[$uid], 'not fetched a fourth time');
+        self::assertSame(['$VereinsbelegeAbgelehnt'], $this->postfach->flags[$uid], 'set aside, the attempts cleared');
+        self::assertStringContainsString('"grund":"unlesbar"', $this->log);
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /** IMAP flags are case-insensitive: a server that lower-cases them still counts. */
+    public function testAttemptMarksCountWhateverTheCase(): void
+    {
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->flags[$uid] = ['$vereinsbelegeversuch', '$VEREINSBELEGEVERSUCH2', '$vereinsbelegeVersuch3'];
 
         $this->schleife->runde();
 
-        self::assertArrayNotHasKey($tot, $this->postfach->flagsBeimHolen, 'not fetched again');
-        self::assertContains('$VereinsbelegeAbgelehnt', $this->postfach->flags[$tot]);
+        self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'three attempts: not fetched again');
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
+    }
+
+    /**
+     * A run that died while reading a mail (out of memory, killed) left the
+     * attempt mark on it: the next run tries again rather than giving up
+     * at once - only a mail that carries all three is set aside.
+     */
+    public function testAMailTheWorkerDiedOnIsTriedAgainUpToThreeTimes(): void
+    {
+        $einmal = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->flags[$einmal] = ['$VereinsbelegeVersuch'];
+        $dreimal = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-9@', $this->rechnungsMail()));
+        $this->postfach->flags[$dreimal] = ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2', '$VereinsbelegeVersuch3'];
+
+        $this->schleife->runde();
+
+        self::assertSame(['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2'], $this->postfach->flagsBeimHolen[$einmal], 'the second attempt');
+        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$einmal], 'handed in, the attempts cleared before the move');
+        self::assertArrayNotHasKey($dreimal, $this->postfach->geholt, 'not fetched again');
+        self::assertSame(['$VereinsbelegeAbgelehnt'], $this->postfach->flags[$dreimal]);
         self::assertStringContainsString('"grund":"unlesbar"', $this->log);
-        // The good one carried the mark while it was read, and lost it after.
-        self::assertContains('$VereinsbelegeVersuch', $this->postfach->flagsBeimHolen[$gut]);
-        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$gut]);
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /**
+     * The worker died after handing the mail in, before marking it - the
+     * next attempt finds the receipt by its key; and when all attempts are
+     * used up, the Message-ID alone shows it is in the inbox: "erledigt",
+     * never "abgelehnt".
+     */
+    public function testAMailHandedInBeforeTheCrashIsNotSetAside(): void
+    {
+        $roh = $this->rechnungsMail();
+        $uid = $this->postfach->hinzufuegen($roh);
+        $this->schleife->runde();
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+
+        // As if every attempt had died between handing in and marking.
+        foreach ([1, 3] as $versuche) {
+            $this->postfach->flags[$uid] = array_slice(\App\Worker\Mail\ImapClient::KEYWORDS_VERSUCH, 0, $versuche);
+            unset($this->postfach->verschoben[$uid], $this->postfach->geholt[$uid]);
+            $this->spaeter += 5 * 60;
+
+            $this->schleife->runde();
+
+            self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$uid], $versuche . ' attempts: erledigt');
+            self::assertSame('Belege/Erledigt', $this->postfach->verschoben[$uid] ?? null);
+        }
+        self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'the last time matched by its Message-ID alone');
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+        self::assertStringNotContainsString('"grund"', $this->log);
+    }
+
+    /** The web host failing as a whole is not the mail's fault: the attempt is taken back. */
+    public function testAnAttemptCutShortByTheWebHostDoesNotCount(): void
+    {
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        // Switched off while the mail is read: the web host answers 409.
+        $this->postfach->beimHolen = fn(int $u) => $this->settings->set(WorkerRouting::SETTING_AKTIV, '0');
+
+        $this->schleife->runde();
+
+        self::assertSame(['$VereinsbelegeVersuch'], $this->postfach->flagsBeimHolen[$uid]);
+        self::assertSame([], $this->postfach->flags[$uid], 'the attempt was taken back');
+        self::assertStringContainsString('"fehler":"webhoster"', $this->log);
     }
 
     public function testRefusedMailsAreMarkedAndStay(): void
@@ -259,6 +351,124 @@ final class MailEingangTest extends WorkerTestCase
         self::assertSame(['\\Seen'], $this->postfach->flags[$gut]);
         self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$schlecht]);
         self::assertStringContainsString('mail_nicht_verschoben', $this->log);
+    }
+
+    /**
+     * Without own keywords \\Flagged is the person's (issue #243): a mail
+     * flagged by hand is handed in like any other and keeps its flag; the
+     * attempts are counted in memory, a broken mail is set aside after three.
+     */
+    public function testWithoutOwnKeywordsAFlaggedMailIsNotSetAside(): void
+    {
+        $this->postfach->keywords = false;
+        $markiert = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->flags[$markiert] = ['\\Flagged'];
+        $abbruch = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-2@', $this->rechnungsMail()));
+        $this->postfach->beimHolen = function (int $u) use ($abbruch): void {
+            if ($u === $abbruch) {
+                throw new ImapFehler('imap_verbindung');
+            }
+        };
+
+        for ($runde = 1; $runde <= 4; ++$runde) {
+            $this->schleife->runde();
+            $this->spaeter += 5 * 60;
+        }
+
+        self::assertEqualsCanonicalizing(['\\Flagged', '\\Seen'], $this->postfach->flags[$markiert], 'handed in, the flag left alone');
+        self::assertSame(1, $this->postfach->geholt[$markiert]);
+        self::assertNotContains('\\Flagged', $this->postfach->flagsBeimHolen[$abbruch], 'no mark of ours');
+        self::assertSame(3, $this->postfach->geholt[$abbruch]);
+        self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$abbruch], 'set aside after three attempts');
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /**
+     * Review of #243: without own keywords the attempts survive a killed
+     * worker - in /daten, not in memory. A mail that kills the worker on
+     * every start is set aside after three, not fetched after every restart.
+     */
+    public function testWithoutOwnKeywordsAttemptsSurviveARestart(): void
+    {
+        $this->postfach->keywords = false;
+        $uid = $this->postfach->hinzufuegen($this->rechnungsMail());
+        // What a kill looks like from the counter's side: the attempt began
+        // and never ended.
+        $this->postfach->beimHolen = static fn(int $u) => throw new ImapFehler('imap_verbindung');
+
+        $this->schleife->runde();
+        $zugang = $this->ki->mailZugang();
+        self::assertNotNull($zugang);
+        for ($neustart = 2; $neustart <= 4; ++$neustart) {
+            // A fresh process: nothing in memory, only the file.
+            $this->neuerEingang()->abrufen($zugang);
+        }
+
+        self::assertSame(3, $this->postfach->geholt[$uid], 'three attempts across restarts, not a fourth');
+        self::assertEqualsCanonicalizing(['\\Seen', '\\Flagged'], $this->postfach->flags[$uid], 'then set aside');
+        self::assertStringContainsString('"grund":"unlesbar"', $this->log);
+        $inhalt = (string) file_get_contents($this->versuchsDatei());
+        self::assertSame('{"format":1,"eintraege":[]}', $inhalt, 'cleared once handled');
+        self::assertSame(0o600, fileperms($this->versuchsDatei()) & 0o777);
+    }
+
+    public function testTheAttemptFileHoldsNoMailContent(): void
+    {
+        $this->postfach->keywords = false;
+        $this->postfach->hinzufuegen($this->rechnungsMail());
+        $this->postfach->beimHolen = static fn(int $u) => throw new ImapFehler('imap_verbindung');
+
+        $this->schleife->runde();
+
+        $inhalt = (string) file_get_contents($this->versuchsDatei());
+        self::assertMatchesRegularExpression('/^\{"format":1,"eintraege":\{"[0-9a-f]{64}":\[1,\d+\]\}\}$/', $inhalt);
+        foreach (['INBOX', 'mueller', 'r-1'] as $verboten) {
+            self::assertStringNotContainsString($verboten, $inhalt);
+        }
+    }
+
+    /**
+     * Review of #243: a mail without Message-ID handed in on its last
+     * attempt, the worker killed before marking it - matched by its header
+     * block, "erledigt", not "abgelehnt".
+     */
+    public function testAMailWithoutMessageIdHandedInBeforeTheCrashIsNotSetAside(): void
+    {
+        $uid = $this->postfach->hinzufuegen(str_replace("Message-ID: <r-1@mueller-getraenke.de>\r\n", '', $this->rechnungsMail()));
+        self::assertStringNotContainsString('Message-ID', $this->postfach->mails[$uid]);
+        $this->schleife->runde();
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+
+        $this->postfach->flags[$uid] = \App\Worker\Mail\ImapClient::KEYWORDS_VERSUCH;
+        unset($this->postfach->verschoben[$uid], $this->postfach->geholt[$uid]);
+        $this->spaeter += 5 * 60;
+        $this->schleife->runde();
+
+        self::assertArrayNotHasKey($uid, $this->postfach->geholt, 'not fetched again');
+        self::assertSame([$uid], $this->postfach->kopfAbgefragt);
+        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$uid]);
+        self::assertStringNotContainsString('"grund"', $this->log);
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /**
+     * N-17: the web host limits mails per worker and hour itself; over the
+     * limit the worker ends its run, the mail waits unmarked and uncounted.
+     */
+    public function testTheWebHostsLimitStopsTheRunAndTheMailWaits(): void
+    {
+        $this->settings->set(\App\Service\Worker\MailEingangGrenze::SETTING_MAILS_STUNDE, '1');
+        $erste = $this->postfach->hinzufuegen($this->rechnungsMail());
+        $zweite = $this->postfach->hinzufuegen(str_replace('r-1@', 'r-2@', $this->rechnungsMail()));
+
+        $this->schleife->runde();
+
+        self::assertSame(['$Vereinsbelege', '\\Seen'], $this->postfach->flags[$erste]);
+        self::assertSame([], $this->postfach->flags[$zweite], 'waits, the attempt taken back');
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+        // The admin page shows why with the next heartbeat.
+        $this->schleife->runde();
+        self::assertSame('mail_limit', $this->mailEingang->status()['fehler'] ?? null);
     }
 
     public function testTheMailboxIsReadEveryIntervalAndAtMostTwentyAtOnce(): void
@@ -340,6 +550,50 @@ final class MailEingangTest extends WorkerTestCase
         $abgelehnt = $einreichen(['schluessel' => $schluessel, 'blobs' => [$fremderBlob->id], 'absender' => ['name' => '', 'adresse' => 'kasse@verein.de'], 'betreff' => 'x']);
         self::assertSame('anhang_unbekannt', self::daten($abgelehnt)['fehler']);
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM submission')->fetchColumn());
+    }
+
+    /** N-17: bytes per worker and hour, checked before an upload ticket is handed out. */
+    public function testTheWebHostLimitsTheBytesPerHour(): void
+    {
+        $this->settings->set(\App\Service\Worker\MailEingangGrenze::SETTING_MB_STUNDE, '1');
+        $this->workers->heartbeat($this->workerId, 1, '2.0.0', WorkerFaehigkeit::cases(), new \DateTimeImmutable());
+        $ticket = fn(int $groesse) => $this->aufruf($this->signiert($this->workerId, $this->schluessel, '/api/worker/mail/uploads', json_encode(['schluessel' => hash('sha256', 'x'), 'groesse' => $groesse], JSON_THROW_ON_ERROR)), fn($r, $p, $w) => $this->mailApi->uploadAnlegen($r, $w));
+
+        self::assertSame(201, $ticket(700 * 1024)->status);
+        $zuViel = $ticket(400 * 1024);
+        self::assertSame(429, $zuViel->status);
+        self::assertSame('mail_limit', self::daten($zuViel)['fehler']);
+        self::assertSame(201, $ticket(300 * 1024)->status, 'what still fits');
+    }
+
+    /** A file larger than a whole hour allows can never pass: refused for good, not 429 forever. */
+    public function testAFileLargerThanTheHourlyLimitIsRefusedForGood(): void
+    {
+        $this->settings->set(\App\Service\Worker\MailEingangGrenze::SETTING_MB_STUNDE, '1');
+        $this->workers->heartbeat($this->workerId, 1, '2.0.0', WorkerFaehigkeit::cases(), new \DateTimeImmutable());
+        $antwort = $this->aufruf($this->signiert($this->workerId, $this->schluessel, '/api/worker/mail/uploads', json_encode(['schluessel' => hash('sha256', 'x'), 'groesse' => 1024 * 1024 + 1], JSON_THROW_ON_ERROR)), fn($r, $p, $w) => $this->mailApi->uploadAnlegen($r, $w));
+
+        self::assertSame(413, $antwort->status, 'the worker sets the mail aside');
+    }
+
+    /** A mail intake as a fresh worker process would build it - attempts in the /daten file. */
+    private function neuerEingang(): MailEingang
+    {
+        return new MailEingang($this->apiClient, function (MailZugang $z): FakePostfach {
+            $this->verbindungen[] = $z;
+            ++$this->postfach->anmeldungen;
+
+            return $this->postfach;
+        }, $this->abbruch, $this->workerLog, fn(): int => $this->uhr + $this->spaeter, new VersuchsSpeicher($this->versuchsDatei(), 'test-schluessel', fn(): int => $this->uhr + $this->spaeter));
+    }
+
+    private function versuchsDatei(): string
+    {
+        if (!is_dir($this->tmp . '/daten')) {
+            mkdir($this->tmp . '/daten', 0700);
+        }
+
+        return $this->tmp . '/daten/mail_versuche.json';
     }
 
     private function einrichten(): void

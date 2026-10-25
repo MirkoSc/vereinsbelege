@@ -173,8 +173,8 @@ eine in diesem PR behobene Zeile.
 | G-07 | `proc_open` nur mit Argumentliste, feste Dateinamen | ✓ | `worker/src/Prozess.php`, `Schritt/*` |
 | G-08 | IMAP nur TLS ≥ 1.2 mit Zertifikatsprüfung, STARTTLS erzwungen, keine Befehlsinjektion | ✓ | `worker/src/Mail/SocketStrom`, `ImapClient` |
 | G-09 | Mails nie gelöscht, keine Mailinhalte im Log | ✓ | `MailEingang`, `worker/src/Log` |
-| G-10 | MIME-Speicherspitze < 3× Mailgröße | ✗ niedrig | `MimeNachricht` (kodierte `message/rfc822` je Ebene kopiert) → N-16 |
-| G-11 | Serverseitige Mengengrenze des Mail-Eingangs | ✗ niedrig | `WorkerMailController` → N-17 |
+| G-10 | MIME-Speicherspitze < 3× Mailgröße | ✓ (#243) | `MimeNachricht` (stückweise dekodiert, höchstens eine dekodierte Kopie; `MimeNachrichtTest`) → N-16 |
+| G-11 | Serverseitige Mengengrenze des Mail-Eingangs | ✓ (#243) | `WorkerMailController` + `MailEingangGrenze` (Mails/Bytes je Worker und Stunde, 429 `mail_limit`) → N-17 |
 | G-12 | Worker-HTTP nur https, keine Redirects, TLS-Prüfung an | ✓ | `worker/src/Http/CurlWorkerHttp` |
 
 ## H – Betrieb: Backup, Update, Integrität, Konfiguration (ASVS V10/V14)
@@ -244,8 +244,8 @@ Fix-Vorschlag im PR-Body. N-01 bis N-04 sind „mittel", alles Weitere ist
 | N-13 | niedrig | TOCTOU Magic Bytes ↔ Speichern beim Upload |
 | N-14 | Härtung | Session-Cookie `PHPSESSID` statt `__Host-` |
 | N-15 | Härtung | kein zentraler CSRF-Test über alle POST-Routen |
-| N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails |
-| N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze |
+| N-16 | niedrig | Worker: MIME-Speicherspitze bei verschachtelten weitergeleiteten Mails – ✓ behoben (#243) |
+| N-17 | niedrig | Worker-Mail-Eingang ohne serverseitige Mengengrenze – ✓ behoben (#243) |
 | N-18 | Härtung | ✓ (#241) Update-Download-URLs nicht auf github.com beschränkt |
 | N-19 | niedrig | ✓ (#241) Prüfsummenliste in `shared/` schreibbar (Spec räumt es ein) – Liste je Release, signiert |
 | N-20 | Hinweis | Posteingang-Scope über `created_at`, Auswertung über Rechnungsdatum (spec-konform, Entscheidung offen) |

@@ -21,6 +21,7 @@ use App\Domain\AuditAction;
 use App\Domain\ImapSicherheit;
 use App\Service\Audit\AuditLog;
 use App\Service\Worker\MailEingangEinstellungen;
+use App\Service\Worker\MailEingangGrenze;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\CryptoException;
@@ -347,6 +348,7 @@ final readonly class WorkerController
             ...$this->bestand(),
             'mailEingang' => $this->mailEingang?->laden(),
             'mailStatus' => $this->mailEingang?->status(),
+            'mailGrenze' => MailEingangGrenze::werte($this->settings),
             'sicherheiten' => ImapSicherheit::cases(),
         ], Area::Admin));
     }
