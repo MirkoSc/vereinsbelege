@@ -135,6 +135,60 @@ final readonly class ReportService
     }
 
     /**
+     * Soll against Ist of budgets (issue #92, E-58): for each budget the
+     * expenses of the lines it covers (its category and/or cost center) in
+     * the period of the input, narrowed to $bereich like every figure here.
+     * A budget for a cost center outside the reader's cost-center scope is
+     * left out, as is its row in the repository. Order as given.
+     *
+     * @param list<Budgetsoll> $budgets
+     *
+     * @return list<Budgetzeile>
+     */
+    public function budgetvergleich(Auswertungsgrundlage $grundlage, Zugriffsbereich $bereich, array $budgets): array
+    {
+        $ausgaben = $this->relevant($grundlage, $bereich, InvoiceDirection::Ausgabe);
+        $zeilen = [];
+        foreach ($budgets as $budget) {
+            if ($bereich->kostenstellen !== null
+                && ($budget->kostenstelleId === null || !in_array($budget->kostenstelleId, $bereich->kostenstellen, true))) {
+                continue;
+            }
+            $ist = 0;
+            $anzahl = 0;
+            foreach ($ausgaben as $posten) {
+                if ($budget->trifft($posten)) {
+                    $ist += $posten->betrag;
+                    ++$anzahl;
+                }
+            }
+            $zeilen[] = new Budgetzeile(
+                $budget,
+                $ist,
+                $anzahl,
+                $budget->betrag > 0 ? self::promilleVon($budget->betrag - $ist, $budget->betrag) : null,
+                $budget->betrag > 0 ? self::promilleVon($ist, $budget->betrag) : null,
+            );
+        }
+
+        return $zeilen;
+    }
+
+    /**
+     * $teil of $ganz in tenths of a percent, rounded half away from zero;
+     * $ganz > 0, $teil any sign. Integer arithmetic only.
+     */
+    public static function promilleVon(int $teil, int $ganz): int
+    {
+        if ($ganz <= 0) {
+            throw new \InvalidArgumentException('Der Bezugswert muss größer als 0 sein.');
+        }
+        $betrag = intdiv(abs($teil) * 2000 + $ganz, 2 * $ganz);
+
+        return $teil < 0 ? -$betrag : $betrag;
+    }
+
+    /**
      * Current period against the previous year ("Vorjahresvergleich"). With
      * a dimension one row per key of either period, in the order of the
      * current period (keys only the previous year has follow, largest

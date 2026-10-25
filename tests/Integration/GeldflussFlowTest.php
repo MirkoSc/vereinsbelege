@@ -409,7 +409,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         preg_match_all('#href="(/app/auswertung[^"]*)"#', $html, $links);
         self::assertNotEmpty($links[1]);
         foreach ($links[1] as $link) {
-            self::assertMatchesRegularExpression('#^/app/auswertung(/geldfluss(/posten)?|/kassenpruefung)?(\?([a-z]+=[a-z0-9-]+)(&amp;[a-z]+=[a-z0-9-]+)*)?$#', $link);
+            self::assertMatchesRegularExpression('#^/app/auswertung(/geldfluss(/posten)?|/kassenpruefung|/budget)?(\?([a-z]+=[a-z0-9-]+)(&amp;[a-z]+=[a-z0-9-]+)*)?$#', $link);
         }
     }
 

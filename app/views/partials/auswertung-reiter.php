@@ -13,6 +13,7 @@
 $auswertungen = [
     '/app/auswertung/geldfluss' => 'Wohin fließt das Geld',
     '/app/auswertung/kassenpruefung' => 'Kassenprüfung',
+    '/app/auswertung/budget' => 'Budget',
 ];
 if (($sphaerenAktiv ?? false) === true) {
     $auswertungen['/app/auswertung/sphaeren'] = 'Sphären';

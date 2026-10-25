@@ -65,6 +65,9 @@ Hoster das nicht tut: Prozess-Aufrufe sind eine Selbstbeschränkung des Projekts
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Meilensteine M0–M13 mit Issues und Abnahmekriterien |
 | [docs/arbeitsplan.html](docs/arbeitsplan.html) | Reihenfolge der offenen Issues, was parallel geht, Modell/Effort/Modus je Sitzung (im Browser öffnen; Status live von GitHub) |
 | [docs/ENTSCHEIDUNGEN.md](docs/ENTSCHEIDUNGEN.md) | Getroffene und offene Grundsatzentscheidungen |
+| [docs/betrieb.md](docs/betrieb.md) | Betriebshandbuch für den Verein: Installation, Cron, Mail, Backups, Restore, Rollen, Updates |
+| [docs/verfahrensdokumentation.md](docs/verfahrensdokumentation.md) | Vorlage der Verfahrensdokumentation für den Verein |
+| [docs/worker-einrichtung.md](docs/worker-einrichtung.md) | Optionalen Worker auf dem Raspberry Pi einrichten |
 | [docs/spec/](docs/spec/) | Detail-Spezifikationen je Bereich (werden bei Bedarf gelesen) |
 | [docs/spec/07-worker.md](docs/spec/07-worker.md) | Optionales Worker-Modul (Raspberry Pi): OCR, PDF/A, KI rund um die Uhr |
 | [docs/hosting-befunde.md](docs/hosting-befunde.md) | Ergebnis des Hosting-Checks (M0) |

@@ -61,6 +61,9 @@ final readonly class CostCenterService
         if ($this->kostenstellen->documentCount($id) > 0) {
             throw new CostCenterRuleViolation('Der Kostenstelle sind Belege zugeordnet. Sie lässt sich nur noch deaktivieren.');
         }
+        if ($this->kostenstellen->budgetCount($id) > 0) {
+            throw new CostCenterRuleViolation('Für die Kostenstelle sind Budgets angelegt. Bitte zuerst die Budgets löschen oder die Kostenstelle deaktivieren.');
+        }
 
         $this->kostenstellen->delete($id);
     }

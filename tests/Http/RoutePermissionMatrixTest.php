@@ -407,6 +407,18 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/geldfluss', true],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/geldfluss/posten', true],
+            // Budgets (issue #92): reading `report.view` (the CSV
+            // `export.csv`), keeping them `bank.book`; the scopes are
+            // checked in BudgetFlowTest.
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/auswertung/budget', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/budget', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/auswertung/budget.csv', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/auswertung/budget.csv', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/auswertung/budget', true],
+            [SystemRole::Admin, HttpMethod::Post, '/app/auswertung/budget/3/loeschen', true],
+            [SystemRole::Vorstand, HttpMethod::Post, '/app/auswertung/budget', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/auswertung/budget/3/loeschen', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/auswertung/budget', false],
             [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/erwartet', false],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erwartet', false],
             // Festschreibung (issue #38/M6-4): the right to capture is the right to lock.
@@ -915,6 +927,8 @@ final class RoutePermissionMatrixTest extends TestCase
             geldfluss: $stellvertreter,
             // The mail intake's worker routes (issue #87), optional.
             workerMail: $stellvertreter,
+            // Budgets with Soll/Ist (issue #92), optional.
+            budgets: $stellvertreter,
         );
 
         return $router;

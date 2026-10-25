@@ -656,7 +656,14 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `document.edit` (M4-5). `/app/auswertung/kassenpruefung` = `report.view`,
   `/app/auswertung/kassenpruefung/{teil}.csv` = `export.csv` (M11-4,
   issue #74); beide prüfen im Controller zusätzlich `bank.view` (403 bzw.
-  Hinweis), Buchungen im Zeitraum-Scope, Anfangsbestand als Übertrag. Der Posteingang ist der erste echte Aufrufer von
+  Hinweis), Buchungen im Zeitraum-Scope, Anfangsbestand als Übertrag.
+  `/app/auswertung/budget` = `report.view` (mit Scope: ein
+  Vereinsverantwortlicher sieht nur Budgets seiner Kostenstellen),
+  `/app/auswertung/budget.csv` = `export.csv` (+ `report.view` im
+  Controller), `POST /app/auswertung/budget` und
+  `POST /app/auswertung/budget/{id}/loeschen` = `bank.book` (issue #92,
+  E-58: wer die Vereinsfinanzen führt – Finanzen, Admin), im Controller
+  zusätzlich `report.view` (das Formular steht auf der Auswertungsseite). Der Posteingang ist der erste echte Aufrufer von
   `sqlBedingung()`: `document.cost_center_id` / `document.created_at`
   (`App\Repository\DocumentRepository::inbox()`/`inboxItem()`); eine ID
   außerhalb des Scopes antwortet 404 wie eine unbekannte.

@@ -6,7 +6,11 @@ namespace App\Tests\Integration;
 
 use App\Domain\BlobMeta;
 use App\Domain\BlobStorage;
+use App\Domain\CategoryDirection;
 use App\Repository\BlobRepository;
+use App\Repository\BudgetRepository;
+use App\Repository\CategoryRepository;
+use App\Repository\CostCenterRepository;
 use App\Service\Backup\BackupService;
 use App\Service\Backup\RestoreService;
 use App\Service\Crypto\Vault;
@@ -161,6 +165,35 @@ final class BackupRestoreRoundtripTest extends DatabaseTestCase
         foreach ($before as $table => $rows) {
             self::assertSame($rows, $this->dumpTable($table), 'restored table ' . $table . ' must be identical');
         }
+    }
+
+    /**
+     * Issue #92: the `budget` table (keys for its UNIQUE index, a CHECK,
+     * NULL foreign keys) comes back from a backup unchanged - a restore must
+     * not trip over any of its columns.
+     */
+    public function testBudgetsSurviveBackupAndRestore(): void
+    {
+        $k = new CategoryRepository($this->pdo())->create('Testkat Material', CategoryDirection::Ausgabe, null, '');
+        $j = new CostCenterRepository($this->pdo())->create('Testkst Jugend');
+        $budgets = new BudgetRepository($this->pdo());
+        $jetzt = new \DateTimeImmutable('2026-01-02 03:04:05');
+        foreach ([[$k, null], [null, $j], [$k, $j]] as [$kategorie, $kostenstelle]) {
+            $id = $budgets->insert(2026, $kategorie, $kostenstelle, random_bytes(48), null, $jetzt);
+            $budgets->setData($id, random_bytes(40));
+        }
+        $vorher = $this->dumpTable('budget', 'id');
+        self::assertCount(3, $vorher);
+
+        $name = $this->service()->create();
+        $this->wipeDatabase();
+        $this->restoreDump(new RestoreService(), $this->backupDir . '/' . $name);
+
+        self::assertSame($vorher, $this->dumpTable('budget', 'id'));
+        // The UNIQUE key still holds after the restore.
+        self::assertNotNull($budgets->idFor(2026, $k, null));
+        $this->expectException(\PDOException::class);
+        $budgets->insert(2026, $k, null, random_bytes(48), null, $jetzt);
     }
 
     /**

@@ -10,7 +10,7 @@ use App\Service\Report\Datenstand;
  * The fingerprint the report cache checks before every use (issue #72,
  * App\Service\Report\AuswertungsCache): a live checksum over every row of
  * every table report input is built from - receipts and their documents
- * (status), bookings, allocations, accounts, the vault (rotation).
+ * (status), bookings, allocations, accounts, the vault (rotation), budgets.
  *
  * CHECKSUM TABLE covers all columns of all rows, so it changes on every
  * insert, update and delete - including an allocation removed without any
@@ -22,8 +22,12 @@ use App\Service\Report\Datenstand;
  */
 final readonly class AuswertungsStandRepository implements Datenstand
 {
-    /** Fixed list - table names come from code, never from a request. */
-    private const array TABELLEN = ['document', 'invoice', 'allocation', 'bank_transaction', 'bank_account', 'vault'];
+    /**
+     * Fixed list - table names come from code, never from a request.
+     * `budget` (issue #92): the budget page reads it next to the cached
+     * report input, so a changed budget also starts afresh.
+     */
+    private const array TABELLEN = ['document', 'invoice', 'allocation', 'bank_transaction', 'bank_account', 'vault', 'budget'];
 
     public function __construct(private \PDO $pdo)
     {
