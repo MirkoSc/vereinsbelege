@@ -21,9 +21,13 @@ use App\Domain\SupplierData;
  *   "SPORTHAUS BEISPIEL GmbH" teaches "Sporthaus Beispiel" nothing.
  * - Creditor id: valid and only when the supplier has none; a different one
  *   is reported, not replaced (one of the two is wrong).
- * - VAT id, tax number (issue #245): like the creditor id - valid (the
- *   form's rules) and only when the supplier has none; a different one is
- *   reported, not replaced (more likely a misread than a second id).
+ * - VAT id, tax number (issue #245): like the creditor id - valid and only
+ *   when the supplier has none; a different one is reported, not replaced
+ *   (more likely a misread than a second id). A VAT id follows the form's
+ *   rule; a tax number is learnt only as a German one (10 to 13 digits once
+ *   slashes and spaces are gone) - a label, a fragment or anything else the
+ *   AI put there would become a unique step-1 key.
+ *   (The form keeps accepting any tax number a person types.)
  * - Mandate reference: only together with the supplier's creditor id (or
  *   the one learnt now) - without it, it says nothing about who collects.
  * - At most SupplierService::LIST_MAX per list, like the form.
@@ -33,6 +37,9 @@ use App\Domain\SupplierData;
  */
 final class LieferantenMerkmale
 {
+    /** A German tax number after SupplierKeys::steuernummer(). */
+    private const string STEUERNUMMER_MUSTER = '/^[0-9]{10,13}$/';
+
     private function __construct()
     {
         // Static utility, no instances.
@@ -96,27 +103,46 @@ final class LieferantenMerkmale
         }
 
         $ustId = SupplierKeys::kennung($wert('vat_id'));
-        $neueUstId = null;
-        if ($ustId !== '' && preg_match(SupplierService::USTID_MUSTER, $ustId) === 1) {
-            $vorhandeneUstId = SupplierKeys::kennung($lieferant->vatId);
-            if ($vorhandeneUstId === '') {
-                $neueUstId = $ustId;
-            } elseif ($vorhandeneUstId !== $ustId) {
-                $hinweise[] = sprintf('Der Beleg nennt die USt-ID %s, beim Lieferanten steht %s – nicht übernommen.', $ustId, $vorhandeneUstId);
-            }
-        }
+        $neueUstId = self::einmalig(
+            preg_match(SupplierService::USTID_MUSTER, $ustId) === 1 ? $ustId : '',
+            $lieferant->vatId,
+            SupplierKeys::kennung(...),
+            'die USt-ID',
+            $hinweise,
+        );
 
         $steuernummer = trim((string) preg_replace('/\s+/u', ' ', $wert('tax_number')));
-        $neueSteuernummer = null;
-        if (SupplierKeys::steuernummer($steuernummer) !== '' && mb_strlen($steuernummer) <= SupplierService::TEXT_MAX) {
-            $vorhandeneSteuernummer = SupplierKeys::steuernummer($lieferant->taxNumber);
-            if ($vorhandeneSteuernummer === '') {
-                $neueSteuernummer = $steuernummer;
-            } elseif ($vorhandeneSteuernummer !== SupplierKeys::steuernummer($steuernummer)) {
-                $hinweise[] = sprintf('Der Beleg nennt die Steuernummer %s, beim Lieferanten steht %s – nicht übernommen.', $steuernummer, $lieferant->taxNumber);
-            }
-        }
+        $neueSteuernummer = self::einmalig(
+            mb_strlen($steuernummer) <= SupplierService::TEXT_MAX && preg_match(self::STEUERNUMMER_MUSTER, SupplierKeys::steuernummer($steuernummer)) === 1 ? $steuernummer : '',
+            $lieferant->taxNumber,
+            SupplierKeys::steuernummer(...),
+            'die Steuernummer',
+            $hinweise,
+        );
 
         return new Merkmale($iban, $alias, $neueGlaeubigerId, $neuesMandat, $hinweise, vatId: $neueUstId, taxNumber: $neueSteuernummer);
+    }
+
+    /**
+     * A single id the supplier may have only one of: $neu ('' = none or
+     * invalid) when the supplier has none, null otherwise - with a hint
+     * when the two differ ($normal: how its key compares them).
+     *
+     * @param \Closure(string): string $normal
+     * @param list<string> $hinweise
+     */
+    private static function einmalig(string $neu, string $vorhanden, \Closure $normal, string $was, array &$hinweise): ?string
+    {
+        if ($neu === '') {
+            return null;
+        }
+        if ($normal($vorhanden) === '') {
+            return $neu;
+        }
+        if ($normal($vorhanden) !== $normal($neu)) {
+            $hinweise[] = sprintf('Der Beleg nennt %s %s, beim Lieferanten steht %s – nicht übernommen.', $was, $neu, $vorhanden);
+        }
+
+        return null;
     }
 }

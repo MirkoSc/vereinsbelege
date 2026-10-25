@@ -1489,7 +1489,9 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
 - **Stand #245** (keine Migration; vorläufige Details E-67): ergänzt M7-6b.
   - *USt-ID und Steuernummer* werden gelernt wie die Gläubiger-ID: gültig
     (USt-ID nach dem Formular-Muster `SupplierService::USTID_MUSTER`,
-    Steuernummer mit Buchstaben/Ziffern, höchstens 200 Zeichen) und **nur,
+    Steuernummer nur als deutsche: 10–13 Ziffern ohne Schrägstriche/
+    Leerzeichen – eine Beschriftung oder ein Bruchstück würde sonst ein
+    eindeutiger Stufe-1-Schlüssel) und **nur,
     wenn der Lieferant keine hat**; eine abweichende wird gemeldet, nicht
     ersetzt (eher ein Lesefehler). Verglichen wie ihr Schlüssel
     (`SupplierKeys::kennung()` bzw. `::steuernummer()`). Felder im Audit:
@@ -1499,11 +1501,15 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     gehört (IBAN, Gläubiger-ID, USt-ID, Steuernummer, Name/Alias), wird nicht
     gelernt; `Merkmale::$konflikte` hält Feld → ID des anderen. Beim Speichern
     (angekreuzt – gibt es nur Konflikte, sendet die Seite statt des
-    Ankreuzfelds ein verstecktes `lieferant_lernen=1` –, Recht
-    `supplier.manage`) schreibt `Pruefung::speichern()` in
+    Ankreuzfelds ein verstecktes `lieferant_lernen=konflikt`; ein seitdem
+    geänderter Plan meldet dann kein „nicht ergänzt“, denn angeboten war
+    nichts –, Recht `supplier.manage`) schreibt `Pruefung::speichern()` in
     der Lern-Transaktion den Audit-Eintrag `lieferant.merkmal_konflikt`
     (Entität: der bestätigte Lieferant) mit `{felder, andere, beleg}` – nur
-    Feldnamen und IDs, kein Wert – auch wenn sonst nichts zu lernen ist. Die
+    Feldnamen und IDs, kein Wert – auch wenn sonst nichts zu lernen ist,
+    aber je Lieferant, Feld und anderem Lieferanten **nur einmal** (frühere
+    Einträge werden in der Session entschlüsselt verglichen; die monatliche
+    Rechnung schreibt nicht jedes Mal einen neuen). Die
     Meldung danach nennt nur Feldbezeichnungen („Beim Lieferanten nicht
     ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN – bitte
     … ggf. zusammenführen.“). Eine Vereins-IBAN ist kein Konflikt (nur

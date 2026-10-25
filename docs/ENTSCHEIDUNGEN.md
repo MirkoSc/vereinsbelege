@@ -1839,11 +1839,14 @@ zeigen soll.
   ab dem nächsten Beleg findet Stufe 1 den Lieferanten. Eine **abweichende**
   wird nur gemeldet, nicht ersetzt – zwei verschiedene USt-IDs eines
   Lieferanten sind eher ein Lesefehler der KI als eine zweite Kennung.
+  Steuernummern nur in deutscher Form (10–13 Ziffern), damit keine
+  Beschriftung oder kein Bruchstück zum eindeutigen Schlüssel wird.
 - **Konflikt = markieren, nicht überschreiben:** gehört ein Wert schon einem
   anderen Lieferanten, wird er nicht übernommen (wie E-29), zusätzlich aber
   dauerhaft festgehalten: Audit `lieferant.merkmal_konflikt` am bestätigten
   Lieferanten mit Feldnamen, ID des anderen und Beleg-ID (kein Klartext) und
-  eine Warnung nach dem Speichern. Kein eigenes Datenbankfeld, keine
+  eine Warnung nach dem Speichern – im Audit je Lieferant, Feld und anderem
+  Lieferanten nur einmal, die Warnung jedes Mal. Kein eigenes Datenbankfeld, keine
   Konfliktliste und kein `needs_review` – „Neue Lieferanten prüfen“ bleibt für
   KI-Neuanlagen; aufgelöst wird über Zusammenführen.
 - Markiert wird beim ersten Speichern, wenn die Person „Neue Merkmale …
@@ -1851,7 +1854,11 @@ zeigen soll.
   übernehmen); gibt es nur Konflikte und nichts zu lernen, zeigt die Seite
   kein Ankreuzfeld und markiert beim Speichern immer.
 
-Offen für Mirko: ob Konflikte statt (nur) im Audit-Log als eigene Liste
+Offen für Mirko: Eine Vereins-USt-ID/-Steuernummer kennt die Anwendung
+nicht (keine Einstellung) – anders als die Vereins-IBAN kann sie deshalb
+nicht ausgeschlossen werden; liest die KI sie fälschlich als die des
+Lieferanten, steht sie sichtbar in der Liste vor dem Speichern (Haken
+herausnehmen). Ob dafür eine Einstellung nötig ist; ob Konflikte statt (nur) im Audit-Log als eigene Liste
 „Mögliche Doppelte“ unter „Lieferanten“ erscheinen sollen; ob eine
 abweichende USt-ID den Lieferanten doch ersetzen oder zur Prüfung markieren
 soll.

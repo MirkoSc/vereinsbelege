@@ -60,10 +60,10 @@ final readonly class SupplierService
     /** A SEPA mandate reference, at most 35 characters. */
     public const int MANDAT_MAX = 35;
 
-    /** A SEPA creditor id, after SupplierKeys::kennung(). */
     /** A VAT id: country code and up to 13 characters (form and learning, #245). */
     public const string USTID_MUSTER = '/^[A-Z]{2}[A-Z0-9+*]{2,13}$/';
 
+    /** A SEPA creditor id, after SupplierKeys::kennung(). */
     public const string GLAEUBIGER_ID_MUSTER = '/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/';
 
     private const string TABLE = 'supplier';
@@ -374,7 +374,7 @@ final readonly class SupplierService
         $pruefen = [
             ['iban', SupplierKeyKind::Iban, $merkmale->iban],
             ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId],
-            ['vat_id', SupplierKeyKind::VatId, $merkmale->vatId === null ? null : SupplierKeys::kennung($merkmale->vatId)],
+            ['vat_id', SupplierKeyKind::VatId, $merkmale->vatId],
             ['tax_number', SupplierKeyKind::TaxNumber, $merkmale->taxNumber === null ? null : SupplierKeys::steuernummer($merkmale->taxNumber)],
             ['aliases', SupplierKeyKind::Name, $merkmale->alias === null ? null : SupplierKeys::name($merkmale->alias)],
         ];

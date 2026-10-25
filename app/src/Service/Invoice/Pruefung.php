@@ -24,6 +24,7 @@ use App\Domain\Supplier;
 use App\Domain\SupplierKeyKind;
 use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
+use App\Repository\AuditLogRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentArtifactRepository;
@@ -32,6 +33,7 @@ use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Archiv\ArchivVorgabe;
+use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Zuordnung;
@@ -959,13 +961,18 @@ final readonly class Pruefung
                         $gelernt = $merkmale->bezeichnungen();
                     }
                     // A value another supplier holds is not learnt but
-                    // marked (issue #245): field names and ids, no value.
+                    // marked (issue #245): field names and ids, no value -
+                    // once per field and other supplier, not on every
+                    // monthly invoice again.
                     if ($merkmale !== null && $merkmale->konflikte !== []) {
-                        $this->audit->record(AuditAction::LieferantMerkmalKonflikt, $userId, $ip, $lernenFuer, [
-                            'felder' => array_keys($merkmale->konflikte),
-                            'andere' => array_values(array_unique(array_values($merkmale->konflikte))),
-                            'beleg' => $document->id,
-                        ], $now);
+                        $neu = $this->neueKonflikte($lernenFuer, $merkmale->konflikte, $vault);
+                        if ($neu !== []) {
+                            $this->audit->record(AuditAction::LieferantMerkmalKonflikt, $userId, $ip, $lernenFuer, [
+                                'felder' => array_keys($neu),
+                                'andere' => array_values(array_unique(array_values($neu))),
+                                'beleg' => $document->id,
+                            ], $now);
+                        }
                         $konflikte = $merkmale->konfliktBezeichnungen();
                     }
                     $this->pdo->commit();
@@ -995,6 +1002,32 @@ final readonly class Pruefung
         }
 
         return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt, $konflikte);
+    }
+
+    /**
+     * $konflikte (`felder()` key => other supplier) minus the pairs an
+     * earlier `lieferant.merkmal_konflikt` of supplier $lieferant recorded
+     * already (issue #245) - the details are sealed, read in the session.
+     *
+     * @param array<string, int> $konflikte
+     *
+     * @return array<string, int>
+     */
+    private function neueKonflikte(int $lieferant, array $konflikte, Vault $vault): array
+    {
+        $filter = new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt, entity: 'supplier', entityId: $lieferant);
+        foreach ((new AuditLogRepository($this->pdo))->page($filter, null, 200) as $eintrag) {
+            $details = $this->audit->details($eintrag, $vault) ?? [];
+            $felder = is_array($details['felder'] ?? null) ? $details['felder'] : [];
+            $andere = is_array($details['andere'] ?? null) ? $details['andere'] : [];
+            foreach ($konflikte as $feld => $anderer) {
+                if (in_array($feld, $felder, true) && in_array($anderer, $andere, true)) {
+                    unset($konflikte[$feld]);
+                }
+            }
+        }
+
+        return $konflikte;
     }
 
     /**

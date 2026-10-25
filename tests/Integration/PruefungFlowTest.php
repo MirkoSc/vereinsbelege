@@ -1878,8 +1878,8 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
         self::assertStringNotContainsString('type="checkbox" name="lieferant_lernen"', $seite, 'nothing to learn');
-        self::assertStringContainsString('<input type="hidden" name="lieferant_lernen" value="1">', $seite);
-        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+        self::assertStringContainsString('<input type="hidden" name="lieferant_lernen" value="konflikt">', $seite);
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $this->lernStand($seite)), 'lieferant_lernen' => 'konflikt']);
 
         $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $lieferant), null, 10);
         self::assertSame([AuditAction::LieferantMerkmalKonflikt->value], array_values(array_filter(
@@ -1887,6 +1887,33 @@ final class PruefungFlowTest extends DatabaseTestCase
             static fn(string $a): bool => $a !== AuditAction::LieferantAngelegt->value,
         )), 'marked, nothing changed');
         self::assertSame(['felder' => ['iban'], 'andere' => [$anderer], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+
+        // The next invoice names the same IBAN: warned again, marked once.
+        $naechster = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+        $seite = $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body;
+        $this->post('/app/belege/pruefen/' . $naechster, [...$this->lernFelder($lieferant, $this->lernStand($seite)), 'lieferant_lernen' => 'konflikt']);
+
+        self::assertStringContainsString('Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+        self::assertStringNotContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+        self::assertCount(1, new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt), null, 10));
+    }
+
+    public function testAConflictOnlyPageWhosePlanChangedDoesNotClaimLostLearning(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+        $stand = $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+        // Meanwhile the other supplier loses the IBAN: the plan changes.
+        $this->supplierService()->aendern($this->tresor, $anderer, ['name' => 'Getränke Müller', 'rolle' => 'lieferant', 'ibans' => ''], new \DateTimeImmutable());
+
+        $this->post('/app/belege/pruefen/' . $id, [...$this->lernFelder($lieferant, $stand), 'lieferant_lernen' => 'konflikt']);
+
+        self::assertSame($lieferant, (int) $this->rechnung($id)['supplier_id']);
+        self::assertStringNotContainsString('sie haben sich seit dem Anzeigen geändert', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'nothing was offered');
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->ibans, 'nothing confirmed, nothing learnt');
     }
 
     public function testAMissingVatIdIsLearntAndFindsTheSupplierInStepOne(): void

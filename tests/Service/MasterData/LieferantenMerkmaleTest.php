@@ -188,6 +188,18 @@ final class LieferantenMerkmaleTest extends TestCase
         self::assertNull($merkmale->vatId, 'no country code');
         self::assertNull($merkmale->taxNumber, 'no letters or digits');
         self::assertTrue($merkmale->leer());
+
+        foreach (['St.-Nr. 12/345/67890', '12', 'DE123456789'] as $keine) {
+            self::assertNull(
+                LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['tax_number' => $keine], '')->taxNumber,
+                'a label, a fragment or a VAT id is no tax number: ' . $keine,
+            );
+        }
+        self::assertSame(
+            '2893081508152',
+            LieferantenMerkmale::neue(new SupplierData(name: 'Sporthaus Beispiel'), ['tax_number' => '2893081508152'], '')->taxNumber,
+            'the 13-digit form',
+        );
     }
 
     public function testTooLongValuesAreLeftOutAndSaySo(): void
