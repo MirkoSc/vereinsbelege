@@ -40,6 +40,7 @@
  * @var list<array{id: int, name: string, rolle: string}> $lieferanten
  * @var array<int, string> $kostenstellen
  * @var bool $darfLieferantAnlegen
+ * @var string|null $girocodeLink the unpaid expense's GiroCode page (issue #86), null without one
  * @var int|null $position place in the queue, 1-based
  * @var int $anzahl length of the queue
  * @var int|null $naechster the next document of the queue
@@ -105,6 +106,10 @@ $rollenGruppe = [
     </p>
 
     <h2>Beleg <?= e($referenz) ?> <?php require __DIR__ . '/posteingang-status.php'; ?></h2>
+
+    <?php if ($girocodeLink !== null): ?>
+        <p class="hinweis hinweis-info">Diese Rechnung ist noch nicht (ganz) bezahlt. <a href="<?= e($girocodeLink) ?>">GiroCode zum Bezahlen anzeigen</a></p>
+    <?php endif; ?>
 
     <?php if (!$entsperrt): ?>
         <p class="hinweis hinweis-info">

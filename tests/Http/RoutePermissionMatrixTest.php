@@ -339,6 +339,9 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/app/offen/rechnungen', true],
             [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/erstattungen', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/rechnungen', true],
+            // GiroCode of one unpaid receipt (issue #86): same right as the list.
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/app/offen/rechnungen/3/girocode', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/rechnungen/3/girocode', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/erstattungen', true],
             [SystemRole::Steuerberater, HttpMethod::Get, '/app/offen/buchungen', true],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/offen/buchungen', false],
