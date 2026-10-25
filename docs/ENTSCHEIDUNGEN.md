@@ -1139,7 +1139,11 @@ Getroffen ohne Rückfrage:
   gezählt). Danach: `ocr` – genau ein Text je Original (`seq` 0 … n−1),
   keiner leer, alle brauchbar → `ocr_status = fertig`, ältere Textläufe
   weg; unvollständig → ganzer Lauf markiert; vollständig, aber unbrauchbar
-  → bleibt nur für die Suche (Review #222); `ai_extract` – der letzte wohlgeformte Versuch beendet den Lauf wie
+  → bleibt nur für die Suche (Review #222); `ai_extract` – ein als gültig
+  gemeldeter Versuch wird serverseitig gegen das Schema `extract-v1`
+  geprüft (sonst defekt); `extraktion`, `hinweise` und `meldung` bildet
+  der Server mit `Auslesung::auswerten()` neu, die Werte des Workers werden
+  nie übernommen (Review #222); der letzte wohlgeformte Versuch beendet den Lauf wie
   die Session-Kette (`ausgewertet`/`ki_fehler`, dann Lieferanten-Auflösung),
   keiner → Session-`ai_extract`; `render_pages` – ein Lauf mit nur einer
   defekten Seite wird ganz verworfen und der Browser rendert. Blob-Artefakte
