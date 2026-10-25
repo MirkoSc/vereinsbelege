@@ -8,7 +8,7 @@
  * `bank.view`; those pages check right and scope again. Links carry ids
  * only.
  *
- * @var \App\Service\Report\Zeitraumwahl $wahl
+ * @var \App\Service\Report\ZeitraumAuswahl $auswahl
  * @var \App\Service\Report\Grundlage $grundlage
  * @var \App\Domain\InvoiceDirection $seite
  * @var array<string, string> $parameter the current filter as query parameters
@@ -32,7 +32,7 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
     <p><a href="<?= e($zurueck) ?>">‹ Zurück zur Übersicht</a></p>
     <h2><?= e($drilldown?->titel ?? 'Einzelposten') ?></h2>
     <p class="gedaempft">
-        <?= e($seitenwort) ?> · <?= e($nach) ?> · <?= e($wahl->bezeichnung()) ?> · <?= e($grundlage->label()) ?>
+        <?= e($seitenwort) ?> · <?= e($nach) ?> · <?= e($auswahl->zeitraum->von->format('d.m.Y') . ' – ' . $auswahl->zeitraum->bis->format('d.m.Y')) ?> · <?= e($grundlage->label()) ?>
     </p>
 </section>
 

@@ -8,8 +8,11 @@
  * (colour/length is never the only signal). The bar is an SVG rect - a
  * length attribute, not an inline style, which the CSP would drop.
  *
- * @var \App\Service\Report\Zeitraumwahl $wahl
- * @var list<int> $jahre
+ * @var \App\Service\Report\ZeitraumAuswahl $auswahl
+ * @var bool $zuLang the requested free period was too long; the default shows
+ * @var int $erstesJahr
+ * @var int $letztesJahr
+ * @var array<string, string> $ansicht basis and side as query parameters
  * @var \App\Service\Report\Grundlage $grundlage
  * @var \App\Domain\InvoiceDirection $seite
  * @var array<string, string> $parameter the current filter as query parameters
@@ -32,9 +35,21 @@ $aktiv = '/app/auswertung/geldfluss';
     <h2>Wohin fließt das Geld</h2>
     <?php require __DIR__ . '/../partials/auswertung-reiter.php'; ?>
 
-    <form method="get" action="/app/auswertung/geldfluss" class="formular">
-        <?php $idPrefix = 'geldfluss'; require __DIR__ . '/../partials/zeitraumfilter.php'; ?>
+    <?php
+    // The shared period filter (issue #74) keeps basis and side; the form
+    // below keeps the period - either change leaves the other as it is.
+    $aktion = '/app/auswertung/geldfluss';
+    $weitereParameter = $ansicht;
+    require __DIR__ . '/../partials/zeitraum-filter.php';
+    ?>
+    <?php if ($zuLang): ?>
+        <p class="hinweis hinweis-warnung">Ein freier Zeitraum umfasst höchstens <?= e((string) \App\App\AuswertungController::MAX_JAHRE_FREI) ?> Jahre; gezeigt wird das Jahr <?= e($auswahl->zeitraum->von->format('Y')) ?>.</p>
+    <?php endif; ?>
 
+    <form method="get" action="/app/auswertung/geldfluss" class="formular nicht-drucken" aria-label="Ansicht wählen">
+        <?php foreach ($auswahl->query() as $name => $wert): ?>
+            <input type="hidden" name="<?= e($name) ?>" value="<?= e($wert) ?>">
+        <?php endforeach; ?>
         <label for="geldfluss-grundlage">Grundlage
             <select id="geldfluss-grundlage" name="grundlage">
                 <?php foreach (Grundlage::cases() as $g): ?>
@@ -51,7 +66,7 @@ $aktiv = '/app/auswertung/geldfluss';
         </label>
 
         <p class="knopfreihe">
-            <button type="submit" class="knopf knopf-primaer">Anzeigen</button>
+            <button type="submit" class="knopf">Ansicht wechseln</button>
         </p>
     </form>
 </section>

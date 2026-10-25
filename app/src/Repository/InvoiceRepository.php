@@ -535,6 +535,36 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * Receipts by id with the status of their document, whatever it is, within
+     * $bereich (receipt date and cost center, in SQL) - the receipts allocated
+     * to the bookings of the Kassenprüfung (issue #74), which shows an
+     * allocation to an unchecked receipt as such. A receipt outside the scope
+     * is simply not returned. In chunks, so the IN list stays short.
+     *
+     * @param list<int> $ids
+     *
+     * @return array<int, array{record: InvoiceRecord, status: DocumentStatus}> by invoice id
+     */
+    public function mitDokumentStatus(array $ids, Zugriffsbereich $bereich): array
+    {
+        $ergebnis = [];
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $teil) {
+            $stmt = $this->pdo->prepare(
+                'SELECT i.*, d.status AS document_status FROM invoice i JOIN document d ON d.id = i.document_id
+                 WHERE i.id IN (' . implode(', ', array_fill(0, count($teil), '?')) . ') AND ' . $scope,
+            );
+            $stmt->execute([...$teil, ...$scopeParameter]);
+            foreach ($stmt->fetchAll() as $row) {
+                $record = InvoiceRecord::fromRow($row);
+                $ergebnis[$record->id] = ['record' => $record, 'status' => DocumentStatus::from((string) $row['document_status'])];
+            }
+        }
+
+        return $ergebnis;
+    }
+
+    /**
      * The suppliers the export page may offer as a filter (issue #76/M12-2):
      * those of receipts within $bereich that are not rejected - a scoped
      * role must not learn the names of suppliers it never sees a receipt of.

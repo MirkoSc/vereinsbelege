@@ -44,6 +44,7 @@ use App\App\ErfassungController;
 use App\App\ExportController;
 use App\App\InboxController;
 use App\App\InvitationController;
+use App\App\KassenpruefungController;
 use App\App\KontoauszugController;
 use App\App\MfaController;
 use App\App\PasswordController;
@@ -229,6 +230,8 @@ use App\View\View;
  * @param (\Closure(): DatevSettingsController)|null $datevAdmin built
  *        lazily, same reason (issue #93). Optional like
  *        $nextcloudAdmin.
+ * @param (\Closure(): KassenpruefungController)|null $kassenpruefung built
+ *        lazily, same reason (issue #74/M11-4). Optional like $nextcloudAdmin.
  * @param (\Closure(): AuswertungController)|null $geldfluss built lazily,
  *        same reason as $mail: only the report pages need the database
  *        (issue #73/M11-3). Optional like $nextcloudAdmin.
@@ -291,6 +294,7 @@ return static function (
     ?\Closure $dashboard = null,
     ?\Closure $datev = null,
     ?\Closure $datevAdmin = null,
+    ?\Closure $kassenpruefung = null,
     ?\Closure $geldfluss = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -311,6 +315,7 @@ return static function (
     $rechtstexteAdmin ??= static fn(): never => throw new \LogicException('The legal texts admin page is not wired into this route table.');
     $datev ??= static fn(): never => throw new \LogicException('The DATEV export is not wired into this route table.');
     $datevAdmin ??= static fn(): never => throw new \LogicException('The DATEV settings are not wired into this route table.');
+    $kassenpruefung ??= static fn(): never => throw new \LogicException('The Kassenprüfung is not wired into this route table.');
     $geldfluss ??= static fn(): never => throw new \LogicException('The report pages are not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -708,6 +713,14 @@ return static function (
     $get('/app/offen/buchungen', Zugriff::recht(Permission::BankView), static fn(Request $r) => $offen()->buchungen($r));
     $get('/app/offen/erwartet', $documentEdit, static fn(Request $r) => $offen()->erwartet($r));
 
+    // Kassenprüfung (issue #74/M11-4, docs/spec/05-auswertung-und-export.md
+    // section 1). Permission: the page `report.view`, the CSV downloads of
+    // its tables `export.csv`; both show bookings, so the controller also
+    // requires `bank.view` and narrows by its period scope (external
+    // auditors, E-44). GET only - nothing is written; the period is a plain
+    // query string (App\Service\Report\ZeitraumAuswahl).
+    $get('/app/auswertung/kassenpruefung', Zugriff::recht(Permission::ReportView), static fn(Request $r) => $kassenpruefung()->seite($r));
+    $get('/app/auswertung/kassenpruefung/{teil:[a-z-]+}.csv', Zugriff::recht(Permission::ExportCsv), static fn(Request $r, array $params) => $kassenpruefung()->csv($r, $params));
     // Reports (issue #73/M11-3, docs/spec/05-auswertung-und-export.md
     // section 1, E-51): "Wohin fließt das Geld" by category and cost center
     // with the drilldown to the single receipt. Permission: `report.view`;

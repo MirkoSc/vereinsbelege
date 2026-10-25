@@ -1461,8 +1461,53 @@ Getroffen ohne Rückfrage:
   weicht bei Fehlern 5 s … 5 min (±20 %) zurück. `pair` wird nie
   wiederholt (der Code ist verbraucht).
 
+## E-52 ❓ Kassenprüfung: Seite, Fälle, Rechte, CSV (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M11-4 (issue #74), 05 §1 „Stand M11-4“, 01 §4*
+
+- **Ort:** eigene Seite `/app/auswertung/kassenpruefung` mit eigenem
+  Navigationspunkt „Kassenprüfung“ (Recht `report.view`); druckbar über
+  das Druck-Stylesheet (Formular und Knöpfe werden nicht gedruckt).
+- **Zeitraum:** Jahr/Quartal/Monat/frei (`?art=…`). Standard: der
+  freigegebene Zeitraum des Kontos (externe Prüfer), sonst das **letzte
+  abgeschlossene Kalenderjahr** – das, was eine Kassenprüfung meist ansieht.
+- **Inhalt:** Salden je Konto (Anfang, Zugänge, Abgänge, Ende; Umbuchungen
+  eingeschlossen, Eröffnung im Zeitraum vermerkt), **alle Buchungen** des
+  Zeitraums älteste zuerst mit Belegstatus und zugeordneten Belegen
+  (Umbuchungen markiert, von Hand erfasste Buchungen markiert),
+  **ohne Beleg** = Status `fehlt`/`teilweise` mit dem noch unbelegten Rest,
+  **von Hand entschiedene Fälle** = Zuordnungen mit Methode `manuell`
+  sowie Buchungen, die eine Person als „kein Beleg nötig“ markiert hat
+  (`doc_source = manuell`). Bestätigte Vorschläge und automatische
+  Zuordnungen zählen nicht als manuell, stehen aber mit ihrer Methode in
+  der Gesamtliste.
+- **Rechte:** Seite `report.view`, CSV `export.csv`; beide brauchen
+  zusätzlich `bank.view` (die Seite zeigt Buchungen) – im Controller
+  geprüft, ohne das Recht ein Hinweis bzw. 403. Buchungen und Salden im
+  Scope von `bank.view` (Zeitraum, SQL); der Anfangsbestand ist bei
+  Zeitraum-Scope der **Übertrag** (E-44) und so beschriftet. Der Beleg
+  hinter einer Zuordnung wird nur im Scope von `report.view` benannt
+  (Belegdatum/Kostenstelle) – sonst „Beleg außerhalb Ihres
+  Zugriffsbereichs“ (z. B. eine Dezember-Rechnung, die im Januar bezahlt
+  wurde, für einen Prüfer mit Scope ab Januar).
+- **CSV:** je Tabelle eine Datei (`buchungen`, `salden`, `ohne-beleg`,
+  `manuell`), UTF-8 mit BOM, Semikolon, Beträge „1.234,56“ mit eigener
+  Währungsspalte; Textzellen gegen Formeln abgesichert (Apostroph vor
+  = + - @ Tab CR). Nur im Speicher gebaut und als Antwort gesendet, kein
+  Audit-Eintrag (rein lesend, wie die Seite). Dateiname nur Teil +
+  Zeitraum (`kassenpruefung-salden-2025-01-01-2025-12-31.csv`).
+- **Datenquelle:** Salden über den Session-Cache (`Auswertungsquelle`,
+  E-48); die Buchungsliste mit Gegenseite/Zweck/Zuordnungen direkt aus der
+  DB – der Cache enthält keine Buchungstexte, und sie dort abzulegen würde
+  ihn für eine selten geöffnete Seite aufblähen. Keine neue Tabelle, keine
+  Migration.
+
+Offen für Mirko: ob „manuell zugeordnet“ auch bestätigte KI-/Abgleich-
+Vorschläge umfassen soll; ob der Standard-Zeitraum das Vorjahr bleiben
+soll; ob CSV-Downloads ins Audit-Log sollen; ob externe Prüfer den Beleg
+hinter einer Zuordnung auch außerhalb ihres Zeitraums sehen dürfen.
+
 ## E-51 ❓ „Wohin fließt das Geld“: Seiten, Zeitraumfilter, Drilldown (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
-*Betrifft: M11-3 (issue #73), 05 §1 „Stand M11-3“; Zeitraumfilter und Reiter sind für M11-4 (#74) vorgesehen*
+*Betrifft: M11-3 (issue #73), 05 §1 „Stand M11-3“*
 
 - **Ort:** `/app/auswertung` leitet auf die erste Ansicht
   `/app/auswertung/geldfluss` weiter; der Drilldown ist
@@ -1474,12 +1519,12 @@ Getroffen ohne Rückfrage:
   **Ausgaben** (Standard) oder **Einnahmen**, Grundlage Buchungen (Standard)
   oder Belege. Lieferant Top 20, Sphäre, Monatsverlauf,
   Vorjahresvergleich und CSV sind nicht Teil des Issues (Folge-Issues).
-- **Zeitraum:** Kalenderjahr/Quartal/Monat/frei per GET
-  (`zeitraum`, `jahr`, `quartal`, `monat`, `von`, `bis`), Standard wie das
-  Dashboard (laufendes Jahr bzw. Ende des Zeitraum-Scopes). Ungültige Wahl
-  → Standardjahr mit Hinweis, nie geraten. Jahre 2000 … laufendes Jahr;
-  ein freier Zeitraum höchstens 3 Jahre (ein Request entschlüsselt alles
-  darin, CLAUDE.md §1).
+- **Zeitraum:** der gemeinsame Filter aus M11-4 (`ZeitraumAuswahl`,
+  `?art=jahr|quartal|monat|frei`, E-52), Standard wie das Dashboard
+  (laufendes Jahr bzw. Ende des Zeitraum-Scopes). Ein freier Zeitraum
+  umfasst hier höchstens 3 Jahre (ein Request entschlüsselt alles darin,
+  CLAUDE.md §1), sonst Standardjahr mit Hinweis. Die Kassenprüfung hat
+  diese Grenze nicht – Folge-Idee: sie in `ZeitraumAuswahl` selbst ziehen.
 - **Drilldown:** Gruppe → Einzelposten (Datum, Lieferant bzw. Gegenseite,
   Rechnungsnummer/Zweck, andere Dimension, Betrag). URL nur Struktur:
   Filter + `nach` (kategorie|kostenstelle) + `schluessel` (ID oder `ohne`);

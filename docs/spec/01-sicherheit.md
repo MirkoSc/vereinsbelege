@@ -653,7 +653,10 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `/app/posteingang`, `/app/posteingang/{id}`,
   `/app/posteingang/{id}/datei/{blob}` = `inbox.view`,
   `/app/posteingang/{id}/(annehmen|ablehnen|wiedervorlage|kostenstelle)` =
-  `document.edit` (M4-5). Der Posteingang ist der erste echte Aufrufer von
+  `document.edit` (M4-5). `/app/auswertung/kassenpruefung` = `report.view`,
+  `/app/auswertung/kassenpruefung/{teil}.csv` = `export.csv` (M11-4,
+  issue #74); beide prüfen im Controller zusätzlich `bank.view` (403 bzw.
+  Hinweis), Buchungen im Zeitraum-Scope, Anfangsbestand als Übertrag. Der Posteingang ist der erste echte Aufrufer von
   `sqlBedingung()`: `document.cost_center_id` / `document.created_at`
   (`App\Repository\DocumentRepository::inbox()`/`inboxItem()`); eine ID
   außerhalb des Scopes antwortet 404 wie eine unbekannte.

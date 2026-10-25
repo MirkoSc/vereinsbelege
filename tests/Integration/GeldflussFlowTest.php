@@ -119,7 +119,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
 
     public function testExpensesByCategoryAndCostCenterOnTheBookingBasis(): void
     {
-        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025']);
+        $seite = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025']);
 
         self::assertSame(200, $seite->status);
         self::assertSame('no-store, private', $seite->headers['Cache-Control'] ?? null);
@@ -151,44 +151,59 @@ final class GeldflussFlowTest extends DatabaseTestCase
 
     public function testOnTheReceiptBasisAndForIncome(): void
     {
-        $belege = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025', 'grundlage' => 'belege']);
+        $belege = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025', 'grundlage' => 'belege']);
         self::assertSame([
             ['Testkat Platzpflege', '350,00 €', '77,8 %', '2'],
             ['Testkat Reisekosten', '100,00 €', '22,2 %', '1'],
         ], $this->tabelle($belege->body, 'kategorie'));
         self::assertStringContainsString('nur geprüfte Belege', $belege->body);
 
-        $einnahmen = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025', 'seite' => 'einnahmen']);
+        $einnahmen = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025', 'seite' => 'einnahmen']);
         self::assertStringContainsString('Einnahmen nach Kategorie', $einnahmen->body);
         self::assertSame([['ohne Kategorie', '500,00 €', '100,0 %', '1']], $this->tabelle($einnahmen->body, 'kategorie'));
     }
 
     public function testThePeriodFilter(): void
     {
-        $quartal = $this->get('/app/auswertung/geldfluss', ['zeitraum' => 'quartal', 'jahr' => '2025', 'quartal' => '2']);
+        $quartal = $this->get('/app/auswertung/geldfluss', ['art' => 'quartal', 'jahr' => '2025', 'quartal' => '2']);
         self::assertStringContainsString('vom 01.04.2025 bis 30.06.2025', $quartal->body);
         self::assertSame([['Testkat Reisekosten', '140,00 €', '100,0 %', '2']], $this->tabelle($quartal->body, 'kategorie'));
         // The drilldown keeps the period.
-        self::assertStringContainsString('zeitraum=quartal&amp;jahr=2025&amp;quartal=2', $quartal->body);
+        self::assertStringContainsString('art=quartal&amp;jahr=2025&amp;quartal=2', $quartal->body);
 
-        $monat = $this->get('/app/auswertung/geldfluss', ['zeitraum' => 'monat', 'jahr' => '2025', 'monat' => '3']);
+        $monat = $this->get('/app/auswertung/geldfluss', ['art' => 'monat', 'jahr' => '2025', 'monat' => '3']);
         self::assertSame([['Testkat Platzpflege', '300,00 €', '100,0 %', '1']], $this->tabelle($monat->body, 'kategorie'));
 
-        $frei = $this->get('/app/auswertung/geldfluss', ['zeitraum' => 'frei', 'von' => '2025-05-01', 'bis' => '2025-05-31']);
+        $frei = $this->get('/app/auswertung/geldfluss', ['art' => 'frei', 'von' => '2025-05-01', 'bis' => '2025-05-31']);
         self::assertStringContainsString('vom 01.05.2025 bis 31.05.2025', $frei->body);
         self::assertSame([['Testkat Reisekosten', '100,00 €', '100,0 %', '1']], $this->tabelle($frei->body, 'kategorie'));
 
-        $leer = $this->get('/app/auswertung/geldfluss', ['jahr' => '2023']);
+        $leer = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2023']);
         self::assertStringContainsString('Keine Ausgaben in diesem Zeitraum.', $leer->body);
 
-        $falsch = $this->get('/app/auswertung/geldfluss', ['zeitraum' => 'monat', 'jahr' => '2025', 'monat' => '13']);
+        $falsch = $this->get('/app/auswertung/geldfluss', ['art' => 'monat', 'jahr' => '2025', 'monat' => '13']);
         self::assertSame(200, $falsch->status);
-        self::assertStringContainsString('Der gewählte Zeitraum war ungültig', $falsch->body);
+        self::assertStringContainsString('vom 01.01.' . date('Y'), $falsch->body);
+
+        // A free period of three years or more falls back with a note.
+        $lang = $this->get('/app/auswertung/geldfluss', ['art' => 'frei', 'von' => '2022-01-01', 'bis' => '2025-01-01']);
+        self::assertStringContainsString('Ein freier Zeitraum umfasst höchstens 3 Jahre', $lang->body);
+        self::assertStringContainsString('vom 01.01.' . date('Y'), $lang->body);
+        $knapp = $this->get('/app/auswertung/geldfluss', ['art' => 'frei', 'von' => '2023-01-01', 'bis' => '2025-12-31']);
+        self::assertStringNotContainsString('Ein freier Zeitraum umfasst höchstens', $knapp->body);
+        self::assertStringContainsString('vom 01.01.2023 bis 31.12.2025', $knapp->body);
+
+        // Changing the period keeps basis and side, changing them keeps the period.
+        $einnahmen = $this->get('/app/auswertung/geldfluss', ['art' => 'quartal', 'jahr' => '2025', 'quartal' => '2', 'grundlage' => 'belege', 'seite' => 'einnahmen']);
+        self::assertStringContainsString('<input type="hidden" name="grundlage" value="belege">', $einnahmen->body);
+        self::assertStringContainsString('<input type="hidden" name="seite" value="einnahmen">', $einnahmen->body);
+        self::assertStringContainsString('<input type="hidden" name="art" value="quartal">', $einnahmen->body);
+        self::assertStringContainsString('<input type="hidden" name="quartal" value="2">', $einnahmen->body);
     }
 
     public function testDrilldownToTheSingleReceiptAndBooking(): void
     {
-        $seite = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
+        $seite = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
 
         self::assertSame(200, $seite->status);
         self::assertSame('no-store, private', $seite->headers['Cache-Control'] ?? null);
@@ -203,14 +218,14 @@ final class GeldflussFlowTest extends DatabaseTestCase
         self::assertStringContainsString('href="/app/buchungen/' . $this->buchungOhneBeleg . '">Buchung</a>', $seite->body);
         self::assertMatchesRegularExpression('#Summe</th>\s*<td class="zahl" data-label="Betrag"><strong>140,00 €</strong>#', $seite->body);
         // Back to the overview with the same filter.
-        self::assertStringContainsString('href="/app/auswertung/geldfluss?zeitraum=jahr&amp;jahr=2025&amp;grundlage=buchungen&amp;seite=ausgaben"', $seite->body);
+        self::assertStringContainsString('href="/app/auswertung/geldfluss?art=jahr&amp;jahr=2025&amp;grundlage=buchungen&amp;seite=ausgaben"', $seite->body);
 
-        $ohne = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => 'ohne']);
+        $ohne = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => 'ohne']);
         self::assertStringContainsString('<h2>ohne Kostenstelle</h2>', $ohne->body);
         self::assertStringContainsString('1 Posten', $ohne->body);
         self::assertStringContainsString('40,00 €', $ohne->body);
 
-        $rasen = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'grundlage' => 'belege', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz]);
+        $rasen = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'grundlage' => 'belege', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz]);
         self::assertStringContainsString('Rasen Testbetrieb', $rasen->body);
         self::assertStringContainsString('Nr. R-1', $rasen->body);
         self::assertStringContainsString('ohne Lieferant', $rasen->body);
@@ -235,7 +250,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
             self::assertSame(404, $this->get('/app/auswertung/geldfluss/posten', $query)->status, (string) json_encode($query));
         }
         // An unknown id is a group without lines, not an error.
-        $unbekannt = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => '999999']);
+        $unbekannt = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => '999999']);
         self::assertSame(200, $unbekannt->status);
         self::assertStringContainsString('Keine Posten in diesem Zeitraum.', $unbekannt->body);
     }
@@ -245,23 +260,23 @@ final class GeldflussFlowTest extends DatabaseTestCase
         $this->rolle(SystemRole::Vereinsverantwortlicher);
         new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$this->jugend]);
 
-        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025']);
+        $seite = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025']);
         self::assertSame([['Testkat Platzpflege', '300,00 €', '100,0 %', '1']], $this->tabelle($seite->body, 'kategorie'));
         self::assertSame([['Testkst Jugend', '300,00 €', '100,0 %', '1']], $this->tabelle($seite->body, 'kostenstelle'));
         self::assertStringNotContainsString('Testkst Herren', $seite->body);
         self::assertStringNotContainsString('140,00', $seite->body);
 
         // Another cost center through the URL: nothing.
-        $fremd = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => (string) $this->herren]);
+        $fremd = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => (string) $this->herren]);
         self::assertSame(200, $fremd->status);
         self::assertStringContainsString('Keine Posten in diesem Zeitraum.', $fremd->body);
         self::assertStringNotContainsString('Bahn Testreisen', $fremd->body);
-        $ohne = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
+        $ohne = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
         self::assertStringNotContainsString('Gegenseite', $ohne->body);
         self::assertStringNotContainsString('40,00', $ohne->body);
 
         // The own one: the receipt opens in the inbox (no document.edit), no booking link (no bank.view).
-        $eigen = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => (string) $this->jugend]);
+        $eigen = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kostenstelle', 'schluessel' => (string) $this->jugend]);
         self::assertStringContainsString('href="/app/posteingang/' . $this->dokumentVon($this->belegRasen) . '">Beleg</a>', $eigen->body);
         self::assertStringNotContainsString('/app/belege/pruefen/', $eigen->body);
         self::assertStringNotContainsString('/app/buchungen/', $eigen->body);
@@ -275,14 +290,11 @@ final class GeldflussFlowTest extends DatabaseTestCase
         $seite = $this->get('/app/auswertung/geldfluss');
         self::assertStringContainsString('vom 01.01.2025 bis 30.04.2025', $seite->body);
         self::assertSame([['Testkat Platzpflege', '300,00 €', '100,0 %', '1']], $this->tabelle($seite->body, 'kategorie'));
-        // The year select offers only the released year.
-        self::assertStringContainsString('<option value="2025" selected>2025</option>', $seite->body);
-        self::assertStringNotContainsString('<option value="2024"', $seite->body);
 
-        $drilldown = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
+        $drilldown = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
         self::assertStringContainsString('Keine Posten in diesem Zeitraum.', $drilldown->body);
 
-        $vorher = $this->get('/app/auswertung/geldfluss', ['jahr' => '2024']);
+        $vorher = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2024']);
         self::assertStringContainsString('außerhalb des für Sie freigegebenen Zeitraums', $vorher->body);
         self::assertStringNotContainsString('9,99', $vorher->body);
     }
@@ -300,7 +312,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         new RoleRepository($this->pdo())->assignToUser($this->userId, [$rolle]);
         new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$this->herren]);
 
-        $seite = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
+        $seite = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
         self::assertStringContainsString('2 Posten', $seite->body);
         self::assertStringContainsString('Bahn Testreisen', $seite->body);
         self::assertStringNotContainsString('Gegenseite', $seite->body);
@@ -313,7 +325,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         $sonstiges = new CategoryRepository($this->pdo())->create('Testkat Gutschriften', CategoryDirection::Ausgabe, null, '');
         $this->beleg(20000, '2025-09-01', $sonstiges, null, null, 'G-1', '', InvoiceType::Gutschrift);
 
-        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025', 'grundlage' => 'belege']);
+        $seite = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025', 'grundlage' => 'belege']);
         self::assertSame([
             ['Testkat Platzpflege', '350,00 €', '77,8 %', '2'],
             ['Testkat Gutschriften', '-200,00 €', '–', '1'],
@@ -324,13 +336,13 @@ final class GeldflussFlowTest extends DatabaseTestCase
 
     public function testWithoutAnUnlockedVaultNoFigures(): void
     {
-        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025'], entsperrt: false);
+        $seite = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025'], entsperrt: false);
         self::assertSame(200, $seite->status);
         self::assertStringContainsString('nur mit entsperrtem Tresor lesbar', $seite->body);
         self::assertStringNotContainsString('300,00', $seite->body);
         self::assertStringNotContainsString('Testkat Platzpflege', $seite->body);
 
-        $drilldown = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz], entsperrt: false);
+        $drilldown = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz], entsperrt: false);
         self::assertStringContainsString('nur mit entsperrtem Tresor lesbar', $drilldown->body);
         self::assertStringNotContainsString('Rasen', $drilldown->body);
         self::assertArrayNotHasKey('auswertung_cache', $_SESSION);
@@ -342,7 +354,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         self::assertSame(302, $start->status);
         self::assertSame('/app/auswertung/geldfluss', $start->headers['Location'] ?? null);
 
-        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025']);
+        $seite = $this->get('/app/auswertung/geldfluss', ['art' => 'jahr', 'jahr' => '2025']);
         self::assertStringContainsString('href="/app/auswertung" aria-current="page">Auswertungen</a>', $seite->body);
     }
 
@@ -397,7 +409,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         preg_match_all('#href="(/app/auswertung[^"]*)"#', $html, $links);
         self::assertNotEmpty($links[1]);
         foreach ($links[1] as $link) {
-            self::assertMatchesRegularExpression('#^/app/auswertung(/geldfluss(/posten)?)?(\?([a-z]+=[a-z0-9-]+)(&amp;[a-z]+=[a-z0-9-]+)*)?$#', $link);
+            self::assertMatchesRegularExpression('#^/app/auswertung(/geldfluss(/posten)?|/kassenpruefung)?(\?([a-z]+=[a-z0-9-]+)(&amp;[a-z]+=[a-z0-9-]+)*)?$#', $link);
         }
     }
 
