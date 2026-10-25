@@ -142,10 +142,68 @@ verändert. Er läuft noch mit dem Code des alten Releases – das Update von
 einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
-Der Updater speichert die `checksums.txt` des Releases als
-`shared/release_checksums.txt` für den Code-Integritätscheck (01 §8); seit
-M13-2 enthält sie neben den Assets je Datei des Releases eine Zeile
-`release/<pfad>` (vom Release-Workflow erzeugt).
+Die `checksums.txt` des Releases enthält seit M13-2 neben den Assets je
+Datei des Releases eine Zeile `release/<pfad>` (vom Release-Workflow
+erzeugt); der Code-Integritätscheck (01 §8) vergleicht dagegen.
+
+**Echtheit, Download-Adressen, Liste je Release** (issue #241, Befunde
+N-02, N-18, N-19 aus `docs/security-checkliste.md`, E-63):
+
+- **Signatur:** Der Release-Workflow signiert die `checksums.txt` mit
+  Ed25519 (libsodium, abgetrennte Signatur, base64) und veröffentlicht sie
+  als Asset `checksums.txt.sig` – sofern das Secret `RELEASE_SIGNING_KEY`
+  existiert (`tools/release-signatur.php signieren`). Die Liste nennt den
+  SHA-256 des ZIP und jeder Datei darin; eine Signatur deckt also Download
+  und Integritätscheck ab. Updater (Schritt `download`, erneut in
+  `extract`) und `setup.php` prüfen sie mit
+  `App\Service\Update\ReleaseSignatur::pruefe()` gegen den **im Code**
+  festgelegten öffentlichen Schlüssel `ReleaseSignatur::PUBLIC_KEY`
+  (dependency-frei, von `bin/build_setup.php` wie der `ReleaseDownloader`
+  eingebettet). Solange der leer ist: Hinweis im Update-Log bzw. auf einer
+  Zwischenseite von `setup.php`, keine Sperre. Ist er gesetzt: fehlende,
+  kaputte oder falsche Signatur bricht ab, und der Workflow bricht ab, wenn
+  das Secret fehlt oder nicht zum Schlüssel passt. Geprüft wird immer mit
+  dem Schlüssel des **laufenden** Releases – das Update von einer Version
+  ohne Signaturprüfung auf eine mit funktioniert deshalb ohne Weiteres.
+  Einrichtung und Schlüsselwechsel: `docs/betrieb.md` §13.
+- **Download-Adressen:** `ReleaseDownloader` fragt nur `https` an den
+  Hosts `api.github.com`, `github.com`, `objects.githubusercontent.com`
+  und `release-assets.githubusercontent.com` an (Port 443, keine
+  Zugangsdaten in der URL). Die erste Adresse einer Anfrage muss zu
+  **diesem** Repository gehören (`/repos/MirkoSc/vereinsbelege/…` bzw.
+  `/MirkoSc/vereinsbelege/releases/download/…`, ohne `/../` und
+  `%`-Kodierung) – jeder GitHub-Nutzer kann auf denselben Hosts Releases
+  veröffentlichen; die Speicher-Hosts erreicht nur GitHubs eigene
+  Weiterleitung. Weiterleitungen folgt er selbst
+  (`folgeWeiterleitungen()`, höchstens 5) und prüft **jeden** Sprung –
+  curl bzw. der Stream-Wrapper folgen nicht selbst; eine Weiterleitung ohne
+  `Location` ist ein Fehler. Die Asset-Adressen
+  laufen über `shared/update_state.json`; eine dort per FTP geänderte
+  Adresse wird abgelehnt. Einzige Ausnahme ist der Selbsttest im
+  `finish`-Schritt (`fetchSelbsttest()`), der die eigene Startseite abruft.
+- **Kein Unterschieben älterer Releases:** auch die Zielversion steht in
+  `update_state.json`. `download` und `extract` verlangen deshalb erneut,
+  dass sie neuer ist als die laufende Version und dass die Liste genau
+  diese Version nennt (Zeile `vereinsbelege-vX.Y.Z.zip`) – sonst ließe
+  sich ein älteres, echt signiertes Release mit bekannter Lücke
+  einspielen.
+- **Liste je Release:** `setup.php` und der Updater (Schritt `extract`,
+  nach erneuter Prüfung von ZIP und Signatur – beides lag zwischen zwei
+  Requests in `shared/var/update/`) legen `checksums.txt` und ggf.
+  `checksums.txt.sig` ins Wurzelverzeichnis des entpackten Releases. Damit
+  wandern sie bei jedem `rename()` mit – nach einem Rollback oder einem
+  vor dem Umschalten abgebrochenen Update passt die Liste in `current/`
+  weiter zu `current/`. `shared/release_checksums.txt` schreibt keine
+  Version mehr; das Update, das #241 bringt, lädt aber noch mit dem Code
+  des Vorgängers herunter, deshalb übernimmt der `finish`-Schritt diese
+  Datei einmalig nach `current/`, wenn das Release keine eigene Liste hat
+  und die Datei genau diese Version nennt (ohne Signatur – die hat der
+  Vorgänger nicht geladen). Der `finish`-Schritt räumt ZIP, Liste und
+  Signatur in `shared/var/update/` weg.
+- **Rechte des Release-Workflows:** Standard `contents: read`; der Job
+  `build` (Composer, ZIP, Prüfsummen) läuft ohne Secret und Schreibrecht,
+  nur der Job `publish` hat `contents: write` und sieht
+  `RELEASE_SIGNING_KEY`.
 
 Während der Wartungsmodus gesetzt ist, lässt der Shim außer `/admin` auch
 `/css/` und `/js/` durch: sonst käme genau die Seite, die die Wartung beendet
@@ -163,11 +221,32 @@ statt eigene Kopien zu führen); `ReleaseSwitcherTest` (Umschalten,
 Idempotenz, Reparatur nach Absturz zwischen den `rename()`-Aufrufen,
 Rollback, Aufräumen, Shim-Selbstheilung und -Rücknahme, Docroot-Dateien inkl.
 „von Hand geändert bleibt stehen"); `ReleaseDownloaderTest` (Kanäle, Entwürfe
-überspringen, fehlende Assets, Prüfsummen erkennen und ablehnen, Dateiname
-des Assets, curl-Zweig); `MaintenanceModeTest`; `ConfigWriterTest`
+überspringen, fehlende Assets, Signatur-Asset optional, Prüfsummen erkennen
+und ablehnen, Dateiname des Assets, curl-Zweig, nur `https` zu den
+GitHub-Hosts – lokale Pfade, `file://`, `http`, fremde und ähnlich
+benannte Hosts, anderer Port, Zugangsdaten, fremdes Repository, Pfad
+außerhalb der Release-Downloads, `/../`, `%`-Kodierung, Speicher-Host als
+Startadresse abgelehnt –, jeder
+Weiterleitungs-Sprung geprüft und der verbotene nie angefragt,
+Weiterleitungs-Schleife endet, Liste und Signatur ins Release, Selbsttest
+nicht auf GitHub beschränkt); `ReleaseSignaturTest` (Signatur gültig,
+geänderte Liste/fremder Schlüssel/fehlend/kaputt abgelehnt, ohne Schlüssel
+nur Hinweis, ungültiger Schlüssel im Code, `PUBLIC_KEY` leer oder gültig,
+Werkzeug: Schlüsselpaar mit geheimem Teil nur in der Datei, ohne Secret
+nur Warnung, mit Secret gültige Signatur; `setup.php` bettet die Klasse
+ein und prüft vor dem Entpacken; Release-Workflow: Secret nur im
+`publish`-Job, Standardrecht `contents: read`); `MaintenanceModeTest`; `ConfigWriterTest`
 (Server-Schlüssel, je Installation eigene Geheimnisse); `UpdateChainTest`
 (ganze Kette gegen ein lokales Release-ZIP, manipuliertes ZIP, falsche
-`VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück);
+`VERSION`, fehlgeschlagener Selbsttest stellt den alten Shim zurück; seit
+#241: Liste wandert mit dem Release und bleibt nach Rollback passend,
+`finish` übernimmt die `shared/`-Liste des Vorgängers nur bei passender
+Version und räumt den Download weg, ohne Schlüssel unsigniert mit
+Hinweis, signiert bestätigt und Signatur im Release, mit Schlüssel
+unsigniert oder fremd signiert abgelehnt, nach dem Download getauschte
+Liste bzw. ZIP vor dem Entpacken erkannt, manipulierte Adresse in
+`update_state.json` abgelehnt, kein Downgrade über den Stand, Liste
+einer anderen Version abgelehnt, Stand ohne `signatur_url` läuft weiter);
 `InstallFlowTest` (Schema, `config.php` erst nach Bestätigung, Kanal-Übernahme,
 Zugriffssperre in `shared/` und `releases/` bzw. sichtbare Warnung,
 CSRF, abgelehnte Zugangsdaten, sieben Gruppen zu acht Zeichen, falsche letzte

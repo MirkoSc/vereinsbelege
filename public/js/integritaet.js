@@ -22,6 +22,9 @@ function statusText(stand) {
     if (stand.phase === 'zusaetzlich') {
         return 'Suche nach zusätzlichen Dateien …';
     }
+    if (stand.phase === 'umgebung') {
+        return 'Prüfe Web-Verzeichnis und Konfiguration …';
+    }
     const gesamt = stand.gesamt || 0;
     const geprueft = Math.min(stand.geprueft || 0, gesamt);
 

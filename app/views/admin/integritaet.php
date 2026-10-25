@@ -11,7 +11,10 @@
  *
  * @var string $csrf
  * @var string|null $hindernis why no check can run, or null
+ * @var string|null $echtheitsfehler the list's signature is missing or wrong
+ *      although a key is fixed (then also $hindernis)
  * @var string|null $warnung the list names another version than current/VERSION
+ * @var string|null $signaturHinweis the list is not signed (no key fixed yet)
  * @var array<string, mixed>|null $stand the current or last run
  */
 
@@ -26,12 +29,15 @@ $ueberschrift = [
     'geaendert' => 'Geänderte Dateien',
     'fehlend' => 'Fehlende Dateien',
     'zusaetzlich' => 'Zusätzliche Dateien (nicht Teil des Releases)',
+    'umgebung' => 'Web-Verzeichnis und Konfiguration',
 ];
 $erklaerung = [
     'geaendert' => 'Inhalt weicht von der Prüfsumme des Releases ab, die Datei ist nicht lesbar oder durch einen '
         . 'Verweis (Symlink) ersetzt; ein Verzeichnis mit „/“ am Ende ließ sich nicht auflisten.',
     'fehlend' => 'Gehört zum Release, liegt aber nicht in current/.',
     'zusaetzlich' => 'Liegt in current/, gehört aber nicht zum Release – zum Beispiel ein nachträglich hochgeladenes Skript.',
+    'umgebung' => 'Der DocumentRoot web/ (Shim, .htaccess, .user.ini, fremde Dateien) und Rechte bzw. Aufbau von '
+        . 'shared/config.php. Eine von Hand angepasste .htaccess ist erlaubt, wird aber hier gemeldet.',
 ];
 $fertig = $stand !== null && $stand['phase'] === CodeIntegritaet::PHASE_FERTIG;
 $offen = $stand !== null && !$fertig;
@@ -41,15 +47,17 @@ $offen = $stand !== null && !$fertig;
 
     <p class="gedaempft">
         Vergleicht jede Datei des installierten Releases (<code>current/</code>) mit den Prüfsummen, die das Release
-        mitbringt. So fallen nachträglich veränderte, gelöschte oder hinzugefügte Dateien auf dem Webspace auf.
-        Kein Schutz gegen einen versierten Angreifer – wer Dateien ändern kann, kann auch die Prüfsummenliste
-        ändern –, aber plumpe Manipulationen und versehentliche Änderungen per FTP werden sichtbar. Jede Prüfung
-        steht im Audit-Log.
+        mitbringt, dazu das Web-Verzeichnis und die Konfigurationsdatei. So fallen nachträglich veränderte,
+        gelöschte oder hinzugefügte Dateien auf dem Webspace auf. Jede Prüfung steht im Audit-Log.
     </p>
 
     <?php if ($hindernis !== null): ?>
-        <p class="hinweis hinweis-info" id="integritaet-hindernis"><?= e($hindernis) ?></p>
+        <p class="hinweis <?= $echtheitsfehler !== null ? 'hinweis-fehler' : 'hinweis-info' ?>"
+           id="integritaet-hindernis"<?= $echtheitsfehler !== null ? ' role="alert"' : '' ?>><?= e($hindernis) ?></p>
     <?php else: ?>
+        <?php if ($signaturHinweis !== null): ?>
+            <p class="hinweis hinweis-info" id="integritaet-signatur"><?= e($signaturHinweis) ?></p>
+        <?php endif; ?>
         <?php if ($warnung !== null): ?>
             <p class="hinweis hinweis-warnung" id="integritaet-warnung"><?= e($warnung) ?></p>
         <?php endif; ?>
@@ -90,7 +98,8 @@ $offen = $stand !== null && !$fertig;
         </p>
         <?php if (CodeIntegritaet::unveraendert($stand)): ?>
             <p class="hinweis hinweis-ok" id="integritaet-ergebnis" role="status">
-                <strong>Keine Abweichung:</strong> alle Dateien entsprechen dem Release, keine zusätzlichen Dateien.
+                <strong>Keine Abweichung:</strong> alle Dateien entsprechen dem Release, keine zusätzlichen Dateien,
+                Web-Verzeichnis und Konfiguration unauffällig.
             </p>
         <?php else: ?>
             <div class="hinweis hinweis-fehler" id="integritaet-ergebnis" role="status">
@@ -98,7 +107,8 @@ $offen = $stand !== null && !$fertig;
                     <strong>Abweichungen gefunden:</strong>
                     <?= e((int) $stand['anzahl']['geaendert']) ?> geändert,
                     <?= e((int) $stand['anzahl']['fehlend']) ?> fehlend,
-                    <?= e((int) $stand['anzahl']['zusaetzlich']) ?> zusätzlich.
+                    <?= e((int) $stand['anzahl']['zusaetzlich']) ?> zusätzlich,
+                    <?= e((int) ($stand['anzahl']['umgebung'] ?? 0)) ?> im Web-Verzeichnis bzw. in der Konfiguration.
                 </p>
                 <p>
                     Unerklärliche Abweichungen ernst nehmen: Zugangsdaten zum Webspace ändern und das Release über
@@ -106,17 +116,17 @@ $offen = $stand !== null && !$fertig;
                 </p>
             </div>
             <?php foreach (CodeIntegritaet::ARTEN as $art): ?>
-                <?php $zahl = (int) $stand['anzahl'][$art]; ?>
+                <?php $zahl = (int) ($stand['anzahl'][$art] ?? 0); ?>
                 <?php if ($zahl > 0): ?>
                 <h4><?= e($ueberschrift[$art]) ?> <span class="marke marke-fehler"><?= e($zahl) ?></span></h4>
                 <p class="feld-hilfe"><?= e($erklaerung[$art]) ?></p>
                 <ul id="integritaet-<?= e($art) ?>">
-                    <?php foreach ((array) $stand['pfade'][$art] as $pfad): ?>
+                    <?php foreach ((array) ($stand['pfade'][$art] ?? []) as $pfad): ?>
                         <li><code><?= e((string) $pfad) ?></code></li>
                     <?php endforeach; ?>
                 </ul>
-                <?php if ($zahl > count((array) $stand['pfade'][$art])): ?>
-                    <p class="gedaempft">… und <?= e($zahl - count((array) $stand['pfade'][$art])) ?> weitere.</p>
+                <?php if ($zahl > count((array) ($stand['pfade'][$art] ?? []))): ?>
+                    <p class="gedaempft">… und <?= e($zahl - count((array) ($stand['pfade'][$art] ?? []))) ?> weitere.</p>
                 <?php endif; ?>
                 <?php endif; ?>
             <?php endforeach; ?>

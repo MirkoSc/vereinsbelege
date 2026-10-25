@@ -4,17 +4,27 @@ declare(strict_types=1);
 
 namespace App\Service\Integritaet;
 
+use App\Service\Update\ReleaseDownloader;
+use App\Service\Update\ReleaseSignatur;
+use App\Service\Update\ReleaseSwitcher;
+
 /**
  * Code integrity check (docs/spec/01-sicherheit.md section 8, issue
- * #79/M13-2): compares every file of the active release (current/) with the
- * per-file checksums of the installed release in shared/release_checksums.txt
- * and lists what differs - changed, missing, and files that are not part of
- * the release at all (a dropped-in script is the typical crude
- * manipulation).
+ * #79/M13-2, #241): compares every file of the active release (current/)
+ * with the per-file checksums of the installed release and lists what
+ * differs - changed, missing, and files that are not part of the release at
+ * all (a dropped-in script is the typical crude manipulation). A last step
+ * looks at what lies outside current/ but runs with every request: the
+ * docroot web/ (shim, .htaccess, .user.ini, foreign files) and the
+ * permissions and structure of shared/config.php (kind `umgebung`).
  *
- * Not a defence against a skilled attacker - whoever can change files in
- * current/ can change the list in shared/ as well. It catches crude
- * tampering and accidental edits over FTP.
+ * The list lies in the release directory itself (current/checksums.txt,
+ * issue #241) and moves with every switch and rollback; an older
+ * installation's shared/release_checksums.txt is the fallback. Once a
+ * release signing key is fixed (ReleaseSignatur::PUBLIC_KEY) the list must
+ * carry a valid signature, so whoever can change files over FTP can no
+ * longer rewrite the list to match. Before that the check catches crude
+ * tampering and accidental edits only.
  *
  * A step chain of short requests (CLAUDE.md section 1): each schritt()
  * hashes at most PORTION_DATEIEN files or PORTION_SEKUNDEN seconds, the last
@@ -40,10 +50,20 @@ final readonly class CodeIntegritaet
 
     public const string PHASE_DATEIEN = 'dateien';
     public const string PHASE_ZUSAETZLICH = 'zusaetzlich';
+    public const string PHASE_UMGEBUNG = 'umgebung';
     public const string PHASE_FERTIG = 'fertig';
 
-    /** The three kinds of finding, in the order the page shows them. */
-    public const array ARTEN = ['geaendert', 'fehlend', 'zusaetzlich'];
+    /** The kinds of finding, in the order the page shows them. */
+    public const array ARTEN = ['geaendert', 'fehlend', 'zusaetzlich', 'umgebung'];
+
+    /** Files the docroot holds by design (docs/spec/06-betrieb.md section 1). */
+    public const array DOCROOT_DATEIEN = ['index.php', ...ReleaseSwitcher::DOCROOT_FILES];
+
+    /**
+     * Permission bits shared/config.php must not have: group write and
+     * anything for others. 0600 (what the installer sets) and 0640 pass.
+     */
+    public const int CONFIG_VERBOTENE_RECHTE = 0o027;
 
     private const string STATUS = 'integritaet.json';
 
@@ -52,9 +72,13 @@ final readonly class CodeIntegritaet
 
     /**
      * @param string $releaseRoot current/ - the files under test
-     * @param string $listenDatei shared/release_checksums.txt
+     * @param string $listenDatei shared/release_checksums.txt - fallback when
+     *        current/ has no list of its own (installed before issue #241)
      * @param string $statusDir where the chain keeps its state (shared/var)
      * @param (\Closure(): \DateTimeImmutable)|null $clock
+     * @param string|null $webDir the docroot; null skips its checks
+     * @param string|null $configDatei shared/config.php; null skips its checks
+     * @param string $publicKey ReleaseSignatur::PUBLIC_KEY; tests pass their own
      */
     public function __construct(
         private string $releaseRoot,
@@ -63,6 +87,9 @@ final readonly class CodeIntegritaet
         private ?\Closure $clock = null,
         private int $portionDateien = self::PORTION_DATEIEN,
         private float $portionSekunden = self::PORTION_SEKUNDEN,
+        private ?string $webDir = null,
+        private ?string $configDatei = null,
+        private string $publicKey = ReleaseSignatur::PUBLIC_KEY,
     ) {
     }
 
@@ -77,9 +104,11 @@ final readonly class CodeIntegritaet
 
     /**
      * A warning that does not stop the check: the list names another
-     * version than current/VERSION. After a rollback or an update stopped
-     * before the switch (the updater stores the list at the download step)
-     * most files then show as different. Never a reason to refuse: a
+     * version than current/VERSION. Since issue #241 the list moves with the
+     * release directory, so this only happens with the shared/ list of an
+     * older installation (after a rollback or an update stopped before the
+     * switch - the older updater stored the list at the download step) - or
+     * when current/VERSION itself was changed. Never a reason to refuse: a
      * tampered VERSION file must not switch the check off - it is reported
      * as a changed file like any other.
      */
@@ -92,19 +121,75 @@ final readonly class CodeIntegritaet
         }
 
         return sprintf(
-            'Die Prüfsummenliste gehört zu Version %s, current/VERSION nennt %s. Das passiert nach einem '
-            . 'Rollback oder einem vor dem Umschalten abgebrochenen Update – dann weichen viele Dateien ab, '
-            . 'bis das nächste Update vollständig durchläuft. Ohne einen solchen Grund ist die VERSION-Datei '
-            . 'selbst verändert worden.',
+            'Die Prüfsummenliste gehört zu Version %s, current/VERSION nennt %s. Bei Installationen aus der '
+            . 'Zeit vor der Liste im Release passiert das nach einem Rollback oder einem vor dem Umschalten '
+            . 'abgebrochenen Update – dann weichen viele Dateien ab, bis das nächste Update vollständig '
+            . 'durchläuft. Ohne einen solchen Grund ist die VERSION-Datei selbst verändert worden.',
             $liste->version,
             $installiert ?? '(keine)',
         );
     }
 
+    /**
+     * Why the list cannot be trusted although a signing key is fixed:
+     * signature missing or wrong. Null when it is valid or no key is fixed
+     * yet. A reason not to run the check - its result would rest on a list
+     * an attacker may have rewritten - and an alarm of its own.
+     */
+    public function echtheitsfehler(): ?string
+    {
+        if (!ReleaseSignatur::erzwungen($this->publicKey)) {
+            return null;
+        }
+        $datei = $this->listenPfad();
+        if ($datei === null) {
+            // Every installation since issue #241 has a list in its release;
+            // a release without one (current/VERSION present - the
+            // development environment has none) lost it. Deleting the list
+            // must not quietly switch the check off.
+            return $this->installierteVersion() === null
+                ? null
+                : 'Die Prüfsummenliste des installierten Releases fehlt (current/checksums.txt). Sie wurde '
+                    . 'entfernt – Zugangsdaten zum Webspace ändern und das Release über „Update“ bzw. setup.php '
+                    . 'neu einspielen.';
+        }
+        $signaturDatei = $this->releaseRoot . '/' . ReleaseSignatur::ASSET;
+        $signatur = $datei !== $this->listenDatei && is_file($signaturDatei)
+            ? (string) file_get_contents($signaturDatei)
+            : null;
+        try {
+            ReleaseSignatur::pruefe((string) file_get_contents($datei), $signatur, $this->publicKey);
+        } catch (\RuntimeException) {
+            return $signatur === null
+                ? 'Die Prüfsummenliste ist nicht signiert, obwohl diese Version einen Signaturschlüssel kennt. '
+                    . 'Ihr kann nicht vertraut werden. Nach dem ersten Update auf eine signierte Version ist die '
+                    . 'Prüfung wieder möglich; geschieht das danach erneut, wurde die Liste entfernt oder ersetzt – '
+                    . 'Zugangsdaten zum Webspace ändern und das Release neu einspielen.'
+                : 'Die Signatur der Prüfsummenliste ist ungültig – die Liste oder ihre Signatur wurde verändert. '
+                    . 'Zugangsdaten zum Webspace ändern und das Release über „Update“ bzw. setup.php neu einspielen.';
+        }
+
+        return null;
+    }
+
+    /**
+     * A note when the list is not protected by a signature because no key
+     * is fixed yet - the page says what the check can and cannot catch.
+     */
+    public function signaturHinweis(): ?string
+    {
+        if ($this->listenPfad() === null || ReleaseSignatur::erzwungen($this->publicKey)) {
+            return null;
+        }
+
+        return 'Die Prüfsummenliste ist (noch) nicht durch eine Signatur geschützt: wer Dateien auf dem Webspace '
+            . 'ändern kann, könnte auch die Liste anpassen.';
+    }
+
     private function hindernisFuer(?Pruefsummenliste $liste): ?string
     {
         if ($liste === null) {
-            return 'Für diese Installation liegt keine Prüfsummenliste vor (shared/release_checksums.txt). '
+            return $this->echtheitsfehler() ?? 'Für diese Installation liegt keine Prüfsummenliste vor (current/checksums.txt). '
                 . 'Sie entsteht bei der Installation mit setup.php und bei jedem Update; '
                 . 'in der Entwicklungsumgebung gibt es sie nicht.';
         }
@@ -113,7 +198,7 @@ final readonly class CodeIntegritaet
                 . 'die liefern erst neuere Releases mit. Nach dem nächsten Update ist die Prüfung möglich.';
         }
 
-        return null;
+        return $this->echtheitsfehler();
     }
 
     /**
@@ -215,6 +300,7 @@ final readonly class CodeIntegritaet
             $stand = match ($stand['phase']) {
                 self::PHASE_DATEIEN => $this->dateien($stand, $liste),
                 self::PHASE_ZUSAETZLICH => $this->zusaetzlich($stand, $liste),
+                self::PHASE_UMGEBUNG => $this->umgebung($stand),
                 default => throw new \RuntimeException('Unbekannter Schritt der Integritätsprüfung.'),
             };
             $fertig = $stand['phase'] === self::PHASE_FERTIG;
@@ -307,9 +393,227 @@ final readonly class CodeIntegritaet
         foreach ($gefunden as $pfad) {
             $stand = self::befund($stand, 'zusaetzlich', $pfad);
         }
+        $stand['phase'] = self::PHASE_UMGEBUNG;
+
+        return $stand;
+    }
+
+    /**
+     * What runs with every request but lies outside current/ (issue #241,
+     * N-03): the docroot and shared/config.php. One short step - a handful
+     * of small files.
+     *
+     * - web/index.php must be ReleaseSwitcher::SHIM byte for byte;
+     * - web/.htaccess and web/.user.ini must match the templates of the
+     *   installed release (current/docker/web/). A hand-edited file is
+     *   allowed by the updater (it is kept) but reported here, so the admin
+     *   sees it and can tell an intended edit from a foreign one;
+     * - every other entry in web/ is foreign (setup.php included: the
+     *   installer deletes it);
+     * - config.php: a regular file, no permissions for others and no group
+     *   write (CONFIG_VERBOTENE_RECHTE), and nothing but `return <array of
+     *   literals>;` - its content is individual and is never compared,
+     *   but code in it would run with every request.
+     *
+     * A legacy state from before #241 has no `umgebung` kind yet; it is
+     * added here.
+     *
+     * @param array<string, mixed> $stand
+     * @return array<string, mixed>
+     */
+    private function umgebung(array $stand): array
+    {
+        $stand['anzahl']['umgebung'] = (int) ($stand['anzahl']['umgebung'] ?? 0);
+        $stand['pfade']['umgebung'] = (array) ($stand['pfade']['umgebung'] ?? []);
+
+        foreach ($this->webBefunde() as $befund) {
+            $stand = self::befund($stand, 'umgebung', $befund);
+        }
+        foreach ($this->configBefunde() as $befund) {
+            $stand = self::befund($stand, 'umgebung', $befund);
+        }
         $stand['phase'] = self::PHASE_FERTIG;
 
         return $stand;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function webBefunde(): array
+    {
+        if ($this->webDir === null) {
+            return [];
+        }
+        if (!is_dir($this->webDir)) {
+            return ['web/ – Verzeichnis nicht gefunden'];
+        }
+
+        $befunde = [];
+        $vorlagen = ['index.php' => ReleaseSwitcher::SHIM];
+        foreach (ReleaseSwitcher::DOCROOT_FILES as $datei) {
+            $vorlage = $this->releaseRoot . '/docker/web/' . $datei;
+            $vorlagen[$datei] = is_file($vorlage) ? (string) file_get_contents($vorlage) : null;
+        }
+        foreach ($vorlagen as $datei => $soll) {
+            $voll = $this->webDir . '/' . $datei;
+            if (is_link($voll)) {
+                $befunde[] = 'web/' . $datei . ' – Verweis (Symlink) statt Datei';
+            } elseif (!is_file($voll)) {
+                $befunde[] = 'web/' . $datei . ' – fehlt';
+            } elseif ($soll !== null && @file_get_contents($voll) !== $soll) {
+                $befunde[] = $datei === 'index.php'
+                    ? 'web/index.php – weicht vom Shim des Releases ab'
+                    : 'web/' . $datei . ' – weicht von der Vorlage des Releases ab (von Hand geändert?)';
+            }
+        }
+
+        $namen = @scandir($this->webDir);
+        if ($namen === false) {
+            $befunde[] = 'web/ – nicht auflistbar';
+
+            return $befunde;
+        }
+        $fremd = [];
+        foreach ($namen as $name) {
+            if ($name === '.' || $name === '..' || in_array($name, self::DOCROOT_DATEIEN, true)) {
+                continue;
+            }
+            $voll = $this->webDir . '/' . $name;
+            if ($name === '.well-known' && self::nurAcmeChallenge($voll)) {
+                continue;
+            }
+            $fremd[] = 'web/' . $name . (!is_link($voll) && is_dir($voll) ? '/' : '') . ' – nicht Teil der Installation';
+        }
+        sort($fremd, SORT_STRING);
+
+        return [...$befunde, ...$fremd];
+    }
+
+    /**
+     * Whether web/.well-known holds nothing but ACME challenge tokens - the
+     * files a host's Let's Encrypt validation puts there for a moment. Only
+     * plain token names (base64url, no extension) directly in
+     * acme-challenge/, no links: a script or a .htaccess in there is still
+     * a finding.
+     */
+    private static function nurAcmeChallenge(string $verzeichnis): bool
+    {
+        if (is_link($verzeichnis) || !is_dir($verzeichnis)) {
+            return false;
+        }
+        foreach (@scandir($verzeichnis) ?: [null] as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            if ($name !== 'acme-challenge') {
+                return false;
+            }
+            $challenge = $verzeichnis . '/acme-challenge';
+            if (is_link($challenge) || !is_dir($challenge)) {
+                return false;
+            }
+            foreach (@scandir($challenge) ?: [null] as $token) {
+                if ($token === '.' || $token === '..') {
+                    continue;
+                }
+                if ($token === null || preg_match('/^[A-Za-z0-9_-]+$/', $token) !== 1
+                    || is_link($challenge . '/' . $token) || !is_file($challenge . '/' . $token)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function configBefunde(): array
+    {
+        if ($this->configDatei === null) {
+            return [];
+        }
+        $name = 'shared/config.php';
+        if (is_link($this->configDatei)) {
+            return [$name . ' – Verweis (Symlink) statt Datei'];
+        }
+        if (!is_file($this->configDatei)) {
+            return [$name . ' – fehlt'];
+        }
+
+        $befunde = [];
+        $rechte = @fileperms($this->configDatei);
+        if ($rechte !== false && ($rechte & self::CONFIG_VERBOTENE_RECHTE) !== 0) {
+            $befunde[] = sprintf(
+                '%s – Rechte %04o, erwartet 0600 (nur der Besitzer darf lesen und schreiben)',
+                $name,
+                $rechte & 0o777,
+            );
+        }
+        $inhalt = @file_get_contents($this->configDatei);
+        if ($inhalt === false) {
+            $befunde[] = $name . ' – nicht lesbar';
+        } elseif (!self::nurWerte($inhalt)) {
+            $befunde[] = $name . ' – enthält mehr als die Einstellungen (Code oder Ausgabe außerhalb des Werte-Arrays)';
+        }
+
+        return $befunde;
+    }
+
+    /**
+     * Whether $php is exactly what ConfigWriter writes in shape:
+     * `<?php return <array of literals>;` plus comments and whitespace. Any
+     * call, variable, include, eval, backtick or output outside the PHP
+     * block fails. Brackets only where an array literal may stand: "(" only
+     * right after `array`, "[" only where a value starts - so a string
+     * callable (`'system'('id')`) or an array callable is no value. Without
+     * ext-tokenizer the structure cannot be read and counts as fine - the
+     * permissions are still checked.
+     */
+    public static function nurWerte(string $php): bool
+    {
+        if (!function_exists('token_get_all')) {
+            return true;
+        }
+        $werte = [T_CONSTANT_ENCAPSED_STRING, T_LNUMBER, T_DNUMBER, T_ARRAY, T_DOUBLE_ARROW];
+        // after these a new value starts (an array literal "[" may follow)
+        $wertBeginn = ['return', '(', '[', ',', '=>', '.', '-', '+'];
+        $phase = 'start';
+        $vorher = '';
+        foreach (token_get_all($php) as $token) {
+            [$art, $text] = is_array($token) ? [$token[0], $token[1]] : [null, $token];
+            if ($art === T_WHITESPACE || $art === T_COMMENT || $art === T_DOC_COMMENT) {
+                continue;
+            }
+            $ok = match ($phase) {
+                'start' => $art === T_OPEN_TAG,
+                'return' => $art === T_RETURN,
+                'werte' => match (true) {
+                    $text === ';', $text === ')', $text === ']', $text === ',', $text === '.',
+                    $text === '-', $text === '+' => true,
+                    $text === '(' => $vorher === 'array',
+                    $text === '[' => in_array($vorher, $wertBeginn, true),
+                    $art === T_STRING => in_array(strtolower($text), ['true', 'false', 'null'], true),
+                    default => in_array($art, $werte, true),
+                },
+                'ende' => $art === T_CLOSE_TAG,
+                default => $art === T_INLINE_HTML && trim($text) === '',
+            };
+            if (!$ok) {
+                return false;
+            }
+            $vorher = $art === T_ARRAY ? 'array' : ($art === T_RETURN ? 'return' : $text);
+            $phase = match ($phase) {
+                'start' => 'return',
+                'return' => 'werte',
+                'werte' => $text === ';' ? 'ende' : 'werte',
+                default => 'nachher',
+            };
+        }
+
+        return $phase === 'ende' || $phase === 'nachher';
     }
 
     /**
@@ -334,6 +638,12 @@ final readonly class CodeIntegritaet
             }
             $voll = $verzeichnis . '/' . $name;
             $pfad = $praefix . $name;
+            // The list and its signature are put into the release root by
+            // setup.php and the updater - they cannot list themselves.
+            if ($praefix === '' && ($name === ReleaseDownloader::LISTE || $name === ReleaseSignatur::ASSET)
+                && !is_link($voll) && is_file($voll)) {
+                continue;
+            }
             if (!is_link($voll) && is_dir($voll)) {
                 $this->durchsuchen($voll, $pfad . '/', $liste, $gefunden, $unlesbar);
             } elseif (!isset($liste->dateien[$pfad])) {
@@ -363,12 +673,28 @@ final readonly class CodeIntegritaet
 
     private function liste(): ?Pruefsummenliste
     {
-        if (!is_file($this->listenDatei)) {
+        $datei = $this->listenPfad();
+        if ($datei === null) {
             return null;
         }
-        $inhalt = file_get_contents($this->listenDatei);
+        $inhalt = file_get_contents($datei);
 
         return $inhalt === false ? null : Pruefsummenliste::aus($inhalt);
+    }
+
+    /**
+     * The list in the release (issue #241), else the one in shared/ an
+     * installation from before kept. Never a symlink: it may point anywhere.
+     */
+    private function listenPfad(): ?string
+    {
+        foreach ([$this->releaseRoot . '/' . ReleaseDownloader::LISTE, $this->listenDatei] as $datei) {
+            if (!is_link($datei) && is_file($datei)) {
+                return $datei;
+            }
+        }
+
+        return null;
     }
 
     private function installierteVersion(): ?string

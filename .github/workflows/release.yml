@@ -4,12 +4,17 @@ on:
   push:
     tags: ['v*.*.*']
 
+# Read-only by default (issue #241): only the publish job may write, and only
+# the publish job sees the signing secret. The build job runs composer and
+# the ZIP tooling without either.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +65,50 @@ jobs:
           find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum \
             | sed 's#^\([0-9a-f]\{64\}\)  \./#\1  release/#' >> ../dist/checksums.txt
           grep -q '^[0-9a-f]\{64\}  release/VERSION$' ../dist/checksums.txt
+
+      - name: Hand the release files to the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Only for tools/release-signatur.php and the public key in
+      # app/src/Service/Update/ReleaseSignatur.php of the tagged commit; no
+      # token left behind in .git/config.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: sodium
+          coverage: none
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      # Ed25519 signature over checksums.txt -> checksums.txt.sig (issue
+      # #241, docs/betrieb.md "Release-Signatur"). The list names the hash of
+      # the ZIP and of every file in it, so this one signature covers both.
+      # Without the secret the tool only warns - as long as no public key is
+      # fixed in ReleaseSignatur. Once one is, a missing or non-matching
+      # secret fails the release instead of publishing one that every
+      # installation would refuse.
+      - name: Sign checksums.txt
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: php tools/release-signatur.php signieren dist/checksums.txt
 
       # Every tag starts as a pre-release for the beta test instance;
       # promoting it to "latest" for the stable channel is a manual step
