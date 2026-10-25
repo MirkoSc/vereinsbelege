@@ -101,7 +101,8 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
 5. „Installation starten“: `setup.php` lädt das Release-ZIP von GitHub,
    prüft die Prüfsumme, entpackt es, legt `current/`, `releases/`,
    `shared/` und die drei Dateien in `web/` an und leitet zu `/install`
-   weiter.
+   weiter. Dabei gibt sie das **Installations-Token** mit (siehe unten) –
+   wer direkt weitergeleitet wird, merkt davon nichts.
 6. Im Installer **„Frische Installation“** wählen, Datenbank-Zugang und den
    **ersten Admin** (E-Mail, Name, Passwort mit mindestens 12 Zeichen)
    eintragen.
@@ -129,6 +130,46 @@ Wird der Browser vor der Bestätigung des Wiederherstellungsschlüssels
 geschlossen, bietet `/install` „Neu beginnen“ an – der Schlüssel wird aus
 Sicherheitsgründen kein zweites Mal angezeigt.
 
+**Installations-Token.** Bis `shared/config.php` geschrieben ist, ist
+`/install` öffentlich erreichbar. Damit niemand, der die Adresse zufällig
+vor dem Verein aufruft, die Installation mit eigener Datenbank und eigenem
+Admin übernimmt, verlangt der Installer ein Token
+([Befund N-05](security-checkliste.md#befunde-des-durchlaufs-2026-10-25-die-noch-offen-sind)):
+
+- `setup.php` legt es als `shared/install_token.txt` an und übergibt es bei
+  der Weiterleitung. **Normalfall: nichts zu tun.**
+- Zeigt `/install` stattdessen „Installation freigeben“ (Browser
+  zwischendurch geschlossen, anderer Browser, Installation ohne
+  `setup.php`): per FTP `shared/install_token.txt` öffnen und die 32
+  Zeichen in das Feld kopieren. Fehlt die Datei, legt `/install` sie beim
+  ersten Aufruf selbst an.
+- Wird `setup.php` erneut ausgeführt, entsteht ein neues Token; das alte
+  gilt nicht mehr.
+- Nach der Installation löscht der Installer die Datei zusammen mit
+  `setup.php`.
+
+`setup.php` selbst prüft kein Token – deshalb **direkt nach dem Hochladen
+aufrufen** und nicht liegen lassen.
+
+**HTTPS-Umleitung.** Wer die Seite über `http://` aufruft, wird auf
+`https://` umgeleitet ([Befund N-11](security-checkliste.md#befunde-des-durchlaufs-2026-10-25-die-noch-offen-sind),
+`web/index.php`). Ausgenommen sind:
+
+- **`/cron`** – damit ein Cronjob, den der Hoster nur über HTTP aufruft,
+  weiterläuft. Trotzdem die Cron-URL mit `https://` eintragen
+  ([Abschnitt 3](#3-cron-einrichten)); das Token steht in der URL.
+- Formular-Absendungen (POST) – eine umgeleitete Absendung verlöre ihre
+  Daten. Seiten, über die man zu einem Formular kommt, werden ohnehin
+  umgeleitet.
+- `localhost` (lokale Docker-Umgebung).
+
+Läuft TLS beim Hoster über einen vorgeschalteten Proxy, erkennt der Shim
+das an `HTTPS`, `REQUEST_SCHEME`, Port 443 oder `X-Forwarded-Proto: https`.
+Endet der Aufruf trotzdem in einer **Umleitungsschleife** („Zu viele
+Weiterleitungen“), per FTP eine leere Datei
+`shared/https_umleitung_aus.flag` anlegen – das schaltet die Umleitung ab –
+und den Fall als Issue melden.
+
 ---
 
 ## 3. Cron einrichten
@@ -153,6 +194,12 @@ dagegen im Browser eines angemeldeten Benutzers.
    ```
    https://<ihre-domain>/cron?token=<cron_token>
    ```
+
+   Bitte mit `https://`: Die Seite leitet `/cron` zwar nicht auf HTTPS um
+   (damit auch ein Cronjob läuft, den der Hoster nur über HTTP aufruft),
+   über HTTP stünde das Token aber im Klartext im Netz. Ob das Kundenmenü
+   von all-inkl HTTPS-URLs annimmt, ist noch nicht im Betrieb bestätigt;
+   ein reiner HTTP-Aufruf funktioniert weiterhin.
 
 3. Intervall: **jede Minute** (all-inkl erlaubt das). Seltener geht auch,
    dann gehen Mails entsprechend später raus. Überlappende Läufe sind

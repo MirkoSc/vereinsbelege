@@ -714,6 +714,17 @@ try {
     // stable. The installer reads the file and deletes it.
     file_put_contents($sharedDir . '/setup_kanal.txt', $kanal);
 
+    // The installation token (security review N-05, App\Installer\InstallToken):
+    // until config.php exists, /install takes only a session that knows it.
+    // A fresh one per run; it travels in the redirect below, and the file
+    // is what an admin reads by FTP when that redirect got lost.
+    $installToken = bin2hex(random_bytes(16));
+    if (file_put_contents($sharedDir . '/install_token.txt', $installToken . "\n", LOCK_EX) === false) {
+        throw new RuntimeException('Installations-Token kann nicht in shared/ geschrieben werden.');
+    }
+    @chmod($sharedDir . '/install_token.txt', 0600);
+    $installUrl = '/install?token=' . $installToken;
+
     // The local name must stay the asset name - the checksum is matched by
     // filename against checksums.txt.
     $zipFile = $releasesDir . '/' . ReleaseDownloader::zipFilename($release['zip_url']);
@@ -761,10 +772,10 @@ try {
             . '. Solange die Domain auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie'
             . ' eine Ebene höher, wären Konfiguration und Belegdateien abrufbar.'
             . ' Die Installation versucht es erneut.</p>'
-            . '<p><a href="/install">Weiter zur Installation</a></p>');
+            . '<p><a href="' . htmlspecialchars($installUrl, ENT_QUOTES) . '">Weiter zur Installation</a></p>');
     }
 
-    header('Location: /install');
+    header('Location: ' . $installUrl);
     exit;
 } catch (Throwable $e) {
     setup_page('Fehler', '<p class="fehlertext">Einrichtung fehlgeschlagen: '

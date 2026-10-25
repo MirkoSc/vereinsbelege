@@ -67,11 +67,19 @@ use App\View\View;
  *                config.php uploaded; accepted only if it opens the data.
  *   access()     POST /install/zugang - recovery key + address, name and
  *                password of the admin's own account.
+ *
+ * Every step needs a session released by the installation token first
+ * (security review N-05, App\Installer\InstallToken): setup.php hands it
+ * over in its redirect (`/install?token=…`), otherwise it is typed in from
+ * shared/install_token.txt (POST /install/freigabe). Without it nobody who
+ * merely finds the URL before the admin does can take the installation over.
  */
 final readonly class InstallController
 {
     /** $_SESSION['install_restore']['phase'] while the access step is open. */
     public const string PHASE_ZUGANG = 'zugang';
+
+    private const string FALSCHES_TOKEN = 'Dieses Installations-Token stimmt nicht. Bitte den Inhalt der Datei shared/install_token.txt genau übernehmen.';
 
     public function __construct(
         private View $view,
@@ -90,6 +98,25 @@ final readonly class InstallController
     public function form(Request $request): ResponseInterface
     {
         $this->session->start();
+
+        $token = $this->token();
+        if (!$token->isReleased()) {
+            try {
+                $token->ensure();
+            } catch (\RuntimeException) {
+                return $this->renderFreigabe(['token' => 'Das Installations-Token lässt sich nicht anlegen: shared/ ist nicht beschreibbar. Bitte die Schreibrechte per FTP prüfen.'], 500);
+            }
+            // The hand-over from setup.php. Redirected at once, so the token
+            // does not stay in the address bar or a Referer.
+            $angeboten = $request->query['token'] ?? null;
+            if (is_string($angeboten) && $token->matches($angeboten)) {
+                $token->release();
+
+                return Response::redirect('/install');
+            }
+
+            return $this->renderFreigabe(is_string($angeboten) ? ['token' => self::FALSCHES_TOKEN] : []);
+        }
 
         if (is_array($_SESSION['install_admin'] ?? null)) {
             return $this->render(['schritt' => 'schluessel_offen', 'errors' => [], 'values' => []]);
@@ -112,9 +139,33 @@ final readonly class InstallController
         ]);
     }
 
+    /**
+     * POST /install/freigabe: the token typed in from
+     * shared/install_token.txt - for whoever did not come straight from
+     * setup.php (closed browser, an install without setup.php).
+     */
+    public function release(Request $request): ResponseInterface
+    {
+        $this->session->start();
+
+        if (!$this->session->checkCsrf($request)) {
+            return $this->renderFreigabe(['csrf' => 'Die Sitzung ist abgelaufen. Bitte das Formular erneut absenden.'], 403);
+        }
+        $token = $this->token();
+        if (!$token->matches((string) ($request->post['token'] ?? ''))) {
+            return $this->renderFreigabe(['token' => self::FALSCHES_TOKEN], 422);
+        }
+        $token->release();
+
+        return Response::redirect('/install');
+    }
+
     public function submit(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (($gesperrt = $this->gesperrt()) !== null) {
+            return $gesperrt;
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->render([
@@ -237,6 +288,9 @@ final readonly class InstallController
     public function confirmKey(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (($gesperrt = $this->gesperrt()) !== null) {
+            return $gesperrt;
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->render([
@@ -285,6 +339,9 @@ final readonly class InstallController
     public function restart(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (($gesperrt = $this->gesperrt()) !== null) {
+            return $gesperrt;
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->render([
@@ -347,6 +404,9 @@ final readonly class InstallController
     public function restoreStep(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (!$this->token()->isReleased()) {
+            return Response::json(['fehler' => 'Installation nicht freigegeben - bitte die Seite neu laden.'], 403);
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return Response::json(['fehler' => 'Sitzung abgelaufen - bitte die Seite neu laden.'], 403);
@@ -506,6 +566,9 @@ final readonly class InstallController
     public function serverKey(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (($gesperrt = $this->gesperrt()) !== null) {
+            return $gesperrt;
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->renderAccess(['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'], 403);
@@ -561,6 +624,9 @@ final readonly class InstallController
     public function access(Request $request): ResponseInterface
     {
         $this->session->start();
+        if (($gesperrt = $this->gesperrt()) !== null) {
+            return $gesperrt;
+        }
 
         if (!$this->session->checkCsrf($request)) {
             return $this->renderAccess(['csrf' => 'Die Sitzung ist abgelaufen. Bitte die Seite neu laden.'], 403);
@@ -843,11 +909,30 @@ final readonly class InstallController
      */
     private function cleanUpSetupLeftovers(): void
     {
-        foreach ([$this->paths->webDir() . '/setup.php', $this->paths->setupChannelFile()] as $file) {
+        foreach ([$this->paths->webDir() . '/setup.php', $this->paths->setupChannelFile(), $this->paths->installTokenFile()] as $file) {
             if (is_file($file)) {
                 @unlink($file);
             }
         }
+    }
+
+    private function token(): InstallToken
+    {
+        return new InstallToken($this->paths->installTokenFile());
+    }
+
+    /** The token page instead of the step, as long as this session is not released (N-05). */
+    private function gesperrt(): ?Response
+    {
+        return $this->token()->isReleased() ? null : $this->renderFreigabe([], 403);
+    }
+
+    /**
+     * @param array<string, string> $errors
+     */
+    private function renderFreigabe(array $errors = [], int $status = 200): Response
+    {
+        return $this->render(['schritt' => 'freigabe', 'errors' => $errors, 'values' => []], $status);
     }
 
     /**

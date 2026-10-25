@@ -3,7 +3,7 @@
  * @var array<string, string> $errors
  * @var array<string, string> $values
  * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
- * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
+ * @var string $schritt one of 'freigabe', 'schluessel', 'schluessel_offen', 'zugang', or unset for the default form/restore/fertig
  */
 $schritt = $schritt ?? '';
 ?>
@@ -19,7 +19,34 @@ $schritt = $schritt ?? '';
         </p>
     <?php endif; ?>
 
-    <?php if (($fertig ?? false) === true): ?>
+    <?php if ($schritt === 'freigabe'): ?>
+        <div class="karte">
+            <h3>Installation freigeben</h3>
+            <p>
+                Damit niemand anderes diese Installation übernimmt, braucht es das
+                <strong>Installations-Token</strong>. Wer gerade <code>setup.php</code> ausgeführt hat,
+                landet normalerweise direkt hier und sieht diese Seite nicht.
+            </p>
+            <p>
+                Sonst: per FTP die Datei <code>shared/install_token.txt</code> öffnen (neben
+                <code>current/</code> und <code>releases/</code>, eine Ebene über dem Domain-Ordner
+                <code>web</code>) und ihren Inhalt hier eintragen.
+            </p>
+            <?php foreach (['csrf', 'token'] as $feld): ?>
+                <?php if (isset($errors[$feld])): ?>
+                    <p class="hinweis hinweis-fehler" role="alert"><?= e($errors[$feld]) ?></p>
+                <?php endif; ?>
+            <?php endforeach; ?>
+            <form method="post" action="/install/freigabe">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <label for="install-token">Installations-Token
+                    <input type="text" id="install-token" name="token" required autocomplete="off"
+                        spellcheck="false" autocapitalize="off" inputmode="latin" maxlength="64">
+                </label>
+                <p><button type="submit" class="knopf knopf-primaer">Freigeben</button></p>
+            </form>
+        </div>
+    <?php elseif (($fertig ?? false) === true): ?>
         <?php if (($restore ?? false) === true): ?>
             <p class="hinweis hinweis-ok">
                 Wiederherstellung abgeschlossen. Das Backup ist eingespielt, die Konfiguration liegt in

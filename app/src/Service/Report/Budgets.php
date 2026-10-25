@@ -86,12 +86,15 @@ final readonly class Budgets
      *
      * @param array<string, string> $felder `kategorie`, `kostenstelle` (id or
      *        empty), `betrag` (German amount)
+     * @param Zugriffsbereich $bereich the writer's cost-center scope (N-07):
+     *        a scoped writer keeps only budgets of his cost centers, never
+     *        one without a cost center - the same rows forYear() shows him
      *
      * @return array{id: int, neu: bool, jahr: int, kategorie: int|null, kostenstelle: int|null}
      *
      * @throws BudgetFehler
      */
-    public function speichern(Vault $vault, int $jahr, array $felder, ?int $userId, \DateTimeImmutable $now): array
+    public function speichern(Vault $vault, int $jahr, array $felder, Zugriffsbereich $bereich, ?int $userId, \DateTimeImmutable $now): array
     {
         $letztes = (int) $now->format('Y') + 1;
         if ($jahr < ZeitraumAuswahl::ERSTES_JAHR || $jahr > $letztes) {
@@ -101,6 +104,9 @@ final readonly class Budgets
         $kostenstelle = $this->kostenstelleAus($felder['kostenstelle'] ?? '');
         if ($kategorie === null && $kostenstelle === null) {
             throw new BudgetFehler('Bitte eine Kategorie, eine Kostenstelle oder beides wählen.', 'kategorie');
+        }
+        if ($bereich->kostenstellen !== null && ($kostenstelle === null || !in_array($kostenstelle, $bereich->kostenstellen, true))) {
+            throw new BudgetFehler('Budgets pflegen Sie nur für Ihre eigenen Kostenstellen. Bitte eine davon wählen.', 'kostenstelle');
         }
         // Betrag::parse() refuses anything above Betrag::MAX_CENT (999.999.999,99).
         $betrag = Betrag::parse(trim($felder['betrag'] ?? ''));
@@ -154,11 +160,14 @@ final readonly class Budgets
         return [$id, $neu];
     }
 
-    /** Deletes a budget; the row as it was, null if there was none. */
-    public function loeschen(int $id): ?BudgetRecord
+    /**
+     * Deletes a budget within the writer's cost-center scope (N-07); the row
+     * as it was, null if there was none or it is outside the scope.
+     */
+    public function loeschen(int $id, Zugriffsbereich $bereich): ?BudgetRecord
     {
-        $record = $this->budgets->find($id);
-        if ($record === null || !$this->budgets->delete($id)) {
+        $record = $this->budgets->find($id, $bereich);
+        if ($record === null || !$this->budgets->delete($id, $bereich)) {
             return null;
         }
 
@@ -167,15 +176,21 @@ final readonly class Budgets
 
     /**
      * What the form offers: the active categories for expenses (an income
-     * category has no expenses to compare with) and the active cost centers.
+     * category has no expenses to compare with) and the active cost centers
+     * within the writer's scope.
      *
      * @return array{kategorien: array<int, string>, kostenstellen: array<int, string>}
      */
-    public function auswahl(): array
+    public function auswahl(Zugriffsbereich $bereich): array
     {
+        $kostenstellen = $this->kostenstellen->active();
+        if ($bereich->kostenstellen !== null) {
+            $kostenstellen = array_intersect_key($kostenstellen, array_flip($bereich->kostenstellen));
+        }
+
         return [
             'kategorien' => $this->kategorien->active(CategoryDirection::Ausgabe),
-            'kostenstellen' => $this->kostenstellen->active(),
+            'kostenstellen' => $kostenstellen,
         ];
     }
 

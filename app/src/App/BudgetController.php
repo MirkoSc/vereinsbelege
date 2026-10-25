@@ -7,6 +7,7 @@ namespace App\App;
 use App\Domain\AuditAction;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
+use App\Domain\Zugriffsbereich;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
 use App\Http\Request;
@@ -113,7 +114,7 @@ final readonly class BudgetController
             'betrag' => self::text($request->post['betrag'] ?? null),
         ];
         try {
-            $gespeichert = ($this->budgets)()->speichern($tresor, $jahr, $felder, $this->session->userId(), new \DateTimeImmutable());
+            $gespeichert = ($this->budgets)()->speichern($tresor, $jahr, $felder, $this->pflegebereich(), $this->session->userId(), new \DateTimeImmutable());
         } catch (BudgetFehler $e) {
             return $this->anzeigen($request, $felder, $e, 422, $anzeigeJahr);
         }
@@ -141,7 +142,7 @@ final readonly class BudgetController
         if (($verweigert = $this->ohneLeserecht()) !== null) {
             return $verweigert;
         }
-        $geloescht = ($this->budgets)()->loeschen((int) ($params['id'] ?? 0));
+        $geloescht = ($this->budgets)()->loeschen((int) ($params['id'] ?? 0), $this->pflegebereich());
         if ($geloescht === null) {
             return $this->fehler(404, 'Nicht gefunden', 'Dieses Budget gibt es nicht (mehr).');
         }
@@ -213,7 +214,7 @@ final readonly class BudgetController
             $ergebnis = $budgets->vergleich($tresor, $grundlage, $jahr, $b->zugriffsbereich(Permission::ReportView));
             $pflegen = $b->darf(Permission::BankBook);
             if ($pflegen) {
-                $auswahl = $budgets->auswahl();
+                $auswahl = $budgets->auswahl($this->pflegebereich());
             }
         }
         $erstes = Dashboard::erstesJahr($b, ZeitraumAuswahl::ERSTES_JAHR);
@@ -294,6 +295,25 @@ final readonly class BudgetController
         }
 
         return $this->fehler(403, 'Kein Zugriff', 'Budgets pflegt, wer auch die Auswertungen sehen darf. Ihrem Konto fehlt das Recht „Auswertungen sehen“.');
+    }
+
+    /**
+     * The cost centers a writer may keep budgets for (N-07): within the
+     * scope of `bank.book` (the write right) and of `report.view` (the page
+     * that shows them) at once. Only the cost centers count - a year is no
+     * date for the period scope, as in BudgetRepository::forYear().
+     */
+    private function pflegebereich(): Zugriffsbereich
+    {
+        $b = $this->berechtigungen();
+        $schreiben = $b->zugriffsbereich(Permission::BankBook)->kostenstellen;
+        $lesen = $b->zugriffsbereich(Permission::ReportView)->kostenstellen;
+
+        return new Zugriffsbereich(match (true) {
+            $schreiben === null => $lesen,
+            $lesen === null => $schreiben,
+            default => array_values(array_intersect($schreiben, $lesen)),
+        });
     }
 
     private function csrfFehler(Request $request, int $jahr): ResponseInterface

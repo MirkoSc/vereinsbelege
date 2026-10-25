@@ -108,6 +108,16 @@ final readonly class Paths
         return $this->sharedDir() . '/setup_kanal.txt';
     }
 
+    /**
+     * The installation token (security review N-05, App\Installer\InstallToken):
+     * written by setup.php - or by /install itself when it is missing - and
+     * deleted together with setup.php once config.php exists.
+     */
+    public function installTokenFile(): string
+    {
+        return $this->sharedDir() . '/install_token.txt';
+    }
+
     /** The docroot, sibling of the release root: shim, .htaccess, .user.ini. */
     public function webDir(): string
     {

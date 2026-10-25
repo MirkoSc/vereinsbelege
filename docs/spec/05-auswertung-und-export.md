@@ -225,6 +225,11 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Jahres/Paars (neuer DEK; zwei gleichzeitige Erstanlagen werden zur
   Änderung); „Löschen“ je Zeile. Nur aktive Ausgaben-Kategorien
   (`ausgabe`/`beide`) und aktive Kostenstellen (serverseitig geprüft).
+  **Scope beim Pflegen** (N-07, #247): mit Kostenstellen-Scope (von
+  `bank.book` oder `report.view`, wirksam ist die Schnittmenge) nur Budgets
+  mit einer eigenen Kostenstelle – nie eines ohne Kostenstelle –
+  anlegen/ändern (sonst 422, das Formular bietet nur die eigenen an) und
+  löschen (in SQL, `BudgetRepository::delete()`; fremde ID = 404).
   Eine Kategorie/Kostenstelle mit Budget gilt als verwendet (nur
   deaktivierbar, FK `RESTRICT`).
   Audit-Log `budget.gespeichert`/`budget.geloescht` (Entität `budget`,
@@ -658,7 +663,9 @@ Begründungen: E-49.
   Konto = Sachkonto des Kontos, Gegenkonto = Sachkonto der Kategorie (ohne
   Kategorie: Klärungskonto), Umsatz ohne Vorzeichen, „S“ bei Geldeingang,
   „H“ bei Ausgang; Belegdatum TTMM; Belegfeld 1 = Rechnungsnummer des
-  ersten zugeordneten geprüften/festgeschriebenen Belegs im Scope;
+  ersten zugeordneten geprüften/festgeschriebenen Belegs im Scope (nur
+  DATEV-Zeichen, die letzten 36; ein führendes `+`/`-` fällt weg, damit eine
+  Tabellenkalkulation das Feld nie als Formel liest – N-12, #247);
   Buchungstext = Kategoriename. Umbuchungen: mit Geldtransitkonto jede
   Hälfte an ihrem Tag gegen dieses Konto; ohne nur die abgehende Hälfte
   (Gegenkonto = empfangendes Konto, `TransferRepository::mitKontenFuer()`),

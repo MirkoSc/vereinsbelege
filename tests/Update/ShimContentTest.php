@@ -133,6 +133,56 @@ final class ShimContentTest extends TestCase
     }
 
     /**
+     * Security review N-11: plain HTTP is redirected to HTTPS - but only for
+     * GET/HEAD, never for /cron (a hoster's cron may only speak HTTP), never
+     * for local hosts, and with a kill switch in shared/ against a loop
+     * behind an unusual proxy. Pinned as strings like the conditions above:
+     * the shim cannot be run in-process (it ends with exit and require).
+     */
+    public function testPlainHttpIsRedirectedExceptForCronAndPosts(): void
+    {
+        $shim = ReleaseSwitcher::SHIM;
+
+        foreach ([
+            "header('Location: https://' . \$teile[1] . (\$_SERVER['REQUEST_URI'] ?? '/'), true, 301);",
+            "in_array(\$_SERVER['REQUEST_METHOD'] ?? '', ['GET', 'HEAD'], true)",
+            "rtrim(\$pfad, '/') !== '/cron'",
+            "['localhost', '127.0.0.1']",
+            "shared/https_umleitung_aus.flag",
+            "(string) (\$_SERVER['SERVER_PORT'] ?? '') !== '443'",
+            "strtolower((string) (\$_SERVER['REQUEST_SCHEME'] ?? '')) !== 'https'",
+        ] as $muss) {
+            self::assertStringContainsString($muss, $shim);
+        }
+        // X-Forwarded-Proto may only switch the redirect off - a negated
+        // check, never something that sends a request elsewhere.
+        self::assertSame(1, substr_count($shim, 'HTTP_X_FORWARDED_PROTO'));
+        self::assertStringContainsString("!str_contains(strtolower((string) (\$_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')), 'https')", $shim);
+        // The redirect comes before the maintenance page, so an http:// visit
+        // during an update ends on https:// too.
+        self::assertLessThan(strpos($shim, 'http_response_code(503)'), strpos($shim, "'Location: https://'"));
+    }
+
+    /**
+     * The host for the redirect comes from the client. It is taken only in
+     * the shape of a host name (no slash, no @, no space), so the redirect
+     * cannot send anyone to a path or userinfo of another site.
+     */
+    public function testTheRedirectHostPatternTakesHostNamesOnly(): void
+    {
+        self::assertSame(1, preg_match("~preg_match\\('(/\\^.+\\$/D)'~", ReleaseSwitcher::SHIM, $treffer));
+        $muster = $treffer[1];
+
+        foreach (['verein.example' => 'verein.example', 'belege.verein.example:443' => 'belege.verein.example', 'localhost:8080' => 'localhost'] as $host => $erwartet) {
+            self::assertSame(1, preg_match($muster, $host, $teile), $host);
+            self::assertSame($erwartet, $teile[1]);
+        }
+        foreach (['evil.example/x', 'a@evil.example', 'evil.example\r\nX: 1', '', '.example', 'verein..example', 'verein.example:', "verein.example\n"] as $host) {
+            self::assertSame(0, preg_match($muster, $host), $host);
+        }
+    }
+
+    /**
      * The shim runs before the application's own bootstrap and must not do
      * anything that needs it - no autoloader, no config, no database.
      */

@@ -314,6 +314,8 @@ if (!is_file($configFile)) {
     $offen = Zugriff::oeffentlich();
     $router = new Router();
     $router->get('/install', $offen, $installer->form(...));
+    // The installation token (security review N-05) typed in by hand.
+    $router->post('/install/freigabe', $offen, $installer->release(...));
     $router->post('/install', $offen, $installer->submit(...));
     $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
     $router->post('/install/neu', $offen, $installer->restart(...));

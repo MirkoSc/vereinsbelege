@@ -25,6 +25,22 @@ Der Shim liegt zusätzlich als Konstante `ReleaseSwitcher::SHIM` vor: beim
 Umschalten ist das Release-Verzeichnis kurz nicht lesbar, die Selbstheilung
 braucht den Inhalt also ohne Datei. `ShimContentTest` hält beide gleich.
 
+**HTTP → HTTPS im Shim** (Security-Review N-11, #247): ein `GET`/`HEAD`
+über HTTP bekommt `301` auf dieselbe URL mit `https://` (Host aus dem
+`Host`-Header, nur in der Form eines Hostnamens, ohne Port). Ausgenommen:
+`/cron` (ein Hoster-Cron, der nur HTTP kann, läuft weiter), alle anderen
+Methoden (ein umgeleitetes `POST` verlöre seinen Body), `localhost`/
+`127.0.0.1` (Docker-Umgebung) und eine Installation mit
+`shared/https_umleitung_aus.flag` (Notschalter per FTP). Als HTTPS gilt ein
+Request, wenn `HTTPS` gesetzt und nicht `off` ist, `REQUEST_SCHEME`
+`https` ist, der Port 443 ist **oder** `X-Forwarded-Proto` `https` enthält –
+Letzteres verhindert eine Schleife hinter einem TLS-Proxy und kann nur die
+Umleitung für den eigenen Request abschalten; die Anwendung selbst
+(`Request::httpsFromGlobals()`, Cookie-Flags) wertet den Header weiterhin
+nicht aus. Statische Dateien (CSS, JS, ACME-Challenge) liefert Apache ohne
+Shim aus, sie werden nicht umgeleitet. HSTS (`.htaccess`) bleibt der
+eigentliche Schutz ab dem ersten HTTPS-Besuch.
+
 **Zugriffssperre für die Verzeichnisse neben dem DocumentRoot** (issue #101):
 `shared/` und `releases/` sind nur deshalb privat, weil die Domain auf `web/`
 zeigt – eine Einstellung im Kundenmenü, die sich ändern kann. Deshalb legt
@@ -70,6 +86,25 @@ Einstellung `update_kanal` und löscht die Datei. Ohne diese Übergabe würde
 eine aus einer Vorabversion installierte Testinstanz danach stillschweigend
 auf `stable` nach Updates suchen. Am Ende löscht der Installer `setup.php`;
 klappt das nicht (Dateieigentümer FTP), sagt die Abschlussseite Bescheid.
+
+**Installations-Token** (Security-Review N-05, #247,
+`App\Installer\InstallToken`): solange `config.php` fehlt, ist `/install`
+öffentlich. Damit niemand, der die URL vor dem Verein findet, die Instanz
+mit eigener Datenbank und eigenem Admin übernimmt, schreibt `setup.php` bei
+jedem Lauf ein neues Token (128 Bit, 32 Hex-Zeichen) nach
+`shared/install_token.txt` (0600) und leitet auf `/install?token=…` weiter.
+`GET /install` mit passendem Token gibt die Session frei (Session-ID wird
+erneuert, in der Session liegt nur der SHA-256 des Tokens – ein neues Token
+entwertet alte Freigaben) und leitet sofort auf `/install` ohne Token um.
+Ohne Freigabe zeigt `/install` die Seite „Installation freigeben“: das Token
+aus der Datei per FTP abschreiben, `POST /install/freigabe` (CSRF). Fehlt
+die Datei (Installation ohne `setup.php`), legt `/install` sie an. Jeder
+Schritt (`POST /install`, `/schluessel`, `/neu`, `/wiederherstellen`,
+`/serverschluessel`, `/zugang`) antwortet ohne Freigabe mit 403. Die Datei
+wird mit `setup.php` gelöscht, sobald `config.php` geschrieben ist.
+Restrisiko: `setup.php` selbst prüft kein Token – wer es vor dem Verein
+aufruft, erhält das Token; deshalb `setup.php` direkt nach dem Hochladen
+ausführen (`docs/betrieb.md` §2).
 
 **Frische Installation als eigene Schrittkette** (`App\Installer\InstallController`,
 `App\Installer\FirstAdminSetup`, M3-2): `VK_priv` darf nach 01 §2 nie im
