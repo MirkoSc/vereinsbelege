@@ -189,9 +189,9 @@ final readonly class Volltextsuche
     }
 
     /**
-     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>} $zustand
      *
-     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>}
      */
     private function schrittMit(array $zustand, Zugriffsbereich $bereich, Vault $vault): array
     {
@@ -200,33 +200,50 @@ final readonly class Volltextsuche
         // taken has a newer one - so each is indexed once per change.
         $dokumente = $this->artifacts->naechsteSuchdokumente($zustand['cursor'], $this->arten(), $bereich, self::SCHRITT_DOKUMENTE);
 
-        if ($dokumente !== []) {
+        // Worker uploads (issue #52) get their row id when announced but
+        // become visible only on commit - possibly after the cursor passed
+        // them. Those the cursor passed while still reserved are taken in
+        // here once visible (review of #52, issue #53); a document indexed
+        // again gets a newer entry, and the newest entry counts.
+        $nachgeholt = $this->artifacts->sichtbarGeworden($zustand['nachholen'], $this->arten(), $bereich);
+        $zustand['nachholen'] = $this->artifacts->nochReserviert($zustand['nachholen']);
+
+        $ids = array_values(array_unique([...$nachgeholt, ...array_column($dokumente, 'document_id')]));
+        if ($ids !== []) {
             $eintraege = [];
-            foreach ($dokumente as $dokument) {
-                $eintraege[] = [$dokument['document_id'], $this->text($dokument['document_id'], $vault)];
+            foreach ($ids as $id) {
+                $eintraege[] = [$id, $this->text($id, $vault)];
             }
             $teil = $zustand['teile'] + 1;
             $this->speicher->schreibe($zustand['id'], $teil, $this->verschluesseln($zustand['schluessel'], $teil, $eintraege));
             $zustand['teile'] = $teil;
+        }
+        if ($dokumente !== []) {
             $zustand['cursor'] = $dokumente[array_key_last($dokumente)]['bis'];
+            $zustand['nachholen'] = array_values(array_unique([
+                ...$zustand['nachholen'],
+                ...$this->artifacts->reservierteBis($zustand['cursor']),
+            ]));
+            sort($zustand['nachholen']);
         }
         if (count($dokumente) < self::SCHRITT_DOKUMENTE) {
             $zustand['fertig'] = true;
         }
-        $zustand['mitglieder'] = $this->mitglieder($zustand['cursor'], $bereich);
+        $zustand['mitglieder'] = $this->mitglieder($zustand['cursor'], $bereich, $zustand['nachholen']);
         $this->merke($zustand, $vault);
 
         return $zustand;
     }
 
     /**
-     * @param array{fertig: bool, cursor: int}|null $zustand
+     * @param array{fertig: bool, cursor: int, nachholen: list<int>}|null $zustand
      */
     private function standVon(?array $zustand, Zugriffsbereich $bereich): SuchindexStand
     {
         return new SuchindexStand(
             $zustand['fertig'] ?? false,
-            $this->artifacts->zaehleSuchquellenNach($zustand['cursor'] ?? 0, $this->arten(), $bereich),
+            $this->artifacts->zaehleSuchquellenNach($zustand['cursor'] ?? 0, $this->arten(), $bereich)
+                + count($this->artifacts->sichtbarGeworden($zustand['nachholen'] ?? [], $this->arten(), $bereich)),
         );
     }
 
@@ -235,10 +252,14 @@ final readonly class Volltextsuche
      * cost-center scope, the one scope whose members change with an old
      * document (its cost center is set later). A period scope is on
      * `created_at`, which never changes; no scope has nothing to change.
+     * Former reservations not taken in yet ($nachholen) are left out, so
+     * their commit alone does not look like a change of scope.
+     *
+     * @param list<int> $nachholen
      */
-    private function mitglieder(int $cursor, Zugriffsbereich $bereich): string
+    private function mitglieder(int $cursor, Zugriffsbereich $bereich, array $nachholen): string
     {
-        return $bereich->kostenstellen === null ? '' : $this->artifacts->suchdokumenteBis($cursor, $this->arten(), $bereich);
+        return $bereich->kostenstellen === null ? '' : $this->artifacts->suchdokumenteBis($cursor, $this->arten(), $bereich, $nachholen);
     }
 
     /**
@@ -246,7 +267,7 @@ final readonly class Volltextsuche
      * usable for this account, this scope and this vault (it is thrown
      * away then).
      *
-     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}|null
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>}|null
      */
     private function zustand(int $benutzerId, Zugriffsbereich $bereich, Vault $vault): ?array
     {
@@ -272,7 +293,7 @@ final readonly class Volltextsuche
         }
         // An old document entered or left a cost-center scope: what the
         // index holds no longer matches what the viewer may see - start over.
-        if (!hash_equals($gespeichert['mitglieder'], $this->mitglieder($gespeichert['cursor'], $bereich))) {
+        if (!hash_equals($gespeichert['mitglieder'], $this->mitglieder($gespeichert['cursor'], $bereich, $gespeichert['nachholen']))) {
             $this->verwerfen();
 
             return null;
@@ -282,7 +303,7 @@ final readonly class Volltextsuche
     }
 
     /**
-     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string}
+     * @return array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>}
      */
     private function neu(int $benutzerId, Zugriffsbereich $bereich): array
     {
@@ -297,11 +318,12 @@ final readonly class Volltextsuche
             'teile' => 0,
             'fertig' => false,
             'mitglieder' => '',
+            'nachholen' => [],
         ];
     }
 
     /**
-     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>} $zustand
      */
     private function merke(array $zustand, Vault $vault): void
     {
@@ -351,7 +373,7 @@ final readonly class Volltextsuche
     /**
      * One part, decrypted - null when it is missing or not readable.
      *
-     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string} $zustand
+     * @param array{id: string, schluessel: DataKey, benutzer: int, bereich: string, cursor: int, teile: int, fertig: bool, mitglieder: string, nachholen: list<int>} $zustand
      *
      * @return list<array{0: int, 1: string}>|null
      */

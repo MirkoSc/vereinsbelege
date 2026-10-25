@@ -274,6 +274,64 @@ final readonly class KiAuslesung implements ExternerJobHandler
         return self::einreihen($this->jobs, $documentId, $now);
     }
 
+    /**
+     * The attempt a worker `ai_extract` artifact holds (issue #53), or null
+     * when it does not open or lacks the shape the session stores: message,
+     * attempt, hints, and an extraction object exactly when the attempt is
+     * valid. App\Service\Worker\WorkerUebernahme marks a null one
+     * defective.
+     */
+    public function workerVersuch(DocumentArtifact $artefakt, Vault $vault): ?KiVersuch
+    {
+        $daten = $this->daten($artefakt, $vault);
+        $extraktion = $daten['extraktion'] ?? null;
+        if (
+            $daten === null
+            || !is_string($daten['meldung'] ?? null)
+            || !is_array($daten['versuch'] ?? null)
+            || !is_array($daten['hinweise'] ?? null)
+            || !($extraktion === null || (is_array($extraktion) && !array_is_list($extraktion)))
+        ) {
+            return null;
+        }
+        try {
+            $versuch = KiVersuch::fromArray($daten['versuch']);
+        } catch (\UnexpectedValueException | \ValueError | \TypeError) {
+            return null;
+        }
+
+        return $versuch->gueltig() === ($extraktion !== null) ? $versuch : null;
+    }
+
+    /**
+     * Takes over a finished worker `ai_extract` run (issue #53): its last
+     * well-formed attempt ends the run the way the session's own chain ends
+     * (status `ausgewertet` or `ki_fehler`, then the supplier resolution).
+     * False when the run left no usable attempt - the caller falls back to
+     * the session run.
+     */
+    public function workerLaufUebernehmen(Job $workerJob, Vault $vault, \DateTimeImmutable $now): bool
+    {
+        $document = $this->dokument($workerJob);
+        $letzter = null;
+        $letzteNummer = -1;
+        foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
+            if ($artefakt->jobId !== $workerJob->id || $artefakt->seq <= $letzteNummer) {
+                continue;
+            }
+            $versuch = $this->workerVersuch($artefakt, $vault);
+            if ($versuch !== null) {
+                [$letzter, $letzteNummer] = [$versuch, $artefakt->seq];
+            }
+        }
+        if ($letzter === null) {
+            return false;
+        }
+        $this->abschliessen($document, $workerJob, $letzter->gueltig(), $now);
+
+        return true;
+    }
+
     /** Whether a run for $documentId is queued or running right now. */
     public function laeuft(int $documentId): bool
     {
@@ -583,17 +641,8 @@ final readonly class KiAuslesung implements ExternerJobHandler
      */
     private function daten(DocumentArtifact $artefakt, Vault $vault): ?array
     {
-        if ($artefakt->dataEnc === null) {
-            return null;
-        }
-        $json = FieldCipher::decrypt(
-            $vault->openDataKey($artefakt->dekSealed),
-            $artefakt->dataEnc,
-            new FieldContext(self::TABELLE, $artefakt->id, self::SPALTE),
-        );
-        $daten = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
-
-        return is_array($daten) ? $daten : null;
+        // A worker artifact that does not open counts as missing (issue #53).
+        return ArtefaktJson::lesen($artefakt, $vault);
     }
 
     private function mimeType(int $blobId, Vault $vault): string
