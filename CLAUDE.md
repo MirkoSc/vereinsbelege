@@ -102,14 +102,15 @@ und `worker/` für das Worker-Programm (`worker/src/`, Namespace
   Code – Kamera, Bild-, PDF- oder E-Rechnungs-Upload, Erstattungsziel,
   Freitext. Schreibt nur in den Posteingang, kann nichts lesen. Spamschutz
   unsichtbar (E-14).
+  Dazu `/impressum` und `/datenschutz` (pflegbare Texte, ohne Session).
 - **Anwenderseite** (`/app/...`): Posteingang, Belege, Lieferanten, Konten,
   Abgleich, Auswertungen, ZIP-Export (`export.zip`), Audit-Log
   (`audit.view`) – beide auch für Vorstand und Kassenprüfer, die kein
   `admin.*`-Recht haben –, Archiv-Import (`archive.import`) – je nach
   Rolle.
 - **Adminseite** (`/admin/...`): Benutzer, Rollen, Tresor-Freigaben,
-  KI-Anbieter, Mail, Speicher-Backend, Kategorien, Einstellungen, Backup,
-  Update, Systemcheck.
+  KI-Anbieter, Mail, Speicher-Backend, Kategorien, Rechtstexte,
+  Einstellungen, Backup, Update, Systemcheck.
 
 Jede Seite wählt ihren Bereich über `App\View\Area`; daran hängen
 Navigation, Inhaltsbreite und ob die Seite eine Session haben darf. Es gibt

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use App\Admin\BackupController;
 use App\Admin\CategoryController;
+use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\NextcloudSettingsController;
+use App\Admin\RechtstexteController;
 use App\Admin\RoleController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
@@ -34,6 +36,7 @@ use App\App\ErstattungController;
 use App\App\ZahllaufController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
+use App\App\DashboardController;
 use App\App\ErfassungController;
 use App\App\ExportController;
 use App\App\InboxController;
@@ -58,6 +61,7 @@ use App\Http\Router;
 use App\Http\Zugriff;
 use App\Http\ZugriffArt;
 use App\PublicPages\EinreichungController;
+use App\PublicPages\RechtstextController;
 use App\Service\Worker\WorkerAuth;
 use App\View\Area;
 use App\View\ScannerSkripte;
@@ -200,10 +204,22 @@ use App\View\View;
  *        $nextcloudAdmin.
  * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
  *        same reason as $mail: only the reimbursement page needs the
- *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
+ *        database (issue #67/M10-3). Optional like $nextcloudAdmin.
  * @param (\Closure(): ZahllaufController)|null $zahllaeufe built lazily,
  *        same reason as $mail: only the payment runs need the database
- *        (issue #85). Optional and last like $nextcloudAdmin.
+ *        (issue #85). Optional like $nextcloudAdmin.
+ * @param (\Closure(): CodeIntegritaetController)|null $integritaet built
+ *        lazily (issue #79/M13-2): only the integrity check writes the audit
+ *        log. Optional like $nextcloudAdmin.
+ * @param (\Closure(): RechtstextController)|null $rechtstexte built lazily,
+ *        same reason as $mail: /impressum and /datenschutz read their text
+ *        from the settings (issue #80/M13-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): RechtstexteController)|null $rechtstexteAdmin built
+ *        lazily, same reason (issue #80/M13-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): DashboardController)|null $dashboard built lazily,
+ *        same reason as $mail: only the dashboard needs the database (issue
+ *        #72/M11-2). Optional and last; without it /app is the plain start
+ *        page with the quick links (route tables built for other pages).
  */
 return static function (
     Router $router,
@@ -257,9 +273,14 @@ return static function (
     ?\Closure $tresorRotation = null,
     ?\Closure $erstattungen = null,
     ?\Closure $zahllaeufe = null,
+    ?\Closure $integritaet = null,
+    ?\Closure $rechtstexte = null,
+    ?\Closure $rechtstexteAdmin = null,
+    ?\Closure $dashboard = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
+    $integritaet ??= static fn(): never => throw new \LogicException('The code integrity check is not wired into this route table.');
     $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
     // Not wired = closed: a worker route answers with an error, never
     // without its signature check.
@@ -271,6 +292,8 @@ return static function (
     $tresorRotation ??= static fn(): never => throw new \LogicException('The vault key rotation is not wired into this route table.');
     $erstattungen ??= static fn(): never => throw new \LogicException('The reimbursement page is not wired into this route table.');
     $zahllaeufe ??= static fn(): never => throw new \LogicException('The payment runs are not wired into this route table.');
+    $rechtstexte ??= static fn(): never => throw new \LogicException('The legal pages are not wired into this route table.');
+    $rechtstexteAdmin ??= static fn(): never => throw new \LogicException('The legal texts admin page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -300,6 +323,11 @@ return static function (
     $get('/', $oeffentlich, static fn(Request $request, array $params): Response => Response::html(
         $view->render('home', ['title' => ''], Area::Oeffentlich),
     ));
+
+    // Permission: public - Impressum and Datenschutzerklärung (issue
+    // #80/M13-3), no session, like /einreichen.
+    $get('/impressum', $oeffentlich, static fn(Request $r) => $rechtstexte()->impressum($r));
+    $get('/datenschutz', $oeffentlich, static fn(Request $r) => $rechtstexte()->datenschutz($r));
 
     // Login and logout (M3-3, docs/spec/01-sicherheit.md section 3).
     // Permission: public - these are the way in. They are the only public
@@ -342,18 +370,22 @@ return static function (
     $get('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->form($r));
     $post('/anmelden/einladung', $oeffentlich, static fn(Request $r) => $einladung()->submit($r));
 
-    // Start page of the user area. The areas behind it (Belege, Konten, ...)
-    // arrive milestone by milestone - the Posteingang since M4-5; the rest are
-    // already in the
-    // navigation as inactive entries (App\View\Area::navigation()), each with
-    // the right its page will need. Permission: any logged-in account.
-    $get('/app', $angemeldet, static fn(): Response => Response::html(
-        $view->render('app/start', [
-            'title' => '',
-            'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
-            'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
-        ], Area::App),
-    ));
+    // Start page of the user area: the dashboard (issue #72/M11-2, docs/spec/
+    // 05-auswertung-und-export.md section 1). Permission: any logged-in
+    // account - every block on it is checked against its own right and scope
+    // inside App\Service\Report\Dashboard (sums `report.view`, balances
+    // `bank.view`, counts the right of the list they link to), so an account
+    // without any of them sees the quick links only. `?jahr=` is a plain
+    // year, read by App\App\DashboardController.
+    $get('/app', $angemeldet, $dashboard !== null
+        ? static fn(Request $r) => $dashboard()->start($r)
+        : static fn(): Response => Response::html(
+            $view->render('app/start', [
+                'title' => '',
+                'posteingang' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::InboxView),
+                'erfassen' => ($view->berechtigungen() ?? Berechtigungen::keine())->darf(Permission::DocumentSubmitInternal),
+            ], Area::App),
+        ));
 
     // One job step (M4-7, issue #29, docs/spec/06-betrieb.md section 4):
     // `public/js/jobs.js` polls this from the browser of a signed-in person
@@ -975,6 +1007,11 @@ return static function (
     $post('/admin/einreichung/pausieren', $einstellungen, static fn(Request $r) => $einreichungAdmin()->pausieren($r));
     $post('/admin/einreichung/fortsetzen', $einstellungen, static fn(Request $r) => $einreichungAdmin()->fortsetzen($r));
 
+    // Impressum, Datenschutzerklärung, notice on /einreichen (issue #80/M13-3).
+    // Permission: admin.settings, like the submission settings above.
+    $get('/admin/rechtstexte', $einstellungen, static fn(Request $r) => $rechtstexteAdmin()->page($r));
+    $post('/admin/rechtstexte', $einstellungen, static fn(Request $r) => $rechtstexteAdmin()->save($r));
+
     // ZIP export path pattern (05 §2, issue #75/M12-1): folders and file
     // names of the export. Permission: `admin.settings`, same right as
     // Einreichung. The preview uses made-up receipts, so no vault; CSRF on
@@ -1022,4 +1059,12 @@ return static function (
     // Permission: `admin.system`, the same right as Update - the findings are
     // what an update or a maintenance run depends on.
     $get('/admin/systemcheck', $system, static fn(Request $r) => $systemcheck()->page($r));
+
+    // Code integrity check (01 section 8, issue #79/M13-2): current/ against
+    // the per-file checksums of the installed release, as a step chain.
+    // Permission: `admin.system`, like Update - it checks what the updater
+    // installed. CSRF on both writes; they answer JSON to the page's script.
+    $get('/admin/integritaet', $system, static fn(Request $r) => $integritaet()->page($r));
+    $post('/admin/integritaet', $system->alsApi(), static fn(Request $r) => $integritaet()->starten($r));
+    $post('/admin/integritaet/schritt', $system->alsApi(), static fn(Request $r) => $integritaet()->schritt($r));
 };

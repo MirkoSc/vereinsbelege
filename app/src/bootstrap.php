@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\BackupController;
 use App\Admin\CategoryController;
+use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
@@ -11,6 +12,7 @@ use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\ExportSettingsController;
 use App\Admin\NextcloudSettingsController;
+use App\Admin\RechtstexteController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
@@ -27,6 +29,7 @@ use App\Api\UploadController;
 use App\Api\WorkerApiController;
 use App\App\AccountController;
 use App\App\CsvFormatController;
+use App\App\DashboardController;
 use App\App\AuditController;
 use App\App\AuthController;
 use App\App\BuchungController;
@@ -68,6 +71,7 @@ use App\Repository\AllocationRepository;
 use App\Repository\AssignmentRuleRepository;
 use App\Repository\AuditLogRepository;
 use App\Repository\AuthTokenRepository;
+use App\Repository\AuswertungsStandRepository;
 use App\Repository\BankAccountRepository;
 use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
@@ -176,6 +180,7 @@ use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Integritaet\CodeIntegritaet;
 use App\Service\Export\Nextcloud\CurlWebDav;
 use App\Service\Export\Nextcloud\NextcloudAblage;
 use App\Service\Export\Nextcloud\NextcloudZielSpeicher;
@@ -204,6 +209,11 @@ use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\Processing\KiAuslese\Auslesung;
 use App\Service\RateLimiter;
+use App\Service\Rechtstexte\Rechtstexte;
+use App\Service\Report\AuswertungsCache;
+use App\Service\Report\Auswertungsdaten;
+use App\Service\Report\Auswertungsquelle;
+use App\Service\Report\Dashboard;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -233,6 +243,7 @@ use App\Service\Upload\UploadStore;
 use App\Support\FileLogger;
 use App\Support\Version;
 use App\PublicPages\EinreichungController;
+use App\PublicPages\RechtstextController;
 use App\View\View;
 
 // -------------------------------------------------------------------------
@@ -842,6 +853,42 @@ $buchungen = static function () use ($connections, $view, $auditFor): BuchungCon
     );
 };
 
+// Report input (issue #71/#72): decrypted by Auswertungsdaten, kept
+// encrypted in the session by AuswertungsCache for the account it is built
+// for. Every report page takes it from here - the dashboard (#72), "Wohin
+// fließt das Geld" (#73), the Kassenprüfung (#74).
+$auswertungsquelleFor = static fn(\PDO $pdo, int $benutzerId): Auswertungsquelle => new AuswertungsCache(
+    new Auswertungsdaten(
+        new InvoiceRepository($pdo),
+        new BankTransactionRepository($pdo),
+        $zuordnungFor($pdo),
+        new BankAccountService($pdo, new BankAccountRepository($pdo)),
+        new SettingRepository($pdo),
+    ),
+    new AuswertungsStandRepository($pdo),
+    $benutzerId,
+);
+
+// The dashboard on /app (issue #72/M11-2): the controller itself needs no
+// database; the figures behind it open the connection when rendered.
+$dashboardSeite = static fn(): DashboardController => new DashboardController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $auswertungsquelleFor): Dashboard {
+        $pdo = $connections->pdo();
+
+        return new Dashboard(
+            // Behind the login guard: the session holds the account.
+            $auswertungsquelleFor($pdo, new Session()->userId() ?? 0),
+            new DocumentRepository($pdo),
+            new InvoiceRepository($pdo),
+            new BankTransactionRepository($pdo),
+            new RecurringSeriesRepository($pdo),
+        );
+    },
+);
+
 // Reimbursements for one booking (M10-3, issue #67): submissions, receipts
 // and bookings are vault data - only this page opens the connection.
 $erstattungen = static function () use ($connections, $view, $zuordnungFor): ErstattungController {
@@ -1088,7 +1135,12 @@ $kontoauszuege = static function () use ($connections, $view, $auditFor, $paths)
 // validates and stores what comes back. Built lazily like $mail - rendering
 // the cost-center dropdown and checking whether a vault exists both need the
 // database.
+// The maintained legal texts (issue #80/M13-3): read by /einreichen, the
+// public pages and their admin page below.
+$rechtstexteFor = static fn(\PDO $pdo): Rechtstexte => new Rechtstexte(new SettingRepository($pdo), $paths->dataDir());
+
 $einreichen = static function () use (
+    $rechtstexteFor,
     $connections,
     $view,
     $formToken,
@@ -1132,6 +1184,7 @@ $einreichen = static function () use (
         $spamschutzFor($pdo),
         $einstellungen,
         $mailSettingsFor($pdo),
+        $rechtstexteFor($pdo),
     );
 };
 
@@ -1144,6 +1197,25 @@ $einreichungAdmin = static function () use ($connections, $view, $auditFor): Sub
     $pdo = $connections->pdo();
 
     return new SubmissionSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+};
+
+// Impressum, Datenschutzerklärung and the notice on /einreichen (issue
+// #80/M13-3, E-46): public pages without a session and their admin page
+// (`admin.settings`). Built lazily like $mail - only these routes need the
+// database. $rechtstexteFor is defined above $einreichen.
+$rechtstexteSeiten = static function () use ($connections, $view, $rechtstexteFor): RechtstextController {
+    return new RechtstextController($view, $rechtstexteFor($connections->pdo()));
+};
+$rechtstexteAdmin = static function () use ($connections, $view, $auditFor, $rechtstexteFor, $serverCrypto): RechtstexteController {
+    $pdo = $connections->pdo();
+
+    return new RechtstexteController(
+        $view,
+        new Session(),
+        $rechtstexteFor($pdo),
+        $auditFor($pdo),
+        new AiProviderRepository($pdo, $serverCrypto),
+    );
 };
 
 // The ZIP export's path pattern (issue #75/M12-1, docs/spec/
@@ -1179,6 +1251,16 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
         new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
     );
 };
+
+// Code integrity check (issue #79/M13-2, 01 section 8): the files of current/
+// against shared/release_checksums.txt. No business data, no vault; the
+// database only for the audit row of a finished run.
+$integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritaetController(
+    $view,
+    new Session(),
+    new CodeIntegritaet($paths->releaseRoot, $paths->releaseChecksumsFile(), $paths->varDir()),
+    $auditFor($connections->pdo()),
+);
 
 // The Nextcloud target of the export (issue #95, 05 section 2): vault data,
 // the page needs the session's unlocked vault. Permission: `admin.settings`.
@@ -1788,6 +1870,10 @@ $router = new Router();
     $tresorRotation,
     $erstattungen,
     $zahllaeufe,
+    $integritaetSeite,
+    $rechtstexteSeiten,
+    $rechtstexteAdmin,
+    $dashboardSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

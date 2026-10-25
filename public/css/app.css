@@ -386,6 +386,16 @@ main.inhalt {
     border-top: 1px solid var(--farbe-rand);
 }
 
+.fuss-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--abstand-4);
+}
+
+.fuss a {
+    color: inherit;
+}
+
 /* Inhaltsspalten, die nicht breiter als angenehm lesbar werden sollen. */
 .schmal {
     max-width: 36rem;
@@ -1264,6 +1274,67 @@ body.bereich-app:has(.pruefansicht) {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         align-items: start;
     }
+}
+
+/* --- Kennzahlen (Dashboard, Issue #72/M11-2) --- */
+
+/* Kacheln mit einer großen Zahl und ihrer Bezeichnung, als <dl> (Beträge)
+   oder <ul> (Zählwerte mit Link). Mobile first: Zählwerte zwei je Zeile ab
+   360 px; Beträge eine je Zeile, weil „−1.234.567,89 €“ in einer halben
+   Spalte nicht passt - ab etwa 40rem drei nebeneinander. min(100%, …),
+   damit eine Kachel nie breiter als der Bildschirm wird (kein waagerechtes
+   Scrollen). Die Zahl steht immer als Text da; Farbe trägt nichts. */
+.kennzahlen {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr));
+    gap: var(--abstand-3);
+    margin: var(--abstand-4) 0;
+    padding: 0;
+    list-style: none;
+}
+
+.kennzahlen-geld {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+}
+
+.kennzahl {
+    display: flex;
+    flex-direction: column;
+    gap: var(--abstand-1);
+    min-width: 0;
+    margin: 0;
+    padding: var(--abstand-3) var(--abstand-4);
+    background: var(--farbe-flaeche);
+    border: 1px solid var(--farbe-rand);
+    border-radius: var(--radius-gross);
+    overflow-wrap: break-word;
+}
+
+/* Breitere Schirme: höchstens vier Zählwerte je Zeile, damit lange Wörter
+   („wiederkehrende“) nicht mitten im Wort umbrechen. */
+@media (min-width: 30rem) {
+    .kennzahlen:not(.kennzahlen-geld) {
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 11rem), 1fr));
+    }
+}
+
+.kennzahl dt,
+.kennzahl dd {
+    margin: 0;
+}
+
+.kennzahl a {
+    display: flex;
+    flex-direction: column;
+    gap: var(--abstand-1);
+    min-height: var(--tippflaeche);
+}
+
+.kennzahl-wert {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
 }
 
 /* --- Installer: Wiederherstellungsschlüssel (Issue #15, M3-2) --- */

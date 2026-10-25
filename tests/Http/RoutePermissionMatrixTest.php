@@ -52,6 +52,9 @@ final class RoutePermissionMatrixTest extends TestCase
      */
     private const array OEFFENTLICH = [
         '/',
+        // Issue #80/M13-3: the legal pages, without a session.
+        '/impressum',
+        '/datenschutz',
         '/anmelden',
         '/abmelden',
         '/anmelden/bestaetigen',
@@ -254,6 +257,14 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/backups/backup_20260101_120000.zip', false],
             [SystemRole::Finanzen, HttpMethod::Post, '/admin/backups', false],
             [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/backups/backup_20260101_120000.zip', false],
+            // Code integrity check (issue #79/M13-2): admin.system, like Update.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/integritaet', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/integritaet', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/integritaet/schritt', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/integritaet', false],
+            [SystemRole::Finanzen, HttpMethod::Post, '/admin/integritaet', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/integritaet/schritt', false],
+            [SystemRole::Steuerberater, HttpMethod::Get, '/admin/integritaet', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/rollen', true],
             [SystemRole::Admin, HttpMethod::Get, '/admin/benutzer', true],
             [SystemRole::Admin, HttpMethod::Post, '/admin/tresor/7/freigeben', true],
@@ -265,6 +276,13 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/mail', false],
             [SystemRole::Admin, HttpMethod::Get, '/admin/einreichung', true],
             [SystemRole::Vorstand, HttpMethod::Get, '/admin/einreichung', false],
+            // Rechtstexte (M13-3): admin.settings; the pages themselves are public.
+            [SystemRole::Admin, HttpMethod::Get, '/admin/rechtstexte', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/rechtstexte', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/admin/rechtstexte', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/admin/rechtstexte', false],
+            [SystemRole::Kassenpruefer, HttpMethod::Get, '/impressum', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/datenschutz', true],
             // Export pattern (M12-1): admin.settings, like Einreichung -
             // export.zip alone (Vorstand, Finanzen) does not configure it.
             [SystemRole::Admin, HttpMethod::Get, '/admin/export', true],
@@ -817,6 +835,13 @@ final class RoutePermissionMatrixTest extends TestCase
             erstattungen: $stellvertreter,
             // The SEPA payment runs (issue #85), optional.
             zahllaeufe: $stellvertreter,
+            // The code integrity check (issue #79/M13-2), optional.
+            integritaet: $stellvertreter,
+            // Impressum/Datenschutz and their admin page (issue #80/M13-3), optional.
+            rechtstexte: $stellvertreter,
+            rechtstexteAdmin: $stellvertreter,
+            // The dashboard on /app (issue #72/M11-2), optional.
+            dashboard: $stellvertreter,
         );
 
         return $router;

@@ -147,6 +147,28 @@
         </table>
     </div>
 
+    <h3>Kennzahlen</h3>
+    <p class="gedaempft">Große Zahlen mit Bezeichnung, etwa auf dem Dashboard – Beträge als <code>&lt;dl class="kennzahlen kennzahlen-geld"&gt;</code>, Zählwerte mit Link als Liste.</p>
+    <dl class="kennzahlen kennzahlen-geld">
+        <div class="kennzahl">
+            <dt>Einnahmen</dt>
+            <dd class="kennzahl-wert">12.480,00 €</dd>
+        </div>
+        <div class="kennzahl">
+            <dt>Saldo</dt>
+            <dd class="kennzahl-wert">−1.250,00 €</dd>
+            <dd class="klein gedaempft">Fehlbetrag</dd>
+        </div>
+    </dl>
+    <ul class="kennzahlen">
+        <li class="kennzahl">
+            <a href="/admin/designsystem"><span class="kennzahl-wert">3</span><span>Belege in Prüfung</span></a>
+        </li>
+        <li class="kennzahl">
+            <span class="kennzahl-wert">0</span><span>Ohne Link</span>
+        </li>
+    </ul>
+
     <h3>Leerzustand</h3>
     <div class="leer">Keine Einträge vorhanden.</div>
 

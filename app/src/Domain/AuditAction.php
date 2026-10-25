@@ -167,6 +167,8 @@ enum AuditAction: string
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
     /** Issue #66/M10-2: points and thresholds of the matching (field names only). */
     case EinstellungAbgleich = 'einstellung.abgleich';
+    /** Issue #80/M13-3: Impressum/Datenschutz/notice changed (names of the texts only). */
+    case EinstellungRechtstexte = 'einstellung.rechtstexte';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -191,6 +193,12 @@ enum AuditAction: string
     // Backups page (issue #112): file name and whether config.php is in it.
     case BackupErstellt = 'backup.erstellt';
     case BackupHeruntergeladen = 'backup.heruntergeladen';
+
+    // Code integrity check (issue #79/M13-2): the outcome is in the action
+    // itself, so the list shows a difference without an unlocked vault.
+    // Details: version and counts only, never a path.
+    case CodeIntegritaetUnveraendert = 'code.integritaet_unveraendert';
+    case CodeIntegritaetAbweichung = 'code.integritaet_abweichung';
 
     public function label(): string
     {
@@ -270,6 +278,7 @@ enum AuditAction: string
             self::ZahllaufVerworfen => 'SEPA-Zahllauf verworfen',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
+            self::EinstellungRechtstexte => 'Rechtstexte geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
             self::AbgleichVorschlagVerworfen => 'Abgleich-Vorschlag verworfen',
             self::AbgleichVorschlagZurueckgenommen => 'Verworfenen Abgleich-Vorschlag wieder zugelassen',
@@ -310,6 +319,8 @@ enum AuditAction: string
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
             self::BackupErstellt => 'Backup erstellt',
             self::BackupHeruntergeladen => 'Backup heruntergeladen',
+            self::CodeIntegritaetUnveraendert => 'Code-Integrität geprüft: unverändert',
+            self::CodeIntegritaetAbweichung => 'Code-Integrität geprüft: Abweichungen gefunden',
         };
     }
 
@@ -363,11 +374,12 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
-            self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
+            self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
-            self::BackupErstellt, self::BackupHeruntergeladen => null,
+            self::BackupErstellt, self::BackupHeruntergeladen,
+            self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,
         };
     }
 

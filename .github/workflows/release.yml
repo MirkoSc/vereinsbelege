@@ -45,8 +45,21 @@ jobs:
       - name: Stage setup.php (exists from milestone M1-2 on)
         run: if [ -f setup.php ]; then cp setup.php dist/; fi
 
+      # First the release assets (what the updater and setup.php check the
+      # download against), then one line per file inside the ZIP, its path
+      # prefixed with "release/": the per-file checksums of the code
+      # integrity check (docs/spec/01-sicherheit.md section 8, issue #79).
+      # Hashed from the unpacked ZIP, so they describe exactly what lands in
+      # current/. `sha256sum -c --ignore-missing checksums.txt` in a download
+      # folder still checks the assets.
       - name: Generate checksums
-        run: cd dist && sha256sum * > checksums.txt
+        run: |
+          cd dist && sha256sum * > checksums.txt
+          mkdir ../release-dateien && cd ../release-dateien
+          unzip -q "../dist/vereinsbelege-${GITHUB_REF_NAME}.zip"
+          find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum \
+            | sed 's#^\([0-9a-f]\{64\}\)  \./#\1  release/#' >> ../dist/checksums.txt
+          grep -q '^[0-9a-f]\{64\}  release/VERSION$' ../dist/checksums.txt
 
       # Every tag starts as a pre-release for the beta test instance;
       # promoting it to "latest" for the stable channel is a manual step

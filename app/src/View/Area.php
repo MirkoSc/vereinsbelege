@@ -18,7 +18,7 @@ use App\Domain\Permission;
  */
 enum Area: string
 {
-    /** Reachable without an account: submission page, start page, errors. */
+    /** Reachable without an account: submission page, start page, Impressum/Datenschutz, errors. */
     case Oeffentlich = 'oeffentlich';
 
     /** Everything behind the login (/app/...). */
@@ -86,6 +86,7 @@ enum Area: string
             self::Admin => [
                 new NavItem('Update', '/admin/update', recht: Permission::AdminSystem),
                 new NavItem('Systemcheck', '/admin/systemcheck', recht: Permission::AdminSystem),
+                new NavItem('Code-Integrität', '/admin/integritaet', recht: Permission::AdminSystem),
                 new NavItem('Designsystem', '/admin/designsystem'),
                 new NavItem('Benutzer', '/admin/benutzer', recht: Permission::AdminUsers),
                 new NavItem('Rollen', '/admin/rollen', recht: Permission::AdminUsers),
@@ -95,6 +96,7 @@ enum Area: string
                 new NavItem('Worker', '/admin/worker', recht: Permission::AdminSettings),
                 new NavItem('Kostenstellen', '/admin/kostenstellen', recht: Permission::AdminSettings),
                 new NavItem('Einreichung', '/admin/einreichung', recht: Permission::AdminSettings),
+                new NavItem('Rechtstexte', '/admin/rechtstexte', recht: Permission::AdminSettings),
                 new NavItem('Export', '/admin/export', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
