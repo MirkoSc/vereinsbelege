@@ -15,6 +15,7 @@
  * @var \App\Service\Report\Budgetergebnis|null $ergebnis null without an unlocked vault
  * @var bool $pflegen the account may keep budgets (and the vault is unlocked)
  * @var array{kategorien: array<int, string>, kostenstellen: array<int, string>} $auswahl
+ * @var list<int>|null $pflegeKostenstellen the cost centers the account may keep budgets for, null = all (N-07)
  * @var bool $csvErlaubt
  * @var string $csrf
  * @var array<string, string> $felder the form as sent after an error
@@ -125,12 +126,14 @@ $aktiv = '/app/auswertung/budget';
                                 <td class="zahl" data-label="Ausgeschöpft"><?= e(BudgetController::prozent($zeile->ausschoepfungPromille)) ?></td>
                                 <?php if ($pflegen): ?>
                                     <td>
+                                        <?php if ($pflegeKostenstellen === null || in_array($zeile->soll->kostenstelleId, $pflegeKostenstellen, true)): ?>
                                         <form method="post" action="/app/auswertung/budget/<?= e((string) $zeile->soll->id) ?>/loeschen">
                                             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
                                             <input type="hidden" name="jahr" value="<?= e((string) $jahr) ?>">
                                             <input type="hidden" name="grundlage" value="<?= e($grundlage->value) ?>">
                                             <button type="submit" class="knopf knopf-gefahr">Löschen</button>
                                         </form>
+                                        <?php endif; ?>
                                     </td>
                                 <?php endif; ?>
                             </tr>
@@ -172,7 +175,9 @@ $aktiv = '/app/auswertung/budget';
 
             <label for="budget-kostenstelle">Kostenstelle
                 <select id="budget-kostenstelle" name="kostenstelle"<?= $fehlerAn('kostenstelle') ?>>
-                    <option value="">alle Kostenstellen</option>
+                    <?php if ($pflegeKostenstellen === null): ?>
+                        <option value="">alle Kostenstellen</option>
+                    <?php endif; ?>
                     <?php foreach ($auswahl['kostenstellen'] as $id => $name): ?>
                         <option value="<?= e((string) $id) ?>"<?= $gewaehlt(($felder['kostenstelle'] ?? '') === (string) $id) ?>><?= e($name) ?></option>
                     <?php endforeach; ?>

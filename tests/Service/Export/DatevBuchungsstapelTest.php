@@ -93,6 +93,18 @@ final class DatevBuchungsstapelTest extends TestCase
         self::assertSame(substr($lang, -36), DatevBuchungsstapel::belegfeld($lang), 'at most 36, the end is kept');
     }
 
+    public function testBelegfeld1NeverStartsWithAFormulaCharacter(): void
+    {
+        self::assertSame('1+2', DatevBuchungsstapel::belegfeld('+1+2'));
+        self::assertSame('SUM', DatevBuchungsstapel::belegfeld('-+-SUM'));
+        self::assertSame('A1', DatevBuchungsstapel::belegfeld('=A1'), '= is not allowed at all');
+        self::assertSame('cmd', DatevBuchungsstapel::belegfeld('@cmd'));
+        self::assertSame('', DatevBuchungsstapel::belegfeld('+-+'));
+        $lang = str_repeat('A', 10) . '-' . str_repeat('9', 35);
+        self::assertSame(str_repeat('9', 35), DatevBuchungsstapel::belegfeld($lang), 'a sign uncovered by shortening goes too');
+        self::assertSame('RE-17', DatevBuchungsstapel::belegfeld('RE-17'), 'a sign inside stays');
+    }
+
     public function testTextsCannotBreakTheFile(): void
     {
         $felder = self::felder(DatevBuchungsstapel::zeile(new DatevZeile(500, '1800', '2110', new \DateTimeImmutable('2026-01-02'), '', "Sag \"Hallo\";\r\nWelt\tund mehr " . str_repeat('x', 80))));
