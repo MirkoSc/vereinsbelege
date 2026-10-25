@@ -173,11 +173,13 @@ final class SystemCheckTest extends TestCase
             self::assertSame(CheckStatus::Ok, new SystemCheck()->memoryLimit()->status);
             self::assertSame('512 MiB', new SystemCheck()->memoryLimit()->actual);
 
-            // Just below the 256 MiB "ok" mark: a lower value fails to set
-            // once the whole suite has used more memory than that.
-            ini_set('memory_limit', '255M');
-            self::assertSame('255M', ini_get('memory_limit'));
-            self::assertSame(CheckStatus::Warn, new SystemCheck()->memoryLimit()->status);
+            // Another value is followed too. Not lowered below the 256 MiB
+            // "ok" mark: that fails to set once the whole suite uses more
+            // memory than that - the "warn" rating is covered by rateMin().
+            ini_set('memory_limit', '768M');
+            self::assertSame('768M', ini_get('memory_limit'));
+            self::assertSame(CheckStatus::Ok, new SystemCheck()->memoryLimit()->status);
+            self::assertSame('768 MiB', new SystemCheck()->memoryLimit()->actual);
 
             ini_set('memory_limit', '-1');
             self::assertSame(CheckStatus::Ok, new SystemCheck()->memoryLimit()->status);

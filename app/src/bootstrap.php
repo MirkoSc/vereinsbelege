@@ -86,6 +86,7 @@ use App\Repository\NextcloudTargetRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
+use App\Repository\MatchRejectionRepository;
 use App\Repository\MfaBackupCodeRepository;
 use App\Repository\MfaEmailCodeRepository;
 use App\Repository\MfaTotpRepository;
@@ -842,6 +843,7 @@ $abgleichSeite = static function () use ($connections, $view, $auditFor): Abglei
     $audit = $auditFor($pdo);
     $transaktionen = new BankTransactionRepository($pdo);
     $rechnungen = new InvoiceRepository($pdo);
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
 
     return new AbgleichController(
         $view,
@@ -851,8 +853,10 @@ $abgleichSeite = static function () use ($connections, $view, $auditFor): Abglei
             $rechnungen,
             $transaktionen,
             new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
-            new Zuordnung($pdo, new AllocationRepository($pdo), $rechnungen, $transaktionen, new BankAccountService($pdo, new BankAccountRepository($pdo)), $audit),
+            new Zuordnung($pdo, new AllocationRepository($pdo), $rechnungen, $transaktionen, $konten, $audit),
             new SettingRepository($pdo),
+            new MatchRejectionRepository($pdo),
+            $konten,
         ),
         $audit,
     );
