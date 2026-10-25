@@ -315,7 +315,7 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - **Artefakte abgebrochener Versuche** werden verworfen – offene Uploads
     und schon festgeschriebene Ergebnisse samt Blobs
     (`WorkerArtefakte::abgebrochenenVersuchVerwerfen()`): bei `release`,
-    bei `fail` ohne `endgueltig` und beim erneuten Claim (ein abgestürzter
+    bei `fail` ohne `endgueltig` und bei jedem Claim (auch wenn das Aufräumen einer Rückgabe scheiterte; ein abgestürzter
     Worker lässt die Sperre ablaufen). Damit findet `vorhanden` beim
     Anmelden nur Ergebnisse des laufenden Versuchs, nie einen halben Lauf
     eines früheren – und die nach `release` wiederverwendete Versuchsnummer

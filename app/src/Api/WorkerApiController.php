@@ -238,9 +238,10 @@ final readonly class WorkerApiController
             // An earlier attempt that died (lock ran out) may have
             // committed part of its results: this attempt starts clean
             // (issue #248).
-            if ($job->attempts > 1) {
-                $this->artefakte->abgebrochenenVersuchVerwerfen($job);
-            }
+            // Always, not only from the second attempt on: a release whose
+            // cleanup failed leaves the attempt number unchanged (review of
+            // #248). Cheap when there is nothing.
+            $this->artefakte->abgebrochenenVersuchVerwerfen($job);
             $jobs[] = self::jobDaten($job, $lock);
         }
 
@@ -375,11 +376,13 @@ final readonly class WorkerApiController
         if ($job->status !== JobStatus::Laeuft) {
             return self::sperreVerloren();
         }
+        // Clean up while the job is still held - before it becomes
+        // claimable again; the next claim cleans once more anyway.
+        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
         $freigaben = is_int($job->state['freigaben'] ?? null) ? $job->state['freigaben'] : 0;
         if (!$this->jobs->zurueckgebenOhneVersuch($job->id, $lock, ['freigaben' => $freigaben + 1] + $job->state, $freigaben < self::MAX_FREIGABEN)) {
             return self::sperreVerloren();
         }
-        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
         $this->freigaben->nachJob($job);
 
         return Response::json(['status' => JobStatus::Offen->value]);

@@ -2033,7 +2033,7 @@ Getroffen ohne Rückfrage:
   zurück (Code-Review #248). Ein Webhoster ohne die Route
   (älteres Release) bekommt vom Worker weiter `fail` (`WorkerBeendet`).
 - **Abgebrochene Versuche räumen auf:** Bei `release`, `fail` ohne
-  `endgueltig` und beim erneuten Claim werden offene Uploads **und schon
+  `endgueltig` und bei jedem Claim (Review #260: auch ein gescheitertes Aufräumen beim `release` fängt der nächste Claim ab) werden offene Uploads **und schon
   festgeschriebene** Worker-Artefakte des Jobs gelöscht (Blobs mit). Bisher
   blieben festgeschriebene Teilergebnisse stehen, und der nächste Versuch
   bekam für dieselbe `seq` „vorhanden“ – ein Lauf hätte aus zwei Versuchen

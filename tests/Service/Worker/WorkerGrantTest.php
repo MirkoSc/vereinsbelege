@@ -247,8 +247,17 @@ final class WorkerGrantTest extends WorkerTestCase
         self::assertSame(200, $wieder->status, $wieder->body);
         self::assertSame(0, $this->jobs->find($jobId)?->attempts);
 
+        // A release whose cleanup did not get through (simulated: an
+        // artifact of the cut-off attempt is still there): the next claim,
+        // with the same attempt number, still starts clean.
+        $alt = $this->artifacts->reserviere($doc, ArtifactKind::PageImage, 0, str_repeat("\1", 81), $jobId, new \DateTimeImmutable());
+        self::assertNotNull($alt);
+        $this->pdo()->prepare('UPDATE document_artifact SET kind = ?, producer = ? WHERE id = ?')->execute(['page_image', 'worker', $alt]);
+        self::assertCount(1, $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage));
+
         // The next claim counts the same attempt again and starts clean.
         $neu = $this->claimen($id, $schluessel);
+        self::assertSame([], $this->artifacts->fuerDokument($doc, ArtifactKind::PageImage), 'no result of the cut-off attempt survives the claim');
         self::assertSame(1, $neu['versuch']);
         self::assertSame(409, $this->abschluss($id, $schluessel, $jobId, 'release', ['lock' => $job['lock']])->status, 'The old lock is no longer the holder.');
         $this->blobHochladen($id, $schluessel, $neu, 'page_image', 0, random_bytes(5000));
