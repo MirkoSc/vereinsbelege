@@ -36,6 +36,9 @@ use App\App\BuchungController;
 use App\App\AbgleichController;
 use App\App\ErstattungController;
 use App\App\ZahllaufController;
+use App\App\DatevController;
+use App\Admin\DatevSettingsController;
+use App\Service\Export\DatevExport;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -1017,6 +1020,51 @@ $export = static function () use ($connections, $view, $auditFor, $paths, $logge
     );
 };
 
+// The DATEV export (issue #93, E-49, docs/spec/05-auswertung-und-export.md
+// section 4): bookings, accounts and receipt numbers are vault data - only
+// these pages open the connection. The file is built in memory.
+$datev = static function () use ($connections, $view, $auditFor): DatevController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+    $settings = new SettingRepository($pdo);
+    $transaktionen = new BankTransactionRepository($pdo);
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+
+    return new DatevController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new DatevExport(
+            new Buchungen($pdo, $transaktionen, $konten, $kategorien, BelegStandard::fromSettings($settings)),
+            new TransferRepository($pdo),
+            new AllocationRepository($pdo),
+            new InvoiceRepository($pdo),
+            $kategorien,
+            $konten,
+            $settings,
+        ),
+        $auditFor($pdo),
+    );
+};
+
+// DATEV settings (issue #93): plaintext configuration; account names are
+// shown when the session's vault is unlocked.
+$datevAdmin = static function () use ($connections, $view, $auditFor): DatevSettingsController {
+    $pdo = $connections->pdo();
+    $kontoRecords = new BankAccountRepository($pdo);
+
+    return new DatevSettingsController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new SettingRepository($pdo),
+        new CategoryRepository($pdo),
+        $kontoRecords,
+        new BankAccountService($pdo, $kontoRecords),
+        $auditFor($pdo),
+    );
+};
+
 // The archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
 // export.md section 3): the ZIP arrives through the chunk upload with a
 // larger limit and is read in place; the import writes documents with the
@@ -1873,6 +1921,8 @@ $router = new Router();
     $rechtstexteSeiten,
     $rechtstexteAdmin,
     $dashboardSeite,
+    $datev,
+    $datevAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

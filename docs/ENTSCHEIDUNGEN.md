@@ -1316,3 +1316,79 @@ ob „Belege in Prüfung“ nur Status `in_pruefung` (statt der ganzen
 Prüf-Warteschlange) meinen soll; ob unbezahlte Rechnungen aus der Zeit
 vor dem Abgleich mitgezählt werden sollen; ob inaktive Konten in den
 Kontoständen erscheinen sollen (derzeit ja, markiert).
+
+## E-49 ❓ DATEV-Export (Buchungsstapel) für den Steuerberater (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #93 (keine Migration), 05 §4, 01 §4 (Routen), 02 `setting`*
+
+Das Issue war ein Backlog-Eintrag ohne Abnahmekriterien. Angesetzt wurden
+diese (konservativ):
+
+1. Export der **Buchungen** aller Konten und Kassen eines Zeitraums als
+   DATEV-Format „Buchungsstapel“ (EXTF 700, Kategorie 21,
+   **Formatversion 13**, 125 Spalten), Windows-1252, `;`, CRLF.
+2. Konto/Gegenkonto über eine pflegbare Zuordnung Kategorie → Sachkonto
+   und Bankkonto/Kasse → Sachkonto (Finanzkonto); Berater-/Mandantennummer,
+   Sachkontenlänge, Kontenrahmen als Einstellung (`/admin/datev`,
+   `admin.settings`).
+3. Belegfeld 1 = Belegnummer, Belegdatum = Buchungsdatum (TTMM),
+   Buchungstext ohne personenbezogene Daten.
+4. Recht `export.csv` (Steuerberater, Kassenprüfer, Vorstand, Finanzen,
+   Admin) – und zusätzlich `bank.view`, weil die Datei alle Buchungen
+   zeigt (alle mitgelieferten Rollen haben beides; eine selbst angelegte
+   Rolle nur mit `export.csv` bekommt 403). Zeitraum-Scope auf das
+   Buchungsdatum in SQL.
+5. Entschlüsselt nur in der Nutzer-Session; Datei entsteht im Speicher,
+   nichts auf der Platte; ein kurzer Request (wie der SEPA-Zahllauf, E-42).
+6. Beträge in Integer-Cent, Ausgabe ohne Vorzeichen mit Komma; das
+   Vorzeichen steckt im Soll/Haben-Kennzeichen.
+
+Entscheidungen dabei:
+
+- **Quelle sind die Buchungen, nicht die Belege.** Nur Buchungen haben
+  ein Geldkonto und ein Datum, das der Steuerberater bucht; Belege ohne
+  Zahlung (offene Rechnungen) sind kein Buchungssatz einer
+  Einnahmen-Überschuss-Rechnung. Die Belege selbst liefert der ZIP-Export.
+- **Soll/Haben aus Sicht des Geldkontos:** Geld rein = „S“ auf dem
+  Finanzkonto, Geld raus = „H“; Gegenkonto = Sachkonto der Kategorie.
+  Kein BU-Schlüssel, keine Steuer – Sphären sind aus (E-15); der
+  Steuerberater kontiert Steuer selbst. **Offen für Mirko:** ob
+  Steuerschlüssel/Sphären später mitgeliefert werden sollen.
+- **Umbuchungen** zwischen eigenen Konten (E-38): Ohne Geldtransitkonto
+  ergeben sie **eine** Zeile – die abgehende Hälfte, Gegenkonto = Sachkonto
+  des empfangenden Kontos, im Zeitraum, in dem das Geld abging; die
+  eingehende Hälfte fehlt immer (auch wenn sie im nächsten Zeitraum liegt),
+  so bucht kein Stapel sie doppelt. Mit dem optionalen **Geldtransitkonto**
+  wird jede Hälfte an ihrem Tag gegen dieses Konto gebucht – richtig auch
+  über Monats-/Jahresgrenzen. **Offen für Mirko:** welche Variante der
+  Steuerberater will.
+- **Unvollständiges wird nicht exportiert:** Fehlt einem Konto oder einer
+  Kategorie das Sachkonto, oder ist eine Buchung nicht in EUR, zeigt die
+  Seite die Lücken und bietet keinen Download an (auch serverseitig
+  gesperrt). Ein stiller Lückenstapel wäre beim Steuerberater falsch.
+  Buchungen ohne Kategorie gehen nur mit einem optionalen
+  **Klärungskonto**. Buchungen über 0,00 € fehlen (DATEV lehnt sie ab).
+- **Belegfeld 1** = Rechnungsnummer des ersten zugeordneten Belegs, der
+  **geprüft oder festgeschrieben** ist und im Scope liegt – nie ein
+  unbestätigter KI-Vorschlag. Zeichen außerhalb `A-Z a-z 0-9 $ & % * + - /`
+  fallen weg, höchstens 36 (das Ende bleibt).
+- **Buchungstext** = Kategoriename („Umbuchung“, „ohne Kategorie“) –
+  bewusst **ohne** Gegenseite und Verwendungszweck, die Mitglieder nennen
+  können. **Offen für Mirko:** ob der Steuerberater mehr Text braucht
+  (z. B. Lieferantenname bei Firmen).
+- **Kopf:** „Exportiert von“ leer (kein Personenname), Festschreibung `0`
+  (der Steuerberater prüft vor dem Buchen), WJ-Beginn 1.1. (E-16), ein
+  Stapel höchstens ein Kalenderjahr.
+- **Kein Export-Lauf / keine „schon exportiert“-Markierung** wie beim
+  ZIP-Export (M12-4) – der Stapel ist aus den Buchungen jederzeit gleich
+  wiederholbar. Audit `export.datev` (Zeitraum, Anzahl).
+- **Keine Migration:** Zuordnung und Nummern stehen als JSON im Setting
+  `datev_einstellungen` (Klartext-Konfiguration). Eine gelöschte Kategorie
+  verschwindet still aus der Zuordnung.
+
+Geprüft gegen die öffentliche Formatbeschreibung (Feldregeln im Test
+`tests/Service/Export/DatevBuchungsstapelTest.php`) und zusätzlich mit
+einem unabhängigen Open-Source-Validator, der DATEVs Musterdaten
+nachbildet (keine Befunde). **Offen für Mirko:** ein echter Import beim
+Steuerberater (DATEV Rechnungswesen / Unternehmen online) steht aus;
+Kontenrahmen-Kennung (42/49), Sachkontenlänge und die Sachkonten je
+Kategorie mit dem Steuerberater abstimmen.
