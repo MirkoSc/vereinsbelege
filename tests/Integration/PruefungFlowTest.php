@@ -1848,6 +1848,68 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertSame([], $daten->ibans, 'an IBAN belongs to one supplier only');
     }
 
+    public function testAConflictWithAnotherSupplierIsMarkedInTheAudit(): void
+    {
+        // Issue #245: not learnt, but marked - ids and field names only.
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'SH Beispiel', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body)));
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt), null, 10);
+        self::assertCount(1, $zeilen);
+        self::assertSame($lieferant, $zeilen[0]->entityId);
+        self::assertSame(['felder' => ['iban'], 'andere' => [$anderer], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+        self::assertStringNotContainsString('Müller', $this->rohTabelle('audit_log'));
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN', $seite);
+        self::assertSame([], $this->supplierService()->finde($this->tresor, $lieferant)?->data->ibans);
+    }
+
+    public function testAConflictAloneIsMarkedWithoutAnOfferToTick(): void
+    {
+        $lieferant = $this->supplierService()->anlegen($this->tresor, ['name' => 'Sporthaus Beispiel GmbH', 'rolle' => 'lieferant', 'vat_id' => 'DE123456789'], new \DateTimeImmutable())->id;
+        $anderer = $this->lieferant('Getränke Müller', SupplierRole::Lieferant, self::IBAN);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort()], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('type="checkbox" name="lieferant_lernen"', $seite, 'nothing to learn');
+        self::assertStringContainsString('<input type="hidden" name="lieferant_lernen" value="1">', $seite);
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(entity: 'supplier', entityId: $lieferant), null, 10);
+        self::assertSame([AuditAction::LieferantMerkmalKonflikt->value], array_values(array_filter(
+            array_map(static fn(AuditEntry $e): string => $e->action, $zeilen),
+            static fn(string $a): bool => $a !== AuditAction::LieferantAngelegt->value,
+        )), 'marked, nothing changed');
+        self::assertSame(['felder' => ['iban'], 'andere' => [$anderer], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+    }
+
+    public function testAMissingVatIdIsLearntAndFindsTheSupplierInStepOne(): void
+    {
+        // Issue #245: a supplier without a VAT id learns the receipt's.
+        $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);
+        $id = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Sporthaus Beispeil', 'iban' => ''])])], aufloesen: true);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringContainsString('<li>USt-ID DE123456789</li>', $seite);
+        $this->post('/app/belege/pruefen/' . $id, $this->lernFelder($lieferant, $this->lernStand($seite)));
+
+        self::assertSame('DE123456789', $this->supplierService()->finde($this->tresor, $lieferant)?->data->vatId);
+        $zeilen = new AuditLogRepository($this->pdo())->page(new AuditFilter(aktion: AuditAction::LieferantGeaendert), null, 10);
+        self::assertSame(['felder' => ['aliases', 'vat_id'], 'beleg' => $id], $this->audit->details($zeilen[0], $this->tresor));
+        self::assertStringContainsString('Beim Lieferanten ergänzt: Name als Alias, USt-ID.', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $naechster = $this->beleg();
+        $this->kiLesen([$this->kiAntwort(['supplier' => self::partner(['name' => 'Ganz anderer Name', 'iban' => ''])])], aufloesen: true);
+        self::assertStringContainsString('Lieferant automatisch erkannt (Stufe 1 – USt-ID).', $this->get('/app/belege/pruefen/' . $naechster, entsperrt: true)->body);
+    }
+
     public function testAPlanChangedSinceThePageWasShownTeachesNothing(): void
     {
         $lieferant = $this->lieferant('Sporthaus Beispiel', SupplierRole::Lieferant);

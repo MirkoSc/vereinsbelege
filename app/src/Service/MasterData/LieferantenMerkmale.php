@@ -21,11 +21,14 @@ use App\Domain\SupplierData;
  *   "SPORTHAUS BEISPIEL GmbH" teaches "Sporthaus Beispiel" nothing.
  * - Creditor id: valid and only when the supplier has none; a different one
  *   is reported, not replaced (one of the two is wrong).
+ * - VAT id, tax number (issue #245): like the creditor id - valid (the
+ *   form's rules) and only when the supplier has none; a different one is
+ *   reported, not replaced (more likely a misread than a second id).
  * - Mandate reference: only together with the supplier's creditor id (or
  *   the one learnt now) - without it, it says nothing about who collects.
  * - At most SupplierService::LIST_MAX per list, like the form.
  *
- * Whether an IBAN, creditor id or the name belongs to another supplier
+ * Whether an IBAN, creditor id, VAT id, tax number or the name belongs to another supplier
  * needs the blind indexes - SupplierService::lernbar() checks that on top.
  */
 final class LieferantenMerkmale
@@ -92,6 +95,28 @@ final class LieferantenMerkmale
             }
         }
 
-        return new Merkmale($iban, $alias, $neueGlaeubigerId, $neuesMandat, $hinweise);
+        $ustId = SupplierKeys::kennung($wert('vat_id'));
+        $neueUstId = null;
+        if ($ustId !== '' && preg_match(SupplierService::USTID_MUSTER, $ustId) === 1) {
+            $vorhandeneUstId = SupplierKeys::kennung($lieferant->vatId);
+            if ($vorhandeneUstId === '') {
+                $neueUstId = $ustId;
+            } elseif ($vorhandeneUstId !== $ustId) {
+                $hinweise[] = sprintf('Der Beleg nennt die USt-ID %s, beim Lieferanten steht %s – nicht übernommen.', $ustId, $vorhandeneUstId);
+            }
+        }
+
+        $steuernummer = trim((string) preg_replace('/\s+/u', ' ', $wert('tax_number')));
+        $neueSteuernummer = null;
+        if (SupplierKeys::steuernummer($steuernummer) !== '' && mb_strlen($steuernummer) <= SupplierService::TEXT_MAX) {
+            $vorhandeneSteuernummer = SupplierKeys::steuernummer($lieferant->taxNumber);
+            if ($vorhandeneSteuernummer === '') {
+                $neueSteuernummer = $steuernummer;
+            } elseif ($vorhandeneSteuernummer !== SupplierKeys::steuernummer($steuernummer)) {
+                $hinweise[] = sprintf('Der Beleg nennt die Steuernummer %s, beim Lieferanten steht %s – nicht übernommen.', $steuernummer, $lieferant->taxNumber);
+            }
+        }
+
+        return new Merkmale($iban, $alias, $neueGlaeubigerId, $neuesMandat, $hinweise, vatId: $neueUstId, taxNumber: $neueSteuernummer);
     }
 }

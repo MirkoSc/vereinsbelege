@@ -479,7 +479,8 @@ Recht `supplier.manage` – Admin, Finanzen; auch zum Lesen).
   die Liste zeigt dann „prüfen“ und „Neue Lieferanten prüfen“
   (`/app/lieferanten?pruefen=1`). `needs_review` wird 0 durch „Als geprüft
   markieren“ (Audit `lieferant.geprueft`) und durch Speichern des Formulars,
-  nicht durch Zusammenführen.
+  nicht durch Zusammenführen. Gelernte Merkmale aus bestätigten Belegen und
+  der Audit `lieferant.merkmal_konflikt`: 03 §7 „Stand M7-6b“/„Stand #245“.
   `default_sphere` bleibt NULL und unsichtbar (E-15).
 
 **Pflicht-Tests:** `SupplierKeysTest` (Namens-Normalisierung inkl.

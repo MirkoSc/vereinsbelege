@@ -78,6 +78,12 @@ enum AuditAction: string
     case LieferantZusammengefuehrt = 'lieferant.zusammengefuehrt';
     /** Issue #48/M7-6: a supplier the AI created was looked at ("Als geprüft markieren"). */
     case LieferantGeprueft = 'lieferant.geprueft';
+    /**
+     * Issue #245: a confirmed receipt named a value that another supplier
+     * holds already - not learnt, marked: details `{felder, andere, beleg}`
+     * (field names and ids only).
+     */
+    case LieferantMerkmalKonflikt = 'lieferant.merkmal_konflikt';
 
     case KontoAngelegt = 'konto.angelegt';
     case KontoGeaendert = 'konto.geaendert';
@@ -254,6 +260,7 @@ enum AuditAction: string
             self::LieferantGeloescht => 'Lieferant gelöscht',
             self::LieferantZusammengefuehrt => 'Lieferanten zusammengeführt',
             self::LieferantGeprueft => 'Neuen Lieferanten geprüft',
+            self::LieferantMerkmalKonflikt => 'Merkmal eines anderen Lieferanten nicht übernommen',
             self::KontoAngelegt => 'Konto angelegt',
             self::KontoGeaendert => 'Konto geändert',
             self::KontoGeloescht => 'Konto gelöscht',
@@ -363,7 +370,7 @@ enum AuditAction: string
             self::KostenstelleAngelegt, self::KostenstelleGeaendert, self::KostenstelleGeloescht => 'cost_center',
             self::KategorieAngelegt, self::KategorieGeaendert, self::KategorieGeloescht => 'category',
             self::LieferantAngelegt, self::LieferantGeaendert, self::LieferantGeloescht,
-            self::LieferantZusammengefuehrt, self::LieferantGeprueft => 'supplier',
+            self::LieferantZusammengefuehrt, self::LieferantGeprueft, self::LieferantMerkmalKonflikt => 'supplier',
             self::KontoAngelegt, self::KontoGeaendert, self::KontoGeloescht => 'bank_account',
             self::KassensturzErfasst => 'cash_count',
             self::CsvFormatAngelegt, self::CsvFormatGeaendert, self::CsvFormatGeloescht => 'csv_profile',

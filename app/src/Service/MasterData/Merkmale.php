@@ -7,16 +7,17 @@ namespace App\Service\MasterData;
 use App\Domain\SupplierData;
 
 /**
- * What a confirmed receipt teaches its supplier (issue #201/M7-6b,
+ * What a confirmed receipt teaches its supplier (issue #201/M7-6b, #245,
  * docs/spec/03-erfassung-und-ki.md section 7): at most one new IBAN, one
- * new alias, a creditor id the supplier had none of and one new mandate
- * reference - each null when there is nothing new. Planned by
+ * new alias, a creditor id, VAT id or tax number the supplier had none of
+ * and one new mandate reference - each null when there is nothing new. Planned by
  * App\Service\MasterData\LieferantenMerkmale, written by
  * SupplierService::merkmaleErgaenzen().
  *
  * $hinweise say what was left out and why - with values, for the review
- * page only, never for a log, a flash message or the audit. $konflikt: a
- * value was left out because another supplier holds it (ohne()).
+ * page only, never for a log, a flash message or the audit. $konflikte:
+ * the values left out because another supplier holds them - `felder()` key
+ * => that supplier's id (ohne(), issue #245), ids only, for the audit.
  */
 final readonly class Merkmale
 {
@@ -24,6 +25,7 @@ final readonly class Merkmale
 
     /**
      * @param list<string> $hinweise
+     * @param array<string, int> $konflikte
      */
     public function __construct(
         public ?string $iban = null,
@@ -31,13 +33,16 @@ final readonly class Merkmale
         public ?string $creditorId = null,
         public ?string $mandateRef = null,
         public array $hinweise = [],
-        public bool $konflikt = false,
+        public array $konflikte = [],
+        public ?string $vatId = null,
+        public ?string $taxNumber = null,
     ) {
     }
 
     public function leer(): bool
     {
-        return $this->iban === null && $this->alias === null && $this->creditorId === null && $this->mandateRef === null;
+        return $this->iban === null && $this->alias === null && $this->creditorId === null && $this->mandateRef === null
+            && $this->vatId === null && $this->taxNumber === null;
     }
 
     /**
@@ -52,6 +57,8 @@ final readonly class Merkmale
             'iban' => $this->iban !== null,
             'creditor_id' => $this->creditorId !== null,
             'mandate_refs' => $this->mandateRef !== null,
+            'vat_id' => $this->vatId !== null,
+            'tax_number' => $this->taxNumber !== null,
         ]));
     }
 
@@ -62,13 +69,31 @@ final readonly class Merkmale
      */
     public function bezeichnungen(): array
     {
-        return array_values(array_map(static fn(string $feld): string => match ($feld) {
+        return array_values(array_map(self::bezeichnung(...), $this->felder()));
+    }
+
+    /**
+     * German labels of the values another supplier holds, without any value
+     * - for a flash message.
+     *
+     * @return list<string>
+     */
+    public function konfliktBezeichnungen(): array
+    {
+        return array_values(array_map(self::bezeichnung(...), array_keys($this->konflikte)));
+    }
+
+    private static function bezeichnung(string $feld): string
+    {
+        return match ($feld) {
             'aliases' => 'Name als Alias',
             'iban' => 'IBAN',
             'creditor_id' => 'Gläubiger-ID',
             'mandate_refs' => 'Mandatsreferenz',
+            'vat_id' => 'USt-ID',
+            'tax_number' => 'Steuernummer',
             default => $feld,
-        }, $this->felder()));
+        };
     }
 
     /**
@@ -91,15 +116,22 @@ final readonly class Merkmale
         if ($this->mandateRef !== null) {
             $zeilen[] = 'Mandatsreferenz ' . $this->mandateRef;
         }
+        if ($this->vatId !== null) {
+            $zeilen[] = 'USt-ID ' . $this->vatId;
+        }
+        if ($this->taxNumber !== null) {
+            $zeilen[] = 'Steuernummer ' . $this->taxNumber;
+        }
 
         return $zeilen;
     }
 
     /**
-     * Without the value of $feld (`felder()` key), with $hinweis added -
-     * another supplier holds it.
+     * Without the value of $feld (`felder()` key), with $hinweis added.
+     * $anderer: the supplier that holds it already - a conflict (#245);
+     * null when it is left out for another reason (the club's own IBAN).
      */
-    public function ohne(string $feld, string $hinweis): self
+    public function ohne(string $feld, string $hinweis, ?int $anderer = null): self
     {
         return new self(
             iban: $feld === 'iban' ? null : $this->iban,
@@ -108,7 +140,9 @@ final readonly class Merkmale
             // A mandate reference only makes sense with its creditor id.
             mandateRef: in_array($feld, ['mandate_refs', 'creditor_id'], true) ? null : $this->mandateRef,
             hinweise: [...$this->hinweise, $hinweis],
-            konflikt: true,
+            konflikte: $anderer === null ? $this->konflikte : [...$this->konflikte, $feld => $anderer],
+            vatId: $feld === 'vat_id' ? null : $this->vatId,
+            taxNumber: $feld === 'tax_number' ? null : $this->taxNumber,
         );
     }
 
@@ -119,7 +153,7 @@ final readonly class Merkmale
     public function fingerabdruck(\App\Service\Crypto\BlindIndex $index): string
     {
         return bin2hex($index->forValue(self::ZWECK, json_encode(
-            [$this->iban, $this->alias, $this->creditorId, $this->mandateRef],
+            [$this->iban, $this->alias, $this->creditorId, $this->mandateRef, $this->vatId, $this->taxNumber],
             JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
         )));
     }
@@ -133,8 +167,8 @@ final readonly class Merkmale
             address: $daten->address,
             ibans: $this->iban === null ? $daten->ibans : [...$daten->ibans, $this->iban],
             bic: $daten->bic,
-            vatId: $daten->vatId,
-            taxNumber: $daten->taxNumber,
+            vatId: $this->vatId ?? $daten->vatId,
+            taxNumber: $this->taxNumber ?? $daten->taxNumber,
             email: $daten->email,
             website: $daten->website,
             creditorId: $this->creditorId ?? $daten->creditorId,

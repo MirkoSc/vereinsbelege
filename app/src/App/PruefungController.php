@@ -374,6 +374,9 @@ final readonly class PruefungController
             $meldung .= ' Beim Lieferanten ergänzt: ' . implode(', ', $ergebnis->gelernt) . '.';
         }
         $warnungen = $ergebnis->warnungen;
+        if ($ergebnis->konflikte !== []) {
+            $warnungen[] = 'Beim Lieferanten nicht ergänzt, weil bei einem anderen Lieferanten hinterlegt: ' . implode(', ', $ergebnis->konflikte) . ' – bitte unter „Lieferanten“ prüfen und ggf. zusammenführen.';
+        }
         if ($ergebnis->nichtGelernt) {
             $warnungen[] = 'Die neuen Merkmale wurden nicht beim Lieferanten ergänzt – sie haben sich seit dem Anzeigen geändert. Bitte unter „Lieferanten“ prüfen.';
         }

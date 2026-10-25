@@ -288,7 +288,8 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   keine hat (eine abweichende wird gemeldet, nicht ersetzt), Mandatsreferenz
   nur mit dieser Gläubiger-ID. **Nicht** USt-ID/Steuernummer (finden den
   Lieferanten schon in Stufe 1, wenn vorhanden; eine abweichende wäre eher ein
-  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …).
+  Lesefehler) und keine übrigen Angaben (Anschrift, E-Mail …). *Seit #245
+  (E-67) werden USt-ID/Steuernummer gelernt, wenn der Lieferant keine hat.*
 - **Konflikte:** IBAN/Gläubiger-ID eines anderen Lieferanten, oder ein Name,
   der Name/Alias eines anderen ist → nicht lernen, die Seite nennt ihn; volle
   Listen (20) → nicht lernen, Hinweis. Der Beleg wird immer gespeichert; das
@@ -1828,3 +1829,29 @@ Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
 richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
 dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
 zeigen soll.
+
+## E-67 ❓ Lieferanten lernen USt-ID/Steuernummer; Konflikte im Audit markiert (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Issue #245, 03 §7 „Stand #245“; ergänzt E-29*
+
+- **USt-ID und Steuernummer** werden – anders als bisher in E-29 – gelernt,
+  aber **nur, wenn der Lieferant noch keine hat** (wie die Gläubiger-ID). Das
+  Issue nennt die USt-ID ausdrücklich; ein fehlender Wert schadet nicht, und
+  ab dem nächsten Beleg findet Stufe 1 den Lieferanten. Eine **abweichende**
+  wird nur gemeldet, nicht ersetzt – zwei verschiedene USt-IDs eines
+  Lieferanten sind eher ein Lesefehler der KI als eine zweite Kennung.
+- **Konflikt = markieren, nicht überschreiben:** gehört ein Wert schon einem
+  anderen Lieferanten, wird er nicht übernommen (wie E-29), zusätzlich aber
+  dauerhaft festgehalten: Audit `lieferant.merkmal_konflikt` am bestätigten
+  Lieferanten mit Feldnamen, ID des anderen und Beleg-ID (kein Klartext) und
+  eine Warnung nach dem Speichern. Kein eigenes Datenbankfeld, keine
+  Konfliktliste und kein `needs_review` – „Neue Lieferanten prüfen“ bleibt für
+  KI-Neuanlagen; aufgelöst wird über Zusammenführen.
+- Markiert wird beim ersten Speichern, wenn die Person „Neue Merkmale …
+  ergänzen“ angekreuzt lässt (ohne Haken wollte sie bewusst nichts
+  übernehmen); gibt es nur Konflikte und nichts zu lernen, zeigt die Seite
+  kein Ankreuzfeld und markiert beim Speichern immer.
+
+Offen für Mirko: ob Konflikte statt (nur) im Audit-Log als eigene Liste
+„Mögliche Doppelte“ unter „Lieferanten“ erscheinen sollen; ob eine
+abweichende USt-ID den Lieferanten doch ersetzen oder zur Prüfung markieren
+soll.

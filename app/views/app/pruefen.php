@@ -393,6 +393,9 @@ $rollenGruppe = [
                                     <li><?= e($zeile) ?></li>
                                 <?php endforeach; ?>
                             </ul>
+                        <?php elseif ($lernen['merkmale']->konflikte !== []): ?>
+                            <?php /* Nothing to learn, only values of another supplier: saving marks them (issue #245). */ ?>
+                            <input type="hidden" name="lieferant_lernen" value="1">
                         <?php endif; ?>
                         <p class="feld-hilfe" id="pruefen-lernen-hilfe">
                             <?php if ($lernenZeilen !== []): ?>

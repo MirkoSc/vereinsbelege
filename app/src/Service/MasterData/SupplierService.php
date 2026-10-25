@@ -61,6 +61,9 @@ final readonly class SupplierService
     public const int MANDAT_MAX = 35;
 
     /** A SEPA creditor id, after SupplierKeys::kennung(). */
+    /** A VAT id: country code and up to 13 characters (form and learning, #245). */
+    public const string USTID_MUSTER = '/^[A-Z]{2}[A-Z0-9+*]{2,13}$/';
+
     public const string GLAEUBIGER_ID_MUSTER = '/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/';
 
     private const string TABLE = 'supplier';
@@ -349,12 +352,13 @@ final readonly class SupplierService
     /**
      * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
      * LieferantenMerkmale::neue(), minus an IBAN of the club's own
-     * (istVereinsIban()), minus an IBAN or creditor id that
+     * (istVereinsIban()), minus an IBAN, creditor id, VAT id or tax number that
      * already belongs to another supplier - learning it would make two
      * suppliers out of one key; they are merged instead - and minus a name
      * that is another supplier's name or alias: it would make step 4 of the
      * resolution ambiguous for that one. The hint names the other supplier,
-     * for the review page only. $sperren reads those keys with `FOR UPDATE`
+     * for the review page only; Merkmale::$konflikte keeps its id for the
+     * audit (issue #245). $sperren reads those keys with `FOR UPDATE`
      * (gap locks included), so two saves cannot teach one IBAN to two
      * suppliers at the same moment.
      *
@@ -370,6 +374,8 @@ final readonly class SupplierService
         $pruefen = [
             ['iban', SupplierKeyKind::Iban, $merkmale->iban],
             ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId],
+            ['vat_id', SupplierKeyKind::VatId, $merkmale->vatId === null ? null : SupplierKeys::kennung($merkmale->vatId)],
+            ['tax_number', SupplierKeyKind::TaxNumber, $merkmale->taxNumber === null ? null : SupplierKeys::steuernummer($merkmale->taxNumber)],
             ['aliases', SupplierKeyKind::Name, $merkmale->alias === null ? null : SupplierKeys::name($merkmale->alias)],
         ];
         foreach ($pruefen as [$feld, $kind, $wert]) {
@@ -383,7 +389,7 @@ final readonly class SupplierService
             $anderer = $this->finde($vault, $andere[0])?->data->name ?? '?';
             $merkmale = $merkmale->ohne($feld, $kind === SupplierKeyKind::Name
                 ? sprintf('Der Name „%s“ gehört bereits zum Lieferanten „%s“ – nicht als Alias übernommen. Ist es derselbe, bitte zusammenführen.', $merkmale->alias, $anderer)
-                : sprintf('Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.', $kind->label(), $anderer));
+                : sprintf('Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.', $kind->label(), $anderer), $andere[0]);
         }
 
         return $merkmale;
@@ -398,8 +404,10 @@ final readonly class SupplierService
      * receipt is no review of the supplier. Opens no transaction of its
      * own; the caller writes the audit entry in it.
      *
-     * Null when there is nothing to learn: the supplier is gone or merged
-     * away.
+     * Null when there is nothing to learn and nothing in conflict: the
+     * supplier is gone or merged away, or the receipt names nothing new. A
+     * plan with conflicts only (Merkmale::$konflikte, issue #245) comes back
+     * without anything written, so the caller can record it.
      *
      * @param array<mixed> $partner `extract-v1` `supplier`
      *
@@ -423,7 +431,7 @@ final readonly class SupplierService
             throw new SupplierRuleViolation('Die Merkmale haben sich seit dem Anzeigen der Seite geändert.');
         }
         if ($merkmale->leer()) {
-            return null;
+            return $merkmale->konflikte === [] ? null : $merkmale;
         }
 
         $daten = $merkmale->anwenden($lieferant->data);
@@ -602,7 +610,7 @@ final readonly class SupplierService
         }
 
         $ustId = SupplierKeys::kennung($feld('vat_id'));
-        if ($ustId !== '' && preg_match('/^[A-Z]{2}[A-Z0-9+*]{2,13}$/', $ustId) !== 1) {
+        if ($ustId !== '' && preg_match(self::USTID_MUSTER, $ustId) !== 1) {
             throw new SupplierRuleViolation('Die USt-ID ist ungültig (Ländercode und bis zu 13 Zeichen, z. B. DE123456789).');
         }
 

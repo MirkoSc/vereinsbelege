@@ -1442,7 +1442,8 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     weder Name noch Alias ist; **Gläubiger-ID** gültig und nur, wenn der
     Lieferant keine hat (eine andere → Hinweis, nicht ersetzt);
     **Mandatsreferenz** nur zusammen mit dieser Gläubiger-ID. Höchstens 20 je
-    Liste, sonst Hinweis. USt-ID/Steuernummer werden nicht gelernt.
+    Liste, sonst Hinweis. USt-ID/Steuernummer: seit #245 wie die
+    Gläubiger-ID (siehe „Stand #245“).
   - *Vereinskonten* (`SupplierService::istVereinsIban()`, Blind Index
     `bank_account.iban`): eine IBAN eines eigenen Kontos des Vereins ist nie
     die eines Lieferanten – bei Lastschrift-Rechnungen und Einnahmen steht oft
@@ -1484,6 +1485,32 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     Die Meldung nennt nur Feldbezeichnungen („Beim Lieferanten ergänzt: IBAN.“).
   - *Unberührt:* festgeschriebene Belege (Speichern ist dort gesperrt) und
     zusammengeführte Lieferanten (weder wählbar noch lernbar).
+
+- **Stand #245** (keine Migration; vorläufige Details E-67): ergänzt M7-6b.
+  - *USt-ID und Steuernummer* werden gelernt wie die Gläubiger-ID: gültig
+    (USt-ID nach dem Formular-Muster `SupplierService::USTID_MUSTER`,
+    Steuernummer mit Buchstaben/Ziffern, höchstens 200 Zeichen) und **nur,
+    wenn der Lieferant keine hat**; eine abweichende wird gemeldet, nicht
+    ersetzt (eher ein Lesefehler). Verglichen wie ihr Schlüssel
+    (`SupplierKeys::kennung()` bzw. `::steuernummer()`). Felder im Audit:
+    `vat_id`, `tax_number`. Eindeutigkeit gegen andere Lieferanten wie bei
+    IBAN/Gläubiger-ID (`lernbar()`, Blind Index nur in der Session).
+  - *Konflikt markiert:* ein Wert, der schon einem **anderen** Lieferanten
+    gehört (IBAN, Gläubiger-ID, USt-ID, Steuernummer, Name/Alias), wird nicht
+    gelernt; `Merkmale::$konflikte` hält Feld → ID des anderen. Beim Speichern
+    (angekreuzt – gibt es nur Konflikte, sendet die Seite statt des
+    Ankreuzfelds ein verstecktes `lieferant_lernen=1` –, Recht
+    `supplier.manage`) schreibt `Pruefung::speichern()` in
+    der Lern-Transaktion den Audit-Eintrag `lieferant.merkmal_konflikt`
+    (Entität: der bestätigte Lieferant) mit `{felder, andere, beleg}` – nur
+    Feldnamen und IDs, kein Wert – auch wenn sonst nichts zu lernen ist. Die
+    Meldung danach nennt nur Feldbezeichnungen („Beim Lieferanten nicht
+    ergänzt, weil bei einem anderen Lieferanten hinterlegt: IBAN – bitte
+    … ggf. zusammenführen.“). Eine Vereins-IBAN ist kein Konflikt (nur
+    Hinweis).
+  - *Schlüsselrotation* (#90): gelernte Werte stehen in den Lieferantendaten;
+    `LieferantenIndexpflege` leitet `supplier_key` daraus neu ab – gelernte
+    IBAN und USt-ID sind im `SchluesselrotationTest` abgedeckt.
 
 ## 8. Kategorisierung
 

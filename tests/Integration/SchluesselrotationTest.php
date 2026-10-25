@@ -84,6 +84,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
     private const string KONTO_IBAN = 'DE02120300000000202051';
     private const string GEGEN_IBAN = 'DE44500105175407324931';
     private const string GELERNTE_IBAN = 'DE75512108001245126199';
+    private const string GELERNTE_USTID = 'DE987654321';
 
     /** For the stand-in handler of one test (anonymous classes cannot capture). */
     public static ?\PDO $pdoFuerHandler = null;
@@ -565,12 +566,14 @@ final class SchluesselrotationTest extends DatabaseTestCase
             'iban' => self::SUPPLIER_IBAN,
         ], $now)->id;
         // A confirmed receipt taught it an alias and a second IBAN (issue
-        // #201): learnt keys must come out of the rotation as well.
+        // #201) and a VAT id (#245): learnt keys must come out of the
+        // rotation as well.
         $service = $this->supplierService();
         $gelernt = $service->finde($tresor, $lieferant) ?? self::fail();
-        $partner = ['name' => 'Müller Sport', 'iban' => self::GELERNTE_IBAN];
+        $partner = ['name' => 'Müller Sport', 'iban' => self::GELERNTE_IBAN, 'vat_id' => self::GELERNTE_USTID];
         $merkmale = $service->lernbar($tresor, $gelernt, $partner, '');
         self::assertSame('Müller Sport', $merkmale->alias);
+        self::assertSame(self::GELERNTE_USTID, $merkmale->vatId);
         $this->pdo()->beginTransaction();
         $service->merkmaleErgaenzen($tresor, $lieferant, $partner, '', $merkmale->fingerabdruck($tresor->blindIndex()), $now);
         $this->pdo()->commit();
@@ -686,6 +689,11 @@ final class SchluesselrotationTest extends DatabaseTestCase
             [SupplierKeyKind::Iban, $index->forValue(SupplierKeyKind::Iban->purpose(), self::GELERNTE_IBAN)],
             new SupplierRepository($this->pdo())->keys($d['lieferant']),
             'Die gelernte IBAN wird unter dem neuen Schlüssel gefunden.',
+        );
+        self::assertSame(
+            [$d['lieferant']],
+            new SupplierRepository($this->pdo())->idsWithKey(SupplierKeyKind::VatId, $index->forValue(SupplierKeyKind::VatId->purpose(), self::GELERNTE_USTID)),
+            'Die gelernte USt-ID wird unter dem neuen Schlüssel gefunden.',
         );
         self::assertSame($d['konto'], new BankAccountRepository($this->pdo())->idWithIban($index->forValue(BankAccountService::IBAN_PURPOSE, self::KONTO_IBAN)));
         self::assertSame(

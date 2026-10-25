@@ -945,6 +945,7 @@ final readonly class Pruefung
         // save (the page offers it only then), only for the supplier the page
         // chose and the person kept, never for one just created from the form.
         $gelernt = [];
+        $konflikte = [];
         $nichtGelernt = false;
         if ($lernenFuer !== null && $darfLieferantAnlegen && $vorher === null && !$lieferantAngelegt && $struktur->supplierId === $lernenFuer) {
             [$partner, $mandat] = $this->belegPartner($document, $vault);
@@ -952,10 +953,20 @@ final readonly class Pruefung
                 $this->pdo->beginTransaction();
                 try {
                     $merkmale = $this->lieferanten->merkmaleErgaenzen($vault, $lernenFuer, $partner, $mandat, $lernenStand, $now);
-                    if ($merkmale !== null) {
+                    if ($merkmale !== null && !$merkmale->leer()) {
                         // Field names only, like every supplier change.
                         $this->audit->record(AuditAction::LieferantGeaendert, $userId, $ip, $lernenFuer, ['felder' => $merkmale->felder(), 'beleg' => $document->id], $now);
                         $gelernt = $merkmale->bezeichnungen();
+                    }
+                    // A value another supplier holds is not learnt but
+                    // marked (issue #245): field names and ids, no value.
+                    if ($merkmale !== null && $merkmale->konflikte !== []) {
+                        $this->audit->record(AuditAction::LieferantMerkmalKonflikt, $userId, $ip, $lernenFuer, [
+                            'felder' => array_keys($merkmale->konflikte),
+                            'andere' => array_values(array_unique(array_values($merkmale->konflikte))),
+                            'beleg' => $document->id,
+                        ], $now);
+                        $konflikte = $merkmale->konfliktBezeichnungen();
                     }
                     $this->pdo->commit();
                 } catch (SupplierRuleViolation) {
@@ -983,7 +994,7 @@ final readonly class Pruefung
             }
         }
 
-        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt);
+        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt, $konflikte);
     }
 
     /**
