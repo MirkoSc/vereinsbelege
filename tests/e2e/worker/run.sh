@@ -14,7 +14,7 @@
 # Usage (repository root, vendor/ installed with dev dependencies):
 #   tests/e2e/worker/run.sh
 # WORKER_IMAGE=<image> uses an image that is already there instead of
-# building worker/Dockerfile (the release workflow tests what it pushes).
+# building worker/Dockerfile (CI and the release workflow build it first).
 #
 # Needs docker with compose and openssl. Leaves nothing behind.
 
@@ -23,11 +23,11 @@ set -euo pipefail
 hier="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$hier/../../.." && pwd)"
 lauf="$hier/.lauf"
-export WORKER_IMAGE="${WORKER_IMAGE:-vereinsbelege-worker:e2e}"
-bauen="${WORKER_IMAGE_BAUEN:-1}"
-if [ "$WORKER_IMAGE" != "vereinsbelege-worker:e2e" ]; then
-    bauen=0
+bauen=0
+if [ -z "${WORKER_IMAGE:-}" ]; then
+    bauen=1
 fi
+export WORKER_IMAGE="${WORKER_IMAGE:-vereinsbelege-worker:e2e}"
 
 dc() {
     docker compose -p vb-worker-e2e --project-directory "$hier" \
@@ -36,6 +36,15 @@ dc() {
 
 treiber() {
     dc exec -T -u www-data webhoster php -d max_execution_time=0 tests/e2e/worker/treiber.php "$@"
+}
+
+# Apache (www-data) creates directories below shared/ the runner's user
+# cannot remove - removed as root inside a container instead.
+weg() {
+    if [ -e "$lauf" ]; then
+        rm -rf "$lauf" 2> /dev/null \
+            || docker run --rm -v "$hier:/e2e" --entrypoint rm mariadb:10.11 -rf /e2e/.lauf
+    fi
 }
 
 schritt() {
@@ -53,13 +62,13 @@ aufraeumen() {
         fi
     fi
     dc down -v --remove-orphans > /dev/null 2>&1 || true
-    rm -rf "$lauf"
+    weg || status=1
     exit "$status"
 }
 trap aufraeumen EXIT
 
 schritt "Test-CA und Server-Zertifikat für https://webhoster"
-rm -rf "$lauf"
+weg
 mkdir -p "$lauf/tls" "$lauf/shared/var"
 (
     cd "$lauf/tls"
@@ -105,10 +114,7 @@ schritt "Worker starten, Scan einreichen"
 dc up -d worker
 treiber einreichen
 
-# The worker sleeps up to its poll interval between heartbeats; a restart
-# wakes it at once (and stops it with SIGTERM on the way).
-dc restart worker
-
+# The worker sees the job with its next heartbeat (poll interval 60 s).
 schritt "Auf das Ergebnis warten und prüfen"
 treiber pruefen 600
 

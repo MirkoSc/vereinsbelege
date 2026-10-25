@@ -4,9 +4,13 @@ name: Worker image
 # issue #55, E-53): linux/arm64 (Raspberry Pi) + linux/amd64 (VPS) at
 # ghcr.io/mirkosc/vereinsbelege-worker.
 #
-#   tag vX.Y.Z           -> end-to-end test, then push `vX.Y.Z` and `beta`
+#   tag vX.Y.Z           -> end-to-end test, then push `vX.Y.Z`, and `beta`
+#                           if it is the highest version tag (a back-ported
+#                           patch never moves a channel backwards)
 #   release promoted     -> `stable` points at that version's image
-#   ("latest" in the UI)    (only if it is the repository's latest release)
+#   ("latest" in the UI)    (only if it is the repository's latest release;
+#                           also set by the tag build when the release was
+#                           promoted before its image was pushed)
 #   pull request         -> multi-arch build only, nothing is pushed
 #
 # Pushes only with the workflow's own GITHUB_TOKEN (packages: write) - no
@@ -46,13 +50,22 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Version from tag
+      - name: Version from tag, channel tags
         id: version
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            hoechster="$(git ls-remote --tags --refs origin 'v*.*.*' | sed 's#.*refs/tags/##' | sort -V | tail -n 1)"
+            tags="${IMAGE}:${GITHUB_REF_NAME}"
+            if [ "$hoechster" = "$GITHUB_REF_NAME" ]; then
+              tags="${tags},${IMAGE}:beta"
+            else
+              echo "::notice::${GITHUB_REF_NAME} is not the highest tag (${hoechster}) - beta stays where it is."
+            fi
+            echo "tags=${tags}" >> "$GITHUB_OUTPUT"
           else
             echo "value=" >> "$GITHUB_OUTPUT"
+            echo "tags=${IMAGE}:pr" >> "$GITHUB_OUTPUT"
           fi
 
       # A tag is tested before anything is pushed: the amd64 image, built
@@ -94,22 +107,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build multi-arch image${{ github.ref_type == 'tag' && ' and push vX.Y.Z + beta' || ' (not pushed)' }}
+      - name: Build multi-arch image${{ github.ref_type == 'tag' && ' and push it' || ' (not pushed)' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: worker/Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.ref_type == 'tag' }}
-          tags: |
-            ${{ env.IMAGE }}:${{ github.ref_type == 'tag' && github.ref_name || 'pr' }}
-            ${{ env.IMAGE }}:beta
+          tags: ${{ steps.version.outputs.tags }}
           build-args: WORKER_VERSION=${{ steps.version.outputs.value }}
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=worker-multiarch
           cache-to: type=gha,mode=max,scope=worker-multiarch
+
+      # The release may have been promoted while this job still ran - the
+      # `stable` job then found no image. Catch up here.
+      - name: Tag as stable if this already is the latest release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          if [ "$latest" = "$GITHUB_REF_NAME" ]; then
+            docker buildx imagetools create --tag "${IMAGE}:stable" "${IMAGE}:${GITHUB_REF_NAME}"
+          fi
 
   # Promoting a pre-release to a full ("latest") release in the GitHub UI
   # moves `stable` to the image of that tag - nothing is rebuilt, the
@@ -151,6 +174,15 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
+          # The tag's build (test + arm64 under QEMU) may still be running;
+          # if it ends after this job, it sets `stable` itself.
+          for _ in $(seq 1 30); do
+            if docker buildx imagetools inspect "${IMAGE}:${TAG}" > /dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for ${IMAGE}:${TAG} ..."
+            sleep 60
+          done
           docker buildx imagetools inspect "${IMAGE}:${TAG}" > /dev/null
           docker buildx imagetools create --tag "${IMAGE}:stable" "${IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:stable"

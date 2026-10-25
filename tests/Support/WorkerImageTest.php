@@ -48,7 +48,7 @@ final class WorkerImageTest extends TestCase
         self::assertMatchesRegularExpression('/^ARG PHP_IMAGE=php:\d+\.\d+\.\d+-cli-trixie$/m', $dockerfile, 'PHP base pinned to a patch release');
         self::assertMatchesRegularExpression('/^ARG COMPOSER_IMAGE=composer:\d+\.\d+\.\d+$/m', $dockerfile);
         self::assertMatchesRegularExpression('/docker-php-ext-install[^\n]*\bpcntl\b/', $dockerfile);
-        self::assertStringContainsString('"pcntl"', $dockerfile, 'the build checks the extension is loaded');
+        self::assertStringContainsString('extension_loaded("pcntl")', $dockerfile, 'the build checks the extension is loaded');
         self::assertMatchesRegularExpression('/^USER worker$/m', $dockerfile);
         self::assertMatchesRegularExpression('/^ENV WORKER_DATEN=\/daten \\\\\n\s*WORKER_ARBEIT=\/arbeit/m', $dockerfile);
         // The web app's code never comes along beyond app/src and the prompts.
@@ -57,10 +57,11 @@ final class WorkerImageTest extends TestCase
 
     public function testTheWorkerProgramRefusesToRunWithoutPcntl(): void
     {
-        self::assertMatchesRegularExpression(
-            "/if \\(!function_exists\\('pcntl_async_signals'\\) && \\(\\\$argv\\[1\\] \\?\\? 'run'\\) === 'run'\\) \\{\\s*fwrite\\(STDERR, [^;]+;\\s*exit\\(1\\);/",
-            self::datei('bin/worker.php'),
-        );
+        $quelle = self::datei('bin/worker.php');
+        $pruefung = strpos($quelle, "!function_exists('pcntl_async_signals')");
+
+        self::assertNotFalse($pruefung, 'bin/worker.php checks for pcntl');
+        self::assertMatchesRegularExpression('/pcntl fehlt[^\n]*\n\s*exit\(1\);/', substr($quelle, $pruefung), 'and ends with an error');
     }
 
     public function testOnlyTagsAndPromotedReleasesPushAndOnlyWithTheWorkflowToken(): void

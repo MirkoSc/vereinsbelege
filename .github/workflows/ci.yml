@@ -100,11 +100,11 @@ jobs:
           context: .
           file: worker/Dockerfile
           load: true
-          tags: vereinsbelege-worker:e2e
+          tags: vereinsbelege-worker:ci-e2e
           cache-from: type=gha,scope=worker-e2e
           cache-to: type=gha,mode=max,scope=worker-e2e
 
       - name: End-to-end test (web host + worker container)
         run: tests/e2e/worker/run.sh
         env:
-          WORKER_IMAGE_BAUEN: '0'
+          WORKER_IMAGE: vereinsbelege-worker:ci-e2e

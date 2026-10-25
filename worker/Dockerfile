@@ -75,9 +75,11 @@ RUN set -eux; \
     chown worker:worker /daten /arbeit; \
     chmod 0700 /daten /arbeit
 
-# Fail the build, not the first job, when a piece is missing.
+# Fail the build, not the first job, when a piece is missing. pcntl is not
+# in composer.json; the other extensions are checked by Composer's platform
+# check when `help` below loads the autoloader.
 RUN set -eux; \
-    php -r 'foreach (["pcntl", "sodium", "curl", "mbstring", "gd", "dom", "xmlreader", "zlib"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing extension $e\n"); exit(1); } }'; \
+    php -r 'exit(extension_loaded("pcntl") ? 0 : 1);'; \
     ocrmypdf --version; \
     tesseract --list-langs 2>&1 | grep -qx deu; \
     tesseract --list-langs 2>&1 | grep -qx eng; \
