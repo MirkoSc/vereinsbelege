@@ -122,7 +122,7 @@ $now = static fn(): DateTimeImmutable => new DateTimeImmutable();
 // The same pieces app/src/bootstrap.php puts together for the web host.
 $blobs = new BlobRepository($pdo);
 $blobService = new BlobService($blobs, new DbBlobBackend($blobs), new FsBlobBackend($paths->blobDir()));
-$vaults = new VaultRepository($pdo);
+$vaults = new VaultRepository($pdo, $crypto->tresorAnker());
 $workers = new WorkerRepository($pdo);
 $jobs = new JobRepository($pdo);
 $documents = new DocumentRepository($pdo);

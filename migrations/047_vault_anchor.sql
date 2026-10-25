@@ -1,0 +1,20 @@
+-- Anchor of the vault public key (security review #78, finding N-01,
+-- issue #240; docs/spec/01-sicherheit.md section 2 "Anker des
+-- Tresor-Schlüssels", decision E-62).
+--
+-- Sealing needs only `vault.public_key`, so whoever can write the database
+-- (or slips a doctored backup into a restore) could otherwise swap in a key
+-- of their own and read every submission from then on. `public_key_mac` is
+-- HMAC-SHA256 over version and public key with a key derived from the server
+-- key in shared/config.php - which is in neither the database nor a default
+-- backup. App\Repository\VaultRepository::current() and the login refuse a
+-- generation whose MAC does not verify.
+--
+-- SQL cannot compute the MAC: the rows that exist get it from PHP right
+-- after this migration, in the same request that applied it (the Migrator's
+-- after-hook, App\Service\Tresor\Erstbeglaubigung). That one moment is the
+-- trust-on-first-use the spec documents; a NULL found later is never
+-- filled in silently again.
+--
+-- Additive and nullable: the previous release neither reads nor writes it.
+ALTER TABLE vault ADD COLUMN public_key_mac VARBINARY(32) NULL AFTER public_key;

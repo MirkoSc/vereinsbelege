@@ -142,6 +142,11 @@ verändert. Er läuft noch mit dem Code des alten Releases – das Update von
 einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
+Wendet `migrate` die Migration 047 an, beglaubigt derselbe Request die
+bestehenden Tresor-Generationen (Erstbeglaubigung, einmal je Installation,
+festgehalten in `shared/vault_anchor.flag` – 01 §2 „Anker des
+Tresor-Schlüssels“, issue #240); zwischen `switch` und `migrate` wird
+nichts versiegelt.
 Die `checksums.txt` des Releases enthält seit M13-2 neben den Assets je
 Datei des Releases eine Zeile `release/<pfad>` (vom Release-Workflow
 erzeugt); der Code-Integritätscheck (01 §8) vergleicht dagegen.
@@ -603,6 +608,19 @@ Rekonstruktion der Adressen aus Tresor-Daten gibt es nicht – sie liegen
 nirgends unter dem Tresor (Folge-Idee: eine an `VK_pub` versiegelte Kopie je
 Konto, dann könnte der Admin nach Weg 2 alle Adressen automatisch neu
 berechnen).
+
+**Anker des Tresor-Schlüssels** (issue #240, 01 §2): Weg 1 und ein
+Backup mit `config.php` übernehmen die MACs aus dem Dump unverändert – ein
+im Backup ausgetauschter `vault.public_key` fällt unter dem echten
+Server-Schlüssel durch, es wird nichts an ihn versiegelt (Systemcheck,
+Audit). Weg 2 beglaubigt die aktuelle Generation im selben Zug per
+Wiederherstellungsschlüssel unter dem neuen Server-Schlüssel neu (Audit
+`tresor.anker_gesetzt`). Ein Backup von vor Migration 047 hat keine MACs:
+der Restore beglaubigt **nie auf Vertrauen** (ein solches Backup könnte
+genauso gut gefälscht sein) – nach Weg 1 bzw. mit `config.php` bleibt der
+Systemcheck rot, bis ein Admin unter `/admin/wiederherstellen` den
+Wiederherstellungsschlüssel eingibt; Weg 2 beweist den Schlüssel ohnehin.
+Jeder Restore schreibt mit `config.php` auch `shared/vault_anchor.flag`.
 
 „Neu beginnen“ (`POST /install/neu`) verwirft in der Phase `zugang` nur den
 Sitzungsstand; die eingespielten Tabellen bleiben, bis das nächste Backup sie

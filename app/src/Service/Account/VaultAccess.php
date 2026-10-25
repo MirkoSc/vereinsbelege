@@ -31,6 +31,14 @@ enum VaultAccess
      */
     case Fehlgeschlagen;
 
+    /**
+     * The newest generation's public key does not carry a valid anchor
+     * (issue #240): it may have been swapped in the database. The vault
+     * stays locked so that this session seals nothing to it; an admin
+     * proves the key with the recovery key (/admin/wiederherstellen).
+     */
+    case Unbeglaubigt;
+
     public function meldung(): ?string
     {
         return match ($this) {
@@ -39,6 +47,8 @@ enum VaultAccess
                 . 'Ein Administrator muss die Freigabe erteilen, bis dahin bleiben Belege verborgen.',
             self::Fehlgeschlagen => 'Der Tresor konnte für Ihren Zugang nicht entsperrt werden. '
                 . 'Bitte wenden Sie sich an einen Administrator.',
+            self::Unbeglaubigt => 'Der Tresor-Schlüssel dieser Installation ist nicht beglaubigt, der Tresor bleibt deshalb gesperrt. '
+                . 'Bitte wenden Sie sich an einen Administrator (Systemcheck, Tresor wiederherstellen).',
         };
     }
 }

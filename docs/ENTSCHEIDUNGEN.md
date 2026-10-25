@@ -2015,3 +2015,62 @@ anlegen, `PUBLIC_KEY` committen (`docs/betrieb.md` §13); ob der vierte
 Host so in Ordnung ist; ob handangepasste `.htaccess` dauerhaft als Befund
 erscheinen soll (Alternative: eine im Admin bestätigte „erwartete“
 Prüfsumme).
+
+## E-62 ❓ Anker des Tresor-Schlüssels: MAC unter dem Server-Schlüssel, Erstbeglaubigung beim Update (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #240 (Befunde N-01, F-10, H-05 aus #78), 01 §2 „Anker des Tresor-Schlüssels“, 02 (`vault.public_key_mac`), 06 §1/§2*
+
+`vault.public_key` war das Einzige, was zum Versiegeln nötig ist – und lag
+unbeglaubigt in der Datenbank. Entschieden:
+
+1. **Anker = HMAC-SHA256 über Version und Schlüssel**, Schlüssel aus dem
+   Server-Schlüssel abgeleitet, in der Spalte `public_key_mac` (Migration
+   047). Keine Signatur (es gibt keinen Signaturschlüssel außerhalb des
+   Servers), keine Datei in `shared/` (der Server-Schlüssel ist schon der
+   Teil, der getrennt gesichert wird; eine zweite Datei müsste Backup,
+   Restore und Rotation zusätzlich mitführen).
+2. **Fail closed:** passt der MAC nicht oder fehlt er, wird nichts
+   versiegelt – `current()` wirft, der Login lässt den Tresor gesperrt.
+   Audit `tresor.anker_abweichung` höchstens einmal je Generation und
+   Stunde (öffentliche Seite darf das Log nicht fluten), Systemcheck rot.
+   Das Audit-Log schreibt in dieser Lage ohne Details weiter; Banner und
+   Benutzerverwaltung bleiben erreichbar.
+3. **Neu beglaubigen nur mit Beweis:** Installer und Rotationsstart (Schlüssel
+   im selben Request erzeugt) und der Wiederherstellungsschlüssel
+   (`/admin/wiederherstellen`, Installer-Zugangsschritt). Eine
+   Tresor-Freigabe beim Login ist **kein** Beweis (jeder kann an `U_pub`
+   versiegeln) – darum beglaubigt der Login nie.
+4. **Bestehende Installationen: Erstbeglaubigung (TOFU)** genau in dem
+   Request, der Migration 047 anwendet (Nach-Haken des `Migrator`,
+   erkannt am Namen `vault_anchor`, nicht an der Nummer) – **einmal je
+   Installation**, festgehalten außerhalb der Datenbank in
+   `shared/vault_anchor.flag` (der Installer schreibt sie mit
+   `config.php`). Sonst könnte ein DB-Schreiber den Moment wiederholen
+   (Spalte löschen, `schema_version` senken, Schlüssel tauschen – Befund
+   aus dem Review von #258). Annahme: im Moment des Updates ist der
+   Schlüssel unverfälscht – ein schon vorher ausgetauschter würde
+   beglaubigt (Stand ohne Anker, nicht schlechter).
+5. **Restore beglaubigt nie auf Vertrauen:** mit `config.php` bzw. altem
+   Server-Schlüssel gelten die MACs des Dumps; ein Backup von vor 047 (oder
+   eines, das sich so ausgibt) bleibt unbeglaubigt, bis der
+   Wiederherstellungsschlüssel den Schlüssel beweist. Weg 2 (neuer
+   Schlüssel) beglaubigt die aktuelle Generation per
+   Wiederherstellungsschlüssel. Eine vorgemerkte Rotations-Generation aus
+   einem Backup mitten in der Rotation bleibt dann unbeglaubigt → Rotation
+   abbrechen und neu starten.
+6. **Lebenszyklus im MAC:** Ab der Bestätigung einer neueren Generation
+   trägt die ältere einen MAC mit eigenem Zweck („retired“); versiegelt
+   wird nur an einen aktiven MAC. Zurückdrehen von Bestätigung oder
+   Stilllegung in der DB bringt die alte Generation nicht zurück (Befund
+   aus dem Review von #258).
+
+Bewusst nicht gelöst (Folge-Ideen im PR): Backup mit `config.php`
+beglaubigt sich selbst; kein Reparaturweg für einen tatsächlich
+ausgetauschten Schlüssel außer Restore; das übrige Backup bleibt ohne MAC
+(H-05 nur teilweise).
+
+Offen für Mirko: ob TOFU beim Update akzeptabel ist oder ob nach dem
+Update zusätzlich die Eingabe des Wiederherstellungsschlüssels verlangt
+werden soll (sicherer, aber ein Ausfall der Einreichung bis dahin); ob nach
+dem Restore eines Backups von vor 047 der rote Check bis zur Eingabe des
+Papierschlüssels so in Ordnung ist; ob die Abweichung zusätzlich per Mail
+an die Admins gehen soll.
