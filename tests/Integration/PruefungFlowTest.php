@@ -406,6 +406,19 @@ final class PruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Bitte den Zahlungsweg wählen.', $antwort->body);
     }
 
+    public function testAnUnpaidExpenseLinksItsGiroCode(): void
+    {
+        $id = $this->beleg();
+        $link = 'href="/app/offen/rechnungen/' . $id . '/girocode"';
+        self::assertStringNotContainsString($link, $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'nothing saved, nothing to pay yet');
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['zahlungsweg' => 'konto', 'aktion' => 'speichern']))->status);
+        self::assertStringContainsString($link, $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['zahlungsweg' => 'bar', 'aktion' => 'speichern']))->status);
+        self::assertStringNotContainsString($link, $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body, 'paid in cash - nothing to transfer');
+    }
+
     public function testASubmissionsWishPrefillsTheZahlungsweg(): void
     {
         foreach (['ueberweisung' => 'erstattung', 'bar' => 'bar', 'keine' => 'konto'] as $art => $weg) {
