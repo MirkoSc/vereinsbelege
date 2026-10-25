@@ -543,14 +543,14 @@ final class BuchungFlowTest extends DatabaseTestCase
         $kasse = $this->kasse('Barkasse', '0,00');
         $felder = $this->buchung($kasse, ['kategorie' => (string) $this->kategorie('Spenden')]);
         $ohne = $this->dispatch(new Request(HttpMethod::Post, '/app/buchungen', cookies: $this->tresorCookie(), post: $felder));
-        self::assertSame(302, $ohne->status);
-        self::assertSame('/app/buchungen/neu', $ohne->headers['Location'] ?? null);
+        self::assertSame(403, $ohne->status);
+        self::assertSame(403, $ohne->status);
         self::assertSame([], $this->alle());
 
         $this->post('/app/buchungen', $felder);
         $id = $this->einzigeBuchung();
         $loeschen = $this->dispatch(new Request(HttpMethod::Post, '/app/buchungen/' . $id . '/loeschen', cookies: $this->tresorCookie(), post: []));
-        self::assertSame('/app/buchungen/' . $id, $loeschen->headers['Location'] ?? null);
+        self::assertSame(403, $loeschen->status);
         self::assertCount(1, $this->alle());
     }
 

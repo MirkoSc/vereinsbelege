@@ -153,7 +153,7 @@ final class SubmissionSettingsFlowTest extends DatabaseTestCase
     {
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/einreichung/pausieren', post: []));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertFalse(EinreichungsEinstellungen::fromSettings(new SettingRepository($this->pdo()))->pausiert);
     }
 

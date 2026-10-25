@@ -554,7 +554,7 @@ final class KiAnbieterFlowTest extends DatabaseTestCase
         ];
 
         foreach ($antworten as $antwort) {
-            self::assertSame(302, $antwort->status);
+            self::assertSame(403, $antwort->status);
         }
         self::assertCount(1, $this->anbieter->all());
         self::assertSame('OpenAI', $this->openai()->name);

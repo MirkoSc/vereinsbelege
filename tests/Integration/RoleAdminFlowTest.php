@@ -129,7 +129,7 @@ final class RoleAdminFlowTest extends DatabaseTestCase
     {
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/rollen', post: ['name' => 'Ohne Token']));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertCount(6, $this->rollen->all());
     }
 

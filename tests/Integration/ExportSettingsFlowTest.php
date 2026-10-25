@@ -131,7 +131,7 @@ final class ExportSettingsFlowTest extends DatabaseTestCase
     {
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/export', post: ['muster' => PfadMuster::ARCHIV]));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(PfadMuster::STANDARD, $this->gespeichert());
     }
 

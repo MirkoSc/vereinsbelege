@@ -160,6 +160,110 @@ final class RateLimiterTest extends DatabaseTestCase
         self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM rate_limit')->fetchColumn());
     }
 
+    /**
+     * Security review N-09 (issue #246): versuch() counts as it checks, so
+     * the attempts let through never exceed the limit - however many
+     * requests ask before the first of them has failed.
+     */
+    public function testVersuchLetsExactlyTheLimitThrough(): void
+    {
+        $jetzt = self::zeit('10:00:00');
+
+        $zugelassen = 0;
+        for ($i = 0; $i < 10; $i++) {
+            $zugelassen += $this->limits->versuch('login.ip', '198.51.100.7', 3, $jetzt) ? 1 : 0;
+        }
+
+        self::assertSame(3, $zugelassen);
+        self::assertTrue($this->limits->isBlocked('login.ip', '198.51.100.7', 3, $jetzt));
+    }
+
+    /**
+     * The interleaving of parallel requests on separate connections: all of
+     * them ask before any of them knows whether its guess was right. With
+     * "isBlocked(), check, registerFailure()" every one of them got
+     * through; with versuch() exactly the limit does.
+     */
+    public function testParallelConnectionsDoNotOvershootTheLimit(): void
+    {
+        $jetzt = self::zeit('10:00:00');
+        $limiter = [$this->limits];
+        for ($i = 0; $i < 4; $i++) {
+            $limiter[] = new RateLimiter(new RateLimitRepository($this->zweiteVerbindung()), windowSeconds: 900);
+        }
+
+        $alt = 0;
+        foreach ($limiter as $l) {
+            $alt += $l->isBlocked('mfa.account', '7', 3, $jetzt) ? 0 : 1;
+        }
+        self::assertSame(5, $alt, 'the read-only check alone lets every parallel request through');
+
+        $zugelassen = 0;
+        foreach ($limiter as $l) {
+            $zugelassen += $l->versuch('mfa.account', '7', 3, $jetzt) ? 1 : 0;
+        }
+        self::assertSame(3, $zugelassen);
+    }
+
+    public function testVersuchStartsANewWindowFromOne(): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:00:00'));
+        }
+
+        self::assertTrue($this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:00')));
+        self::assertTrue($this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:01')));
+        self::assertTrue($this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:02')));
+        self::assertFalse($this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:03')));
+    }
+
+    /** A request with a slightly older clock does not roll a newer window back. */
+    public function testAnOlderClockDoesNotResetANewerWindow(): void
+    {
+        $this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:00'));
+        $this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:14:59'));
+        $this->limits->versuch('login.ip', '198.51.100.7', 3, self::zeit('10:15:01'));
+
+        self::assertTrue($this->limits->isBlocked('login.ip', '198.51.100.7', 3, self::zeit('10:15:02')));
+    }
+
+    /** A success hands its count back - only failures stay counted. */
+    public function testErstattenTakesTheAttemptBack(): void
+    {
+        $jetzt = self::zeit('10:00:00');
+        for ($i = 0; $i < 3; $i++) {
+            self::assertTrue($this->limits->versuch('worker.pair', '198.51.100.7', 3, $jetzt));
+            $this->limits->erstatten('worker.pair', '198.51.100.7', $jetzt);
+        }
+
+        self::assertFalse($this->limits->isBlocked('worker.pair', '198.51.100.7', 3, $jetzt));
+        // Never below zero, and not into a window that has moved on.
+        $this->limits->erstatten('worker.pair', '198.51.100.7', $jetzt);
+        $this->limits->erstatten('worker.pair', '198.51.100.7', self::zeit('10:15:00'));
+        self::assertSame(0, (int) $this->pdo()->query('SELECT `count` FROM rate_limit')->fetchColumn());
+    }
+
+    public function testVersuchWithAnEmptyValueNeitherCountsNorBlocks(): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            self::assertTrue($this->limits->versuch('login.ip', '', 1, self::zeit('10:00:00')));
+        }
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM rate_limit')->fetchColumn());
+    }
+
+    private function zweiteVerbindung(): \PDO
+    {
+        $db = self::configData()['db'];
+        assert(is_array($db));
+
+        return new \PDO(
+            sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $db['host'], $db['port'], $db['name']),
+            (string) $db['user'],
+            (string) $db['password'],
+            [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION, \PDO::ATTR_EMULATE_PREPARES => false, \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC],
+        );
+    }
+
     private static function zeit(string $uhrzeit): \DateTimeImmutable
     {
         return new \DateTimeImmutable('2026-03-01 ' . $uhrzeit);

@@ -1309,8 +1309,7 @@ final class InstallFlowTest extends DatabaseTestCase
 
         // The admin had set up an authenticator app: its secret is server-key
         // ciphertext like the address.
-        new MfaTotpRepository($this->pdo())->put($userId, $alt->encrypt('JBSWY3DPEHPK3PXP'));
-        new MfaTotpRepository($this->pdo())->confirm($userId);
+        new MfaTotpRepository($this->pdo())->putConfirmed($userId, $alt->encrypt('JBSWY3DPEHPK3PXP'), 0);
         new UserRepository($this->pdo())->updateMfaMethod($userId, MfaMethod::Totp);
         // ... and a mail still waiting in the queue, ciphertext under the same key.
         new MailQueueRepository($this->pdo(), $alt)->enqueue('jemand@verein.example', 'Betreff', 'Text');

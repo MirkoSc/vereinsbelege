@@ -275,13 +275,12 @@ final readonly class BackupController
             return 'Bitte erneut anmelden.';
         }
         $konto = (string) $userId;
-        if ($this->limits->isBlocked(PasswordChange::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT)) {
+        // Counted before the check, atomically (N-09, issue #246).
+        if (!$this->limits->versuch(PasswordChange::LIMIT_ACCOUNT, $konto, RateLimiter::LOGIN_LIMIT_PER_ACCOUNT)) {
             return 'Zu viele Versuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.';
         }
         $user = $this->users->findById($userId);
         if ($user === null || !$this->passwords->verify($passwort, $user->passwordHash)) {
-            $this->limits->registerFailure(PasswordChange::LIMIT_ACCOUNT, $konto);
-
             return 'Das Passwort ist falsch – das Backup wurde nicht heruntergeladen.';
         }
         $this->limits->reset(PasswordChange::LIMIT_ACCOUNT, $konto);

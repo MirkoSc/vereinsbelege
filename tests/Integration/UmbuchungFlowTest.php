@@ -426,7 +426,7 @@ final class UmbuchungFlowTest extends DatabaseTestCase
         $this->umbuchungen()->paaren($this->tresor, $ab, $an, UmbuchungMethode::Manuell, $this->userId, '192.0.2.1', new \DateTimeImmutable());
 
         $ohneCsrf = $this->dispatch(new Request(HttpMethod::Post, '/app/buchungen/' . $ab . '/umbuchung/loesen', cookies: $this->tresorCookie(), post: []));
-        self::assertSame('/app/buchungen/' . $ab, $ohneCsrf->headers['Location'] ?? null);
+        self::assertSame(403, $ohneCsrf->status);
         $this->post('/app/buchungen/' . $ab . '/umbuchung/loesen', [], entsperrt: false);
         self::assertNotNull($this->umbuchungen()->fuerBuchung($ab), 'neither without token nor without vault');
         self::assertSame(404, $this->post('/app/buchungen/999999/umbuchung', ['gegenbuchung' => (string) $an])->status);

@@ -111,14 +111,24 @@ final readonly class WorkerKopplung
             return KopplungsErgebnis::abgelehnt('schluessel_ungueltig', 422);
         }
 
+        // Counted before the code is tried, atomically (N-09, issue #246):
+        // parallel guesses cannot overshoot the limit. The read-only check
+        // above only answers a blocked client early.
+        if (
+            !$this->fehlversuche->versuch(self::ZWECK, $ip, self::FEHLER_LIMIT_PRO_IP, $now)
+            || !$this->fehlversuche->versuch(self::ZWECK, 'alle', self::FEHLER_LIMIT_GESAMT, $now)
+        ) {
+            return KopplungsErgebnis::abgelehnt('zu_viele_fehlversuche', 429);
+        }
+
         $normiert = self::normiereCode($code);
         $pairingId = $normiert === null ? null : $this->workers->codeEinloesen($this->codeHash($normiert), $now);
         if ($pairingId === null) {
-            $this->fehlversuche->registerFailure(self::ZWECK, $ip, $now);
-            $this->fehlversuche->registerFailure(self::ZWECK, 'alle', $now);
-
             return KopplungsErgebnis::abgelehnt('code_ungueltig', 403);
         }
+        // A valid code was no failed attempt.
+        $this->fehlversuche->erstatten(self::ZWECK, $ip, $now);
+        $this->fehlversuche->erstatten(self::ZWECK, 'alle', $now);
         // Codes are only handed out while no worker exists; this is the net
         // for a worker paired with an older code in between.
         if ($this->workers->aktueller() !== null) {

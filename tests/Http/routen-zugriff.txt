@@ -61,6 +61,9 @@ POST /einreichen/upload/{id:[0-9a-f]+}/finish -> öffentlich (api)
 POST /einreichen/upload/{id:[0-9a-f]+}/abort -> öffentlich (api)
 GET /app/sicherheit -> angemeldet
 GET /app/sicherheit/einrichten -> angemeldet
+GET /app/sicherheit/bestaetigen -> angemeldet
+POST /app/sicherheit/bestaetigen -> angemeldet
+POST /app/sicherheit/bestaetigen/code-senden -> angemeldet
 POST /app/sicherheit/einrichten/totp/starten -> angemeldet
 POST /app/sicherheit/einrichten/totp/bestaetigen -> angemeldet
 POST /app/sicherheit/einrichten/email/starten -> angemeldet

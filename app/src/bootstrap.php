@@ -133,6 +133,7 @@ use App\Service\Account\Invitation;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\Neuanmeldung;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
 use App\Service\Account\PasswordPolicy;
@@ -1725,6 +1726,12 @@ $sicherheit = static function () use ($connections, $serverCrypto, $view, $mfaSe
             new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
         ),
         $auditFor($pdo),
+        new Neuanmeldung(
+            new UserRepository($pdo),
+            new PasswordHasher(),
+            $mfaServiceFor($pdo),
+            new RateLimiter(new RateLimitRepository($pdo), RateLimiter::LOGIN_WINDOW_SECONDS),
+        ),
     );
 };
 

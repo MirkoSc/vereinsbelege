@@ -378,7 +378,7 @@ final class BankAccountFlowTest extends DatabaseTestCase
             post: [...$this->felder(['art' => 'bank', 'name' => 'Girokonto']), '_csrf' => 'falsch'],
         ));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame([], $this->konten->all());
     }
 

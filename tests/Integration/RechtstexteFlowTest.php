@@ -199,7 +199,7 @@ final class RechtstexteFlowTest extends DatabaseTestCase
 
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/rechtstexte', post: ['impressum' => 'Fremd']));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertTrue($this->rechtstexte()->lesen(Rechtstext::Impressum)->istVorlage);
     }
 

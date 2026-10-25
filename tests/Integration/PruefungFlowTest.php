@@ -292,7 +292,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             post: [...$this->felder(), '_csrf' => 'falsch'],
         ));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(0, $this->anzahlBelege());
     }
 
@@ -891,7 +891,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             cookies: $this->tresorCookie(),
             post: ['_csrf' => 'falsch'],
         ));
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(DocumentStatus::Geprueft, $this->belegStatus($id));
 
         // Outside the period scope the id answers 404, like one that does not exist.

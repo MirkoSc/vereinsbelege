@@ -165,11 +165,17 @@ final readonly class RestoreAccess
             throw new RestoreAccessException('Das eingespielte Backup enthält keinen Tresor.');
         }
 
+        // The attempt is counted here, before key and password are checked,
+        // in one atomic step (N-09, issue #246) - the read-only check above
+        // only spares a blocked client the form validation. A match resets
+        // the counter below.
+        if (!$limits->versuch(self::LIMIT_IP, $ip, RateLimiter::LOGIN_LIMIT_PER_IP, $now)) {
+            throw new RestoreAccessException('Zu viele Versuche. Bitte einige Minuten warten und erneut versuchen.');
+        }
+
         try {
             $tresor = RecoveryKey::parse($recoveryKeyInput)->openVault($aktuell->publicKey(), $aktuell->version);
         } catch (RecoveryKeyException $e) {
-            $limits->registerFailure(self::LIMIT_IP, $ip, $now);
-
             throw new RestoreAccessException(VaultRecovery::meldungFuer(VaultRecovery::problemFuer($e, $recoveryKeyInput, $vaults)));
         }
 
@@ -193,8 +199,6 @@ final readonly class RestoreAccess
             }
         }
         if ($treffer === []) {
-            $limits->registerFailure(self::LIMIT_IP, $ip, $now);
-
             throw new RestoreAccessException(
                 'Zu diesem Passwort gehört kein aktives Admin-Konto. Bitte das bisherige Passwort eines Kontos '
                 . 'eingeben, das Benutzer verwalten darf.',

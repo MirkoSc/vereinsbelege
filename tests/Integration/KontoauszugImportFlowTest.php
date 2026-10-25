@@ -782,7 +782,7 @@ final class KontoauszugImportFlowTest extends DatabaseTestCase
         $this->bankkonto('Girokonto Sparkasse', self::sparkasseIban());
 
         $ohne = $this->dispatch(new Request(HttpMethod::Post, '/app/konten/import', cookies: $this->tresorCookie(), files: $this->datei(self::sparkasse(), 'auszug.sta')));
-        self::assertSame(302, $ohne->status);
+        self::assertSame(403, $ohne->status);
         self::assertSame(0, $this->anzahl('bank_import'));
 
         $id = self::importId($this->hochladen(self::sparkasse()));

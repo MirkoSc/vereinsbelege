@@ -37,6 +37,7 @@ use App\Repository\VaultRepository;
 use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaService;
+use App\Service\Account\Neuanmeldung;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
 use App\Service\Account\PasswordPolicy;
@@ -666,6 +667,7 @@ final class PasswordFlowTest extends DatabaseTestCase
             $crypto,
             new PasswordChange($pdo, new PasswordHasher(), $policy, $limiter),
             $audit,
+            new Neuanmeldung(new UserRepository($pdo), new PasswordHasher(), $mfaService, $limiter),
         );
 
         $passwort = fn(): PasswordController => new PasswordController(

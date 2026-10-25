@@ -2216,3 +2216,62 @@ Getroffen ohne Rückfrage:
   hätte ein drittes Ergebnis (bereinigtes Bild) neben Original und
   Browser-Fassung gebraucht. Entfernt aus Fähigkeiten, Artefakt-Kinds,
   Vorgänger-Regel, Übernahme, Admin-Anzeige und Spec.
+
+## E-68 ❓ Anmeldung und Sitzung härten: Neuanmeldung vor 2FA-Änderung, `__Host-`-Cookie, zentrale CSRF-Prüfung (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #246, 01 §3, `docs/security-checkliste.md`*
+
+Issue #246 (Security-Review #78, Befunde N-08, N-09, N-10, N-14, N-15).
+Details in `docs/spec/01-sicherheit.md` §3.
+
+Entscheidungen dabei:
+- **Neuanmeldung vor 2FA-Änderung (N-08):** Passwort **und** aktueller
+  Faktor – TOTP-Code, E-Mail-Code oder Backup-Code, dieselben drei Wege wie
+  beim Login. Ein Backup-Code genügt bewusst: wer das Handy verloren hat,
+  muss die Methode wechseln können. Gültig **10 Minuten** (Zeit für QR-Code
+  scannen und ersten Code eintippen), die Änderung verbraucht die
+  Bestätigung. Die **erste** Einrichtung (noch kein Faktor) fragt nicht
+  nach – es gibt nichts abzufragen, und der Login hat das Passwort gerade
+  geprüft.
+- Ein **neues TOTP-Geheimnis** liegt bis zur Bestätigung nur in der Session
+  (Chiffrat des Server-Schlüssels), nicht in `mfa_totp` – eine abgebrochene
+  Einrichtung lässt die bestehende App gültig. Keine Migration nötig.
+- **Wechsel auf E-Mail-Code löscht das TOTP-Geheimnis.** Die Anmeldung nimmt
+  einen TOTP-Code unabhängig von der gewählten Methode; ohne Löschen bliebe
+  eine abgewählte (evtl. verlorene) App weiter ein Schlüssel zum Konto.
+- **Rate-Limiter (N-09):** gezählt wird **vor** der Prüfung, atomar
+  (`INSERT … ON DUPLICATE KEY UPDATE`), Erfolg setzt zurück bzw. gibt die
+  eine Zählung zurück. Bewusst nicht umgestellt: die Fehlversuche der
+  Worker-Signatur (256-Bit-Schlüssel, nicht erratbar; sonst ein Schreibzugriff
+  je Poll) und das Stundenbudget der öffentlichen Einreichung (zählt nur
+  Erfolge; zwei zeitgleiche Einreichungen können beide durch – das atomare
+  Upload-Budget begrenzt, was dabei gespeichert werden kann).
+- **Session-Cookie `__Host-sid` über HTTPS (N-14),** über HTTP (nur
+  Docker-Entwicklung) weiter `PHPSESSID`. Übergang: hat der Browser nur das
+  alte `PHPSESSID`, wandert **dieselbe** Session-ID einmal unter
+  `__Host-sid`, das alte Cookie wird gelöscht – kein Massen-Logout. Grund:
+  der Self-Updater führt seine letzten Schritte schon auf dem neuen Release
+  aus; ein dort abgemeldeter Admin käme nicht mehr hinein (die Anmeldeseite
+  ist im Wartungsmodus gesperrt). Keine Neuvergabe der ID dabei (Race mit
+  den Pollern, wie bei `use_strict_mode`); der nächste Login vergibt sie neu.
+- **2FA-Pflicht auch für JSON-Routen (N-10):** 403 mit `weiter` statt
+  Umleitung; die Poller (`jobs.js`, `rasterung.js`) halten bei 403 an, die
+  Einrichtungsseiten unter `/app/sicherheit/*` bleiben offen.
+- **Zentrale CSRF-Prüfung (N-15)** im Routen-Wrapper für jede POST-Route
+  (hinter dem Login-Guard), Antwort 403 (HTML-Seite „Formular abgelaufen“
+  bzw. JSON). Ausnahmen nur `/einreichen*` (Formular-Token) und
+  `/api/worker/*` (HMAC), festgeschrieben in `App\Http\CsrfSchutz::AUSNAHMEN`
+  und per Test. Die bisherigen Prüfungen in den Controllern bleiben.
+  Folge: ein abgelaufenes Formular auf der Anmeldeseite zeigt jetzt die
+  403-Seite mit Link statt das Formular mit Hinweis.
+
+- Eine **gestartete TOTP-Einrichtung** hat ihr eigenes 10-Minuten-Fenster ab
+  Start; läuft die Bestätigung beim QR-Scannen ab, lässt sie sich trotzdem
+  abschließen. „Code per E-Mail senden“ auf der Bestätigungsseite zählt
+  gegen das Limit des zweiten Faktors.
+- Skript-Anfragen (Token im Header `X-CSRF-Token` oder `Accept: application/json`)
+  bekommen die 403 als JSON, auch auf Routen ohne API-Deklaration (Update-,
+  Backup-, Speicher-Schrittketten).
+
+Offen für Mirko: ob 10 Minuten passen; ob die erste Einrichtung zusätzlich
+das Passwort verlangen soll; ob die 403-Seite beim Login statt dessen das
+Formular neu zeigen soll.

@@ -71,6 +71,11 @@ final readonly class WorkerAuth
 
     public function pruefen(Request $request, \DateTimeImmutable $now): Worker|Response
     {
+        // Read, then counted per failure - not RateLimiter::versuch() (N-09,
+        // issue #246), deliberately: a signature under a 256-bit key cannot
+        // be guessed, so a few parallel failures past the limit cost
+        // nothing, while counting every legitimate poll first would cost a
+        // write per request. The counter only keeps noise down.
         if ($this->fehlversuche->isBlocked(self::ZWECK_FEHLER, $request->ip, self::FEHLER_LIMIT_PRO_IP, $now)) {
             return self::antwort(429, 'zu_viele_fehlversuche', 'Zu viele fehlgeschlagene Anmeldungen – bitte später erneut versuchen.');
         }
@@ -126,10 +131,11 @@ final readonly class WorkerAuth
         }
 
         $id = (string) $worker->id;
-        if ($this->anfragen->isBlocked(self::ZWECK_ANFRAGEN, $id, self::ANFRAGEN_LIMIT_PRO_MINUTE, $now)) {
+        // Every request counts, checked and counted in one atomic step
+        // (N-09, issue #246).
+        if (!$this->anfragen->versuch(self::ZWECK_ANFRAGEN, $id, self::ANFRAGEN_LIMIT_PRO_MINUTE, $now)) {
             return self::antwort(429, 'zu_viele_anfragen', 'Zu viele Anfragen – bitte kurz warten.');
         }
-        $this->anfragen->register(self::ZWECK_ANFRAGEN, $id, $now);
 
         return $worker;
     }

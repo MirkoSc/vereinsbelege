@@ -284,7 +284,7 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/kategorien', post: ['name' => 'Ohne Token', 'richtung' => 'ausgabe']));
         $this->dispatch(new Request(HttpMethod::Post, '/admin/kategorien/' . $fahrt->id . '/loeschen', post: []));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertCount($vorher, $this->kategorien->all());
         self::assertNotNull($this->kategorien->find($fahrt->id));
     }
@@ -381,7 +381,7 @@ final class CategoryAdminFlowTest extends DatabaseTestCase
         $einstellung = new Sphaereneinstellung(new SettingRepository($this->pdo()));
         // Without the token nothing changes.
         $ohne = $this->dispatch(new Request(HttpMethod::Post, '/admin/kategorien/sphaeren', post: ['aktiv' => '1']));
-        self::assertSame(302, $ohne->status);
+        self::assertSame(403, $ohne->status);
         self::assertFalse($einstellung->aktiv());
 
         self::assertSame(302, $this->post('/admin/kategorien/sphaeren', ['aktiv' => '1'])->status);

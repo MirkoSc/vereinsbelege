@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Http;
 
 use App\Http\Cookie;
+use App\Http\Session;
 use App\Service\Account\SessionVault;
 use PHPUnit\Framework\TestCase;
 
@@ -73,7 +74,7 @@ final class ResponseSendTest extends TestCase
     public function testTheLoginResponseKeepsTheRegeneratedSessionCookieNextToTheOthers(): void
     {
         $anonymous = $this->cookies($this->request('/'));
-        $name = session_name();
+        $name = Session::NAME_HTTP;
         self::assertArrayHasKey($name, $anonymous, 'Die Anmeldeseite startet eine Session.');
 
         $cookies = $this->cookies($this->request('/anmelden', $name . '=' . $anonymous[$name]));
@@ -89,15 +90,86 @@ final class ResponseSendTest extends TestCase
     }
 
     /**
+     * Security review N-14 (issue #246): over HTTPS the session cookie is
+     * `__Host-sid` with exactly what the prefix demands - Secure, Path=/,
+     * no Domain - and the regenerated id arrives under that name as well.
+     */
+    public function testOverHttpsTheSessionCookieCarriesTheHostPrefix(): void
+    {
+        $antwort = $this->request('/', https: true);
+        $anonymous = $this->cookies($antwort);
+        self::assertArrayHasKey(Session::NAME_HTTPS, $anonymous);
+        self::assertArrayNotHasKey(Session::NAME_HTTP, $anonymous);
+
+        $zeile = $this->setCookieZeile($antwort, Session::NAME_HTTPS);
+        self::assertMatchesRegularExpression('/;\s*secure/i', $zeile);
+        self::assertMatchesRegularExpression('/;\s*path=\/(;|$)/i', $zeile);
+        self::assertDoesNotMatchRegularExpression('/;\s*domain=/i', $zeile);
+        self::assertMatchesRegularExpression('/;\s*httponly/i', $zeile);
+        self::assertMatchesRegularExpression('/;\s*samesite=Lax/i', $zeile);
+
+        $cookies = $this->cookies($this->request('/anmelden', Session::NAME_HTTPS . '=' . $anonymous[Session::NAME_HTTPS], https: true));
+        self::assertArrayHasKey(Session::NAME_HTTPS, $cookies);
+        self::assertNotSame($anonymous[Session::NAME_HTTPS], $cookies[Session::NAME_HTTPS]);
+        self::assertSame('vault-key', $cookies[SessionVault::COOKIE] ?? null);
+    }
+
+    /**
+     * The switch after the update: a browser still sending only PHPSESSID
+     * keeps its session - the self-update runs its last steps on this
+     * release, and logging the admin out there would leave the site in
+     * maintenance mode. The id moves to `__Host-sid`, PHPSESSID is deleted.
+     */
+    public function testAnOldPhpsessidMovesToTheHostCookieOverHttps(): void
+    {
+        $alt = $this->cookies($this->request('/anmelden'))[Session::NAME_HTTP] ?? '';
+        self::assertNotSame('', $alt, 'Testvorbereitung: eine angemeldete Session unter dem alten Namen.');
+
+        $antwort = $this->request('/', Session::NAME_HTTP . '=' . $alt, https: true);
+        $cookies = $this->cookies($antwort);
+
+        self::assertSame($alt, $cookies[Session::NAME_HTTPS] ?? null, 'Die Session läuft unter dem neuen Namen weiter.');
+        self::assertStringContainsString('user_id|i:42;', (string) file_get_contents($this->sessionDir . '/sess_' . $alt));
+        $loeschen = $this->setCookieZeile($antwort, Session::NAME_HTTP);
+        self::assertMatchesRegularExpression('/expires=Thu, 01[ -]Jan[ -]1970/i', $loeschen, 'PHPSESSID wird gelöscht.');
+    }
+
+    /** Once the new cookie exists, a leftover PHPSESSID is not taken over again. */
+    public function testWithBothCookiesTheHostCookieWins(): void
+    {
+        $neu = $this->cookies($this->request('/', https: true))[Session::NAME_HTTPS] ?? '';
+        $alt = $this->cookies($this->request('/anmelden'))[Session::NAME_HTTP] ?? '';
+
+        $antwort = $this->request('/', Session::NAME_HTTPS . '=' . $neu . '; ' . Session::NAME_HTTP . '=' . $alt, https: true);
+
+        self::assertArrayNotHasKey(Session::NAME_HTTPS, $this->cookies($antwort), 'kein neues Cookie - die bestehende Session bleibt');
+        $this->setCookieZeile($antwort, Session::NAME_HTTP);
+    }
+
+    private function setCookieZeile(string $response, string $name): string
+    {
+        [$head] = explode("\r\n\r\n", $response, 2);
+        foreach (explode("\r\n", $head) as $line) {
+            if (stripos($line, 'Set-Cookie: ' . $name . '=') === 0) {
+                return $line;
+            }
+        }
+        self::fail('Kein Set-Cookie für ' . $name);
+    }
+
+    /**
      * Raw HTTP/1.0 so the answer comes back unchunked and the connection
      * closes on its own.
      */
-    private function request(string $path, ?string $cookie = null): string
+    private function request(string $path, ?string $cookie = null, bool $https = false): string
     {
         $socket = stream_socket_client('tcp://127.0.0.1:' . $this->port, $errno, $error, 5);
         self::assertIsResource($socket, 'Keine Verbindung zu php -S: ' . $error);
 
         $request = 'GET ' . $path . " HTTP/1.0\r\nHost: 127.0.0.1\r\n";
+        if ($https) {
+            $request .= "X-Test-Https: 1\r\n";
+        }
         if ($cookie !== null) {
             $request .= 'Cookie: ' . $cookie . "\r\n";
         }

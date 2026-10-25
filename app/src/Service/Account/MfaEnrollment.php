@@ -18,9 +18,8 @@ use App\Service\Crypto\ServerCrypto;
  * once a method actually commits here.
  *
  * `user.mfa_method` only ever changes in this class, and only once a factor
- * has proven it works: a freshly generated TOTP secret is not the account's
- * method until a real code from it has been confirmed, exactly the
- * distinction `mfa_totp.confirmed_at` exists for.
+ * has proven it works: a freshly generated TOTP secret is not even stored
+ * until a real code from it has been confirmed (issue #246).
  */
 final readonly class MfaEnrollment
 {
@@ -33,48 +32,49 @@ final readonly class MfaEnrollment
     }
 
     /**
-     * Starts (or restarts) TOTP setup with a fresh, unconfirmed secret -
-     * restarting is deliberate: a secret nobody has scanned yet is not worth
-     * keeping around, and switching back to TOTP later means scanning a new
-     * code rather than trusting whatever the phone still remembers.
+     * Starts (or restarts) TOTP setup with a fresh secret. Nothing is
+     * stored: the caller keeps it until confirmTotp() (App\App\
+     * SecurityController holds it, as server-key ciphertext, in the session
+     * - App\Http\Session::merkeTotpEinrichtung()). That way an abandoned
+     * setup - a closed tab, a QR code nobody scanned - leaves the account's
+     * current authenticator working (security review N-08, issue #246);
+     * before, starting already overwrote the confirmed secret.
      *
      * @return string the raw secret, for the QR code / manual entry
-     *                (App\Service\Account\Totp::uri()/base32Encode()) - never
-     *                stored anywhere outside this call's caller and the
-     *                server-key ciphertext this method writes
+     *                (App\Service\Account\Totp::uri()/base32Encode())
      */
-    public function startTotp(int $userId, ?\DateTimeImmutable $now = null): string
+    public function startTotp(): string
     {
-        $secret = Totp::generateSecret();
-        $this->totp->put($userId, $this->crypto->encrypt($secret), $now);
-
-        return $secret;
+        return Totp::generateSecret();
     }
 
     /**
-     * Confirms the secret startTotp() just generated and, only on success,
-     * commits TOTP as the account's method and issues its backup codes.
+     * Confirms the secret startTotp() generated and, only on success,
+     * stores it as the account's secret, commits TOTP as the method and
+     * issues fresh backup codes.
      *
      * @return list<string>|null the ten backup codes on success, null when
-     *                           the code does not verify (no secret pending,
-     *                           wrong code)
+     *                           the code does not verify
      */
-    public function confirmTotp(int $userId, string $code, ?\DateTimeImmutable $now = null): ?array
-    {
-        $stored = $this->totp->forUser($userId);
-        if ($stored === null) {
+    public function confirmTotp(
+        int $userId,
+        #[\SensitiveParameter] string $secret,
+        string $code,
+        ?\DateTimeImmutable $now = null,
+    ): ?array {
+        if ($secret === '') {
             return null;
         }
 
-        $step = Totp::matchingStep($this->crypto->decrypt($stored->secretEnc), $code, $now);
+        $step = Totp::matchingStep($secret, $code, $now);
         if ($step === null) {
             return null;
         }
 
-        $this->totp->confirm($userId, $now);
-        // The confirming code is spent too: seen over a shoulder during
-        // setup, it must not open a login within its ~90 s (issue #78).
-        $this->totp->claimStep($userId, $step);
+        // Stored, confirmed and with the confirming code spent in one go:
+        // seen over a shoulder during setup, that code must not open a login
+        // within its ~90 s (issue #78).
+        $this->totp->putConfirmed($userId, $this->crypto->encrypt($secret), $step, $now);
         $this->users->updateMfaMethod($userId, MfaMethod::Totp);
 
         return $this->regenerateBackupCodes($userId, $now);
@@ -86,11 +86,17 @@ final readonly class MfaEnrollment
      * requestEmailCode()/verifyEmailCode(), the same check the login page
      * uses) - there is nothing left to verify here.
      *
+     * A TOTP secret from before goes: the login accepts a TOTP code whatever
+     * the method (App\App\MfaController), so an authenticator the user
+     * just switched away from - perhaps because the phone is gone - would
+     * otherwise keep opening the account (issue #246).
+     *
      * @return list<string> the ten backup codes
      */
     public function commitEmailMethod(int $userId, ?\DateTimeImmutable $now = null): array
     {
         $this->users->updateMfaMethod($userId, MfaMethod::EMail);
+        $this->totp->delete($userId);
 
         return $this->regenerateBackupCodes($userId, $now);
     }

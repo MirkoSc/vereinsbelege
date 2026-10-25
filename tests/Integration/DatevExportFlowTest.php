@@ -227,7 +227,7 @@ final class DatevExportFlowTest extends DatabaseTestCase
         // Without CSRF token or vault: no file.
         $ohneToken = $this->kernel()->handle(new Request(HttpMethod::Post, '/app/datev/datei', cookies: $this->tresorCookie(), post: self::QUARTAL));
         self::assertInstanceOf(Response::class, $ohneToken);
-        self::assertSame(302, $ohneToken->status);
+        self::assertSame(403, $ohneToken->status);
         self::assertSame(302, $this->post('/app/datev/datei', self::QUARTAL, entsperrt: false)->status);
         self::assertSame([], $this->audits());
 

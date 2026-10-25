@@ -148,7 +148,7 @@ final class CostCenterAdminFlowTest extends DatabaseTestCase
     {
         $antwort = $this->dispatch(new Request(HttpMethod::Post, '/admin/kostenstellen', post: ['name' => 'Ohne Token']));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertCount(0, $this->kostenstellen->all());
     }
 

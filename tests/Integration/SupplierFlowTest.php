@@ -345,7 +345,7 @@ final class SupplierFlowTest extends DatabaseTestCase
             post: [...$this->felder(['name' => 'Muster']), '_csrf' => 'falsch'],
         ));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame([], $this->lieferanten->all());
     }
 
@@ -556,7 +556,7 @@ final class SupplierFlowTest extends DatabaseTestCase
             cookies: $this->tresorCookie(),
             post: ['ziel' => (string) $b, '_csrf' => 'falsch'],
         ));
-        self::assertSame(302, $falsch->status);
+        self::assertSame(403, $falsch->status);
         self::assertCount(2, $this->lieferanten->all(), 'nothing merged');
     }
 

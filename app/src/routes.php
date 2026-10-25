@@ -59,11 +59,13 @@ use App\App\UebersichtController;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
 use App\Domain\Worker;
+use App\Http\CsrfSchutz;
 use App\Http\HttpMethod;
 use App\Http\LoginGuard;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
+use App\Http\Session;
 use App\Http\Zugriff;
 use App\Http\ZugriffArt;
 use App\PublicPages\EinreichungController;
@@ -336,7 +338,15 @@ return static function (
     // actually matched: pruefe() returns a wrapper, it runs nothing yet.
     // A worker route's handler gets the authenticated worker as third
     // argument - it cannot be reached without a valid signature.
-    $route = static function (HttpMethod $methode, string $muster, Zugriff $zugriff, \Closure $handler) use ($router, $guard, $workerAuth): void {
+    // Every POST route also gets the central CSRF check (security review
+    // N-15, issue #246), inside the guard so the login comes first; the
+    // exceptions are the routes without a session (App\Http\CsrfSchutz::
+    // AUSNAHMEN).
+    $csrf = new CsrfSchutz(new Session(), $view);
+    $route = static function (HttpMethod $methode, string $muster, Zugriff $zugriff, \Closure $handler) use ($router, $guard, $workerAuth, $csrf): void {
+        if ($methode === HttpMethod::Post && $zugriff->art !== ZugriffArt::Worker && !CsrfSchutz::ausgenommen($muster)) {
+            $handler = $csrf->pruefe($zugriff->api, $handler);
+        }
         $router->add(
             $methode,
             $muster,
@@ -577,6 +587,11 @@ return static function (
     // what it exempts from that redirect.
     $get('/app/sicherheit', $angemeldet, static fn(Request $r) => $sicherheit()->page($r));
     $get('/app/sicherheit/einrichten', $angemeldet, static fn(Request $r) => $sicherheit()->einrichten($r));
+    // Re-authentication before the second factor changes (security review
+    // N-08, issue #246): the account's own, like the rest of this page.
+    $get('/app/sicherheit/bestaetigen', $angemeldet, static fn(Request $r) => $sicherheit()->bestaetigen($r));
+    $post('/app/sicherheit/bestaetigen', $angemeldet, static fn(Request $r) => $sicherheit()->bestaetigenPruefen($r));
+    $post('/app/sicherheit/bestaetigen/code-senden', $angemeldet, static fn(Request $r) => $sicherheit()->bestaetigenCodeSenden($r));
     $post('/app/sicherheit/einrichten/totp/starten', $angemeldet, static fn(Request $r) => $sicherheit()->totpStarten($r));
     $post('/app/sicherheit/einrichten/totp/bestaetigen', $angemeldet, static fn(Request $r) => $sicherheit()->totpBestaetigen($r));
     $post('/app/sicherheit/einrichten/email/starten', $angemeldet, static fn(Request $r) => $sicherheit()->emailStarten($r));

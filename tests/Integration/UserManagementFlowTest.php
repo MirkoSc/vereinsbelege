@@ -49,6 +49,7 @@ use App\Service\Account\LoginService;
 use App\Service\Account\MfaEnrollment;
 use App\Service\Account\MfaMethod;
 use App\Service\Account\MfaService;
+use App\Service\Account\Neuanmeldung;
 use App\Service\Account\PasswordChange;
 use App\Service\Account\PasswordHasher;
 use App\Service\Account\PasswordPolicy;
@@ -203,7 +204,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             'rolle' => [(string) $this->rolle(SystemRole::Vorstand)],
         ], headers: ['host' => self::HOST]));
 
-        self::assertSame(302, $antwort->status);
+        self::assertSame(403, $antwort->status);
         self::assertSame(1, new UserRepository($this->pdo())->count());
     }
 
@@ -638,8 +639,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
 
         // The account also had an authenticator app - its secret is under the
         // lost key as well.
-        new MfaTotpRepository($this->pdo())->put($id, $fremd->encrypt('JBSWY3DPEHPK3PXP'));
-        new MfaTotpRepository($this->pdo())->confirm($id);
+        new MfaTotpRepository($this->pdo())->putConfirmed($id, $fremd->encrypt('JBSWY3DPEHPK3PXP'), 0);
         new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
 
         // An invalid address does not touch anything, the authenticator included.
@@ -704,8 +704,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
         $stmt->bindValue(4, $id, \PDO::PARAM_INT);
         $stmt->execute();
         // ... but the authenticator secret is under the CURRENT key.
-        new MfaTotpRepository($this->pdo())->put($id, $this->crypto->encrypt('JBSWY3DPEHPK3PXP'));
-        new MfaTotpRepository($this->pdo())->confirm($id);
+        new MfaTotpRepository($this->pdo())->putConfirmed($id, $this->crypto->encrypt('JBSWY3DPEHPK3PXP'), 0);
         new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
 
         $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
@@ -1058,6 +1057,7 @@ final class UserManagementFlowTest extends DatabaseTestCase
             $crypto,
             new PasswordChange($pdo, new PasswordHasher(), $this->policy(), $this->limiter()),
             $audit,
+            new Neuanmeldung(new UserRepository($pdo), new PasswordHasher(), $mfaService, $this->limiter()),
         );
         $passwort = fn(): PasswordController => new PasswordController(
             $view,

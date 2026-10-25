@@ -360,12 +360,12 @@ final class CsvProfileFlowTest extends DatabaseTestCase
     public function testWritesNeedTheCsrfToken(): void
     {
         $ohne = $this->dispatch(new Request(HttpMethod::Post, '/app/konten/csv-formate', post: $this->felder('Testbank'), files: $this->datei('unbekannt.csv')));
-        self::assertSame(302, $ohne->status);
+        self::assertSame(403, $ohne->status);
         self::assertSame([], $this->eigene());
 
         $vorschau = $this->dispatch(new Request(HttpMethod::Post, '/app/konten/csv-formate/vorschau', files: $this->datei('unbekannt.csv')));
-        self::assertSame(200, $vorschau->status);
-        self::assertStringContainsString('Die Sitzung ist abgelaufen', $vorschau->body);
+        // The central check (issue #246) answers before the controller's own.
+        self::assertSame(403, $vorschau->status);
         self::assertStringNotContainsString('Bahnmiete', $vorschau->body);
     }
 

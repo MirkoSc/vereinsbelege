@@ -80,22 +80,28 @@ final readonly class Spamschutz
         $limitIp = $this->einstellungen->limitProIpStunde * $this->einstellungen->maxSeiten;
         $limitGesamt = $this->einstellungen->limitGesamtStunde * $this->einstellungen->maxSeiten;
 
-        if ($this->limits->isBlocked(self::PURPOSE_UPLOAD_IP, $ip, $limitIp, $now)) {
+        // Checked and counted in one atomic step each (N-09, issue #246),
+        // so parallel uploads cannot overshoot the budget. An upload the
+        // global limit turns away does not cost the visitor's own budget.
+        if (!$this->limits->versuch(self::PURPOSE_UPLOAD_IP, $ip, $limitIp, $now)) {
             return EinreichungAbgelehnt::ZuVieleVonIp;
         }
-        if ($this->limits->isBlocked(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $limitGesamt, $now)) {
+        if (!$this->limits->versuch(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $limitGesamt, $now)) {
+            $this->limits->erstatten(self::PURPOSE_UPLOAD_IP, $ip, $now);
+
             return EinreichungAbgelehnt::ZuVieleGesamt;
         }
 
         // Last, so a request the checks above turn away costs no bytes
-        // (issue #242); refused here, it costs no upload count either.
+        // (issue #242); refused here, it costs no upload count either - the
+        // two counts versuch() took above are handed back.
         $budget = $this->budget->reservieren($ip, $uploadId, $groesse, $now);
         if ($budget !== null) {
+            $this->limits->erstatten(self::PURPOSE_UPLOAD_IP, $ip, $now);
+            $this->limits->erstatten(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $now);
+
             return $budget;
         }
-
-        $this->limits->register(self::PURPOSE_UPLOAD_IP, $ip, $now);
-        $this->limits->register(self::PURPOSE_UPLOAD_GESAMT, self::GLOBAL_VALUE, $now);
 
         return null;
     }
@@ -124,6 +130,12 @@ final readonly class Spamschutz
             return $gesperrt;
         }
 
+        // Read here and counted only once a submission went through (see
+        // above) - so not RateLimiter::versuch() (N-09, issue #246): two
+        // submissions sent in the very same moment can both pass. Accepted:
+        // this budget limits spam volume, it guards no secret, and the
+        // upload budget (pruefeUpload(), atomic) already caps what such a
+        // burst can store.
         if ($this->limits->isBlocked(self::PURPOSE_SUBMIT_IP, $ip, $this->einstellungen->limitProIpStunde, $now)) {
             return EinreichungAbgelehnt::ZuVieleVonIp;
         }
