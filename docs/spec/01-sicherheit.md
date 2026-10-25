@@ -17,6 +17,11 @@ KI-Anbieter sieht die Belege im Klartext. Für personenbezogene Daten
 (Einreicher-IBAN) ist bei Cloud-Anbietern ein AV-Vertrag nötig; der lokale
 llama.cpp-Server ist die datensparsame Option.
 
+Geprüft wird das Ganze wiederholbar mit `docs/security-checkliste.md`
+(OWASP ASVS Level 2, Issue #78): vor dem Produktivbetrieb und bei jeder
+größeren Änderung; eine neue Route ist Anlass genug
+(`tests/Http/routen-zugriff.txt`).
+
 ## 2. Schlüsselhierarchie (libsodium, `ext-sodium`)
 
 ```
