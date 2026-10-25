@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token for every job: CI runs the PR's code and never writes.
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -80,8 +84,12 @@ jobs:
   # result in the inbox. The multi-arch build is worker-image.yml's.
   worker-e2e:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: shivammathur/setup-php@v2
         with:

@@ -365,7 +365,9 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   nur wenn es das neueste Release ist) zeigt `stable` auf das schon
   getestete `vX.Y.Z` (kein Neubau; war das Image beim Hochstufen noch
   nicht gepusht, setzt der Tag-Build `stable` nach). Push nur mit dem `GITHUB_TOKEN` des
-  Workflows (`packages: write`), kein gespeichertes Secret. PRs, die
+  Workflows (`packages: write` nur im Job `publish` für Tag-Pushes; PR-Builds
+  und die CI laufen mit `contents: read`, Checkout ohne gespeicherte
+  Zugangsdaten), kein gespeichertes Secret. PRs, die
   Worker/Composer/Workflow ändern, bauen das Multi-Arch-Image nur.
 - `worker/docker-compose.yml` als Vorlage: `restart: unless-stopped`,
   `tmpfs` für das Arbeitsverzeichnis (`/arbeit`), Volume nur für
