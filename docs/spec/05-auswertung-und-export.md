@@ -34,6 +34,26 @@ Ansichten:
 Diagramme: CSS/SVG serverseitig gerendert wie im Vereinskalender, keine
 Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
 
+### Stand M11-1: ReportService (issue #71, E-44)
+
+- `App\Service\Report\ReportService` ist die reine Berechnung (ohne DB,
+  Session, Tresor; Integer-Cent): `summen`, `gruppiert` (Kategorie,
+  Lieferant, Kostenstelle, Sphäre, Monat, Konto; optional nur Einnahmen
+  oder Ausgaben), `rangliste` (Top N + Übrige + „ohne“), `drilldown`,
+  `vergleich` (Vorjahr, Monate auf das aktuelle Jahr verschoben),
+  `kontostaende` und `kontosalden` (Anfang/Ende je Konto). Jede Methode
+  begrenzt die Zeilen erneut auf den Zeitraum und den `Zugriffsbereich`.
+- Eingabe sind Berichtszeilen (`Posten`), gebildet von `Postenbildung`:
+  Belegsicht = geprüfte/festgeschriebene Belege nach Rechnungsdatum
+  (Gutschrift negativ); Buchungssicht = Buchungen nach Buchungsdatum,
+  aufgeteilt nach ihren Zuordnungen (Teil mit Kategorie/Kostenstelle/
+  Lieferant des Belegs, Rest mit Kategorie der Buchung), Umbuchungen
+  ausgelassen. `Zeitraum` liefert Jahr/Quartal/Monat/frei und `vorjahr()`.
+- `App\Service\Report\Auswertungsdaten` lädt und entschlüsselt in der
+  Session (SQL filtert nach Struktur und Scope; unlesbare Zeilen und
+  Fremdwährung werden gezählt, nicht geraten) und liest `sphaeren_aktiv`.
+  Laufzeit: etwa 0,04 ms je Zeile – keine Schrittkette nötig (E-44).
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle
@@ -424,6 +444,8 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
 
 Report-Berechnungen (Summen je Kategorie/Lieferant/Monat, Belege vs.
 Buchungen, Vorjahresvergleich, Kostenstellen-Scope eines Verantwortlichen);
+umgesetzt (M11-1): `tests/Service/Report/` (`ReportServiceTest`,
+`ZeitraumTest`), `tests/Integration/AuswertungsdatenTest.php`;
 CSV-Format (BOM, Trennzeichen, Zahlenformat); ZIP-Pfadbildung (Muster-
 Platzhalter, verbotene Zeichen, Kollisionssuffix, `_Ohne Lieferant`);
 ZIP-Stream ist gültiges ZIP und enthält genau die gefilterten Belege +

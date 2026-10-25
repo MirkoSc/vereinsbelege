@@ -429,6 +429,97 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   werden soll (dafür müsste sie gespeichert werden); ob die automatische
   Erkennung beim Import auf den Zugriffsbereich des Importierenden
   beschränkt werden soll.
+## E-42 ❓ SEPA-Zahllauf für Erstattungen: pain.001.001.09, nur Eindeutiges, Datei nie gespeichert (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #85 (Migration 043), 02 „Fachdaten“, 04 §5 „Stand SEPA-Zahllauf“*
+
+- **Format pain.001.001.09** nach DK (DFÜ-Abkommen Anlage 3): eine
+  `PmtInf` je Lauf, Service-Level `SEPA`, `SLEV`, nur EUR, IBAN-only beim
+  Empfänger, Auftraggeberbank per BIC oder `NOTPROVIDED`. Getestet gegen
+  das **ISO-20022-Schema** (frei erhältlich, unter `tests/fixtures/sepa/`
+  mit Herkunft und Lizenzhinweis); die zusätzlichen DK-Regeln
+  (Zeichensatz, Längen, Referenzen) prüft `Pain001` selbst. Das DK-eigene
+  GBIC-Schema liegt nicht bei. **Offen für Mirko:** Abnahme mit einem
+  echten Upload ins Online-Banking des Vereins (Prüfpunkt im PR); ob die
+  Bank `.09` annimmt (Pflicht seit Nov. 2025) oder noch `.03` erwartet.
+- **`BtchBookg = false`:** jede Überweisung einzeln auf dem Auszug, damit
+  der Erstattungs-Abgleich (E-36) sie über die Empfänger-IBAN findet. Eine
+  Sammelbuchung bräuchte einen eigenen Abgleich Lauf ↔ Buchung. **Offen für
+  Mirko:** ob die Bank dafür Gebühren je Posten berechnet.
+- **Nur Eindeutiges in den Lauf:** Empfänger mit gleichem Namen und
+  anderer/fehlender IBAN (E-37), ohne Namen, ohne gültige IBAN, mit
+  Vereins-IBAN, Barerstattungen, ungeprüfte Belege und nicht-EUR werden
+  **nicht** angeboten (auch nicht abwählbar vorbelegt) – sie werden nach
+  Prüfung von Hand überwiesen. Verworfen: mehrdeutige Gruppen mit
+  Bestätigungshaken anbieten (zu leicht weggeklickt).
+- **Eine Überweisung je Empfänger** (Name + IBAN) über die Summe der
+  offenen Beträge (Teilbezahlte mit ihrem Rest); der Abgleich findet sie
+  über die Kombinationssuche (E-36, bis 6 Belege). Verwendungszweck mit
+  Belegnummer bzw. Belegdatum, damit der Empfänger zuordnen kann.
+- **Doppelte Anweisung ausgeschlossen** über `payment_run_item.active_invoice_id`
+  (`UNIQUE`, NULL nach Verwerfen) statt nur per Prüfung – hält auch bei
+  zwei gleichzeitigen Anfragen. Ein Beleg bleibt reserviert, solange sein
+  Lauf `angewiesen` ist, auch nach dem Ausgleich.
+- **Status:** gespeichert nur `angewiesen`/`verworfen`; „ausgeglichen“ wird
+  aus den Belegen abgeleitet (keine zweite Wahrheit neben `payment_status`).
+  Verwerfen ist nur möglich, solange kein Beleg des Laufs seit dessen
+  Anlage eine Zuordnung bekommen hat (Teilausführung = Geld ist raus), und
+  gedacht für
+  eine abgelehnte oder nie eingereichte Datei. **Offen für Mirko:** ob ein
+  Lauf nach einer Frist ohne Ausgleich markiert werden soll.
+- **Datei nie gespeichert:** alle Angaben verschlüsselt in
+  `payment_run.data_enc`; die XML entsteht bei jedem Download im Speicher
+  (`attachment`, `no-store`) und wird beim Anlegen einmal probehalber
+  erzeugt. Kein Blob, nichts in `var/tmp`.
+- **Recht `matching.edit`** (es ist die Gegenseite des Erstattungs-Abgleichs)
+  mit dessen Zugriffsbereich: Kandidaten im Bereich; ein Lauf ist nur
+  sichtbar, wenn **alle** seine Belege im Bereich liegen. Kein eigenes
+  Recht (die Spec sieht keines vor). **Offen für Mirko:** ob ein
+  Vier-Augen-Prinzip (Anlegen ≠ Herunterladen) gewünscht ist.
+- **Empfängername = Kontoinhaber** laut Einreichung (sonst Name des
+  Einreichers), weil die Bank Name und IBAN abgleichen kann (Empfänger-
+  überprüfung); nennen Einreichungen derselben IBAN verschiedene Inhaber,
+  wird die Gruppe nicht angeboten.
+- **Auftraggeber-Name** frei eingebbar, vorbelegt mit dem Vereinsnamen aus
+  den Mail-Einstellungen (kein eigenes Setting), Umlaute ausgeschrieben.
+
+## E-41 ✅ Abgleich-Oberfläche: verworfene Vorschläge speichern, Betrag/Suche nur per POST, Seiten-Integration über Links (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M10-4 (issue #68, Migration 042), 02 „Fachdaten“, 04 §5 „Stand M10-4“*
+
+- **„Verwerfen“ wird gespeichert, Vorschläge weiterhin nicht:** Tabelle
+  `match_rejection` (nur IDs, wer, wann). Ohne sie käme ein verworfener
+  Vorschlag beim nächsten „Abgleich berechnen“ wieder – E-35 („nichts
+  gespeichert“) bleibt für die Vorschläge selbst. Ein verworfenes Paar wird
+  nicht bewertet und zählt in der Abstandsprüfung nur mit der Obergrenze
+  nicht bewerteter Paare: Das „Nein“ des Nutzers kann also ein anderes
+  Paar **eindeutig** (automatisch) machen – gewollt, es ist dann der
+  einzige plausible Kandidat. Verwerfen sperrt nicht: von Hand zuordnen
+  geht weiter, „Wieder vorschlagen“ löscht die Zeile. Fremdschlüssel
+  `CASCADE` (nur ein Hinweis zum Paar). Verworfen: Verwerfen nur in der
+  Session (überlebt keine Anmeldung) und ein Ablaufdatum (unnötig).
+- **Betrag und Suche nur per POST** (wie die Volltextsuche, 03 §10): Sie
+  sind Vereinsdaten und gehören nicht in URLs/Server-Logs. Konto,
+  Zeitraum, gewählter Beleg und Seite bleiben GET (Struktur, verlinkbar).
+  Folge: Nach einer Aktion (Zuordnen, Lösen …) gelten wieder nur die
+  Struktur-Filter.
+- **Listen:** älteste zuerst (Arbeitsvorrat), 25 je Seite; „Buchungen ohne
+  Beleg“ = `fehlt`/`teilweise` (Einnahmen ohne Belegbedarf fluten die
+  Liste sonst mit Beiträgen) – ein Einnahme-Beleg findet seine Buchung
+  trotzdem, weil die Kandidaten des gewählten Belegs alle offenen
+  Buchungen seiner Richtung ab Fensterbeginn umfassen (bewertet, beste
+  20; ältere Buchungen nicht – Vorauszahlungen weit vor dem
+  Rechnungsdatum findet man so nicht, dafür wächst die Arbeit nicht mit
+  jedem Jahr).
+- **Von Hand** = Methode `manuell`, aber mit Punkten und `rule_trace` der
+  Bewertung, sofern bewertbar (nachvollziehbar, warum das Paar passte).
+- **Integration statt Verdopplung:** „kein Beleg nötig“, Regeln,
+  Umbuchung paaren (`bank.book`) und die Erstattungs-Kombination (M10-3)
+  bleiben auf ihren Seiten und sind aus der Buchungsliste verlinkt –
+  eigene Rechte, keine zweite Implementierung derselben Regeln.
+- **Offen für Mirko:** ob „kein Beleg nötig“ direkt in der Abgleich-Liste
+  schaltbar sein soll (braucht `bank.book` zusätzlich zu `matching.edit`);
+  ob die Belegliste auch Belege im Status „in Prüfung“ zeigen soll (heute
+  nur geprüfte, wie E-35); Seitengröße 25 und „älteste zuerst“.
+
 ## E-24 ❓ Volltextsuche nur mit Session-Index
 *(vorläufig, autonom getroffen – Bestätigung durch Mirko offen; issue #94)*
 Die Volltextsuche über erkannte Texte (Textebene, E-Rechnung, KI-Auslesung,
@@ -989,3 +1080,61 @@ soll; ob Kassenprüfer/Vorstand (`report.view`) den Code sehen sollen oder
 nur, wer zahlt (`bank.book`/`matching.edit`); ob die Rechnungsnummer allein
 als Zweck reicht (z. B. Kundennummer dazu); bei mehreren IBANs die IBAN
 von der Rechnung (KI/E-Rechnung) vorziehen.
+
+## E-44 ❓ ReportService: Berichtszeilen, Belege vs. Buchungen, Scope (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M11-1 (issue #71), 05 §1 „Stand M11-1“; Grundlage für M11-2…M11-4 (#72–#74), #84 Sphären, #92 Budget, #93 DATEV*
+
+- **Eine Zeile als gemeinsame Einheit** (`App\Service\Report\Posten`):
+  Datum, Seite (Einnahme/Ausgabe), Betrag in Cent auf dieser Seite,
+  Kategorie, Kostenstelle, Lieferant, Sphäre, Konto, Beleg- und Buchungs-ID.
+  Alle Kennzahlen (Summen, Gruppen, Top-N, Drilldown, Vorjahr) rechnet
+  `ReportService` rein auf diesen Zeilen – ohne DB, Session und Tresor;
+  `Auswertungsdaten` lädt und entschlüsselt getrennt davon. Neue
+  Auswertungen (Budget, DATEV) brauchen so nur eine neue Gruppierung oder
+  eine eigene Sicht auf dieselben Zeilen.
+- **Belegsicht:** nur Belege mit Dokumentstatus `geprueft`/`festgeschrieben`
+  (KI-Werte sind bis zur Prüfung nur Vorschläge), Rechnungsdatum im
+  Zeitraum, Bruttobetrag; eine **Gutschrift zählt negativ** auf ihrer Seite.
+- **Buchungssicht (Default):** eine Buchung wird **nach ihren Zuordnungen
+  aufgeteilt** – jeder zugeordnete Teil (an einen geprüften Beleg) trägt
+  Kategorie, Kostenstelle, Lieferant und Sphäre des Belegs (Kategorie der
+  Buchung nur, wenn der Beleg keine hat), der Rest die Kategorie der
+  Buchung ohne Kostenstelle. Ein Beleg der Gegenrichtung (Rückzahlung einer
+  Gutschrift) mindert die Seite des Belegs, so dass Gutschriften in beiden
+  Sichten gleich wirken; die Teile einer Buchung ergeben im Saldo immer
+  genau ihren Betrag. Zuordnungen über den Buchungsbetrag hinaus werden
+  gekappt; Zuordnungen an noch ungeprüfte Belege zählen als Rest.
+  **Umbuchungen** (`doc_source = umbuchung`, E-38) ergeben keine Zeile;
+  Kontostände und -salden enthalten sie.
+- **Kostenstellen-Scope:** Eine Zeile ohne Kostenstelle liegt außerhalb
+  jedes Kostenstellen-Scopes (wie in den Repositories). In der
+  Buchungssicht sieht ein Verantwortlicher daher nur die **zugeordneten
+  Teile** von Buchungen an Belege seiner Kostenstellen – SQL lädt nur solche
+  Buchungen (`EXISTS` über `allocation`), und schon der Lader gibt nur
+  die Zeilen im Bereich heraus (`Zugriffsbereich::erlaubt()`) – nie den
+  Rest oder fremde Teile derselben Buchung; der Service prüft noch einmal. Kontostände/-salden gibt es
+  für einen Kostenstellen-Scope nicht (Buchungen haben keine Kostenstelle).
+- **Zeitraum-Scope (externe Konten):** Der Zeitraum wird auf den
+  freigegebenen Zeitraum begrenzt. Der Anfangssaldo eines Kontos zählt die
+  Buchungen davor mit; der Lader fasst sie je Konto zu einem Übertrag am
+  Vortag zusammen, keine einzelne Buchung davor verlässt ihn.
+- **Sphären** nur mit Setting `sphaeren_aktiv = 1`; sonst wirft eine
+  Sphären-Auswertung (`DomainException`), statt still leer zu sein.
+- **Währung:** Zeilen in anderer Währung als EUR werden nicht mitgezählt,
+  sondern wie unlesbare Zeilen gezählt und gemeldet.
+- **Kontosalden:** Anfang (Ende des Vortags) + Eröffnungsbestand (wenn das
+  Konto im Zeitraum eröffnet wurde) + Zugänge − Abgänge = Ende; Buchungen
+  vor dem Stichtag des Kontos zählen nicht (sie stecken im Anfangsbestand).
+- **Laufzeit:** Entschlüsseln kostet gemessen etwa 0,04 ms je Zeile (Sealed
+  Box + AEAD); ein Vereinsjahr mit einigen Tausend Belegen und Buchungen
+  liegt deutlich unter einer Sekunde, mit Vorjahresvergleich und
+  Kontosalden über mehrere Jahre bei wenigen Sekunden. Deshalb **keine
+  Schrittkette**; den kurzen, verschlüsselten Session-Cache der Ergebnisse
+  baut die Seite (M11-2), die ihn nutzt.
+
+Offen für Mirko: ob ungeprüfte Belege (in Prüfung) in der Belegsicht
+wahlweise mitzählen sollen; ob ein Verantwortlicher in der Buchungssicht
+auch nicht zugeordnete Buchungen „seiner“ Kategorien sehen soll (derzeit
+nein); ob externe Kassenprüfer den Anfangssaldo vor ihrem Zeitraum sehen
+dürfen (derzeit ja, nur als Summe); ob Fremdwährungen später umgerechnet
+werden sollen.

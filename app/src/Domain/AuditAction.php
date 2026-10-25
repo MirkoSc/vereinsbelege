@@ -114,11 +114,18 @@ enum AuditAction: string
     case BelegDifferenzGeoeffnet = 'beleg.differenz_geoeffnet';
     // The matching run (M10-2, issue #66): counts only.
     case AbgleichAusgefuehrt = 'abgleich.ausgefuehrt';
+    // The matching page (M10-4, issue #68): a suggested pair discarded or
+    // taken back - the two ids only.
+    case AbgleichVorschlagVerworfen = 'abgleich.vorschlag_verworfen';
+    case AbgleichVorschlagZurueckgenommen = 'abgleich.vorschlag_zurueckgenommen';
 
     // Transfers between own accounts (M10-6, issue #70): the two booking
     // ids and the method, never an amount.
     case UmbuchungVerknuepft = 'umbuchung.verknuepft';
     case UmbuchungGeloest = 'umbuchung.geloest';
+    case ZahllaufAngelegt = 'zahllauf.angelegt';
+    case ZahllaufHeruntergeladen = 'zahllauf.heruntergeladen';
+    case ZahllaufVerworfen = 'zahllauf.verworfen';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -264,9 +271,14 @@ enum AuditAction: string
             self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
             self::UmbuchungVerknuepft => 'Umbuchung zwischen eigenen Konten verknüpft',
             self::UmbuchungGeloest => 'Umbuchung zwischen eigenen Konten gelöst',
+            self::ZahllaufAngelegt => 'SEPA-Zahllauf für Erstattungen angelegt',
+            self::ZahllaufHeruntergeladen => 'SEPA-Datei eines Zahllaufs heruntergeladen',
+            self::ZahllaufVerworfen => 'SEPA-Zahllauf verworfen',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
+            self::AbgleichVorschlagVerworfen => 'Abgleich-Vorschlag verworfen',
+            self::AbgleichVorschlagZurueckgenommen => 'Verworfenen Abgleich-Vorschlag wieder zugelassen',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -347,6 +359,7 @@ enum AuditAction: string
             self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
             self::ZuordnungAngelegt, self::ZuordnungGeloest => 'allocation',
             self::UmbuchungVerknuepft, self::UmbuchungGeloest => 'transfer',
+            self::ZahllaufAngelegt, self::ZahllaufHeruntergeladen, self::ZahllaufVerworfen => 'payment_run',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -359,6 +372,7 @@ enum AuditAction: string
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
+            self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen,
@@ -389,6 +403,7 @@ enum AuditAction: string
             'assignment_rule' => 'Buchungsregel',
             'allocation' => 'Zuordnung Beleg ↔ Buchung',
             'transfer' => 'Umbuchung',
+            'payment_run' => 'Zahllauf',
             'document' => 'Beleg',
             'worker' => 'Worker',
             'vault' => 'Tresor-Generation',

@@ -10,6 +10,7 @@ use App\Domain\BankAccountKind;
 use App\Domain\BankAccountRecord;
 use App\Domain\Iban;
 use App\Repository\BankAccountRepository;
+use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -65,7 +66,38 @@ final readonly class BankAccountService
      */
     public function liste(Vault $vault): array
     {
-        $alle = array_map(fn(BankAccountRecord $r): BankAccount => $this->entschluesseln($vault, $r), $this->konten->all());
+        return self::sortiert(array_map(fn(BankAccountRecord $r): BankAccount => $this->entschluesseln($vault, $r), $this->konten->all()));
+    }
+
+    /**
+     * The same, but an account that cannot be decrypted (sealed to an older
+     * vault version, damaged) is left out and counted instead of failing
+     * the whole list - for the reports (issue #71).
+     *
+     * @return array{konten: list<BankAccount>, unlesbar: int}
+     */
+    public function lesbare(Vault $vault): array
+    {
+        $konten = [];
+        $unlesbar = 0;
+        foreach ($this->konten->all() as $record) {
+            try {
+                $konten[] = $this->entschluesseln($vault, $record);
+            } catch (CryptoException | \JsonException) {
+                ++$unlesbar;
+            }
+        }
+
+        return ['konten' => self::sortiert($konten), 'unlesbar' => $unlesbar];
+    }
+
+    /**
+     * @param list<BankAccount> $alle
+     *
+     * @return list<BankAccount>
+     */
+    private static function sortiert(array $alle): array
+    {
         $rang = static fn(BankAccount $k): int => $k->kind === BankAccountKind::Bank ? 0 : 1;
         usort($alle, static fn(BankAccount $a, BankAccount $b): int => ($b->active <=> $a->active)
             ?: ($rang($a) <=> $rang($b))
