@@ -8,7 +8,6 @@
  * No tax advice: the page says so.
  *
  * @var \App\Service\Report\ZeitraumAuswahl $auswahl
- * @var bool $zuLang the requested free period was too long; the default shows
  * @var int $erstesJahr
  * @var int $letztesJahr
  * @var array<string, string> $ansicht the basis as query parameter
@@ -40,10 +39,6 @@ $aktiv = '/app/auswertung/sphaeren';
     $weitereParameter = $ansicht;
     require __DIR__ . '/../partials/zeitraum-filter.php';
     ?>
-    <?php if ($zuLang): ?>
-        <p class="hinweis hinweis-warnung">Ein freier Zeitraum umfasst höchstens <?= e((string) \App\App\AuswertungController::MAX_JAHRE_FREI) ?> Jahre; gezeigt wird das Jahr <?= e($auswahl->zeitraum->von->format('Y')) ?>.</p>
-    <?php endif; ?>
-
     <form method="get" action="/app/auswertung/sphaeren" class="formular nicht-drucken" aria-label="Ansicht wählen">
         <?php foreach ($auswahl->query() as $name => $wert): ?>
             <input type="hidden" name="<?= e($name) ?>" value="<?= e($wert) ?>">
