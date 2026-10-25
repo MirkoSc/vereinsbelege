@@ -178,8 +178,11 @@ final class DashboardFlowTest extends DatabaseTestCase
             self::assertSame(200, $seite->status, $falsch);
             self::assertStringContainsString('Übersicht ' . $aktuell, $seite->body, $falsch);
         }
-        // The current year offers no year after it.
-        self::assertStringNotContainsString('href="/app?jahr=' . ($aktuell + 1) . '"', $this->get('/app')->body);
+        // The current year offers no year after it and no way back to itself.
+        $aktuelleSeite = $this->get('/app')->body;
+        self::assertStringNotContainsString('href="/app?jahr=' . ($aktuell + 1) . '"', $aktuelleSeite);
+        self::assertStringNotContainsString('Zurück zu', $aktuelleSeite);
+        self::assertStringContainsString('Zurück zu ' . $aktuell, $this->get('/app', ['jahr' => '2024'])->body);
     }
 
     public function testWithoutAnUnlockedVaultOnlyTheCountsShow(): void
@@ -255,8 +258,15 @@ final class DashboardFlowTest extends DatabaseTestCase
         // The balance at the end of the released period, the booking before it in the carry-over.
         self::assertStringContainsString('Stand am Ende des 30.06.2025', $seite->body);
         self::assertMatchesRegularExpression('#>Girokonto</a>.*?1\.490,01 €#s', $seite->body);
+        // The switcher offers no year outside the released period.
+        self::assertStringNotContainsString('href="/app?jahr=2024"', $seite->body);
+        self::assertStringNotContainsString('href="/app?jahr=2026"', $seite->body);
+        self::assertStringNotContainsString('Zurück zu', $seite->body);
 
         $vorher = $this->get('/app', ['jahr' => '2024']);
+        self::assertStringContainsString('href="/app?jahr=2025"', $vorher->body);
+        self::assertStringContainsString('Zurück zu 2025', $vorher->body);
+        self::assertStringNotContainsString('href="/app?jahr=2023"', $vorher->body);
         self::assertStringContainsString('außerhalb des für Sie freigegebenen Zeitraums', $vorher->body);
         self::assertStringNotContainsString('9,99', $vorher->body);
     }

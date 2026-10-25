@@ -55,14 +55,18 @@ final readonly class DashboardController
         $heute = new \DateTimeImmutable('today');
         $jahr = self::jahr($request->query['jahr'] ?? null, $b, $heute);
         $tresor = $this->tresor($request);
+        // The switcher stays within the years the account may see.
+        $standard = Dashboard::standardJahr($b, $heute);
+        $erstes = Dashboard::erstesJahr($b, self::ERSTES_JAHR);
 
         $antwort = Response::html($this->view->render('app/start', [
             'title' => '',
             'flash' => $this->session->pullFlash(),
             'entsperrt' => $tresor !== null,
             'kennzahlen' => ($this->dashboard)()->kennzahlen($b, $tresor, $jahr, $heute),
-            'vorjahr' => $jahr > self::ERSTES_JAHR ? $jahr - 1 : null,
-            'folgejahr' => $jahr < (int) $heute->format('Y') ? $jahr + 1 : null,
+            'vorjahr' => $jahr > $erstes ? min($jahr, $standard + 1) - 1 : null,
+            'folgejahr' => $jahr < $standard ? max($jahr, $erstes - 1) + 1 : null,
+            'standardJahr' => $jahr !== $standard ? $standard : null,
             'posteingang' => $b->darf(Permission::InboxView),
             'erfassen' => $b->darf(Permission::DocumentSubmitInternal),
         ], Area::App));

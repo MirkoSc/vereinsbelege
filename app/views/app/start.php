@@ -16,7 +16,8 @@
  * @var bool $entsperrt whether the vault is unlocked
  * @var \App\Service\Report\DashboardKennzahlen|null $kennzahlen
  * @var int|null $vorjahr the year before, null at the first offered year
- * @var int|null $folgejahr the year after, null for the current year
+ * @var int|null $folgejahr the year after, null for the last year the account may see
+ * @var int|null $standardJahr the year /app opens with, when another one is shown
  */
 
 use App\Service\Processing\Betrag;
@@ -34,7 +35,9 @@ $datum = static fn(\DateTimeImmutable $d): string => $d->format('d.m.Y');
             <?php endif; ?>
             <?php if ($folgejahr !== null): ?>
                 <a class="knopf knopf-still" href="/app?jahr=<?= e((string) $folgejahr) ?>" rel="next"><?= e((string) $folgejahr) ?> ›</a>
-                <a class="knopf knopf-still" href="/app">Aktuelles Jahr</a>
+            <?php endif; ?>
+            <?php if ($standardJahr !== null): ?>
+                <a class="knopf knopf-still" href="/app">Zurück zu <?= e((string) $standardJahr) ?></a>
             <?php endif; ?>
         </nav>
     <?php endif; ?>

@@ -64,7 +64,8 @@ final readonly class Dashboard
         $summen = null;
         $unlesbar = 0;
         $fremd = 0;
-        if ($summenErlaubt && $vault !== null) {
+        // A year outside the period scope shows only a note - nothing to load.
+        if ($summenErlaubt && $vault !== null && $sichtbar !== null) {
             $grundlage = $this->quelle->grundlage($vault, Grundlage::Buchungen, $zeitraum, $berichtsBereich);
             $summen = $this->quelle->rechner()->summen($grundlage, $berichtsBereich);
             $unlesbar = $grundlage->unlesbar;
@@ -106,16 +107,41 @@ final readonly class Dashboard
     }
 
     /**
-     * The calendar year the dashboard opens with: the current one - or,
-     * for a reader whose period scope ended before it (an external auditor
-     * with last year released), the year that scope ends in.
+     * The calendar year the dashboard opens with, and the last one its
+     * switcher offers: the current one - or, for a reader whose period
+     * scope ended before it (an external auditor with last year released),
+     * the year that scope ends in.
      */
     public static function standardJahr(Berechtigungen $b, \DateTimeImmutable $heute): int
     {
         $jahr = (int) $heute->format('Y');
-        $bis = $b->zugriffsbereich(Permission::ReportView)->bis;
+        $bis = self::zeitraumScope($b)->bis;
 
         return $bis !== null && (int) $bis->format('Y') < $jahr ? (int) $bis->format('Y') : $jahr;
+    }
+
+    /** The first year the switcher offers: $erstes, or where the period scope starts. */
+    public static function erstesJahr(Berechtigungen $b, int $erstes): int
+    {
+        $von = self::zeitraumScope($b)->von;
+
+        return $von !== null && (int) $von->format('Y') > $erstes ? (int) $von->format('Y') : $erstes;
+    }
+
+    /**
+     * The period scope of the account. It is the account's, not a right's
+     * (docs/spec/01-sicherheit.md section 4): read through the first right it
+     * holds - an account with `bank.view` but no `report.view` has it too.
+     */
+    private static function zeitraumScope(Berechtigungen $b): Zugriffsbereich
+    {
+        foreach (Permission::cases() as $recht) {
+            if ($b->darf($recht)) {
+                return $b->zugriffsbereich($recht);
+            }
+        }
+
+        return Zugriffsbereich::unbeschraenkt();
     }
 
     /**

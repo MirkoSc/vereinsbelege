@@ -205,11 +205,9 @@ final readonly class DocumentRepository
         if ($status === []) {
             return 0;
         }
-        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
-        $stmt = $this->pdo->prepare(
-            'SELECT COUNT(*) FROM document d WHERE d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope,
-        );
-        $stmt->execute([...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter]);
+        [$bedingung, $parameter] = self::imStatusBedingung($status, $bereich);
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . $bedingung);
+        $stmt->execute($parameter);
 
         return (int) $stmt->fetchColumn();
     }
@@ -284,14 +282,31 @@ final readonly class DocumentRepository
      */
     private function imStatus(array $status, Zugriffsbereich $bereich, int $limit): array
     {
-        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+        [$bedingung, $parameter] = self::imStatusBedingung($status, $bereich);
         $stmt = $this->pdo->prepare(
-            self::INBOX_SELECT . ' WHERE d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope
-            . ' ORDER BY d.created_at, d.id LIMIT ' . max(1, $limit),
+            self::INBOX_SELECT . ' WHERE ' . $bedingung . ' ORDER BY d.created_at, d.id LIMIT ' . max(1, $limit),
         );
-        $stmt->execute([...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter]);
+        $stmt->execute($parameter);
 
         return array_map(InboxItem::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The WHERE of the status lists and their counts (the dashboard links
+     * to the list it counts, so both use this one condition).
+     *
+     * @param non-empty-list<DocumentStatus> $status
+     *
+     * @return array{0: string, 1: list<int|string>}
+     */
+    private static function imStatusBedingung(array $status, Zugriffsbereich $bereich): array
+    {
+        [$scope, $parameter] = $bereich->sqlBedingung('d.created_at', 'd.cost_center_id');
+
+        return [
+            'd.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope,
+            [...array_map(static fn(DocumentStatus $s): string => $s->value, $status), ...$parameter],
+        ];
     }
 
     /**

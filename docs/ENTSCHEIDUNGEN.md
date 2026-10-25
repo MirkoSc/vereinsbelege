@@ -1177,7 +1177,7 @@ werden sollen.
   den Tresor-Public-Key versiegelt (wie der Suchindex, 03 §10). Schlüssel
   eines Eintrags: Grundlage/Art + Zeitraum + Zugriffsbereich
   (Kostenstellen sortiert, von, bis), als Hash; die ID steht zusätzlich im
-  Chiffrat. Höchstens 8 Einträge, 1 MiB Chiffrat, 30 Minuten.
+  Chiffrat. Höchstens 8 Einträge, 512 KiB Chiffrat, 30 Minuten.
 - **Invalidierung konservativ über `CHECKSUM TABLE`** auf `document`,
   `invoice`, `allocation`, `bank_transaction`, `bank_account`, `vault`
   (vor dem Laden gebildet): ändert sich bei jedem Insert/Update/Delete

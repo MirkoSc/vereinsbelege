@@ -61,8 +61,11 @@ final readonly class AuswertungsCache implements Auswertungsquelle
 
     public const int MAX_EINTRAEGE = 8;
 
-    /** Total ciphertext kept in the session - the session is read on every request. */
-    public const int MAX_BYTES = 1_048_576;
+    /**
+     * Total ciphertext kept in the session - the session is read on every
+     * request. A year of a club's bookings packs to a few dozen KiB.
+     */
+    public const int MAX_BYTES = 524_288;
 
     private const string SESSION_KEY = 'auswertung_cache';
 
@@ -96,40 +99,40 @@ final readonly class AuswertungsCache implements Auswertungsquelle
 
     public function grundlage(Vault $vault, Grundlage $grundlage, Zeitraum $zeitraum, Zugriffsbereich $bereich): Auswertungsgrundlage
     {
-        $id = self::id('grundlage', $grundlage->value, $zeitraum, $bereich);
-        $daten = $this->mitCache(
+        return $this->mitCache(
             $vault,
-            $id,
-            fn(): array => self::grundlageKodieren($this->quelle->grundlage($vault, $grundlage, $zeitraum, $bereich)),
+            self::id('grundlage', $grundlage->value, $zeitraum, $bereich),
+            fn(): Auswertungsgrundlage => $this->quelle->grundlage($vault, $grundlage, $zeitraum, $bereich),
+            self::grundlageKodieren(...),
+            static fn(array $d): ?Auswertungsgrundlage => self::grundlageDekodieren($d, $grundlage, $zeitraum),
         );
-        $ergebnis = $daten === null ? null : self::grundlageDekodieren($daten, $grundlage, $zeitraum);
-
-        // Undecodable (cannot happen with what this class wrote): load directly.
-        return $ergebnis ?? $this->quelle->grundlage($vault, $grundlage, $zeitraum, $bereich);
     }
 
     public function kontobewegungen(Vault $vault, Zeitraum $zeitraum, Zugriffsbereich $bereich): array
     {
-        $id = self::id('konten', '', $zeitraum, $bereich);
-        $daten = $this->mitCache(
+        return $this->mitCache(
             $vault,
-            $id,
-            fn(): array => self::kontenKodieren($this->quelle->kontobewegungen($vault, $zeitraum, $bereich)),
+            self::id('konten', '', $zeitraum, $bereich),
+            fn(): array => $this->quelle->kontobewegungen($vault, $zeitraum, $bereich),
+            self::kontenKodieren(...),
+            self::kontenDekodieren(...),
         );
-        $ergebnis = $daten === null ? null : self::kontenDekodieren($daten);
-
-        return $ergebnis ?? $this->quelle->kontobewegungen($vault, $zeitraum, $bereich);
     }
 
     /**
-     * The decoded payload of entry $id - from the session, or freshly loaded
-     * with $laden and kept. Null only when a kept entry does not decode.
+     * Entry $id from the session - or, when it is missing, expired, does not
+     * open or does not decode, freshly loaded with $laden and kept in its
+     * place.
      *
-     * @param \Closure(): array<string, mixed> $laden
+     * @template T
      *
-     * @return array<string, mixed>|null
+     * @param \Closure(): T $laden
+     * @param \Closure(T): array<string, mixed> $kodieren
+     * @param \Closure(array<string, mixed>): (T|null) $dekodieren
+     *
+     * @return T
      */
-    private function mitCache(Vault $vault, string $id, \Closure $laden): ?array
+    private function mitCache(Vault $vault, string $id, \Closure $laden, \Closure $kodieren, \Closure $dekodieren): mixed
     {
         if (!isset($_SESSION) || !is_array($_SESSION)) {
             return $laden();
@@ -147,20 +150,21 @@ final readonly class AuswertungsCache implements Auswertungsquelle
         $eintrag = $zustand['eintraege'][$id] ?? null;
         if ($eintrag !== null && $jetzt - $eintrag['zeit'] <= self::LEBENSDAUER && $eintrag['zeit'] <= $jetzt) {
             $daten = self::entschluesseln($zustand['schluessel'], $eintrag['chiffrat'], $id);
-            if ($daten !== null) {
-                return $daten;
+            $ergebnis = $daten === null ? null : $dekodieren($daten);
+            if ($ergebnis !== null) {
+                return $ergebnis;
             }
         }
         unset($zustand['eintraege'][$id]);
 
-        $daten = $laden();
-        $chiffrat = self::verschluesseln($zustand['schluessel'], ['id' => $id, 'f' => self::FORMAT, 'd' => $daten]);
+        $ergebnis = $laden();
+        $chiffrat = self::verschluesseln($zustand['schluessel'], ['id' => $id, 'f' => self::FORMAT, 'd' => $kodieren($ergebnis)]);
         if (strlen($chiffrat) <= self::MAX_BYTES) {
             $zustand['eintraege'][$id] = ['zeit' => $jetzt, 'chiffrat' => $chiffrat];
         }
         $this->merke($vault, self::begrenzt($zustand, $jetzt));
 
-        return $daten;
+        return $ergebnis;
     }
 
     /**
