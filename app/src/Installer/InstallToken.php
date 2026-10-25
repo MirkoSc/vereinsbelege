@@ -47,7 +47,13 @@ final readonly class InstallToken
         return $token;
     }
 
-    /** The token in the file, null when there is no valid one. */
+    /**
+     * The token in the file, null when there is no valid one. Besides the
+     * 32 hex characters written here, 16 to 64 letters and digits are
+     * accepted: where PHP runs as another user than FTP, the admin cannot
+     * read the generated file, but can delete it and upload one with a token
+     * of their own (docs/betrieb.md section 2). Case does not count.
+     */
     public function current(): ?string
     {
         if (!is_file($this->file)) {
@@ -55,7 +61,7 @@ final readonly class InstallToken
         }
         $token = strtolower(trim((string) @file_get_contents($this->file, length: 256)));
 
-        return preg_match('/^[0-9a-f]{32}$/D', $token) === 1 ? $token : null;
+        return preg_match('/^[0-9a-z]{16,64}$/D', $token) === 1 ? $token : null;
     }
 
     /** Whether $eingabe is the current token (spaces and case ignored). */

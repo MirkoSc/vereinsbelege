@@ -147,8 +147,22 @@ Admin übernimmt, verlangt der Installer ein Token
   `setup.php`): per FTP `shared/install_token.txt` öffnen und die 32
   Zeichen in das Feld kopieren. Fehlt die Datei, legt `/install` sie beim
   ersten Aufruf selbst an.
-- Wird `setup.php` erneut ausgeführt, entsteht ein neues Token; das alte
-  gilt nicht mehr.
+- **Token verloren oder Datei per FTP nicht lesbar?** Die Datei hat die
+  Rechte 0600. Läuft PHP beim Hoster unter einem anderen Benutzer als der
+  FTP-Zugang, lässt sie sich per FTP nicht öffnen. Dann:
+  1. `shared/install_token.txt` per FTP **löschen**,
+  2. eine neue Textdatei `install_token.txt` mit einem **selbst gewählten
+     Token** (16 bis 64 Buchstaben und Ziffern, z. B. eine lange,
+     zufällige Zeichenfolge) nach `shared/` hochladen,
+  3. `/install` neu laden und dieses Token eintragen (Groß-/Kleinschreibung
+     egal).
+
+  Ist die Datei nur weg (oder ist PHP gleicher Benutzer wie FTP), reicht
+  Schritt 1: Beim nächsten Aufruf legt `/install` ein neues Token an. Ein
+  zu kurzes Token ersetzt `/install` durch ein zufälliges. Mit jedem neuen
+  Token gelten frühere Freigaben nicht mehr.
+- `setup.php` noch einmal aufzurufen hilft **nicht**: Sobald `current/`
+  existiert, leitet es nur noch ohne Token auf `/install` weiter.
 - Nach der Installation löscht der Installer die Datei zusammen mit
   `setup.php`.
 

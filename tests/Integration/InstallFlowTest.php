@@ -365,6 +365,45 @@ final class InstallFlowTest extends DatabaseTestCase
     }
 
     /**
+     * The way back when the token is lost or the generated file cannot be
+     * read by FTP (PHP running as another user): delete the file and upload
+     * one with a token of one's own - or let /install create a new one.
+     * Running setup.php again does not help, it only redirects once
+     * current/ exists.
+     */
+    public function testALostTokenIsReplacedByDeletingOrUploadingTheFile(): void
+    {
+        unset($_SESSION[InstallToken::SESSION_KEY]);
+        $token = new InstallToken($this->paths()->installTokenFile());
+        $alt = $token->current();
+        self::assertNotNull($alt);
+
+        // An own token uploaded by FTP (with the line break of an editor) is
+        // kept by the next visit and accepted in any case.
+        unlink($this->paths()->installTokenFile());
+        file_put_contents($this->paths()->installTokenFile(), "Vereinskasse2026Neu\r\n");
+        $seite = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $seite);
+        self::assertStringContainsString('Installation freigeben', $seite->body);
+        self::assertSame("Vereinskasse2026Neu\r\n", file_get_contents($this->paths()->installTokenFile()), 'not overwritten');
+        self::assertFalse($token->matches($alt));
+        self::assertTrue($token->matches('vereinskasse2026neu'));
+
+        // Too short is no token: the next visit replaces it with a random one.
+        file_put_contents($this->paths()->installTokenFile(), 'kurz');
+        self::assertNull($token->current());
+        $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', (string) $token->current());
+
+        // Deleted: /install creates a new one, the old one is worthless.
+        $vorher = $token->current();
+        unlink($this->paths()->installTokenFile());
+        $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertNotNull($token->current());
+        self::assertNotSame($vorher, $token->current());
+    }
+
+    /**
      * Issue #101: the installer repeats what setup.php did - a deny-all
      * .htaccess in shared/, releases/ and current/ - and stays quiet when it
      * worked.

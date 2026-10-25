@@ -94,14 +94,20 @@ klappt das nicht (Dateieigentümer FTP), sagt die Abschlussseite Bescheid.
 `App\Installer\InstallToken`): solange `config.php` fehlt, ist `/install`
 öffentlich. Damit niemand, der die URL vor dem Verein findet, die Instanz
 mit eigener Datenbank und eigenem Admin übernimmt, schreibt `setup.php` bei
-jedem Lauf ein neues Token (128 Bit, 32 Hex-Zeichen) nach
+seinem Installationslauf ein neues Token (128 Bit, 32 Hex-Zeichen) nach
 `shared/install_token.txt` (0600) und leitet auf `/install?token=…` weiter.
+Ein erneuter Aufruf von `setup.php` hilft nicht weiter, sobald `current/`
+existiert, leitet es nur noch ohne Token um.
 `GET /install` mit passendem Token gibt die Session frei (Session-ID wird
 erneuert, in der Session liegt nur der SHA-256 des Tokens – ein neues Token
 entwertet alte Freigaben) und leitet sofort auf `/install` ohne Token um.
 Ohne Freigabe zeigt `/install` die Seite „Installation freigeben“: das Token
 aus der Datei per FTP abschreiben, `POST /install/freigabe` (CSRF). Fehlt
-die Datei (Installation ohne `setup.php`), legt `/install` sie an. Jeder
+die Datei (Installation ohne `setup.php`, per FTP gelöscht) oder enthält sie
+kein gültiges Token, legt `/install` ein neues an. Als gültig gelten auch
+16–64 Buchstaben/Ziffern (Groß-/Kleinschreibung egal): Wo PHP unter einem
+anderen Benutzer als FTP läuft und die 0600-Datei per FTP nicht lesbar ist,
+löscht der Admin sie und lädt eine mit eigenem Token hoch. Jeder
 Schritt (`POST /install`, `/schluessel`, `/mail`, `/neu`, `/wiederherstellen`,
 `/serverschluessel`, `/zugang`) antwortet ohne Freigabe mit 403. Die Datei
 wird mit `setup.php` gelöscht, sobald `config.php` geschrieben ist.
