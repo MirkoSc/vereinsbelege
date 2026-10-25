@@ -571,7 +571,7 @@ Weiterleitung zum Zugangsschritt nur auf einen Pfad dieses Hosts).
   raus (Host-Header-Injection, 01 §3, `App\Service\Mail\PublicUrl`).
 - Absender, Reply-To, Vereinsname als Settings (`mail_absender`,
   `mail_antwort_an`, `mail_vereinsname`). SPF/DKIM beim Hoster einrichten
-  (Doku in `docs/betrieb.md`, Folge-Issue zu #14).
+  (Anleitung für den Verein: `docs/betrieb.md` §4).
 - Admin: Testmail senden, Queue einsehen (Empfänger maskiert, Betreff wird
   gar nicht angezeigt).
 
