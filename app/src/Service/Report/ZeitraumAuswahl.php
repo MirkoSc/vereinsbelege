@@ -19,10 +19,18 @@ namespace App\Service\Report;
  * back to the page's default - it is a filter, not a form. Years run from
  * ERSTES_JAHR to the year after today. Nothing of the request reaches a
  * query except the dates of the resulting Zeitraum.
+ *
+ * A free period spans at most MAX_JAHRE_FREI years (E-51, issue #250): one
+ * request decrypts every line of it (CLAUDE.md section 1). A longer one
+ * falls back to the default too, but marked `zuLang`, so the period filter
+ * (partials/zeitraum-filter.php) says why.
  */
 final readonly class ZeitraumAuswahl
 {
     public const int ERSTES_JAHR = 2000;
+
+    /** The longest free period a request may ask for, in years. */
+    public const int MAX_JAHRE_FREI = 3;
 
     public const array ARTEN = ['jahr' => 'Jahr', 'quartal' => 'Quartal', 'monat' => 'Monat', 'frei' => 'Frei'];
 
@@ -30,6 +38,8 @@ final readonly class ZeitraumAuswahl
         /** One of the keys of ARTEN. */
         public string $art,
         public Zeitraum $zeitraum,
+        /** The requested free period was too long; this is the default instead. */
+        public bool $zuLang = false,
     ) {
     }
 
@@ -76,7 +86,7 @@ final readonly class ZeitraumAuswahl
             'monat' => ($m = $zahl($query['monat'] ?? null, 1, 12)) === null || $jahr === null
                 ? $standard
                 : new self('monat', Zeitraum::monat($jahr, $m)),
-            'frei' => self::freiAusAnfrage($query['von'] ?? null, $query['bis'] ?? null, $letztesJahr) ?? $standard,
+            'frei' => self::freiAusAnfrage($query['von'] ?? null, $query['bis'] ?? null, $letztesJahr, $standard) ?? $standard,
             default => $standard,
         };
     }
@@ -99,12 +109,16 @@ final readonly class ZeitraumAuswahl
         };
     }
 
-    private static function freiAusAnfrage(mixed $von, mixed $bis, int $letztesJahr): ?self
+    private static function freiAusAnfrage(mixed $von, mixed $bis, int $letztesJahr, self $standard): ?self
     {
         $von = self::datum($von, $letztesJahr);
         $bis = self::datum($bis, $letztesJahr);
         if ($von === null || $bis === null || $bis < $von) {
             return null;
+        }
+        // Three whole calendar years still fit; one day more does not.
+        if ($bis >= $von->modify('+' . self::MAX_JAHRE_FREI . ' years')) {
+            return new self($standard->art, $standard->zeitraum, zuLang: true);
         }
 
         return self::frei($von, $bis);

@@ -967,6 +967,7 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
             new InvoiceRepository($pdo),
+            new DocumentRepository($pdo),
             new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
@@ -1229,6 +1230,8 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
         \Closure::fromCallable(new CurlStatusProbe()),
         $paths->sharedDir(),
     ),
+    // Shown to admins with `admin.system` (issue #244), never logged.
+    $config->cronToken,
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the

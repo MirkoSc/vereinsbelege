@@ -151,8 +151,11 @@ dagegen im Browser eines angemeldeten Benutzers.
 
 **Einrichten:**
 
-1. Per FTP `shared/config.php` öffnen und den Wert von **`cron_token`**
-   ablesen (48 Zeichen). Die Datei nicht verändern.
+1. Die fertige Cron-URL steht nach der Installation bzw. dem Restore auf
+   der Abschlussseite und jederzeit unter **Admin → Systemcheck**
+   („Cron-URL anzeigen“, Recht `admin.system`). Alternativ per FTP
+   `shared/config.php` öffnen und den Wert von **`cron_token`** ablesen
+   (48 Zeichen). Die Datei nicht verändern.
 2. Im Kundenmenü des Hosters einen Cronjob als **URL-Aufruf** anlegen:
 
    ```
@@ -168,8 +171,10 @@ Die Antwort ist ein kurzes JSON (`"status": "ok"`). Ein falsches Token gibt
 holt nach.
 
 > **Achtung nach einer Wiederherstellung:** Der Installer erzeugt beim
-> Restore ein **neues** `cron_token`. Danach den Cronjob mit dem neuen Wert
-> aus `shared/config.php` aktualisieren, sonst gehen keine Mails mehr raus.
+> Restore ein **neues** `cron_token`. Die Abschlussseite zeigt die neue
+> Cron-URL („Cronjob aktualisieren“); danach den Cronjob beim Hoster auf
+> diese Adresse umstellen, sonst gehen keine Mails mehr raus. Später steht
+> sie auch unter Admin → Systemcheck.
 
 Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets
 kopieren. Wer es kennt, kann nur den Cron auslösen, aber keine Daten lesen.
@@ -308,6 +313,9 @@ heruntergeladen und außerhalb des Hosters aufbewahrt werden.
 - Mit Belegdateien ist jedes Backup so groß wie der ganze Belegbestand –
   zehn Backups brauchen zehnmal so viel Platz. Speicherplatz beim Hoster
   im Blick behalten.
+  Ein Backup, das größer ist als die Upload-Grenze des Hosters, lässt sich
+  trotzdem einspielen: per FTP nach `shared/var/backups/` legen und im
+  Installer auswählen ([Abschnitt 7](#7-wiederherstellung-restore)).
 - Jedes **Update** legt automatisch ein Backup an – aber nur der Datenbank,
   ohne `config.php` und ohne die Belegdateien im Dateisystem. Das schützt
   vor einem missglückten Update, ersetzt aber kein vollständiges Backup.
@@ -341,7 +349,18 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
    Schritten mit Fortschrittsanzeige; den Tab offen lassen.
    Das ZIP wird in einem Stück hochgeladen – es darf nicht größer sein als
    `upload_max_filesize`/`post_max_size` des Hosters (bei all-inkl
-   384 MiB).
+   384 MiB; das Formular nennt die Grenze).
+   **Größeres Backup:** das ZIP per FTP nach `shared/var/backups/` laden
+   (Ordner ggf. anlegen; Dateiname nur aus Buchstaben, Ziffern, `.`, `_`,
+   `-`, am besten unverändert `backup_….zip`). Der Installer nennt dann
+   unter „Backup einspielen“ den Namen einer **leeren Datei**
+   (`freigabe-….txt`), die ebenfalls per FTP in `shared/var/backups/`
+   angelegt wird – der Nachweis, dass hier jemand mit FTP-Zugang
+   installiert. Seite neu laden und das Backup unter „… oder ein per FTP
+   abgelegtes Backup“ auswählen.
+   Es wird dort gelesen und bleibt danach liegen (bei `backup_….zip`
+   erscheint es unter `/admin/backups` und fällt später unter die
+   Rotation).
 3. Danach je nach Backup:
    - **Backup enthält `config.php`:** fertig. Alle Konten melden sich wie
      bisher an.
@@ -363,8 +382,8 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
         - SMTP-Passwort und API-Schlüssel der KI-Anbieter neu eintragen;
           nicht versendete Mails sind verloren.
 4. Nach dem Restore:
-   - [Cron-URL](#3-cron-einrichten) mit dem **neuen `cron_token`**
-     aktualisieren.
+   - [Cronjob](#3-cron-einrichten) auf die **neue Cron-URL** umstellen –
+     sie steht auf der Abschlussseite (und unter Admin → Systemcheck).
    - Neue `shared/config.php` per FTP herunterladen und sicher ablegen.
    - **Worker-Kopplungen prüfen** (`/admin/worker`): Ein älteres Backup
      bringt auch Worker zurück, die inzwischen entkoppelt waren – solche
@@ -499,7 +518,9 @@ prüft die Einstellungen, die der Hoster im Betrieb ändern könnte
 `shared/config.php` aus dem Internet abrufbar ist. Ein rotes Ergebnis bei
 „config.php abrufbar“ heißt: **sofort** die Domain-Einstellung beim Hoster
 prüfen (muss auf `web/` zeigen). Das Ergebnis lässt sich als JSON kopieren,
-z. B. für ein GitHub-Issue – es enthält keine Geheimnisse.
+z. B. für ein GitHub-Issue – es enthält keine Geheimnisse. Darunter, getrennt
+davon, lässt sich die **Cron-URL** aufklappen (enthält das Token – nicht in
+Issues kopieren).
 
 Wann ausführen: nach der Installation, nach jedem Update, nach
 Änderungen beim Hoster (PHP-Version, Tarif) und einmal im Quartal.

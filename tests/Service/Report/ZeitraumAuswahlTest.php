@@ -77,4 +77,28 @@ final class ZeitraumAuswahlTest extends TestCase
 
         self::assertSame($standard, ZeitraumAuswahl::ausAnfrage($query, $standard, new \DateTimeImmutable(self::HEUTE)));
     }
+
+    public function testAFreePeriodSpansAtMostThreeYears(): void
+    {
+        $heute = new \DateTimeImmutable(self::HEUTE);
+        $standard = ZeitraumAuswahl::frei(new \DateTimeImmutable('2025-01-01'), new \DateTimeImmutable('2025-06-30'));
+        self::assertSame(3, ZeitraumAuswahl::MAX_JAHRE_FREI);
+        self::assertFalse($standard->zuLang);
+
+        // Three whole years still fit, one day more does not.
+        $drei = ZeitraumAuswahl::ausAnfrage(['art' => 'frei', 'von' => '2022-03-01', 'bis' => '2025-02-28'], $standard, $heute);
+        self::assertFalse($drei->zuLang);
+        self::assertSame('2022-03-01', $drei->zeitraum->von->format('Y-m-d'));
+        self::assertSame('2025-02-28', $drei->zeitraum->bis->format('Y-m-d'));
+
+        // Too long: the default, marked - the rest of it unchanged.
+        $lang = ZeitraumAuswahl::ausAnfrage(['art' => 'frei', 'von' => '2022-03-01', 'bis' => '2025-03-01'], $standard, $heute);
+        self::assertTrue($lang->zuLang);
+        self::assertSame($standard->art, $lang->art);
+        self::assertEquals($standard->zeitraum, $lang->zeitraum);
+        self::assertSame($standard->query(), $lang->query());
+
+        // Years, quarters and months are never too long.
+        self::assertFalse(ZeitraumAuswahl::ausAnfrage(['art' => 'jahr', 'jahr' => '2024'], $standard, $heute)->zuLang);
+    }
 }

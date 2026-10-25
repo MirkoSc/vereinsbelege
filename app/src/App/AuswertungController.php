@@ -45,9 +45,6 @@ use App\View\View;
  */
 final readonly class AuswertungController
 {
-    /** The longest free period: one request decrypts every line of it. */
-    public const int MAX_JAHRE_FREI = 3;
-
     /**
      * @param \Closure(): Geldfluss $geldfluss built only when figures are
      *        actually rendered (it opens the database)
@@ -142,6 +139,10 @@ final readonly class AuswertungController
 
         $filter = $this->filter($request);
         $b = $this->berechtigungen();
+        // Where a receipt opens: the review page for who may edit, else
+        // the read-only inbox entry, else nowhere - like the lists "Offen".
+        // A receipt outside that page's scope gets no link (issue #250).
+        $belegRecht = $b->darf(Permission::DocumentEdit) ? Permission::DocumentEdit : ($b->darf(Permission::InboxView) ? Permission::InboxView : null);
         $tresor = $this->tresor($request);
         $drilldown = $tresor === null ? null : ($this->geldfluss)()->posten(
             $tresor,
@@ -152,6 +153,7 @@ final readonly class AuswertungController
             $dimension,
             $schluessel,
             $b->darf(Permission::BankView) ? $b->zugriffsbereich(Permission::BankView) : null,
+            $belegRecht === null ? null : $b->zugriffsbereich($belegRecht),
         );
 
         return $this->seite('app/auswertung-posten', $drilldown?->titel ?? 'Einzelposten', [
@@ -160,9 +162,11 @@ final readonly class AuswertungController
             'dimension' => $dimension,
             'schluessel' => $schluesselWert,
             'drilldown' => $drilldown,
-            // Where a receipt opens: the review page for who may edit, else
-            // the read-only inbox entry, else nowhere - like the lists "Offen".
-            'belegPfad' => $b->darf(Permission::DocumentEdit) ? '/app/belege/pruefen/' : ($b->darf(Permission::InboxView) ? '/app/posteingang/' : null),
+            'belegPfad' => match ($belegRecht) {
+                Permission::DocumentEdit => '/app/belege/pruefen/',
+                Permission::InboxView => '/app/posteingang/',
+                default => null,
+            },
             'buchungPfad' => $b->darf(Permission::BankView) ? '/app/buchungen/' : null,
         ]);
     }
@@ -172,20 +176,16 @@ final readonly class AuswertungController
      * recognised falls back to its default. The period is the shared
      * ZeitraumAuswahl (issue #74); its default is the dashboard's year.
      *
-     * @return array{auswahl: ZeitraumAuswahl, zuLang: bool, grundlage: Grundlage, seite: InvoiceDirection, bereich: \App\Domain\Zugriffsbereich, erstesJahr: int, letztesJahr: int, ansicht: array<string, string>, parameter: array<string, string>}
+     * @return array{auswahl: ZeitraumAuswahl, grundlage: Grundlage, seite: InvoiceDirection, bereich: \App\Domain\Zugriffsbereich, erstesJahr: int, letztesJahr: int, ansicht: array<string, string>, parameter: array<string, string>}
      */
     private function filter(Request $request): array
     {
         $b = $this->berechtigungen();
         $heute = new \DateTimeImmutable('today');
         $standard = ZeitraumAuswahl::jahr(Dashboard::standardJahr($b, $heute));
+        // A free period longer than ZeitraumAuswahl::MAX_JAHRE_FREI falls
+        // back to the default; the period filter says so.
         $auswahl = ZeitraumAuswahl::ausAnfrage($request->query, $standard, $heute);
-        // One request decrypts every line of the period (CLAUDE.md section 1):
-        // a free period longer than MAX_JAHRE_FREI falls back with a note.
-        $zuLang = $auswahl->zeitraum->bis >= $auswahl->zeitraum->von->modify('+' . self::MAX_JAHRE_FREI . ' years');
-        if ($zuLang) {
-            $auswahl = $standard;
-        }
         $grundlage = Grundlage::tryFrom(self::text($request->query['grundlage'] ?? null)) ?? Grundlage::STANDARD;
         $seite = self::text($request->query['seite'] ?? null) === 'einnahmen' ? InvoiceDirection::Einnahme : InvoiceDirection::Ausgabe;
         $ansicht = [
@@ -195,7 +195,6 @@ final readonly class AuswertungController
 
         return [
             'auswahl' => $auswahl,
-            'zuLang' => $zuLang,
             'grundlage' => $grundlage,
             'seite' => $seite,
             'bereich' => $b->zugriffsbereich(Permission::ReportView),

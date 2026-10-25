@@ -35,9 +35,9 @@ final class ConfigWriterTest extends TestCase
         return $data;
     }
 
-    private function write(string $password = 'geheim'): void
+    private function write(string $password = 'geheim'): string
     {
-        ConfigWriter::write($this->file, [
+        return ConfigWriter::write($this->file, [
             'host' => 'db.example',
             'port' => 3307,
             'name' => 'verein',
@@ -90,6 +90,14 @@ final class ConfigWriterTest extends TestCase
 
         self::assertNotSame($erste['server_key'], $zweite['server_key']);
         self::assertNotSame($erste['cron_token'], $zweite['cron_token']);
+    }
+
+    /** Issue #244: the installer shows the new cron URL, so write() hands the token back. */
+    public function testWriteReturnsTheCronTokenItWrote(): void
+    {
+        $token = $this->write();
+
+        self::assertSame($this->written()['cron_token'], $token);
     }
 
     public function testTheConfigDirectoryIsCreatedIfMissing(): void

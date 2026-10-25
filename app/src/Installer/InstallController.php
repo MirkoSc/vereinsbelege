@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Installer;
 
+use App\Api\CronController;
 use App\Config\Paths;
 use App\Http\Request;
 use App\Http\Response;
@@ -23,6 +24,7 @@ use App\Service\Mail\MailTransport;
 use App\Service\Mail\PublicUrl;
 use App\Service\Mail\SmtpSecurity;
 use App\Service\Migration\Migrator;
+use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\UpdateService;
 use App\View\View;
@@ -161,6 +163,8 @@ final readonly class InstallController
             'db_password' => (string) ($request->post['db_password'] ?? ''),
             'kanal' => ((string) ($request->post['kanal'] ?? '')) === 'beta' ? 'beta' : 'stable',
             'modus' => ((string) ($request->post['modus'] ?? '')) === 'restore' ? 'restore' : 'frisch',
+            // name of a ZIP in shared/var/backups/ (issue #244), '' = upload
+            'backup_server' => trim((string) ($request->post['backup_server'] ?? '')),
             // Kept for re-display only - never the password (see below).
             'admin_email' => trim((string) ($request->post['admin_email'] ?? '')),
             'admin_name' => trim((string) ($request->post['admin_name'] ?? '')),
@@ -188,11 +192,35 @@ final readonly class InstallController
             }
         }
 
-        $upload = null;
+        // The backup comes either as an upload or - for one larger than
+        // upload_max_filesize - from shared/var/backups/, put there by FTP
+        // (issue #244, E-66). That one only with the FTP proof of this
+        // session (ftpFreigegeben()): /install answers without a login, and
+        // the form names the database the dump goes into.
+        $zipPfad = null;
+        $vomServer = false;
+        $auswahl = $values['backup_server'];
         if ($values['modus'] === 'restore' && $errors === []) {
-            $upload = $this->uploadedBackup($request);
-            if ($upload === null) {
-                $errors['backup'] = 'Bitte ein Backup-ZIP hochladen.';
+            if ($auswahl !== '' && $this->uploadedBackup($request) !== null) {
+                $errors['backup'] = 'Bitte entweder ein Backup hochladen oder ein per FTP abgelegtes auswählen, nicht beides.';
+            } elseif ($auswahl !== '') {
+                $vomServer = true;
+                if (!$this->ftpFreigegeben()) {
+                    $errors['backup'] = sprintf(
+                        'Zuerst per FTP die leere Datei %s in shared/var/backups/ anlegen und diese Seite neu laden.',
+                        $this->ftpFreigabeDatei(),
+                    );
+                } else {
+                    $zipPfad = $this->serverBackups()->path($auswahl);
+                    if ($zipPfad === null) {
+                        $errors['backup'] = 'Das ausgewählte Backup liegt nicht (mehr) in shared/var/backups/. Bitte die Seite neu laden und erneut auswählen.';
+                    }
+                }
+            } else {
+                $zipPfad = $this->uploadedBackup($request)['tmp_name'] ?? null;
+                if ($zipPfad === null) {
+                    $errors['backup'] = 'Bitte ein Backup-ZIP hochladen oder ein per FTP abgelegtes Backup auswählen.';
+                }
             }
         }
 
@@ -201,8 +229,8 @@ final readonly class InstallController
         }
         assert($pdo instanceof \PDO);
 
-        if ($upload !== null) {
-            return $this->startRestore($values, $upload);
+        if ($zipPfad !== null) {
+            return $this->startRestore($values, $zipPfad, $vomServer);
         }
 
         // Fresh install: every migration from 0. The channel setting is
@@ -330,7 +358,7 @@ final readonly class InstallController
         $aktion = (string) ($request->post['aktion'] ?? '');
         if ($aktion === 'ueberspringen') {
             // Saves nothing more; what an earlier test saved stays.
-            return $this->finishFresh($stand, $this->mailVollstaendig($stand));
+            return $this->finishFresh($request, $stand, $this->mailVollstaendig($stand));
         }
         if ($aktion !== 'testen' && $aktion !== 'abschliessen') {
             return $this->renderMail($stand, ['mail' => 'Unbekannte Aktion.'], 422);
@@ -398,7 +426,7 @@ final readonly class InstallController
         );
 
         if ($aktion === 'abschliessen') {
-            return $this->finishFresh($stand, true);
+            return $this->finishFresh($request, $stand, true);
         }
 
         $ergebnis = new Mailer(
@@ -600,7 +628,9 @@ final readonly class InstallController
             new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
             @unlink($dumpDatei);
-            if ($zipDatei !== null) {
+            // A backup from shared/var/backups/ is the admin's file, not a
+            // copy of the installer's (issue #244): it stays.
+            if ($zipDatei !== null && ($stand['zip_behalten'] ?? false) !== true) {
                 @unlink($zipDatei);
             }
 
@@ -621,9 +651,14 @@ final readonly class InstallController
                 return Response::json([...$antwort, 'weiter' => '/install']);
             }
 
-            $this->finishRestore($values, $serverSchluessel);
+            $cronToken = $this->finishRestore($values, $serverSchluessel);
 
-            return Response::json($antwort);
+            // The new cron token (issue #244): the old cronjob of the
+            // hoster no longer works. The page shows the URL once; it is in
+            // this answer only, never in a log or a link.
+            // Not cached: the session's cache limiter sends no-store
+            // (Session::OPTIONEN), as on every installer page.
+            return Response::json([...$antwort, 'cron_url' => CronController::url($request->ownOrigin(), $cronToken)]);
         } catch (\PDOException $e) {
             // Deliberately not getMessage(): a failed INSERT quotes a part
             // of the statement, and that is the row data of the backup.
@@ -691,9 +726,15 @@ final readonly class InstallController
             return $this->renderAccess(['server_key' => 'Dieser Schlüssel passt nicht zu den eingespielten Daten: kein Benutzerkonto lässt sich damit lesen. Bitte die config.php der Installation verwenden, von der das Backup stammt.'], 422);
         }
 
-        $this->finishRestore($values, $schluessel);
+        $cronToken = $this->finishRestore($values, $schluessel);
 
-        return $this->render(['fertig' => true, 'restore' => true, 'errors' => [], 'values' => []]);
+        return $this->render([
+            'fertig' => true,
+            'restore' => true,
+            'cronUrl' => CronController::url($request->ownOrigin(), $cronToken),
+            'errors' => [],
+            'values' => [],
+        ]);
     }
 
     /**
@@ -720,6 +761,7 @@ final readonly class InstallController
             'admin_name' => trim((string) ($request->post['admin_name'] ?? '')),
         ];
         $neuerSchluessel = ConfigWriter::generateServerKey();
+        $cronToken = null;
 
         try {
             $zugang = new RestoreAccess($this->connect($values));
@@ -733,7 +775,9 @@ final readonly class InstallController
                 // Inside relink()'s transaction: a config.php that cannot be
                 // written rolls the re-link back instead of leaving the one
                 // readable account under a key that exists nowhere.
-                fn() => ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel),
+                function () use (&$cronToken, $values, $neuerSchluessel): void {
+                    $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel);
+                },
             );
             $unlesbar = $zugang->unreadableAccounts($neuerSchluessel, $ergebnis->userId);
         } catch (RestoreAccessException $e) {
@@ -747,6 +791,7 @@ final readonly class InstallController
         return $this->render([
             'fertig' => true,
             'restore' => true,
+            'cronUrl' => is_string($cronToken) ? CronController::url($request->ownOrigin(), $cronToken) : null,
             'zugangVerknuepft' => [
                 'email' => $eingabe['admin_email'],
                 'freigabeErteilt' => $ergebnis->freigabeErteilt,
@@ -764,16 +809,22 @@ final readonly class InstallController
      *
      * @param array<string, mixed> $stand $_SESSION['install_admin']
      */
-    private function finishFresh(array $stand, bool $mailEingerichtet): Response
+    private function finishFresh(Request $request, array $stand, bool $mailEingerichtet): Response
     {
         /** @var array<string, string> $dbValues */
         $dbValues = $stand['db'];
-        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+        $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
 
         unset($_SESSION['install_admin']);
         $this->cleanUpSetupLeftovers();
 
-        return $this->render(['fertig' => true, 'mailEingerichtet' => $mailEingerichtet, 'errors' => [], 'values' => []]);
+        return $this->render([
+            'fertig' => true,
+            'mailEingerichtet' => $mailEingerichtet,
+            'cronUrl' => CronController::url($request->ownOrigin(), $cronToken),
+            'errors' => [],
+            'values' => [],
+        ]);
     }
 
     /** The open step of a fresh install: confirming the key, or the mail step after it. */
@@ -880,11 +931,14 @@ final readonly class InstallController
      * /install), the leftovers of setup.php, the session state.
      *
      * @param array<string, string> $values
+     * @return string the new cron token
      */
-    private function finishRestore(array $values, string $serverSchluessel): void
+    private function finishRestore(array $values, string $serverSchluessel): string
     {
-        ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
+        $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $serverSchluessel);
         $this->closeInstaller();
+
+        return $cronToken;
     }
 
     /** What follows a written config.php: the leftovers of setup.php, the session state. */
@@ -958,10 +1012,13 @@ final readonly class InstallController
      * Unpacks dump.sql into shared/var/ and hands the page over to
      * install.js.
      *
+     * `$zip` is the uploaded file, or - `$vomServer` - a backup the admin
+     * put into shared/var/backups/ by FTP (issue #244). That one is read in
+     * place: no copy (it may be gigabytes), and it is never deleted.
+     *
      * @param array<string, string> $values
-     * @param array{tmp_name: string} $upload
      */
-    private function startRestore(array $values, array $upload): ResponseInterface
+    private function startRestore(array $values, string $zip, bool $vomServer): ResponseInterface
     {
         $varDir = $this->paths->varDir();
         if (!is_dir($varDir)) {
@@ -973,23 +1030,28 @@ final readonly class InstallController
 
         $restore = new RestoreService();
         try {
-            $restore->dumpAusZip($upload['tmp_name'], $dumpDatei);
-            $serverSchluessel = $restore->serverSchluesselAusZip($upload['tmp_name']);
-            $manifest = $restore->manifestAusZip($upload['tmp_name']);
+            $restore->dumpAusZip($zip, $dumpDatei);
+            $serverSchluessel = $restore->serverSchluesselAusZip($zip);
+            $manifest = $restore->manifestAusZip($zip);
 
             // The upload is gone at the end of this request, so a backup with
             // blobs has to keep its ZIP until the blob phase is through. Only
             // then - otherwise every restore would double the disk it needs.
-            if ($restore->blobAnzahlImZip($upload['tmp_name']) > 0) {
-                $zipDatei = $varDir . '/install_restore_' . $kennung . '.zip';
-                if (!copy($upload['tmp_name'], $zipDatei)) {
-                    throw new \RuntimeException('Das Backup konnte nicht zwischengespeichert werden.');
+            // A backup from shared/var/backups/ stays where it is anyway.
+            if ($restore->blobAnzahlImZip($zip) > 0) {
+                if ($vomServer) {
+                    $zipDatei = $zip;
+                } else {
+                    $zipDatei = $varDir . '/install_restore_' . $kennung . '.zip';
+                    if (!copy($zip, $zipDatei)) {
+                        throw new \RuntimeException('Das Backup konnte nicht zwischengespeichert werden.');
+                    }
+                    @chmod($zipDatei, 0600);
                 }
-                @chmod($zipDatei, 0600);
             }
         } catch (\RuntimeException $e) {
             @unlink($dumpDatei);
-            if ($zipDatei !== null) {
+            if ($zipDatei !== null && !$vomServer) {
                 @unlink($zipDatei);
             }
 
@@ -1000,6 +1062,8 @@ final readonly class InstallController
             'values' => $values,
             'dump_datei' => $dumpDatei,
             'zip_datei' => $zipDatei,
+            // the admin's own file in shared/var/backups/ (issue #244)
+            'zip_behalten' => $vomServer,
             'phase' => 'sql',
             // dump phase: byte offset into dump.sql and statements run so
             // far (issue #120); `offset` counts the files of the blob phase
@@ -1009,6 +1073,12 @@ final readonly class InstallController
             'server_key' => $serverSchluessel,
         ];
 
+        if ($vomServer) {
+            // The proof is used up: another restore wants a new one.
+            @unlink($this->paths->backupDir() . '/' . $this->ftpFreigabeDatei());
+            unset($_SESSION['install_ftp_code']);
+        }
+
         return $this->render([
             'restore' => true,
             'serverKeyUebernommen' => $serverSchluessel !== null,
@@ -1016,6 +1086,37 @@ final readonly class InstallController
             'errors' => [],
             'values' => $values,
         ]);
+    }
+
+    private function serverBackups(): ServerBackups
+    {
+        return new ServerBackups($this->paths->backupDir());
+    }
+
+    /**
+     * The file whose existence proves FTP access for this session (issue
+     * #244): `freigabe-<random>.txt`, the random part kept in the session.
+     * Without it, anyone who reaches /install before the admin could have a
+     * backup the admin put into shared/var/backups/ played into a database
+     * of their own choosing. Only someone with FTP access can create the
+     * file, and only for the code their own browser was shown.
+     */
+    private function ftpFreigabeDatei(): string
+    {
+        $code = $_SESSION['install_ftp_code'] ?? null;
+        if (!is_string($code) || preg_match('/^[0-9a-f]{16}$/D', $code) !== 1) {
+            $code = bin2hex(random_bytes(8));
+            $_SESSION['install_ftp_code'] = $code;
+        }
+
+        return 'freigabe-' . $code . '.txt';
+    }
+
+    private function ftpFreigegeben(): bool
+    {
+        $pfad = $this->paths->backupDir() . '/' . $this->ftpFreigabeDatei();
+
+        return is_file($pfad) && !is_link($pfad);
     }
 
     /**
@@ -1113,16 +1214,51 @@ final readonly class InstallController
     }
 
     /**
+     * What one upload may carry: the smaller of upload_max_filesize and
+     * post_max_size, formatted like the system check does, '' if unknown.
+     */
+    private static function uploadGrenze(): string
+    {
+        $werte = [];
+        foreach (['upload_max_filesize', 'post_max_size'] as $name) {
+            $bytes = SystemCheck::parseBytes((string) ini_get($name));
+            if ($bytes !== null && $bytes > 0) {
+                $werte[] = $bytes;
+            }
+        }
+
+        return $werte === [] ? '' : SystemCheck::formatBytes(min($werte));
+    }
+
+    /**
      * @param array<string, mixed> $data
      */
     private function render(array $data, int $status = 200): Response
     {
+        // Only the form (no other step) offers the ZIPs put there by FTP
+        // and names the upload limit they get around (issue #244) - and
+        // lists them only once this session proved FTP access, so a visitor
+        // learns nothing about shared/var/backups/.
+        $formular = !isset($data['schritt']) && !isset($data['fertig']) && !isset($data['restore']);
+        $ftp = [];
+        if ($formular) {
+            $freigegeben = $this->ftpFreigegeben();
+            $ftp = [
+                'uploadGrenze' => self::uploadGrenze(),
+                'ftpFreigabeDatei' => $this->ftpFreigabeDatei(),
+                'serverBackups' => $freigegeben ? $this->serverBackups()->list() : null,
+            ];
+        }
+
+        // Pages with the cron token are not cached either: the session's
+        // cache limiter sends no-store on all of them (Session::OPTIONEN).
         return Response::html(
             $this->view->render('install', [
                 'title' => 'Installation',
                 'csrf' => $this->session->csrfToken(),
                 'scripts' => ['/js/install.js'],
                 'setupUebrig' => is_file($this->paths->webDir() . '/setup.php'),
+                ...$ftp,
                 ...$data,
             ]),
             $status,
