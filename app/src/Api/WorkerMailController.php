@@ -83,7 +83,7 @@ final readonly class WorkerMailController
 
     public function uploadAnlegen(Request $request, Worker $worker): Response
     {
-        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten): Response {
+        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request): Response {
             $groesse = $daten['groesse'] ?? null;
             if (!is_int($groesse) || $groesse < 1) {
                 return self::fehler(422, 'groesse_ungueltig', 'Ungültige Dateigröße.');

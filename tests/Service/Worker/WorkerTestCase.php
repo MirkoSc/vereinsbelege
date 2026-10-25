@@ -5,6 +5,13 @@ declare(strict_types=1);
 namespace App\Tests\Service\Worker;
 
 use App\Api\WorkerApiController;
+use App\Api\WorkerMailController;
+use App\Repository\SubmissionRepository;
+use App\Repository\SubmissionUploadRepository;
+use App\Service\Submission\EinreichungsEinstellungen;
+use App\Service\Submission\MailEinreichung;
+use App\Service\Upload\UploadStore;
+use App\Service\Worker\MailEingangSpeicher;
 use App\Domain\Worker;
 use App\Http\HttpMethod;
 use App\Http\Request;
@@ -77,6 +84,10 @@ abstract class WorkerTestCase extends DatabaseTestCase
     protected WorkerUebergabe $uebergabe;
     protected WorkerFallback $fallback;
 
+    // Issue #87: the mail intake.
+    protected MailEingangSpeicher $mailEingang;
+    protected WorkerMailController $mailApi;
+
     /** The key pair of the worker koppeln() paired last - what stays on the worker. */
     protected string $workerSchluesselpaar = '';
 
@@ -124,6 +135,7 @@ abstract class WorkerTestCase extends DatabaseTestCase
         // The module is on in these tests unless one switches it off.
         $this->settings->set(WorkerRouting::SETTING_AKTIV, '1');
         $this->routing = new WorkerRouting($this->workers, $this->settings);
+        $this->mailEingang = new MailEingangSpeicher($this->settings, $this->crypto);
         $this->uebergabe = new WorkerUebergabe($this->routing, $this->freigaben, $this->jobs, $this->documents);
         $this->fallback = new WorkerFallback($this->routing, $this->workers, $this->jobs, $this->freigaben, $this->settings, $this->artifacts);
         $this->kopplung = new WorkerKopplung(
@@ -148,7 +160,7 @@ abstract class WorkerTestCase extends DatabaseTestCase
             $this->grants,
             $this->freigaben,
             $this->artefakte,
-            new WorkerKonfiguration($this->workers, $this->anbieter, $this->crypto),
+            new WorkerKonfiguration($this->workers, $this->anbieter, $this->crypto, $this->mailEingang, $this->settings),
             $this->blobService,
             $vaults,
             new CategoryRepository($this->pdo()),
@@ -156,6 +168,26 @@ abstract class WorkerTestCase extends DatabaseTestCase
             $this->routing,
             $this->fallback,
             $this->documents,
+            $this->mailEingang,
+        );
+        $einstellungen = EinreichungsEinstellungen::fromSettings($this->settings);
+        $this->mailApi = new WorkerMailController(
+            new MailEinreichung(
+                $this->pdo(),
+                new SubmissionRepository($this->pdo()),
+                $this->documents,
+                new SubmissionUploadRepository($this->pdo()),
+                $blobs,
+                $vaults,
+                $einstellungen,
+                $this->jobs,
+                new AuditLog(new AuditLogRepository($this->pdo()), $vaults, $this->crypto),
+            ),
+            $this->mailEingang,
+            $this->routing,
+            new UploadService($this->tmp . '/upload'),
+            new UploadStore($this->blobService, $vaults, $this->settings),
+            $einstellungen,
         );
     }
 
