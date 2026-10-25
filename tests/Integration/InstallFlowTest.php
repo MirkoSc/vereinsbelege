@@ -1635,6 +1635,7 @@ final class InstallFlowTest extends DatabaseTestCase
 
         $schluessel = (string) (require $this->paths()->configFile())['server_key'];
         self::assertNotNull($this->tresorUnter($schluessel)->current());
+        self::assertFileExists($this->paths()->vaultAnchorFlagFile(), 'no first use on trust after this');
 
         $this->expectException(TresorAnkerException::class);
         $this->tresorUnter(ConfigWriter::generateServerKey())->current();
@@ -1707,42 +1708,75 @@ final class InstallFlowTest extends DatabaseTestCase
         $this->tresorUnter($sicherung['alterSchluessel'])->current();
     }
 
-    /**
-     * A backup from before migration 047 has no MAC at all: the restore that
-     * applies the migration takes the key over (first use) - with the server
-     * key handed in at the access step.
-     */
-    public function testABackupFromBeforeTheAnchorIsAnchoredWithTheOldServerKey(): void
+    private function schluesselTauschen(Vault $fremd): void
     {
-        $sicherung = $this->bisZumZugangsschritt($this->schemaVorDemAnker(...));
-        self::assertSame(true, $_SESSION['install_restore']['erstbeglaubigung'] ?? null);
+        $stmt = $this->pdo()->prepare('UPDATE vault SET public_key = ?');
+        $stmt->bindValue(1, $fremd->publicKey(), \PDO::PARAM_LOB);
+        $stmt->execute();
+    }
+
+    /**
+     * Review finding on #240 (H-05): a doctored backup that pretends to come
+     * from before migration 047 - no MAC column, lower schema_version, a key
+     * of the attacker's. Restored with the genuine server key, its key is
+     * NOT anchored: a restore never anchors on trust.
+     */
+    public function testADoctoredBackupFromBeforeTheAnchorIsNeverAnchoredOnTrust(): void
+    {
+        $fremd = Vault::create();
+        $sicherung = $this->bisZumZugangsschritt(function () use ($fremd): void {
+            $this->schluesselTauschen($fremd);
+            $this->schemaVorDemAnker();
+        });
 
         self::assertSame(200, $this->postAccess('/install/serverschluessel', ['server_key' => $sicherung['alterSchluessel']])->status);
 
-        self::assertNotNull($this->tresorUnter($sicherung['alterSchluessel'])->current());
+        self::assertSame([1 => false], $this->tresorUnter($sicherung['alterSchluessel'])->ankerStand());
+        self::assertFileExists($this->paths()->vaultAnchorFlagFile(), 'and no later update anchors it on trust either');
     }
 
-    /** The same with the server key inside the backup: anchored before config.php is written. */
-    public function testABackupWithConfigFromBeforeTheAnchorIsAnchoredWithItsKey(): void
+    /** The same with the server key inside the backup. */
+    public function testADoctoredBackupWithConfigFromBeforeTheAnchorIsNeverAnchoredOnTrust(): void
     {
-        $sicherung = $this->installationOhneSchluesselGesichert($this->schemaVorDemAnker(...), mitConfig: true);
+        $fremd = Vault::create();
+        $sicherung = $this->installationOhneSchluesselGesichert(function () use ($fremd): void {
+            $this->schluesselTauschen($fremd);
+            $this->schemaVorDemAnker();
+        }, mitConfig: true);
 
         self::assertSame(200, $this->submitRestore($sicherung['zip'])->status);
         self::assertTrue($this->runRestoreSteps()['fertig']);
 
         self::assertSame($sicherung['alterSchluessel'], (require $this->paths()->configFile())['server_key']);
-        self::assertNotNull($this->tresorUnter($sicherung['alterSchluessel'])->current());
+        self::assertSame([1 => false], $this->tresorUnter($sicherung['alterSchluessel'])->ankerStand());
+    }
+
+    /**
+     * A genuine backup from before 047 is not anchored either - it waits for
+     * the recovery key; alternative 2 of the access step brings it, and
+     * anchors the key it proves.
+     */
+    public function testABackupFromBeforeTheAnchorIsAnchoredByTheRecoveryKeyOnly(): void
+    {
+        $sicherung = $this->bisZumZugangsschritt($this->schemaVorDemAnker(...));
+
+        $response = $this->postAccess('/install/zugang', [
+            'schluessel' => implode(' ', $sicherung['gruppen']),
+            'admin_email' => $this->validPost()['admin_email'],
+            'admin_name' => $this->validPost()['admin_name'],
+            'admin_password' => $this->validPost()['admin_password'],
+        ]);
+        self::assertSame(200, $response->status, $response->body);
+
+        $neu = (string) (require $this->paths()->configFile())['server_key'];
+        self::assertNotNull($this->tresorUnter($neu)->current());
     }
 
     /** A current backup restored the same way keeps its MAC - nothing is taken over on trust. */
     public function testACurrentBackupIsNotAnchoredAgainOnRestore(): void
     {
         $fremd = Vault::create();
-        $sicherung = $this->installationOhneSchluesselGesichert(function () use ($fremd): void {
-            $stmt = $this->pdo()->prepare('UPDATE vault SET public_key = ?');
-            $stmt->bindValue(1, $fremd->publicKey(), \PDO::PARAM_LOB);
-            $stmt->execute();
-        }, mitConfig: true);
+        $sicherung = $this->installationOhneSchluesselGesichert(fn() => $this->schluesselTauschen($fremd), mitConfig: true);
 
         self::assertSame(200, $this->submitRestore($sicherung['zip'])->status);
         self::assertTrue($this->runRestoreSteps()['fertig']);

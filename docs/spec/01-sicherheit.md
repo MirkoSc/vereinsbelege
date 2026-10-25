@@ -446,6 +446,15 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
   TresorAnker`, `ServerCrypto::tresorAnker()`). Weder die Datenbank noch
   ein Backup ohne `config.php` enthält den Schlüssel; eine aus einer
   anderen Installation kopierte Zeile (Schlüssel + MAC) passt nicht.
+- **Lebenszyklus im MAC:** Sobald eine neuere Generation bestätigt ist
+  (Rotation, `confirmRecovery()`) bzw. spätestens beim `retire()`, wird
+  der MAC der älteren durch einen MAC unter dem Zweck
+  `"vault-anchor-retired-v1"` ersetzt – nur, wenn ihr aktiver MAC stimmte.
+  Versiegelt wird nur an eine nicht stillgelegte Generation mit **aktivem**
+  MAC. Wer `recovery_confirmed_at`/`retired_at` in der Datenbank
+  zurückdreht, bekommt die alte Generation (deren `VK_priv` ein früherer
+  Inhaber noch haben könnte) nicht zurück; auch ihr Papierschlüssel macht
+  einen abgelösten MAC nie wieder aktiv.
 - **Geprüft wird vor jedem Versiegeln:** `VaultRepository::current()` gibt
   den Schlüssel nur heraus, wenn sein MAC stimmt, sonst
   `TresorAnkerException`. Öffentliche Einreichung, interne Erfassung,
@@ -469,12 +478,10 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
   Seiten, die nur zählen oder Konten auflisten (Freigabe-Banner,
   Benutzerverwaltung, Tresor-Freigaben, Worker-Freigabe aus der Sitzung),
   nutzen `currentUngeprueft()` und bleiben erreichbar.
-- Die Erstbeglaubigung (unten) setzt sich nicht selbst zurück: scheitert
-  der Request nach Migration 047 (Datenbankfehler genau dann), bleibt der
-  MAC leer – Ausweg ist der Wiederherstellungsschlüssel. Der Installer
-  merkt sich vor dem Migrieren, dass 047 aussteht, damit ein
-  wiederholter Schritt sie nicht verliert, und prüft bei einer frischen
-  Installation vor dem Migrieren, ob schon ein Tresor existiert.
+- Die Erstbeglaubigung (unten) gibt es einmal: scheitert der Request nach
+  Migration 047 (Datenbankfehler genau dann), bleibt der MAC leer – Ausweg
+  ist der Wiederherstellungsschlüssel. Eine frische Installation prüft vor
+  dem Migrieren, ob schon ein Tresor existiert.
 - **Wer den Anker setzt** – nur, wer den Schlüssel *beweisen* kann:
   1. der Installer beim Anlegen (Schlüsselpaar im selben Request erzeugt),
   2. der Start einer Rotation (ebenso; die neue Generation ist von Anfang
@@ -489,34 +496,38 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
      zu dieser Installation“) – dann Audit-Log prüfen und ein Backup von
      vor der Änderung einspielen.
   4. **Erstbeglaubigung** (trust on first use) für Generationen ohne MAC –
-     nur in dem Request, der Migration 047 anwendet
+     **einmal je Installation**, in dem Request, der Migration 047 anwendet
      (`App\Service\Tresor\Erstbeglaubigung` als Nach-Haken des
-     `Migrator`: Update-Schritt `migrate`, `bin/migrate.php`; beim Restore
-     eines Backups von vor 047 mit dem Schlüssel, den `config.php`
-     bekommt). Ein MAC, der später fehlt, wird nie wieder still ergänzt;
-     ein falscher MAC wird nie überschrieben.
+     `Migrator`: Update-Schritt `migrate`, `bin/migrate.php`). Dass sie
+     verbraucht ist, steht **außerhalb der Datenbank** in
+     `shared/vault_anchor.flag` (`Paths::vaultAnchorFlagFile()`), vor den
+     MACs geschrieben; der Installer schreibt die Datei mit `config.php`
+     (frische Installation und jeder Restore). Ob die Migration „aussteht“,
+     ist eine Tatsache der Datenbank – wer sie schreiben kann, löscht die
+     Spalte, senkt `schema_version` und tauscht den Schlüssel; mit der Datei
+     beglaubigt das nächste Update trotzdem nichts. Lässt sich die Datei
+     nicht schreiben, unterbleibt die Erstbeglaubigung. Ein MAC, der später
+     fehlt, wird nie wieder still ergänzt; ein falscher nie überschrieben.
 - **Annahme (dokumentiert, nicht prüfbar):** zum Zeitpunkt des Updates auf
-  dieses Release – bzw. beim Einspielen eines Backups von davor – ist
-  `vault.public_key` unverfälscht. Ein vorher ausgetauschter Schlüssel
-  würde beglaubigt; das ist der Stand ohne Anker, nicht schlechter. Ein
-  Angreifer kann den Moment nicht selbst herbeiführen: die Datenbank
-  allein erzeugt ihn nicht – nur das Anwenden der Migration durch den
-  Admin (wer `schema_version` und die Spalte zurückdreht, braucht danach
-  noch ein Update durch den Admin).
-- **Restore:** mit `config.php` im Backup oder dem alten Server-Schlüssel
-  (Zugangsschritt Weg 1) passen die MACs aus dem Dump unverändert – ein
-  manipulierter Schlüssel im Backup fällt durch. Weg 2 (neuer
+  dieses Release ist `vault.public_key` unverfälscht. Ein vorher
+  ausgetauschter Schlüssel würde beglaubigt; das ist der Stand ohne Anker,
+  nicht schlechter. Der Moment lässt sich nicht wiederholen (Datei oben).
+- **Restore beglaubigt nie auf Vertrauen:** mit `config.php` im Backup oder
+  dem alten Server-Schlüssel (Zugangsschritt Weg 1) gelten die MACs aus dem
+  Dump unverändert – ein manipulierter Schlüssel im Backup fällt durch,
+  auch wenn das Backup sich als „vor 047“ ausgibt (Spalte fehlt,
+  `schema_version` gesenkt). Ein echtes Backup von vor 047 bleibt ebenso
+  unbeglaubigt, bis der Wiederherstellungsschlüssel den Schlüssel beweist
+  (`/admin/wiederherstellen` nach der Anmeldung). Weg 2 (neuer
   Server-Schlüssel) beglaubigt die aktuelle Generation per
   Wiederherstellungsschlüssel neu; eine *vorgemerkte* Generation einer
   Rotation (Backup mitten in der Rotation) hat danach keinen gültigen MAC
   – die Rotation lässt sich dann nur abbrechen und neu starten.
 - **Grenzen:** Ein Backup **mit** `config.php` beglaubigt sich selbst – wer
-  es fälschen kann, setzt Server-Schlüssel und MAC gleich mit. Der MAC
-  bindet Version und Schlüssel, nicht den Lebenszyklus: wer schreiben
-  kann, könnte die neueste Generation zurück auf „unbestätigt“ setzen und
-  so an die *vorige, echte* Generation versiegeln lassen – relevant nur
-  für jemanden, der deren alten `VK_priv` besitzt (Rest-Exposure der
-  Rotation). Das übrige Backup (Belege, Konten) bleibt ohne MAC (H-05
+  es fälschen kann, setzt Server-Schlüssel und MAC gleich mit. Vor der
+  Bestätigung einer Rotation ist die alte Generation noch aktiv – ein
+  Rückdrehen in diesem Fenster ändert nichts, sie ist dann ohnehin die
+  laufende. Das übrige Backup (Belege, Konten) bleibt ohne MAC (H-05
   teilweise).
 - Zwischen den Update-Schritten `switch` und `migrate` fehlt die Spalte:
   dann gilt jeder Schlüssel als unbeglaubigt, für diese Sekunden wird
@@ -1058,9 +1069,12 @@ Installation oder Generation) wird von `current()` abgelehnt und einmal je
 Stunde auditiert, die Anmeldung lässt den Tresor trotz passender
 Freigabe gesperrt, ein gelöschter MAC wird nicht wieder ergänzt (auch nicht
 von einem erneuten Migrationslauf), die Migration beglaubigt bestehende
-Generationen genau einmal, der Wiederherstellungsschlüssel beglaubigt einen
-echten Schlüssel neu und einen ausgetauschten nicht, Rotation und Restore
-(mit/ohne `config.php`, Backup von vor 047) setzen den Anker, Systemcheck,
+Generationen genau einmal und ein DB-Schreiber kann das nicht wiederholen
+(Markierungsdatei), der Wiederherstellungsschlüssel beglaubigt einen
+echten Schlüssel neu und einen ausgetauschten nicht, eine abgelöste
+Generation kommt durch Zurückdrehen von Bestätigung/Stilllegung nicht
+zurück, Rotation und Restore (mit/ohne `config.php`) setzen den Anker, ein
+als „vor 047“ getarntes manipuliertes Backup wird nicht beglaubigt, Systemcheck,
 jede `VaultRepository` der Anwendung hat den Anker;
 Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);

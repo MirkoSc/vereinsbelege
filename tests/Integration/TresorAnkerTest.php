@@ -48,6 +48,7 @@ final class TresorAnkerTest extends DatabaseTestCase
     private ServerCrypto $crypto;
     private RecoveryKey $schluessel;
     private int $adminId;
+    private string $markierung;
 
     protected function setUp(): void
     {
@@ -60,6 +61,35 @@ final class TresorAnkerTest extends DatabaseTestCase
         $erstellt = new FirstAdminSetup($this->pdo())->create(self::ADMIN, 'Anna Admin', self::PASSWORT, $config['server_key']);
         $this->adminId = $erstellt['userId'];
         $this->schluessel = $erstellt['recoveryKey'];
+        $this->markierung = sys_get_temp_dir() . '/vb_vault_anchor_' . uniqid('', true) . '.flag';
+    }
+
+    protected function tearDown(): void
+    {
+        @unlink($this->markierung);
+        parent::tearDown();
+    }
+
+    private function erstbeglaubigung(?AuditLog $audit = null): \Closure
+    {
+        return \Closure::fromCallable(new Erstbeglaubigung($this->vaults(), $this->markierung, $audit));
+    }
+
+    /** What a writer of the database can do to stage the first use again. */
+    private function ankerMigrationZuruecksetzen(): void
+    {
+        $this->pdo()->exec('ALTER TABLE vault DROP COLUMN public_key_mac');
+        $this->pdo()->prepare('DELETE FROM schema_version WHERE version >= ?')->execute([$this->ankerVersion()]);
+    }
+
+    private function ankerVersion(): int
+    {
+        foreach (Migration::discover($this->migrationsDir()) as $migration) {
+            if (Erstbeglaubigung::betrifft($migration)) {
+                return $migration->version;
+            }
+        }
+        self::fail('no anchor migration');
     }
 
     private function vaults(): VaultRepository
@@ -197,17 +227,39 @@ final class TresorAnkerTest extends DatabaseTestCase
      */
     public function testAMissingMacIsRefusedAndNotFilledInAgain(): void
     {
+        Erstbeglaubigung::markieren($this->markierung);
         $this->macLoeschen();
 
-        new Migrator($this->pdo(), $this->migrationsDir(), \Closure::fromCallable(new Erstbeglaubigung($this->vaults())))->migrate();
+        new Migrator($this->pdo(), $this->migrationsDir(), $this->erstbeglaubigung())->migrate();
 
         $this->expectException(TresorAnkerException::class);
         $this->vaults()->current();
     }
 
     /**
+     * Review finding on #240: "pending" is a fact of the database. A writer
+     * of it drops the column, lowers schema_version and swaps the key - the
+     * next update applies the migration again. The flag outside the
+     * database says the first use is spent: nothing is anchored.
+     */
+    public function testAWriterOfTheDatabaseCannotStageTheFirstUseAgain(): void
+    {
+        Erstbeglaubigung::markieren($this->markierung);
+        $this->ankerMigrationZuruecksetzen();
+        $this->schluesselAustauschen();
+
+        $ergebnis = new Migrator($this->pdo(), $this->migrationsDir(), $this->erstbeglaubigung())->migrate();
+
+        self::assertContains($this->ankerVersion(), array_map(static fn(Migration $m): int => $m->version, $ergebnis->applied), 'the migration did run again');
+        self::assertSame([1 => false], $this->vaults()->ankerStand());
+        $this->expectException(TresorAnkerException::class);
+        $this->vaults()->current();
+    }
+
+    /**
      * An installation from before migration 047: the update that applies it
-     * anchors the existing generations, in the same request, and audits it.
+     * anchors the existing generations, in the same request, audits it and
+     * records outside the database that this was the one first use.
      */
     public function testTheAnchorMigrationAnchorsExistingGenerationsOnFirstUse(): void
     {
@@ -215,15 +267,11 @@ final class TresorAnkerTest extends DatabaseTestCase
         $alt = sys_get_temp_dir() . '/vb_anker_' . uniqid('', true);
         mkdir($alt);
         try {
-            $ankerVersion = null;
             foreach (Migration::discover($this->migrationsDir()) as $migration) {
-                if (Erstbeglaubigung::betrifft($migration)) {
-                    $ankerVersion = $migration->version;
-                } elseif ($ankerVersion === null) {
+                if ($migration->version < $this->ankerVersion()) {
                     copy($migration->path, $alt . '/' . basename($migration->path));
                 }
             }
-            self::assertNotNull($ankerVersion);
             new Migrator($this->pdo(), $alt)->migrate();
         } finally {
             array_map('unlink', glob($alt . '/*') ?: []);
@@ -232,14 +280,71 @@ final class TresorAnkerTest extends DatabaseTestCase
         // What the previous release wrote: a row without a MAC column.
         $vault = Vault::create();
         new VaultRepository($this->pdo())->insert($vault->publicKey());
+        self::assertFileDoesNotExist($this->markierung);
 
-        $vaults = $this->vaults();
-        $audit = new AuditLog(new AuditLogRepository($this->pdo()), $vaults, $this->crypto);
-        $ergebnis = new Migrator($this->pdo(), $this->migrationsDir(), \Closure::fromCallable(new Erstbeglaubigung($vaults, $audit)))->migrate();
+        $audit = new AuditLog(new AuditLogRepository($this->pdo()), $this->vaults(), $this->crypto);
+        $ergebnis = new Migrator($this->pdo(), $this->migrationsDir(), $this->erstbeglaubigung($audit))->migrate();
 
-        self::assertContains($ankerVersion, array_map(static fn(Migration $m): int => $m->version, $ergebnis->applied));
+        self::assertContains($this->ankerVersion(), array_map(static fn(Migration $m): int => $m->version, $ergebnis->applied));
         self::assertTrue(hash_equals($vault->publicKey(), $this->vaults()->current()?->publicKey() ?? ''));
         self::assertSame([AuditAction::TresorAnkerGesetzt->value], $this->aktionen());
+        self::assertFileExists($this->markierung, 'the first use is spent');
+    }
+
+    /** Without a place to record the first use, it does not happen - the recovery key is the way out. */
+    public function testNoFirstUseWhenItCannotBeRecorded(): void
+    {
+        $this->macLoeschen();
+
+        $versionen = new Erstbeglaubigung($this->vaults(), sys_get_temp_dir() . '/gibt-es-nicht-' . uniqid() . '/vault_anchor.flag')->ausfuehren();
+
+        self::assertSame([], $versionen);
+        self::assertSame([1 => false], $this->vaults()->ankerStand());
+    }
+
+    /**
+     * Review finding on #240: rolling a rotation back in the database must
+     * not bring the replaced generation - whose private key an earlier
+     * holder may still have - back into use.
+     */
+    public function testAReplacedGenerationCannotBeBroughtBackByRollingItsRowBack(): void
+    {
+        $vaults = $this->vaults();
+        $neu = Vault::create(2);
+        $vaults->insert($neu->publicKey(), 2, schluesselBestaetigt: false);
+        self::assertSame(1, $vaults->current()?->version, 'before the confirmation');
+        $vaults->confirmRecovery(2, new \DateTimeImmutable());
+        self::assertSame(2, $vaults->current()?->version);
+        self::assertSame([1 => true, 2 => true], $vaults->ankerStand(), 'generation 1 carries the replaced anchor now');
+
+        // Confirmation rolled back: generation 1 would be the newest confirmed one.
+        $this->pdo()->exec('UPDATE vault SET recovery_confirmed_at = NULL WHERE version = 2');
+        try {
+            $vaults->current();
+            self::fail('the replaced generation was handed out again');
+        } catch (TresorAnkerException $e) {
+            self::assertSame(1, $e->version);
+        }
+
+        // Nor does the recovery key of generation 1 make it current again.
+        $ergebnis = $this->recovery()->wiederherstellen($this->adminId, $this->schluessel->formatted());
+        self::assertFalse($ergebnis->ankerErneuert);
+        $this->expectException(TresorAnkerException::class);
+        $vaults->current();
+    }
+
+    public function testARetiredGenerationStaysOutEvenWithItsRetirementUndone(): void
+    {
+        $vaults = $this->vaults();
+        $vaults->insert(Vault::create(2)->publicKey(), 2, schluesselBestaetigt: false);
+        $vaults->confirmRecovery(2, new \DateTimeImmutable());
+        $vaults->retire(1, new \DateTimeImmutable());
+
+        $this->pdo()->exec('UPDATE vault SET retired_at = NULL, recovery_confirmed_at = NULL WHERE version = 1 OR version = 2');
+        $this->pdo()->exec('UPDATE vault SET recovery_confirmed_at = created_at WHERE version = 1');
+
+        $this->expectException(TresorAnkerException::class);
+        $vaults->current();
     }
 
     public function testFirstUseLeavesAWrongMacAlone(): void

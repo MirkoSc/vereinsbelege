@@ -101,21 +101,33 @@ final readonly class VaultRepository
     }
 
     /**
-     * Whether the generation's public key carries a valid anchor. True when
-     * this instance has no anchor to check against (see the class comment).
+     * Whether the generation's MAC is genuine for its place in the
+     * lifecycle: the ACTIVE anchor while no newer generation is confirmed,
+     * the REPLACED one afterwards (TresorAnker::fuer(..., abgeloest: true)).
+     * For the system check and the recovery key; sealing asks
+     * pruefe(). True when this instance has no anchor (class comment).
      */
     public function beglaubigt(VaultGeneration $generation): bool
     {
-        return $this->anker === null || $this->anker->passt($generation->version, $generation->publicKey, $generation->publicKeyMac);
+        return $this->anker === null || $this->anker->passt(
+            $generation->version,
+            $generation->publicKey,
+            $generation->publicKeyMac,
+            $this->abgeloest($generation, $this->all()),
+        );
     }
 
     /**
-     * beglaubigt(), and a failure is reported (audit entry) - for the
-     * places that are about to use the key: current() and the login.
+     * May anything be sealed to this generation? Only to an active, not
+     * retired one whose MAC is the ACTIVE anchor - a replaced generation
+     * stays out even if its lifecycle columns were rolled back in the
+     * database. A failure is reported (audit entry). For current() and the
+     * login.
      */
     public function pruefe(VaultGeneration $generation): bool
     {
-        if ($this->beglaubigt($generation)) {
+        if ($this->anker === null
+            || ($generation->retiredAt === null && $this->anker->passt($generation->version, $generation->publicKey, $generation->publicKeyMac))) {
             return true;
         }
         if ($this->beiAbweichung !== null) {
@@ -131,41 +143,55 @@ final readonly class VaultRepository
      * the paper recovery key. Never for a key that was merely read from the
      * database - that is exactly what an attacker would have written.
      * Matches version AND key, so a row that changed in between keeps its
-     * old MAC.
+     * old MAC. A generation already replaced gets the replaced anchor - and
+     * one that carries the replaced anchor keeps it, whatever its lifecycle
+     * columns say now: a recovery key proves a key genuine, not current.
+     *
+     * @return bool whether a MAC was written
      */
-    public function beglaubige(int $version, string $publicKey): void
+    public function beglaubige(int $version, string $publicKey): bool
     {
-        $stmt = $this->pdo->prepare('UPDATE vault SET public_key_mac = ? WHERE version = ? AND public_key = ?');
-        $stmt->bindValue(1, $this->ankerOderFehler()->fuer($version, $publicKey), \PDO::PARAM_LOB);
-        $stmt->bindValue(2, $version, \PDO::PARAM_INT);
-        $stmt->bindValue(3, $publicKey, \PDO::PARAM_LOB);
-        $stmt->execute();
+        $anker = $this->ankerOderFehler();
+        $alle = $this->all();
+        $generation = null;
+        foreach ($alle as $g) {
+            if ($g->version === $version && hash_equals($g->publicKey, $publicKey)) {
+                $generation = $g;
+            }
+        }
+        if ($generation === null || $anker->passt($version, $publicKey, $generation->publicKeyMac, abgeloest: true)) {
+            return false;
+        }
+        $this->schreibeMac($version, $publicKey, $anker->fuer($version, $publicKey, $this->abgeloest($generation, $alle)));
+
+        return true;
     }
 
     /**
      * Trust on first use, for installations from before the anchor existed
      * (issue #240): every generation WITHOUT a MAC gets one, as it stands.
-     * Only App\Service\Tresor\Erstbeglaubigung calls this, and only in the
-     * request that applied migration 047 - a MAC that goes missing later is
-     * not filled in again, it stays a failed check until a recovery key
-     * proves the key. A row whose MAC is set but wrong is never touched.
+     * Only App\Service\Tresor\Erstbeglaubigung calls this - once per
+     * installation, recorded outside the database (shared/vault_anchor.flag),
+     * in the request that applied migration 047. A MAC that goes missing
+     * later is not filled in again; a row whose MAC is set is never touched.
      *
      * @return list<int> the generations anchored
      */
     public function erstbeglaubigen(): array
     {
         $anker = $this->ankerOderFehler();
-        $stmt = $this->pdo->query('SELECT version, public_key FROM vault WHERE public_key_mac IS NULL ORDER BY version');
+        $alle = $this->all();
         $versionen = [];
         $update = $this->pdo->prepare('UPDATE vault SET public_key_mac = ? WHERE version = ? AND public_key = ? AND public_key_mac IS NULL');
-        foreach ($stmt === false ? [] : $stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
-            $version = (int) $row['version'];
-            $publicKey = (string) $row['public_key'];
-            $update->bindValue(1, $anker->fuer($version, $publicKey), \PDO::PARAM_LOB);
-            $update->bindValue(2, $version, \PDO::PARAM_INT);
-            $update->bindValue(3, $publicKey, \PDO::PARAM_LOB);
+        foreach ($alle as $generation) {
+            if ($generation->publicKeyMac !== null) {
+                continue;
+            }
+            $update->bindValue(1, $anker->fuer($generation->version, $generation->publicKey, $this->abgeloest($generation, $alle)), \PDO::PARAM_LOB);
+            $update->bindValue(2, $generation->version, \PDO::PARAM_INT);
+            $update->bindValue(3, $generation->publicKey, \PDO::PARAM_LOB);
             $update->execute();
-            $versionen[] = $version;
+            $versionen[] = $generation->version;
         }
 
         return $versionen;
@@ -173,8 +199,8 @@ final readonly class VaultRepository
 
     /**
      * The anchor state of every generation still in use, for the system
-     * check: version => valid. Retired generations are left out - nothing is
-     * sealed to them any more.
+     * check: version => valid (beglaubigt()). Retired generations are left
+     * out - nothing is sealed to them any more.
      *
      * @return array<int, bool>
      */
@@ -333,6 +359,11 @@ final readonly class VaultRepository
             'UPDATE vault SET recovery_confirmed_at = ? WHERE version = ? AND recovery_confirmed_at IS NULL AND retired_at IS NULL',
         );
         $stmt->execute([$now->format(self::FORMAT), $version]);
+        // From here on everything is sealed to $version: the generations
+        // before it get the replaced anchor (issue #240), so that rolling
+        // this confirmation back in the database cannot hand out the old
+        // key again.
+        $this->abloesen($version);
     }
 
     /**
@@ -359,6 +390,7 @@ final readonly class VaultRepository
     {
         $stmt = $this->pdo->prepare('UPDATE vault SET retired_at = ? WHERE version = ? AND retired_at IS NULL');
         $stmt->execute([$now->format(self::FORMAT), $version]);
+        $this->abloesen($version + 1);
     }
 
     /**
@@ -435,6 +467,52 @@ final readonly class VaultRepository
         }
 
         return null;
+    }
+
+    /**
+     * Whether $generation is replaced: retired, or a newer generation's
+     * recovery key is confirmed (everything new is sealed to that one).
+     *
+     * @param list<VaultGeneration> $alle
+     */
+    private function abgeloest(VaultGeneration $generation, array $alle): bool
+    {
+        if ($generation->retiredAt !== null) {
+            return true;
+        }
+        foreach ($alle as $g) {
+            if ($g->version > $generation->version && $g->schluesselBestaetigt()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The generations below $version get the replaced anchor - only those
+     * whose ACTIVE anchor verifies: a wrong MAC is never turned into a
+     * valid one. Without an anchor (tests that only seed rows) nothing.
+     */
+    private function abloesen(int $version): void
+    {
+        if ($this->anker === null) {
+            return;
+        }
+        foreach ($this->all() as $generation) {
+            if ($generation->version < $version && $this->anker->passt($generation->version, $generation->publicKey, $generation->publicKeyMac)) {
+                $this->schreibeMac($generation->version, $generation->publicKey, $this->anker->fuer($generation->version, $generation->publicKey, abgeloest: true));
+            }
+        }
+    }
+
+    private function schreibeMac(int $version, string $publicKey, string $mac): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE vault SET public_key_mac = ? WHERE version = ? AND public_key = ?');
+        $stmt->bindValue(1, $mac, \PDO::PARAM_LOB);
+        $stmt->bindValue(2, $version, \PDO::PARAM_INT);
+        $stmt->bindValue(3, $publicKey, \PDO::PARAM_LOB);
+        $stmt->execute();
     }
 
     private function ankerOderFehler(): TresorAnker

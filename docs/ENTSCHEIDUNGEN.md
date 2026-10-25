@@ -1985,25 +1985,36 @@ unbeglaubigt in der Datenbank. Entschieden:
    versiegeln) – darum beglaubigt der Login nie.
 4. **Bestehende Installationen: Erstbeglaubigung (TOFU)** genau in dem
    Request, der Migration 047 anwendet (Nach-Haken des `Migrator`,
-   erkannt am Namen `vault_anchor`, nicht an der Nummer). Danach wird ein
-   fehlender MAC nie wieder still ergänzt. Annahme: im Moment des Updates
-   ist der Schlüssel unverfälscht – ein schon vorher ausgetauschter würde
-   beglaubigt (Stand ohne Anker, nicht schlechter). Gleiches beim Restore
-   eines Backups von vor 047.
-5. **Restore:** mit `config.php` bzw. altem Server-Schlüssel gelten die
-   MACs des Dumps; Weg 2 (neuer Schlüssel) beglaubigt die aktuelle
-   Generation per Wiederherstellungsschlüssel neu. Eine vorgemerkte
-   Rotations-Generation aus einem Backup mitten in der Rotation bleibt
-   dann unbeglaubigt → Rotation abbrechen und neu starten.
+   erkannt am Namen `vault_anchor`, nicht an der Nummer) – **einmal je
+   Installation**, festgehalten außerhalb der Datenbank in
+   `shared/vault_anchor.flag` (der Installer schreibt sie mit
+   `config.php`). Sonst könnte ein DB-Schreiber den Moment wiederholen
+   (Spalte löschen, `schema_version` senken, Schlüssel tauschen – Befund
+   aus dem Review von #258). Annahme: im Moment des Updates ist der
+   Schlüssel unverfälscht – ein schon vorher ausgetauschter würde
+   beglaubigt (Stand ohne Anker, nicht schlechter).
+5. **Restore beglaubigt nie auf Vertrauen:** mit `config.php` bzw. altem
+   Server-Schlüssel gelten die MACs des Dumps; ein Backup von vor 047 (oder
+   eines, das sich so ausgibt) bleibt unbeglaubigt, bis der
+   Wiederherstellungsschlüssel den Schlüssel beweist. Weg 2 (neuer
+   Schlüssel) beglaubigt die aktuelle Generation per
+   Wiederherstellungsschlüssel. Eine vorgemerkte Rotations-Generation aus
+   einem Backup mitten in der Rotation bleibt dann unbeglaubigt → Rotation
+   abbrechen und neu starten.
+6. **Lebenszyklus im MAC:** Ab der Bestätigung einer neueren Generation
+   trägt die ältere einen MAC mit eigenem Zweck („retired“); versiegelt
+   wird nur an einen aktiven MAC. Zurückdrehen von Bestätigung oder
+   Stilllegung in der DB bringt die alte Generation nicht zurück (Befund
+   aus dem Review von #258).
 
 Bewusst nicht gelöst (Folge-Ideen im PR): Backup mit `config.php`
-beglaubigt sich selbst; der MAC bindet nicht den Lebenszyklus (Rückstufung
-auf die vorige, echte Generation – nur mit deren altem `VK_priv`
-ausnutzbar); kein Reparaturweg für einen tatsächlich ausgetauschten
-Schlüssel außer Restore; das übrige Backup bleibt ohne MAC (H-05 nur
-teilweise).
+beglaubigt sich selbst; kein Reparaturweg für einen tatsächlich
+ausgetauschten Schlüssel außer Restore; das übrige Backup bleibt ohne MAC
+(H-05 nur teilweise).
 
 Offen für Mirko: ob TOFU beim Update akzeptabel ist oder ob nach dem
 Update zusätzlich die Eingabe des Wiederherstellungsschlüssels verlangt
-werden soll (sicherer, aber ein Ausfall der Einreichung bis dahin); ob die
-Abweichung zusätzlich per Mail an die Admins gehen soll.
+werden soll (sicherer, aber ein Ausfall der Einreichung bis dahin); ob nach
+dem Restore eines Backups von vor 047 der rote Check bis zur Eingabe des
+Papierschlüssels so in Ordnung ist; ob die Abweichung zusätzlich per Mail
+an die Admins gehen soll.

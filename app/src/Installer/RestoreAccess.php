@@ -29,7 +29,6 @@ use App\Service\Crypto\RecoveryKey;
 use App\Service\Crypto\RecoveryKeyException;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\RateLimiter;
-use App\Service\Tresor\Erstbeglaubigung;
 
 /**
  * Getting back into a restored installation whose backup carried no
@@ -128,7 +127,6 @@ final readonly class RestoreAccess
         string $ip,
         \Closure $configSchreiben,
         ?\DateTimeImmutable $now = null,
-        bool $erstbeglaubigen = false,
     ): RestoreAccessResult {
         $now ??= new \DateTimeImmutable();
         $limits = new RateLimiter(new RateLimitRepository($this->pdo), RateLimiter::LOGIN_WINDOW_SECONDS);
@@ -219,16 +217,8 @@ final readonly class RestoreAccess
         try {
             // First: the grant and the audit entry below seal with it.
             $vaults->beglaubige($aktuell->version, $aktuell->publicKey());
-            // A backup from before migration 047 carries no MACs at all; the
-            // generations the recovery key does not cover (a rotation's
-            // pending one) are taken over as they stand - the same first use
-            // as an update (App\Service\Tresor\Erstbeglaubigung).
-            $weitere = $erstbeglaubigen ? $vaults->erstbeglaubigen() : [];
             $audit = new AuditLog(new AuditLogRepository($this->pdo), $vaults, $crypto);
             $audit->record(AuditAction::TresorAnkerGesetzt, $konto->id, $ip, $aktuell->version, ['weg' => 'wiederherstellungsschluessel'], $now);
-            foreach ($weitere as $version) {
-                $audit->record(AuditAction::TresorAnkerGesetzt, $konto->id, $ip, $version, ['weg' => 'erstbeglaubigung'], $now);
-            }
 
             $users->updateEmail(
                 $konto->id,
@@ -287,27 +277,6 @@ final readonly class RestoreAccess
         }
 
         return new RestoreAccessResult($konto->id, $freigabeErteilt, $mfaZurueckgesetzt);
-    }
-
-    /**
-     * The first-use anchor after restoring a backup from before migration
-     * 047 (issue #240), with the server key config.php is about to get - the
-     * one in the backup or the old one handed in at the access step. Only
-     * rows without a MAC; one that carries a MAC keeps it, right or wrong:
-     * a doctored public key in a newer backup fails the check under the
-     * genuine server key instead of being anchored here.
-     *
-     * @return list<int> the generations anchored
-     */
-    public function erstbeglaubigen(#[\SensitiveParameter] string $serverKeyBase64): array
-    {
-        if (!RestoreService::gueltigerServerSchluessel($serverKeyBase64)) {
-            throw new \InvalidArgumentException('Not a server key.');
-        }
-        $crypto = new ServerCrypto((string) base64_decode($serverKeyBase64, true));
-        $vaults = new VaultRepository($this->pdo, $crypto->tresorAnker());
-
-        return new Erstbeglaubigung($vaults, new AuditLog(new AuditLogRepository($this->pdo), $vaults, $crypto))->ausfuehren();
     }
 
     /**

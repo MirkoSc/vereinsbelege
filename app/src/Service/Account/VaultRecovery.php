@@ -98,10 +98,8 @@ final readonly class VaultRecovery
         $generation = $this->vaults->generationOf($tresor->version);
         $ankerErneuert = $generation !== null
             && hash_equals($generation->publicKey, $tresor->publicKey())
-            && !$this->vaults->beglaubigt($generation);
-        if ($ankerErneuert) {
-            $this->vaults->beglaubige($tresor->version, $tresor->publicKey());
-        }
+            && !$this->vaults->beglaubigt($generation)
+            && $this->vaults->beglaubige($tresor->version, $tresor->publicKey());
 
         $bereitsFreigegeben = !in_array($userId, $this->grants->pendingUserIds($tresor->version, $now), true);
         if (!$bereitsFreigegeben) {

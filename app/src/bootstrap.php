@@ -453,7 +453,7 @@ $updates = static fn(): UpdateController => new UpdateController(
         migrator: new Migrator(
             $connections->pdo(),
             $paths->migrationsDir(),
-            \Closure::fromCallable(new Erstbeglaubigung($vaultsFor($connections->pdo()), $auditFor($connections->pdo()))),
+            \Closure::fromCallable(new Erstbeglaubigung($vaultsFor($connections->pdo()), $paths->vaultAnchorFlagFile(), $auditFor($connections->pdo()))),
         ),
         backups: new BackupErstellung(
             new BackupService(

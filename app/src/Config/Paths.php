@@ -80,6 +80,18 @@ final readonly class Paths
     }
 
     /**
+     * Written once the vault anchor exists on this installation (issue #240,
+     * docs/spec/01-sicherheit.md section 2 "Anker des Tresor-Schlüssels"):
+     * by the installer with config.php, or by the first-use anchoring of an
+     * update. Outside the database on purpose - whoever can only write the
+     * database must not be able to stage that first use again.
+     */
+    public function vaultAnchorFlagFile(): string
+    {
+        return $this->sharedDir() . '/vault_anchor.flag';
+    }
+
+    /**
      * State of the running update step chain. A file and not a table: the
      * chain has to survive the rename of current/ and be readable by a
      * release whose migrations have not run yet.

@@ -16,11 +16,17 @@ use App\Service\Migration\Migration;
  * `public_key_mac`. Right after that migration - in the same request, via
  * the Migrator's after-hook - every such row is anchored as it stands.
  *
- * The moment is the whole point: it exists once per installation and cannot
- * be produced again from the database alone. A MAC that is missing later
- * (deleted, or a row added by an older release after a rollback) is never
- * filled in here - it stays a failed check until the paper recovery key
- * proves the key (VaultRepository::beglaubige()).
+ * Once per installation, recorded OUTSIDE the database in
+ * shared/vault_anchor.flag (Paths::vaultAnchorFlagFile()), which the
+ * installer writes together with config.php. Whether the migration is
+ * "pending" is a fact of the database - and so in the hands of whoever can
+ * write it (drop the column, lower schema_version, swap the key, wait for
+ * the next update). The flag is not: with it present nothing is ever
+ * anchored without proof. It is written BEFORE the MACs, and if it cannot
+ * be written nothing is anchored (the recovery key is the way out).
+ *
+ * Restoring a backup never anchors on trust: its rows without MAC stay
+ * unanchored until the recovery key proves the key.
  *
  * The assumption this makes - the database is not tampered with at the
  * moment of the update - is documented in the spec; a key swapped before it
@@ -34,10 +40,12 @@ final readonly class Erstbeglaubigung
     /**
      * @param VaultRepository $vaults with the anchor of the server key that
      *        the installation keeps using
+     * @param string $markierung Paths::vaultAnchorFlagFile()
      * @param ?AuditLog $audit one `tresor.anker_gesetzt` per generation
      */
     public function __construct(
         private VaultRepository $vaults,
+        private string $markierung,
         private ?AuditLog $audit = null,
     ) {
     }
@@ -51,14 +59,17 @@ final readonly class Erstbeglaubigung
     }
 
     /**
-     * @return list<int> the generations anchored
+     * @return list<int> the generations anchored - none when the anchor of
+     *         this installation was initialised before
      */
     public function ausfuehren(): array
     {
+        if (is_file($this->markierung) || !self::markieren($this->markierung)) {
+            return [];
+        }
         $versionen = $this->vaults->erstbeglaubigen();
         // The MACs are what counts: a failing audit entry must not fail the
-        // migration step - its retry finds nothing pending and could not
-        // anchor again (the way out then is the recovery key).
+        // migration step.
         try {
             foreach ($versionen as $version) {
                 $this->audit?->record(AuditAction::TresorAnkerGesetzt, null, '', $version, ['weg' => 'erstbeglaubigung']);
@@ -76,19 +87,15 @@ final readonly class Erstbeglaubigung
     }
 
     /**
-     * Whether the anchor migration is among these - for the installer's
-     * restore, which learns the final server key only requests later.
-     *
-     * @param list<Migration> $migrationen
+     * Records that this installation's anchor exists - the installer calls
+     * this next to config.php. Idempotent.
      */
-    public static function darunter(array $migrationen): bool
+    public static function markieren(string $datei): bool
     {
-        foreach ($migrationen as $migration) {
-            if (self::betrifft($migration)) {
-                return true;
-            }
+        if (is_file($datei)) {
+            return true;
         }
 
-        return false;
+        return @file_put_contents($datei, "vault anchor initialised\n", LOCK_EX) !== false;
     }
 }

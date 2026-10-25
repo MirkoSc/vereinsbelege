@@ -45,7 +45,7 @@ try {
     $migrator = new Migrator(
         $pdo,
         $paths->migrationsDir(),
-        Closure::fromCallable(new Erstbeglaubigung($vaults, new AuditLog(new AuditLogRepository($pdo), $vaults, $crypto))),
+        Closure::fromCallable(new Erstbeglaubigung($vaults, $paths->vaultAnchorFlagFile(), new AuditLog(new AuditLogRepository($pdo), $vaults, $crypto))),
     );
 
     $pending = $migrator->pending();

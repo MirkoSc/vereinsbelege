@@ -636,14 +636,7 @@ final readonly class InstallController
             }
 
             // Everything is in: only migrations newer than the backup remain.
-            $migrator = new Migrator($pdo, $this->paths->migrationsDir());
-            // Noted BEFORE migrating, and kept: a request that dies after
-            // migration 047 but before config.php must not lose the vault
-            // anchor's first use (issue #240) - its retry finds nothing pending.
-            if (Erstbeglaubigung::darunter($migrator->pending())) {
-                $_SESSION['install_restore']['erstbeglaubigung'] = true;
-            }
-            $migriert = $migrator->migrate();
+            $migriert = new Migrator($pdo, $this->paths->migrationsDir())->migrate();
             new SettingRepository($pdo)->set(UpdateService::SETTING_CHANNEL, $values['kanal']);
 
             @unlink($dumpDatei);
@@ -664,23 +657,15 @@ final readonly class InstallController
             // A backup from before the vault anchor (issue #240): its rows
             // get their first MAC with the key config.php will hold - known
             // now when the backup carried one, at the access step otherwise.
-            $erstbeglaubigen = ($_SESSION['install_restore']['erstbeglaubigung'] ?? false) === true;
             $serverSchluessel = is_string($stand['server_key'] ?? null) ? $stand['server_key'] : null;
             if ($serverSchluessel === null) {
                 // No key in the backup: config.php waits for the access step
                 // (serverKey()/access()), the page moves on to its form.
-                $_SESSION['install_restore'] = [
-                    'values' => $values,
-                    'phase' => self::PHASE_ZUGANG,
-                    'erstbeglaubigung' => $erstbeglaubigen,
-                ];
+                $_SESSION['install_restore'] = ['values' => $values, 'phase' => self::PHASE_ZUGANG];
 
                 return Response::json([...$antwort, 'weiter' => '/install']);
             }
 
-            if ($erstbeglaubigen) {
-                new RestoreAccess($pdo)->erstbeglaubigen($serverSchluessel);
-            }
             $cronToken = $this->finishRestore($values, $serverSchluessel);
 
             // The new cron token (issue #244): the old cronjob of the
@@ -756,13 +741,6 @@ final readonly class InstallController
             return $this->renderAccess(['server_key' => 'Dieser Schlüssel passt nicht zu den eingespielten Daten: kein Benutzerkonto lässt sich damit lesen. Bitte die config.php der Installation verwenden, von der das Backup stammt.'], 422);
         }
 
-        if ($this->erstbeglaubigungAusstehend()) {
-            try {
-                new RestoreAccess($this->connect($values))->erstbeglaubigen($schluessel);
-            } catch (\PDOException $e) {
-                return $this->renderAccess(['db' => 'Verbindung fehlgeschlagen: ' . $e->getMessage()], 422);
-            }
-        }
         $cronToken = $this->finishRestore($values, $schluessel);
 
         return $this->render([
@@ -815,7 +793,6 @@ final readonly class InstallController
                 function () use (&$cronToken, $values, $neuerSchluessel): void {
                     $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($values), $neuerSchluessel);
                 },
-                erstbeglaubigen: $this->erstbeglaubigungAusstehend(),
             );
             $unlesbar = $zugang->unreadableAccounts($neuerSchluessel, $ergebnis->userId);
         } catch (RestoreAccessException $e) {
@@ -852,6 +829,9 @@ final readonly class InstallController
         /** @var array<string, string> $dbValues */
         $dbValues = $stand['db'];
         $cronToken = ConfigWriter::write($this->paths->configFile(), $this->dbConfig($dbValues), (string) $stand['server_key']);
+        // The vault was anchored when it was created; from now on nothing
+        // is anchored on trust (issue #240).
+        Erstbeglaubigung::markieren($this->paths->vaultAnchorFlagFile());
 
         unset($_SESSION['install_admin']);
         $this->cleanUpSetupLeftovers();
@@ -982,6 +962,9 @@ final readonly class InstallController
     /** What follows a written config.php: the leftovers of setup.php, the session state. */
     private function closeInstaller(): void
     {
+        // A restore never anchors on trust; from now on nothing is (issue
+        // #240) - rows of an older backup wait for the recovery key.
+        Erstbeglaubigung::markieren($this->paths->vaultAnchorFlagFile());
         unset($_SESSION['install_restore']);
         $this->cleanUpSetupLeftovers();
     }
@@ -1003,12 +986,6 @@ final readonly class InstallController
         $values = $stand['values'];
 
         return $values;
-    }
-
-    /** Whether the restore waiting for its access step applied the vault anchor migration (issue #240). */
-    private function erstbeglaubigungAusstehend(): bool
-    {
-        return ($_SESSION['install_restore']['erstbeglaubigung'] ?? false) === true;
     }
 
     /**

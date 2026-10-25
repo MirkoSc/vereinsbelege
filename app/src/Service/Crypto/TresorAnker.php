@@ -25,6 +25,16 @@ final readonly class TresorAnker
     private const string ZWECK = 'vault-anchor-v1';
 
     /**
+     * A generation that a newer, confirmed one replaced (issue #240): its
+     * MAC is rewritten under this purpose, and only the active purpose
+     * lets anything be sealed to a key. Rolling `recovery_confirmed_at` or
+     * `retired_at` back in the database therefore does not bring an old
+     * generation - whose private key an earlier holder may still have -
+     * back into use.
+     */
+    private const string ZWECK_ABGELOEST = 'vault-anchor-retired-v1';
+
+    /**
      * @param string $schluessel 32 bytes, derived from the server key
      *        (ServerCrypto::tresorAnker())
      */
@@ -38,15 +48,19 @@ final readonly class TresorAnker
     /**
      * The MAC of one generation. The public key has a fixed length, so
      * version and key cannot be shifted into each other.
+     *
+     * @param bool $abgeloest the generation was replaced by a newer one
      */
-    public function fuer(int $version, string $publicKey): string
+    public function fuer(int $version, string $publicKey, bool $abgeloest = false): string
     {
-        return hash_hmac('sha256', self::ZWECK . "\x00" . pack('N', $version) . $publicKey, $this->schluessel, true);
+        $zweck = $abgeloest ? self::ZWECK_ABGELOEST : self::ZWECK;
+
+        return hash_hmac('sha256', $zweck . "\x00" . pack('N', $version) . $publicKey, $this->schluessel, true);
     }
 
-    public function passt(int $version, string $publicKey, ?string $mac): bool
+    public function passt(int $version, string $publicKey, ?string $mac, bool $abgeloest = false): bool
     {
-        return $mac !== null && strlen($mac) === self::BYTES && hash_equals($this->fuer($version, $publicKey), $mac);
+        return $mac !== null && strlen($mac) === self::BYTES && hash_equals($this->fuer($version, $publicKey, $abgeloest), $mac);
     }
 
     /**
