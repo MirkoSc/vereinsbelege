@@ -24,6 +24,7 @@ use App\Domain\Supplier;
 use App\Domain\SupplierKeyKind;
 use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
+use App\Repository\AuditLogRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\DocumentArtifactRepository;
@@ -32,6 +33,7 @@ use App\Repository\InvoiceRepository;
 use App\Repository\JobRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Archiv\ArchivVorgabe;
+use App\Service\Audit\AuditFilter;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\Buchungsregeln;
 use App\Service\Bank\Zuordnung;
@@ -945,6 +947,7 @@ final readonly class Pruefung
         // save (the page offers it only then), only for the supplier the page
         // chose and the person kept, never for one just created from the form.
         $gelernt = [];
+        $konflikte = [];
         $nichtGelernt = false;
         if ($lernenFuer !== null && $darfLieferantAnlegen && $vorher === null && !$lieferantAngelegt && $struktur->supplierId === $lernenFuer) {
             [$partner, $mandat] = $this->belegPartner($document, $vault);
@@ -952,10 +955,25 @@ final readonly class Pruefung
                 $this->pdo->beginTransaction();
                 try {
                     $merkmale = $this->lieferanten->merkmaleErgaenzen($vault, $lernenFuer, $partner, $mandat, $lernenStand, $now);
-                    if ($merkmale !== null) {
+                    if ($merkmale !== null && !$merkmale->leer()) {
                         // Field names only, like every supplier change.
                         $this->audit->record(AuditAction::LieferantGeaendert, $userId, $ip, $lernenFuer, ['felder' => $merkmale->felder(), 'beleg' => $document->id], $now);
                         $gelernt = $merkmale->bezeichnungen();
+                    }
+                    // A value another supplier holds is not learnt but
+                    // marked (issue #245): field names and ids, no value -
+                    // once per field and other supplier, not on every
+                    // monthly invoice again.
+                    if ($merkmale !== null && $merkmale->konflikte !== []) {
+                        $neu = $this->neueKonflikte($lernenFuer, $merkmale->konflikte, $vault);
+                        if ($neu !== []) {
+                            $this->audit->record(AuditAction::LieferantMerkmalKonflikt, $userId, $ip, $lernenFuer, [
+                                'felder' => array_keys($neu),
+                                'andere' => array_values(array_unique(array_values($neu))),
+                                'beleg' => $document->id,
+                            ], $now);
+                        }
+                        $konflikte = $merkmale->konfliktBezeichnungen();
                     }
                     $this->pdo->commit();
                 } catch (SupplierRuleViolation) {
@@ -983,7 +1001,33 @@ final readonly class Pruefung
             }
         }
 
-        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt);
+        return new PruefErgebnis($invoiceId, $geprueft, $warnungen, $lieferantAngelegt, $gelernt, $nichtGelernt, $konflikte);
+    }
+
+    /**
+     * $konflikte (`felder()` key => other supplier) minus the pairs an
+     * earlier `lieferant.merkmal_konflikt` of supplier $lieferant recorded
+     * already (issue #245) - the details are sealed, read in the session.
+     *
+     * @param array<string, int> $konflikte
+     *
+     * @return array<string, int>
+     */
+    private function neueKonflikte(int $lieferant, array $konflikte, Vault $vault): array
+    {
+        $filter = new AuditFilter(aktion: AuditAction::LieferantMerkmalKonflikt, entity: 'supplier', entityId: $lieferant);
+        foreach ((new AuditLogRepository($this->pdo))->page($filter, null, 200) as $eintrag) {
+            $details = $this->audit->details($eintrag, $vault) ?? [];
+            $felder = is_array($details['felder'] ?? null) ? $details['felder'] : [];
+            $andere = is_array($details['andere'] ?? null) ? $details['andere'] : [];
+            foreach ($konflikte as $feld => $anderer) {
+                if (in_array($feld, $felder, true) && in_array($anderer, $andere, true)) {
+                    unset($konflikte[$feld]);
+                }
+            }
+        }
+
+        return $konflikte;
     }
 
     /**
@@ -1143,12 +1187,13 @@ final readonly class Pruefung
         $kennungen = [
             [SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))],
             [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))],
-            // The club's own account names no supplier (issue #201, E-29).
-            [SupplierKeyKind::Iban, $this->lieferanten->istVereinsIban($vault, $wert('iban')) ? '' : Iban::normalisieren($wert('iban'))],
+            [SupplierKeyKind::Iban, Iban::normalisieren($wert('iban'))],
             [SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))],
         ];
         foreach ($kennungen as [$art, $kennung]) {
-            if ($kennung === '') {
+            // The club's own ids name no supplier: its account (issue #201,
+            // E-29), its VAT id and tax number (issue #245, E-67).
+            if ($kennung === '' || $this->lieferanten->istVereinsKennung($vault, $art, $kennung)) {
                 continue;
             }
             $ids = $this->lieferantenRepository->idsWithKey($art, $index->forValue($art->purpose(), $kennung));

@@ -283,6 +283,8 @@ POST /admin/export -> admin.settings
 POST /admin/export/vorschau -> admin.settings
 GET /admin/datev -> admin.settings
 POST /admin/datev -> admin.settings
+GET /admin/vereinskennungen -> admin.settings
+POST /admin/vereinskennungen -> admin.settings
 GET /admin/export/nextcloud -> admin.settings
 POST /admin/export/nextcloud -> admin.settings
 POST /admin/export/nextcloud/testen -> admin.settings

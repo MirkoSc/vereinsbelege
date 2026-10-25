@@ -13,8 +13,10 @@ use App\Domain\SupplierRecord;
 use App\Domain\SupplierRole;
 use App\Repository\BankAccountRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Bank\BankAccountService;
+use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\DataKey;
 use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
@@ -59,6 +61,9 @@ final readonly class SupplierService
 
     /** A SEPA mandate reference, at most 35 characters. */
     public const int MANDAT_MAX = 35;
+
+    /** A VAT id: country code and up to 13 characters (form and learning, #245). */
+    public const string USTID_MUSTER = '/^[A-Z]{2}[A-Z0-9+*]{2,13}$/';
 
     /** A SEPA creditor id, after SupplierKeys::kennung(). */
     public const string GLAEUBIGER_ID_MUSTER = '/^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/';
@@ -217,8 +222,10 @@ final readonly class SupplierService
      * them. A value the form would refuse (an IBAN with a wrong check sum, a
      * VAT id that is none) is left out rather than failing the supplier: the
      * AI may misread one value, the rest is still worth keeping. An IBAN of
-     * the club's own accounts is left out too (istVereinsIban()). A name
-     * that is too long is cut.
+     * the club's own accounts is left out too (istVereinsIban()), and so
+     * are the club's own VAT id and tax number - and any VAT id or tax
+     * number while an admin has not saved the club's (#245, E-67): the
+     * one the AI read may be the club's. A name that is too long is cut.
      *
      * @param array<string, string> $felder
      *
@@ -237,6 +244,7 @@ final readonly class SupplierService
             'rolle' => $rolle->value,
         ];
         $gueltig = $basis;
+        $verein = null;
         foreach ($felder as $feld => $wert) {
             if (in_array($feld, ['name', 'rolle', 'kategorie', 'notes'], true) || trim($wert) === '') {
                 continue;
@@ -244,6 +252,15 @@ final readonly class SupplierService
             // The club's own account is nobody's supplier IBAN (E-29).
             if ($feld === 'ibans' && $this->istVereinsIban($vault, $wert)) {
                 continue;
+            }
+            // Nor its own VAT id or tax number (#245, E-67) - and while an
+            // admin has not said which they are, the AI's are left out: the
+            // one it read may be the club's ("Ihre USt-IdNr.").
+            if (in_array($feld, ['vat_id', 'tax_number'], true)) {
+                $verein ??= $this->vereinskennung($vault) ?? false;
+                if ($verein === false || $this->istVereinsKennung($vault, $feld === 'vat_id' ? SupplierKeyKind::VatId : SupplierKeyKind::TaxNumber, $wert, $verein)) {
+                    continue;
+                }
             }
             try {
                 $this->pruefe([...$basis, $feld => $wert], null);
@@ -347,14 +364,51 @@ final readonly class SupplierService
     }
 
     /**
+     * The club's own VAT id and tax number (issue #245, E-67), or null while
+     * no admin saved them (/admin/vereinskennungen) - or when the row does
+     * not decrypt: then nothing is learnt or created with these ids, the
+     * safe side. Like the club's IBANs, they name no supplier.
+     */
+    public function vereinskennung(Vault $vault): ?Vereinskennung
+    {
+        try {
+            return (new Vereinskennungen(new ClubIdentityRepository($this->pdo)))->lesen($vault);
+        } catch (CryptoException | \JsonException) {
+            return null;
+        }
+    }
+
+    /**
+     * $wert is one of the club's own ids of $art and names no supplier:
+     * an IBAN of its accounts (istVereinsIban(), E-29) or its VAT id / tax
+     * number (vereinskennung(), #245, E-67). Every lookup and learning path
+     * skips such a value. $verein: the club's ids if the caller has them
+     * already (several values of one receipt).
+     */
+    public function istVereinsKennung(Vault $vault, SupplierKeyKind $art, string $wert, ?Vereinskennung $verein = null): bool
+    {
+        if (trim($wert) === '') {
+            return false;
+        }
+
+        return match ($art) {
+            SupplierKeyKind::Iban => $this->istVereinsIban($vault, $wert),
+            SupplierKeyKind::VatId => ($verein ?? $this->vereinskennung($vault))?->istUstId($wert) ?? false,
+            SupplierKeyKind::TaxNumber => ($verein ?? $this->vereinskennung($vault))?->istSteuernummer($wert) ?? false,
+            default => false,
+        };
+    }
+
+    /**
      * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
      * LieferantenMerkmale::neue(), minus an IBAN of the club's own
-     * (istVereinsIban()), minus an IBAN or creditor id that
+     * (istVereinsIban()), minus an IBAN, creditor id or VAT id that
      * already belongs to another supplier - learning it would make two
      * suppliers out of one key; they are merged instead - and minus a name
      * that is another supplier's name or alias: it would make step 4 of the
      * resolution ambiguous for that one. The hint names the other supplier,
-     * for the review page only. $sperren reads those keys with `FOR UPDATE`
+     * for the review page only; Merkmale::$konflikte keeps its id for the
+     * audit (issue #245). $sperren reads those keys with `FOR UPDATE`
      * (gap locks included), so two saves cannot teach one IBAN to two
      * suppliers at the same moment.
      *
@@ -366,10 +420,22 @@ final readonly class SupplierService
         if ($merkmale->iban !== null && $this->istVereinsIban($vault, $merkmale->iban)) {
             $merkmale = $merkmale->ohne('iban', 'Die IBAN des Belegs ist ein Konto des Vereins – nicht übernommen.');
         }
+        // The club's own VAT id is nobody's supplier id (#245, E-67) - and
+        // while an admin has not said which it is, none is learnt: a
+        // reverse-charge invoice prints the club's as "Ihre USt-IdNr.".
+        if ($merkmale->vatId !== null) {
+            $verein = $this->vereinskennung($vault);
+            if ($verein === null) {
+                $merkmale = $merkmale->ohne('vat_id', 'Die USt-ID des Belegs wird erst übernommen, wenn unter „Admin → Vereinskennungen“ die eigene USt-ID des Vereins eingetragen ist.');
+            } elseif ($verein->istUstId($merkmale->vatId)) {
+                $merkmale = $merkmale->ohne('vat_id', 'Die USt-ID des Belegs ist die des Vereins – nicht übernommen.');
+            }
+        }
         $index = $vault->blindIndex();
         $pruefen = [
             ['iban', SupplierKeyKind::Iban, $merkmale->iban],
             ['creditor_id', SupplierKeyKind::CreditorId, $merkmale->creditorId],
+            ['vat_id', SupplierKeyKind::VatId, $merkmale->vatId],
             ['aliases', SupplierKeyKind::Name, $merkmale->alias === null ? null : SupplierKeys::name($merkmale->alias)],
         ];
         foreach ($pruefen as [$feld, $kind, $wert]) {
@@ -383,7 +449,7 @@ final readonly class SupplierService
             $anderer = $this->finde($vault, $andere[0])?->data->name ?? '?';
             $merkmale = $merkmale->ohne($feld, $kind === SupplierKeyKind::Name
                 ? sprintf('Der Name „%s“ gehört bereits zum Lieferanten „%s“ – nicht als Alias übernommen. Ist es derselbe, bitte zusammenführen.', $merkmale->alias, $anderer)
-                : sprintf('Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.', $kind->label(), $anderer));
+                : sprintf('Die %s des Belegs ist bereits beim Lieferanten „%s“ hinterlegt – nicht übernommen. Ist es derselbe, bitte zusammenführen.', $kind->label(), $anderer), $andere[0]);
         }
 
         return $merkmale;
@@ -398,8 +464,10 @@ final readonly class SupplierService
      * receipt is no review of the supplier. Opens no transaction of its
      * own; the caller writes the audit entry in it.
      *
-     * Null when there is nothing to learn: the supplier is gone or merged
-     * away.
+     * Null when there is nothing to learn and nothing in conflict: the
+     * supplier is gone or merged away, or the receipt names nothing new. A
+     * plan with conflicts only (Merkmale::$konflikte, issue #245) comes back
+     * without anything written, so the caller can record it.
      *
      * @param array<mixed> $partner `extract-v1` `supplier`
      *
@@ -423,7 +491,7 @@ final readonly class SupplierService
             throw new SupplierRuleViolation('Die Merkmale haben sich seit dem Anzeigen der Seite geändert.');
         }
         if ($merkmale->leer()) {
-            return null;
+            return $merkmale->konflikte === [] ? null : $merkmale;
         }
 
         $daten = $merkmale->anwenden($lieferant->data);
@@ -602,7 +670,7 @@ final readonly class SupplierService
         }
 
         $ustId = SupplierKeys::kennung($feld('vat_id'));
-        if ($ustId !== '' && preg_match('/^[A-Z]{2}[A-Z0-9+*]{2,13}$/', $ustId) !== 1) {
+        if ($ustId !== '' && preg_match(self::USTID_MUSTER, $ustId) !== 1) {
             throw new SupplierRuleViolation('Die USt-ID ist ungültig (Ländercode und bis zu 13 Zeichen, z. B. DE123456789).');
         }
 
