@@ -74,6 +74,30 @@ final class UploadCleanupTaskTest extends TestCase
         self::assertSame(0, $aufgabe->run(new \DateTimeImmutable()), 'the task has to be safe to repeat');
     }
 
+    public function testTheDayLimitCountsRealHoursAcrossTheClockChange(): void
+    {
+        // 25 Oct 2026 the clocks go back; "24 hours ago" must be 24 real
+        // hours, not 24 wall-clock hours (which would be 25 real ones).
+        $jetzt = new \DateTimeImmutable('2026-10-25 12:00:00');
+        $dienst = new UploadService($this->dir, 4);
+        $alt = $dienst->create(8);
+        $frisch = $dienst->create(8);
+        $this->touchAt($alt->id, $jetzt->getTimestamp() - 24 * 3600 - 1800);
+        $this->touchAt($frisch->id, $jetzt->getTimestamp() - 23 * 3600);
+
+        self::assertSame(1, $this->task()->run($jetzt));
+        self::assertDirectoryDoesNotExist($this->dir . '/' . $alt->id);
+        self::assertDirectoryExists($this->dir . '/' . $frisch->id);
+    }
+
+    private function touchAt(string $id, int $zeit): void
+    {
+        foreach (glob($this->dir . '/' . $id . '/*') ?: [] as $datei) {
+            touch($datei, $zeit);
+        }
+        touch($this->dir . '/' . $id, $zeit);
+    }
+
     private function task(): UploadCleanupTask
     {
         return new UploadCleanupTask(new UploadService($this->dir));

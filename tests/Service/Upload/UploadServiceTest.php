@@ -263,7 +263,7 @@ final class UploadServiceTest extends TestCase
         }
         touch($this->dir . '/' . $alt->id, $gestern);
 
-        self::assertSame(1, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertSame(1, $dienst->cleanup(self::hoursAgo(24)));
         self::assertDirectoryDoesNotExist($this->dir . '/' . $alt->id);
         self::assertDirectoryExists($this->dir . '/' . $frisch->id);
     }
@@ -279,7 +279,7 @@ final class UploadServiceTest extends TestCase
         touch($this->dir . '/' . $ticket->id . '/meta.json', time() - 25 * 3600);
         $dienst->writeChunk($ticket->id, 0, self::stream('1234'));
 
-        self::assertSame(0, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertSame(0, $dienst->cleanup(self::hoursAgo(24)));
         self::assertDirectoryExists($this->dir . '/' . $ticket->id);
     }
 
@@ -289,7 +289,7 @@ final class UploadServiceTest extends TestCase
         mkdir($this->dir . '/kein-upload');
         touch($this->dir . '/kein-upload', time() - 100 * 3600);
 
-        self::assertSame(0, $this->service()->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertSame(0, $this->service()->cleanup(self::hoursAgo(24)));
         self::assertFileExists($this->dir . '/fremde-datei');
         self::assertDirectoryExists($this->dir . '/kein-upload');
     }
@@ -298,7 +298,7 @@ final class UploadServiceTest extends TestCase
     {
         $dienst = new UploadService($this->dir . '/gibt-es-nicht');
 
-        self::assertSame(0, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertSame(0, $dienst->cleanup(self::hoursAgo(24)));
     }
 
     // ------------------------------------------- Archiv-Import (#77, M12-3)
@@ -351,7 +351,7 @@ final class UploadServiceTest extends TestCase
 
         $dienst->beruehren($ticket->id);
 
-        self::assertSame(0, $dienst->cleanup(new \DateTimeImmutable('-24 hours')));
+        self::assertSame(0, $dienst->cleanup(self::hoursAgo(24)));
         self::assertTrue($dienst->vorhanden($ticket->id));
         $dienst->discard($ticket->id);
         self::assertFalse($dienst->vorhanden($ticket->id));
@@ -435,5 +435,11 @@ final class UploadServiceTest extends TestCase
         }
 
         rmdir($dir);
+    }
+
+    /** Real hours, not wall-clock hours - those differ across a clock change. */
+    private static function hoursAgo(int $stunden): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable()->setTimestamp(time() - $stunden * 3600);
     }
 }
