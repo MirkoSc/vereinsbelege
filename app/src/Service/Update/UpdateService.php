@@ -7,6 +7,7 @@ namespace App\Service\Update;
 use App\Config\Paths;
 use App\Repository\SettingRepository;
 use App\Service\Backup\BackupErstellung;
+use App\Service\Integritaet\Pruefsummenliste;
 use App\Service\Migration\Migrator;
 
 /**
@@ -58,6 +59,8 @@ final class UpdateService
          * @var (\Closure(): ?string)|null
          */
         private readonly ?\Closure $rollbackHindernis = null,
+        /** ReleaseSignatur::PUBLIC_KEY; tests pass their own key pair. */
+        private readonly string $publicKey = ReleaseSignatur::PUBLIC_KEY,
     ) {
     }
 
@@ -123,6 +126,7 @@ final class UpdateService
             zipUrl: $release['zip_url'],
             checksumsUrl: $release['checksums_url'],
             abgeschlossenerSchritt: 'check',
+            signaturUrl: $release['signatur_url'],
             meldungen: [sprintf(
                 'Update auf Version %s verfügbar (Kanal %s).',
                 $release['version'],
@@ -135,33 +139,58 @@ final class UpdateService
     }
 
     /**
-     * Step 2: download ZIP + checksums.txt, verify SHA-256.
+     * Step 2: download ZIP + checksums.txt (+ signature), verify SHA-256 and
+     * authenticity (issue #241: ReleaseSignatur - a refusal once a public
+     * key is fixed, a warning before).
      *
-     * The checksums file is kept in shared/ afterwards: the code integrity
-     * check of the admin area compares the installed release against it
-     * (docs/spec/01-sicherheit.md section 8, milestone M13-2).
+     * List and signature wait next to the ZIP until the extract step puts
+     * them into the release directory - the list belongs to the release, not
+     * to shared/ (docs/spec/01-sicherheit.md section 8).
      */
     public function download(): UpdateState
     {
         return $this->step('download', function (UpdateState $state): UpdateState {
-            $zipFile = $this->zipFile((string) $state->zielVersion);
+            $version = (string) $state->zielVersion;
+            $zipFile = $this->zipFile($version);
             $this->downloader->downloadTo((string) $state->zipUrl, $zipFile);
 
             $checksums = $this->downloader->fetchText((string) $state->checksumsUrl);
-            $this->downloader->verifyChecksum($zipFile, $checksums);
-            file_put_contents($this->paths->releaseChecksumsFile(), $checksums, LOCK_EX);
+            $signatur = $state->signaturUrl === null ? null : $this->downloader->fetchText($state->signaturUrl);
+            $hinweis = $this->pruefeEchtheit($version, $zipFile, $checksums, $signatur);
 
-            return $state->mit(meldung: 'Release-ZIP geladen und Prüfsumme bestätigt.');
+            $listenDir = $this->listDir($version);
+            if (!is_dir($listenDir)) {
+                mkdir($listenDir, 0775, true);
+            }
+            ReleaseDownloader::speichereListe($listenDir, $checksums, $signatur);
+
+            return $state->mit(meldung: $hinweis === null
+                ? 'Release-ZIP geladen, Prüfsumme und Signatur bestätigt.'
+                : 'Release-ZIP geladen und Prüfsumme bestätigt. ' . $hinweis);
         });
     }
 
     /**
      * Step 3: unpack into releases/vX.Y.Z (the running version is untouched).
+     *
+     * ZIP and list are checked again first: they waited in shared/var
+     * between two requests, where FTP access could have swapped them.
+     * Afterwards the list and its signature go into the release root, so
+     * they move with every switch and rollback (issue #241).
      */
     public function extract(): UpdateState
     {
         return $this->step('extract', function (UpdateState $state): UpdateState {
             $version = (string) $state->zielVersion;
+            $listFile = $this->listDir($version) . '/' . ReleaseDownloader::LISTE;
+            $signaturFile = $this->listDir($version) . '/' . ReleaseSignatur::ASSET;
+            if (!is_file($listFile)) {
+                throw new \RuntimeException('Prüfsummenliste des Downloads fehlt – bitte den Download wiederholen.');
+            }
+            $checksums = (string) file_get_contents($listFile);
+            $signatur = is_file($signaturFile) ? (string) file_get_contents($signaturFile) : null;
+            $this->pruefeEchtheit($version, $this->zipFile($version), $checksums, $signatur);
+
             $target = dirname($this->paths->releaseRoot) . '/releases/v' . $version;
             $this->downloader->extractTo($this->zipFile($version), $target);
 
@@ -169,6 +198,7 @@ final class UpdateService
             if (!is_file($versionFile) || trim((string) file_get_contents($versionFile)) !== $version) {
                 throw new \RuntimeException('Entpacktes Release enthält keine passende VERSION-Datei.');
             }
+            ReleaseDownloader::speichereListe($target, $checksums, $signatur);
 
             return $state->mit(meldung: 'Release entpackt nach releases/v' . $version . '.');
         });
@@ -284,6 +314,7 @@ final class UpdateService
             $docrootMeldungen = [
                 ...$this->switcher->refreshDocrootFiles(),
                 ...$this->switcher->lockPrivateDirectories(),
+                ...$this->uebernimmAlteListe(),
             ];
 
             try {
@@ -297,9 +328,19 @@ final class UpdateService
 
             $this->switcher->cleanupOldReleases();
 
-            $zipFile = $this->zipFile((string) $state->zielVersion);
-            if (is_file($zipFile)) {
-                unlink($zipFile);
+            $version = (string) $state->zielVersion;
+            $listenDir = $this->listDir($version);
+            foreach ([
+                $this->zipFile($version),
+                $listenDir . '/' . ReleaseDownloader::LISTE,
+                $listenDir . '/' . ReleaseSignatur::ASSET,
+            ] as $datei) {
+                if (is_file($datei)) {
+                    unlink($datei);
+                }
+            }
+            if (is_dir($listenDir)) {
+                @rmdir($listenDir);
             }
 
             // One combined line on purpose: the admin page logs only the LAST
@@ -350,6 +391,64 @@ final class UpdateService
     }
 
     /**
+     * The target is newer than the running release, the list is the list
+     * of exactly that version, the ZIP matches its line, and the list is
+     * authentic. Target and URLs come from shared/update_state.json, which
+     * FTP access can edit - without the first two checks an older, validly
+     * signed release could be slipped in (a downgrade to a known hole).
+     *
+     * @return string|null warning when the authenticity could not be
+     *         checked (no public key fixed yet)
+     */
+    private function pruefeEchtheit(string $version, string $zipFile, string $checksums, ?string $signatur): ?string
+    {
+        if (!version_compare($version, $this->currentVersion, '>')) {
+            throw new \RuntimeException(sprintf(
+                'Version %s ist nicht neuer als die installierte Version %s – kein Update.',
+                $version,
+                $this->currentVersion,
+            ));
+        }
+        if (Pruefsummenliste::aus($checksums)->version !== $version) {
+            throw new \RuntimeException('Die Prüfsummenliste gehört nicht zu Version ' . $version . '.');
+        }
+        $this->downloader->verifyChecksum($zipFile, $checksums);
+
+        return ReleaseSignatur::pruefe($checksums, $signatur, $this->publicKey);
+    }
+
+    /**
+     * Transition for the update that brings issue #241: its download and
+     * extract steps still ran on the previous release, which kept the list
+     * in shared/release_checksums.txt instead of the release directory.
+     * When the release has no list of its own and that file names exactly
+     * this version, it is copied in - without signature, the previous
+     * release did not fetch one. Every later update brings both itself.
+     *
+     * @return list<string> German notes for the update log
+     */
+    private function uebernimmAlteListe(): array
+    {
+        $ziel = $this->paths->releaseRoot . '/' . ReleaseDownloader::LISTE;
+        $alt = $this->paths->releaseChecksumsFile();
+        if (is_file($ziel) || !is_file($alt)) {
+            return [];
+        }
+        $inhalt = (string) file_get_contents($alt);
+        $version = $this->switcher->currentVersion();
+        if ($version === null || Pruefsummenliste::aus($inhalt)->version !== $version) {
+            return [];
+        }
+        try {
+            ReleaseDownloader::speichereListe($this->paths->releaseRoot, $inhalt, null);
+        } catch (\RuntimeException) {
+            return ['Hinweis: Prüfsummenliste konnte nicht ins Release übernommen werden.'];
+        }
+
+        return [];
+    }
+
+    /**
      * Fetches the start page through the web server. That exercises the
      * shim, the release switch and the autoloader of the new version in one
      * go - the three things a release ZIP can get wrong.
@@ -357,7 +456,7 @@ final class UpdateService
     private function selfTest(string $baseUrl): void
     {
         try {
-            $this->downloader->fetchText(rtrim($baseUrl, '/') . '/');
+            $this->downloader->fetchSelbsttest(rtrim($baseUrl, '/') . '/');
         } catch (\RuntimeException $e) {
             throw new \RuntimeException('Selbsttest fehlgeschlagen für /: ' . $e->getMessage());
         }
@@ -409,5 +508,14 @@ final class UpdateService
     private function zipFile(string $version): string
     {
         return $this->paths->varDir() . '/update/vereinsbelege-v' . $version . '.zip';
+    }
+
+    /**
+     * checksums.txt and its signature of a download, until the extract step
+     * puts them into the release.
+     */
+    private function listDir(string $version): string
+    {
+        return $this->paths->varDir() . '/update/liste-v' . $version;
     }
 }
