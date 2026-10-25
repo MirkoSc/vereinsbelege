@@ -149,8 +149,13 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         $zeilen = $this->pdo()->query('SELECT * FROM ai_call_log ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
         self::assertCount(2, $zeilen, 'each worker call once, also after a repeated takeover');
         self::assertSame(['kein_json', 'gueltig'], array_column($zeilen, 'status'));
-        self::assertSame(['unbekannt', 'test'], array_column($zeilen, 'model'), 'no free text from the worker');
-        self::assertSame(['Worker', 'Worker'], array_column($zeilen, 'provider_name'), 'an unknown profile is not named by the worker');
+        // Profile 1 is the web host's own (KiAuslesungFabrik): its name and
+        // model count, not the worker's "Test"/"test". Profile 999 is unknown.
+        $profil = $this->pdo()->query('SELECT name, model FROM ai_provider WHERE id = 1')->fetch(\PDO::FETCH_ASSOC);
+        self::assertIsArray($profil);
+        self::assertSame(['unbekannt', $profil['model']], array_column($zeilen, 'model'), 'no free text from the worker');
+        self::assertSame(['Worker', $profil['name']], array_column($zeilen, 'provider_name'), 'an unknown profile is not named by the worker');
+        self::assertSame([null, 1], array_map(static fn(mixed $id): ?int => $id === null ? null : (int) $id, array_column($zeilen, 'provider_id')));
         self::assertSame(['extract-v1', 'extract-v1'], array_column($zeilen, 'prompt_version'));
         self::assertNull($zeilen[0]['duration_ms']);
         self::assertNull($zeilen[0]['http_status']);
