@@ -41,6 +41,8 @@ use App\Service\Processing\PngZuJpeg;
 use App\Service\Processing\ProcessingException;
 use App\Service\Storage\BlobService;
 use App\Service\Upload\MagicBytes;
+use App\Service\Worker\WorkerUebergabe;
+use App\Service\Worker\WorkerUebernahme;
 
 /**
  * The `ai_extract` job (issue #47/M7-5, docs/spec/03-erfassung-und-ki.md
@@ -274,6 +276,82 @@ final readonly class KiAuslesung implements ExternerJobHandler
         return self::einreihen($this->jobs, $documentId, $now);
     }
 
+    /**
+     * The attempt a worker `ai_extract` artifact holds (issue #53), or null
+     * when it does not open or lacks the shape the session stores (message,
+     * attempt, hints), or claims to be valid with data that does not fit the
+     * schema `extract-v1` - the worker's "valid" is checked here, not
+     * believed. App\Service\Worker\WorkerUebernahme marks a null one
+     * defective. The worker's `extraktion` is never used: the takeover
+     * builds it anew from the attempt's data with the server's checks.
+     */
+    public function workerVersuch(DocumentArtifact $artefakt, Vault $vault): ?KiVersuch
+    {
+        $daten = $this->daten($artefakt, $vault);
+        $extraktion = $daten['extraktion'] ?? null;
+        if (
+            $daten === null
+            || !is_string($daten['meldung'] ?? null)
+            || !is_array($daten['versuch'] ?? null)
+            || !is_array($daten['hinweise'] ?? null)
+            || !($extraktion === null || (is_array($extraktion) && !array_is_list($extraktion)))
+        ) {
+            return null;
+        }
+        try {
+            $versuch = KiVersuch::fromArray($daten['versuch']);
+        } catch (\UnexpectedValueException | \ValueError | \TypeError) {
+            return null;
+        }
+
+        if ($versuch->gueltig() && ($versuch->daten === null || !$this->auslesung->passtZumSchema($versuch->daten))) {
+            return null;
+        }
+
+        return $versuch;
+    }
+
+    /**
+     * Takes over a finished worker `ai_extract` run (issue #53): its last
+     * well-formed attempt ends the run the way the session's own chain ends
+     * (status `ausgewertet` or `ki_fehler`, then the supplier resolution).
+     * Message, extraction and hints are rebuilt here - the extraction by
+     * Auslesung::auswerten(), the same server checks a session run applies -
+     * and replace what the worker stored. False when the run left no usable
+     * attempt - the caller falls back to the session run.
+     */
+    public function workerLaufUebernehmen(Document $document, int $workerJobId, Vault $vault, \DateTimeImmutable $now): bool
+    {
+        $versuche = [];
+        foreach ($this->artifacts->fuerDokument($document->id, ArtifactKind::Extraction) as $artefakt) {
+            if ($artefakt->jobId !== $workerJobId || $artefakt->producer !== JobExecutor::Worker) {
+                continue;
+            }
+            $versuch = $this->workerVersuch($artefakt, $vault);
+            if ($versuch !== null) {
+                $versuche[$artefakt->seq] = $versuch;
+            }
+        }
+        if ($versuche === []) {
+            return false;
+        }
+        ksort($versuche);
+        $n = (int) array_key_last($versuche);
+        $letzter = $versuche[$n];
+        $vorschlag = $letzter->gueltig() && $letzter->daten !== null
+            ? $this->auslesung->auswerten($letzter->daten, $this->eingabe($document, $vault, null, mitBildern: false))
+            : null;
+        $this->speichern($document, $workerJobId, $n, $vault, $now, [
+            'versuch' => $letzter->toArray(),
+            'meldung' => new KiErgebnis(array_values($versuche))->meldung(),
+            'extraktion' => $vorschlag?->extraktion,
+            'hinweise' => $vorschlag->hinweise ?? [],
+        ]);
+        $this->abschliessen($document, $workerJobId, $letzter->gueltig(), $now);
+
+        return true;
+    }
+
     /** Whether a run for $documentId is queued or running right now. */
     public function laeuft(int $documentId): bool
     {
@@ -300,7 +378,9 @@ final readonly class KiAuslesung implements ExternerJobHandler
         if ($standard === null) {
             return JobSchrittErgebnis::uebersprungen();
         }
-        if ($this->jobs->offenFuer([Texterkennung::JOB_TYP, PdfRasterung::JOB_TYP], self::REF_TYPE, $document->id)) {
+        // Also the worker's OCR and the takeover of its results (issue #53):
+        // the AI reads the recognised text instead of guessing from images.
+        if ($this->jobs->offenFuer([Texterkennung::JOB_TYP, PdfRasterung::JOB_TYP, WorkerUebergabe::OCR, WorkerUebernahme::JOB_TYP], self::REF_TYPE, $document->id)) {
             return JobSchrittErgebnis::warten('', [], self::WARTEN_SEKUNDEN);
         }
 
@@ -310,7 +390,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
                 $this->speichern($document, $job->id, 0, $vault, $now, ['versuch' => null, 'meldung' => $grund, 'extraktion' => null, 'hinweise' => []]);
             }
 
-            return $this->abschliessen($document, $job, false, $now);
+            return $this->abschliessen($document, $job->id, false, $now);
         }
 
         return JobSchrittErgebnis::weiter(self::SCHRITT_FRAGEN, ['n' => 0]);
@@ -333,7 +413,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
             return JobSchrittErgebnis::uebersprungen();
         }
 
-        return $this->abschliessen($document, $job, false, $now);
+        return $this->abschliessen($document, $job->id, false, $now);
     }
 
     /** What follows attempt $n: done, the repair call, the fallback, or "KI fehlgeschlagen". */
@@ -341,7 +421,7 @@ final readonly class KiAuslesung implements ExternerJobHandler
     {
         $versuch = $this->gespeicherterVersuch($document, $job->id, $n, $vault) ?? throw new ProcessingException('Versuch nicht gespeichert.');
         if ($versuch->gueltig()) {
-            return $this->abschliessen($document, $job, true, $now);
+            return $this->abschliessen($document, $job->id, true, $now);
         }
         if ($versuch->reparaturMoeglich()) {
             return JobSchrittErgebnis::weiter(self::SCHRITT_REPARIEREN, ['n' => $n + 1]);
@@ -350,12 +430,12 @@ final readonly class KiAuslesung implements ExternerJobHandler
             return JobSchrittErgebnis::weiter(self::SCHRITT_FALLBACK, ['n' => $n + 1]);
         }
 
-        return $this->abschliessen($document, $job, false, $now);
+        return $this->abschliessen($document, $job->id, false, $now);
     }
 
-    private function abschliessen(Document $document, Job $job, bool $gueltig, \DateTimeImmutable $now): JobSchrittErgebnis
+    private function abschliessen(Document $document, int $jobId, bool $gueltig, \DateTimeImmutable $now): JobSchrittErgebnis
     {
-        $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Extraction, $job->id);
+        $this->artifacts->loescheAndereLaeufe($document->id, ArtifactKind::Extraction, $jobId);
         // Only from `bereit_zur_auswertung` (UPDATE ... WHERE status = ?): a
         // receipt someone took up meanwhile keeps its status.
         $gewechselt = $this->documents->wechsleStatus(
@@ -382,12 +462,12 @@ final readonly class KiAuslesung implements ExternerJobHandler
      * only $mitBildern - step '' needs just their number; the same for the
      * preselection of known suppliers.
      */
-    private function eingabe(Document $document, Vault $vault, KiAnbieter $profil, bool $mitBildern): AusleseEingabe
+    private function eingabe(Document $document, Vault $vault, ?KiAnbieter $profil, bool $mitBildern): AusleseEingabe
     {
         $eRechnung = $this->texterkennung->eRechnung($document, $vault);
         [$bilder, $seiten] = $document->ocrStatus === OcrStatus::Fertig
             ? [[], 0]
-            : $this->seitenbilder($document, $vault, $mitBildern ? Auslesung::bilderGrenze($profil) : 0);
+            : $this->seitenbilder($document, $vault, $mitBildern && $profil !== null ? Auslesung::bilderGrenze($profil) : 0);
         $item = $document->submissionId === null ? null : $this->documents->inboxItem($document->id, Zugriffsbereich::unbeschraenkt());
 
         $text = $this->texterkennung->textFuerKi($document, $vault);
@@ -583,17 +663,8 @@ final readonly class KiAuslesung implements ExternerJobHandler
      */
     private function daten(DocumentArtifact $artefakt, Vault $vault): ?array
     {
-        if ($artefakt->dataEnc === null) {
-            return null;
-        }
-        $json = FieldCipher::decrypt(
-            $vault->openDataKey($artefakt->dekSealed),
-            $artefakt->dataEnc,
-            new FieldContext(self::TABELLE, $artefakt->id, self::SPALTE),
-        );
-        $daten = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
-
-        return is_array($daten) ? $daten : null;
+        // A worker artifact that does not open counts as missing (issue #53).
+        return ArtefaktJson::lesen($artefakt, $vault);
     }
 
     private function mimeType(int $blobId, Vault $vault): string

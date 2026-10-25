@@ -102,6 +102,25 @@ final readonly class Auslesung
     }
 
     /**
+     * Whether $daten fits the schema `extract-v1` - for an answer that did
+     * not come through KiAbfrage here but from the optional worker (issue
+     * #53): its "valid" is not taken on trust. The schema check wants
+     * objects and lists apart, hence the JSON round trip.
+     *
+     * @param array<mixed> $daten
+     */
+    public function passtZumSchema(array $daten): bool
+    {
+        try {
+            $objekt = json_decode(json_encode($daten, JSON_THROW_ON_ERROR), false, 64, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return false;
+        }
+
+        return $objekt instanceof \stdClass && $this->prompts->schema(self::PROMPT_VERSION)->pruefe($objekt) === [];
+    }
+
+    /**
      * The server's own checks on an answer that already fits the schema
      * (section 6): amounts are parsed into cents and must add up, dates
      * must exist, category and cost center must be ones the club offers -

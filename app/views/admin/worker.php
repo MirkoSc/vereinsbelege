@@ -1,9 +1,9 @@
 <?php
 
 /**
- * Admin page "Worker" (docs/spec/07-worker.md section 4, issue #51/M7b-1):
- * pairing code, fingerprint confirmation, unpairing. Status, queue and the
- * module switch follow with issue #53.
+ * Admin page "Worker" (docs/spec/07-worker.md sections 4 and 6): pairing
+ * code, fingerprint confirmation, unpairing (issue #51/M7b-1); module
+ * switch, status, queue, last errors, throughput, "OCR nachholen" (#53).
  *
  * Only components from /admin/designsystem, no page-specific CSS/JS.
  *
@@ -15,9 +15,25 @@
  * @var ?\DateTimeImmutable $codeBis
  * @var ?\DateTimeImmutable $offenerCodeBis
  * @var string $adresse
+ * @var bool $modulAktiv
+ * @var int $fallbackMinuten
+ * @var bool $online
+ * @var array{wartend: array<string, array{offen: int, laeuft: int}>, fertig: int, fehler: list<array{id: int, typ: string, fehler: string, am: \DateTimeImmutable}>} $uebersicht
+ * @var int $defekte
+ * @var int $nachholbar
+ * @var bool $ocrVerfuegbar
  */
 
 use App\Domain\WorkerStatus;
+use App\Service\Worker\WorkerRouting;
+
+$typName = static fn(string $typ): string => match ($typ) {
+    'ocr' => 'Texterkennung (OCR)',
+    'image_cleanup' => 'Bildaufbereitung',
+    'render_pages' => 'PDF-Seiten rendern',
+    'ai_extract' => 'KI-Auslesen',
+    default => $typ,
+};
 
 ?>
 <section class="schmal">
@@ -29,6 +45,28 @@ use App\Domain\WorkerStatus;
         öffentliche Adresse. Er bekommt nie den Tresor-Schlüssel. Ohne Worker läuft alles wie bisher
         im Browser.
     </p>
+
+    <h3>Modul</h3>
+    <form method="post" action="/admin/worker/einstellungen" class="formular">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <label class="feld-ankreuz">
+            <input type="checkbox" name="aktiv" value="1"<?= $modulAktiv ? ' checked' : '' ?>>
+            Worker-Modul aktiv – passende Aufgaben gehen an den Worker, solange er online ist
+        </label>
+        <label for="worker-fallback" class="feld-kurz">Rückfall auf den Browser nach (Minuten ohne Meldung)
+            <input type="number" id="worker-fallback" name="fallback_minuten" value="<?= e((string) $fallbackMinuten) ?>"
+                   min="<?= e((string) WorkerRouting::FALLBACK_MINUTEN_MIN) ?>" max="<?= e((string) WorkerRouting::FALLBACK_MINUTEN_MAX) ?>"
+                   step="1" required aria-describedby="worker-fallback-hilfe">
+        </label>
+        <p class="feld-hilfe" id="worker-fallback-hilfe">
+            Meldet sich der Worker so lange nicht, laufen seine offenen Aufgaben wieder im Browser; die
+            Texterkennung entfällt dann und lässt sich später nachholen. Nach 24 Stunden ohne Meldung
+            geht eine Alarm-Mail an die Verwaltung.
+        </p>
+        <p class="knopfreihe">
+            <button type="submit" class="knopf knopf-primaer">Speichern</button>
+        </p>
+    </form>
 
     <?php if ($code !== null): ?>
         <div class="karte">
@@ -70,6 +108,11 @@ use App\Domain\WorkerStatus;
             <?php if (!$protokollOk): ?>
                 <span class="marke marke-fehler">Worker-Update nötig</span>
             <?php endif; ?>
+            <?php if ($online): ?>
+                <span class="marke marke-ok">online</span>
+            <?php else: ?>
+                <span class="marke marke-warnung">offline</span>
+            <?php endif; ?>
         </p>
 
         <div class="karte">
@@ -106,6 +149,64 @@ use App\Domain\WorkerStatus;
             </form>
         <?php endif; ?>
 
+        <h3>Warteschlange</h3>
+        <?php if ($uebersicht['wartend'] === []): ?>
+            <p class="gedaempft">Keine Aufgaben für den Worker.</p>
+        <?php else: ?>
+            <div class="tabelle-rahmen">
+                <table class="tabelle tabelle-karten">
+                    <thead>
+                        <tr>
+                            <th scope="col">Aufgabe</th>
+                            <th scope="col" class="zahl">wartend</th>
+                            <th scope="col" class="zahl">in Arbeit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($uebersicht['wartend'] as $typ => $anzahl): ?>
+                            <tr>
+                                <td data-label="Aufgabe"><?= e($typName($typ)) ?></td>
+                                <td data-label="wartend" class="zahl"><?= e((string) $anzahl['offen']) ?></td>
+                                <td data-label="in Arbeit" class="zahl"><?= e((string) $anzahl['laeuft']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+        <p class="gedaempft">
+            In den letzten 24 Stunden erledigt: <?= e((string) $uebersicht['fertig']) ?>
+            <?php if ($defekte > 0): ?>
+                · <span class="marke marke-fehler"><?= e((string) $defekte) ?> unbrauchbare Ergebnisse verworfen</span>
+            <?php endif; ?>
+        </p>
+
+        <h3>Letzte Fehler</h3>
+        <?php if ($uebersicht['fehler'] === []): ?>
+            <p class="gedaempft">Keine.</p>
+        <?php else: ?>
+            <div class="tabelle-rahmen">
+                <table class="tabelle tabelle-karten">
+                    <thead>
+                        <tr>
+                            <th scope="col">Zeit</th>
+                            <th scope="col">Aufgabe</th>
+                            <th scope="col">Fehler</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($uebersicht['fehler'] as $fehler): ?>
+                            <tr>
+                                <td data-label="Zeit"><?= e($fehler['am']->format('d.m.Y H:i')) ?></td>
+                                <td data-label="Aufgabe"><?= e($typName($fehler['typ'])) ?></td>
+                                <td data-label="Fehler"><code><?= e($fehler['fehler']) ?></code></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
         <h3>Entkoppeln</h3>
         <p class="gedaempft">
             Sperrt den Zugang des Workers sofort; Aufgaben, die er gerade hält, werden freigegeben.
@@ -117,5 +218,21 @@ use App\Domain\WorkerStatus;
                 <button type="submit" class="knopf knopf-gefahr">Worker entkoppeln</button>
             </p>
         </form>
+    <?php endif; ?>
+
+    <h3>OCR nachholen</h3>
+    <p class="gedaempft">
+        Belege, deren Texterkennung ohne Worker ausgefallen ist: <?= e((string) $nachholbar) ?>.
+        Je Klick gehen bis zu <?= e((string) \App\Admin\WorkerController::NACHHOLEN_MAX) ?> davon an den Worker.
+    </p>
+    <?php if ($nachholbar > 0 && $ocrVerfuegbar): ?>
+        <form method="post" action="/admin/worker/ocr-nachholen">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <p class="knopfreihe">
+                <button type="submit" class="knopf">OCR nachholen</button>
+            </p>
+        </form>
+    <?php elseif ($nachholbar > 0): ?>
+        <p class="hinweis hinweis-info">Möglich, sobald das Modul aktiv ist und der Worker mit Texterkennung online ist.</p>
     <?php endif; ?>
 </section>

@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Domain\ArtifactKind;
 use App\Domain\Document;
 use App\Domain\DocumentSource;
 use App\Domain\DocumentStatus;
 use App\Domain\InboxItem;
+use App\Domain\JobExecutor;
+use App\Domain\JobStatus;
 use App\Domain\OcrStatus;
 use App\Domain\Zugriffsbereich;
 use App\Service\Inbox\InboxAnsicht;
@@ -34,6 +37,12 @@ final readonly class DocumentRepository
     private const string INBOX_SELECT =
         'SELECT d.*, s.reference_code, s.received_at, s.dek_sealed AS submission_dek_sealed, s.payload_enc
          FROM document d LEFT JOIN submission s ON s.id = d.submission_id';
+
+    /** ocrNachholbar(): see there. */
+    private const string OCR_NACHHOLBAR =
+        'd.ocr_status = ? AND d.status NOT IN (?, ?)
+         AND NOT EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.status IN (?, ?, ?))
+         AND NOT EXISTS (SELECT 1 FROM document_artifact a WHERE a.document_id = d.id AND a.producer = ? AND a.kind = ?)';
 
     public function __construct(private \PDO $pdo)
     {
@@ -137,6 +146,56 @@ final readonly class DocumentRepository
         $stmt->bindValue(1, $status->value);
         $stmt->bindValue(2, $id, \PDO::PARAM_INT);
         $stmt->execute();
+    }
+
+    /**
+     * Documents whose OCR is to be caught up (docs/spec/07-worker.md section
+     * 6 "OCR nachholen", issue #53): page images needed (`ocr_status`
+     * `uebersprungen`), not fixed or rejected, and no `ocr` job that is pending or
+     * done and no taken-over OCR text of the worker - a failed or skipped
+     * one (the worker fell out) may be repeated.
+     * Oldest first, ids only.
+     *
+     * @return list<int>
+     */
+    public function ocrNachholbar(int $limit, int $nachId = 0): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.id FROM document d WHERE ' . self::OCR_NACHHOLBAR . ' AND d.id > ? ORDER BY d.id LIMIT ' . max(1, $limit),
+        );
+        $stmt->execute([...self::ocrNachholbarParameter(), $nachId]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    public function zaehleOcrNachholbar(): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . self::OCR_NACHHOLBAR);
+        $stmt->execute(self::ocrNachholbarParameter());
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function ocrNachholbarParameter(): array
+    {
+        return [
+            OcrStatus::Uebersprungen->value,
+            DocumentStatus::Festgeschrieben->value,
+            DocumentStatus::Abgelehnt->value,
+            'ocr',
+            'document',
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+            JobStatus::Fertig->value,
+            // Finished jobs are cleaned up after a while; the worker's OCR
+            // text that was taken over stays as the proof. A discarded or
+            // defective one (`!text`) does not block a new attempt.
+            JobExecutor::Worker->value,
+            ArtifactKind::Text->value,
+        ];
     }
 
     /**

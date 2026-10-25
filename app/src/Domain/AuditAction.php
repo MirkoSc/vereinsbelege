@@ -196,6 +196,12 @@ enum AuditAction: string
     case BackupErstellt = 'backup.erstellt';
     case BackupHeruntergeladen = 'backup.heruntergeladen';
 
+    // Code integrity check (issue #79/M13-2): the outcome is in the action
+    // itself, so the list shows a difference without an unlocked vault.
+    // Details: version and counts only, never a path.
+    case CodeIntegritaetUnveraendert = 'code.integritaet_unveraendert';
+    case CodeIntegritaetAbweichung = 'code.integritaet_abweichung';
+
     public function label(): string
     {
         return match ($this) {
@@ -316,6 +322,8 @@ enum AuditAction: string
             self::WartungAufgehoben => 'Wartungsmodus aufgehoben',
             self::BackupErstellt => 'Backup erstellt',
             self::BackupHeruntergeladen => 'Backup heruntergeladen',
+            self::CodeIntegritaetUnveraendert => 'Code-Integrität geprüft: unverändert',
+            self::CodeIntegritaetAbweichung => 'Code-Integrität geprüft: Abweichungen gefunden',
         };
     }
 
@@ -373,7 +381,8 @@ enum AuditAction: string
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
-            self::BackupErstellt, self::BackupHeruntergeladen => null,
+            self::BackupErstellt, self::BackupHeruntergeladen,
+            self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,
         };
     }
 

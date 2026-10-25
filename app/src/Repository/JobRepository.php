@@ -87,6 +87,10 @@ final readonly class JobRepository
      *        (the cron's `JobCleanupTask` reads finished jobs directly, and
      *        the worker module (07-worker.md) will claim one type at a
      *        time).
+     * @param array<string, non-empty-list<string>> $warteAuf per job type
+     *        the types that must not be pending for the same row (the
+     *        worker's `ai_extract` waits for OCR and page images, issue
+     *        #53, App\Service\Worker\WorkerRouting::VORGAENGER)
      */
     public function claim(
         JobExecutor $executor,
@@ -95,6 +99,7 @@ final readonly class JobRepository
         ?string $typ = null,
         ?\DateTimeImmutable $now = null,
         ?array $typen = null,
+        array $warteAuf = [],
     ): ?Job {
         if ($typen === []) {
             return null;
@@ -114,6 +119,9 @@ final readonly class JobRepository
             $sql .= ' AND typ = ?';
             $params[] = $typ;
         }
+        [$warten, $warteParameter] = self::warteBedingung($warteAuf);
+        $sql .= $warten;
+        array_push($params, ...$warteParameter);
         $sql .= sprintf(' ORDER BY id LIMIT %d', self::CANDIDATES);
 
         $stmt = $this->pdo->prepare($sql);
@@ -292,24 +300,27 @@ final readonly class JobRepository
      * zaehleOffen(), jobs someone is working on do not count).
      *
      * @param list<string> $typen empty counts nothing
+     * @param array<string, non-empty-list<string>> $warteAuf as for claim()
      */
-    public function zaehleBeanspruchbar(JobExecutor $executor, array $typen, ?\DateTimeImmutable $now = null): int
+    public function zaehleBeanspruchbar(JobExecutor $executor, array $typen, ?\DateTimeImmutable $now = null, array $warteAuf = []): int
     {
         if ($typen === []) {
             return 0;
         }
 
+        [$warten, $warteParameter] = self::warteBedingung($warteAuf);
         $stmt = $this->pdo->prepare(sprintf(
             'SELECT COUNT(*) FROM job
              WHERE executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?) AND typ IN (%s)',
             implode(',', array_fill(0, count($typen), '?')),
-        ));
+        ) . $warten);
         $stmt->execute([
             $executor->value,
             JobStatus::Offen->value,
             JobStatus::Laeuft->value,
             ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
             ...$typen,
+            ...$warteParameter,
         ]);
 
         return (int) $stmt->fetchColumn();
@@ -519,6 +530,130 @@ final readonly class JobRepository
         ]);
 
         return $stmt->rowCount();
+    }
+
+    /**
+     * Worker jobs nobody works on right now (`offen`, or `laeuft` with an
+     * expired lock) - what the fallback (issue #53, 07-worker.md section 6)
+     * sends back to the browser/session route.
+     *
+     * @return list<Job>
+     */
+    public function freieWorkerJobs(\DateTimeImmutable $now, int $limit = 200): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM job WHERE executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?)
+             ORDER BY id LIMIT ' . max(1, $limit),
+        );
+        $stmt->execute([JobExecutor::Worker->value, JobStatus::Offen->value, JobStatus::Laeuft->value, $now->format(self::FORMAT)]);
+
+        return array_map(Job::fromRow(...), $stmt->fetchAll());
+    }
+
+    /** How many worker jobs are free (as freieWorkerJobs()) - for the alarm. */
+    public function zaehleFreieWorkerJobs(\DateTimeImmutable $now): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM job WHERE executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?)',
+        );
+        $stmt->execute([JobExecutor::Worker->value, JobStatus::Offen->value, JobStatus::Laeuft->value, $now->format(self::FORMAT)]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Moves a free worker job to another executor, from its first step - or,
+     * with $ziel null, ends it as `uebersprungen` (`ocr` has no browser/
+     * session counterpart). Conditional like claim(): a job the worker
+     * claimed in the meantime stays with the worker. Returns whether it
+     * moved.
+     */
+    public function vomWorkerUmleiten(int $id, ?JobExecutor $ziel, string $grund, \DateTimeImmutable $now): bool
+    {
+        $jetzt = $now->format(self::FORMAT);
+        $bedingung = 'WHERE id = ? AND executor = ? AND status IN (?, ?) AND (locked_until IS NULL OR locked_until <= ?)';
+        $frei = [$id, JobExecutor::Worker->value, JobStatus::Offen->value, JobStatus::Laeuft->value, $jetzt];
+        if ($ziel === null) {
+            $stmt = $this->pdo->prepare(
+                'UPDATE job SET status = ?, last_error = ?, locked_by = NULL, locked_until = NULL, updated_at = ? ' . $bedingung,
+            );
+            $stmt->execute([JobStatus::Uebersprungen->value, $grund, $jetzt, ...$frei]);
+        } else {
+            $stmt = $this->pdo->prepare(
+                "UPDATE job SET executor = ?, status = ?, step = '', state = ?, attempts = 0, last_error = NULL,
+                    locked_by = NULL, locked_until = NULL, updated_at = ? " . $bedingung,
+            );
+            $stmt->execute([$ziel->value, JobStatus::Offen->value, '{}', $jetzt, ...$frei]);
+        }
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * What the admin page "Worker" shows about the queue (issue #53):
+     * pending worker jobs per type (waiting, running), finished worker jobs
+     * since $seit, and the last failures - type, error code and time only;
+     * `last_error` holds a class name or a code, never content.
+     *
+     * @return array{wartend: array<string, array{offen: int, laeuft: int}>, fertig: int, fehler: list<array{id: int, typ: string, fehler: string, am: \DateTimeImmutable}>}
+     */
+    public function workerUebersicht(\DateTimeImmutable $seit, int $fehlerLimit = 10): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT typ, status, COUNT(*) AS n FROM job WHERE executor = ? AND status IN (?, ?) GROUP BY typ, status ORDER BY typ',
+        );
+        $stmt->execute([JobExecutor::Worker->value, JobStatus::Offen->value, JobStatus::Laeuft->value]);
+        $wartend = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $typ = (string) $row['typ'];
+            $wartend[$typ] ??= ['offen' => 0, 'laeuft' => 0];
+            $wartend[$typ][$row['status'] === JobStatus::Laeuft->value ? 'laeuft' : 'offen'] = (int) $row['n'];
+        }
+
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM job WHERE executor = ? AND status = ? AND updated_at >= ?');
+        $stmt->execute([JobExecutor::Worker->value, JobStatus::Fertig->value, $seit->format(self::FORMAT)]);
+        $fertig = (int) $stmt->fetchColumn();
+
+        // Failures of the worker: final ones, and attempts it gave back.
+        $stmt = $this->pdo->prepare(
+            'SELECT id, typ, last_error, updated_at FROM job
+             WHERE executor = ? AND last_error IS NOT NULL ORDER BY updated_at DESC, id DESC LIMIT ' . max(1, $fehlerLimit),
+        );
+        $stmt->execute([JobExecutor::Worker->value]);
+        $fehler = array_map(
+            static fn(array $row): array => [
+                'id' => (int) $row['id'],
+                'typ' => (string) $row['typ'],
+                'fehler' => (string) $row['last_error'],
+                'am' => new \DateTimeImmutable((string) $row['updated_at']),
+            ],
+            $stmt->fetchAll(),
+        );
+
+        return ['wartend' => $wartend, 'fertig' => $fertig, 'fehler' => $fehler];
+    }
+
+    /**
+     * " AND NOT (typ = ? AND EXISTS (pending predecessor on the same row))"
+     * per entry of $warteAuf, for claim() and zaehleBeanspruchbar().
+     *
+     * @param array<string, non-empty-list<string>> $warteAuf
+     * @return array{string, list<string>}
+     */
+    private static function warteBedingung(array $warteAuf): array
+    {
+        $sql = '';
+        $parameter = [];
+        foreach ($warteAuf as $typ => $vorgaenger) {
+            $sql .= sprintf(
+                ' AND NOT (job.typ = ? AND EXISTS (SELECT 1 FROM job v WHERE v.ref_type = job.ref_type AND v.ref_id = job.ref_id
+                   AND v.id <> job.id AND v.status IN (?, ?) AND v.typ IN (%s)))',
+                implode(',', array_fill(0, count($vorgaenger), '?')),
+            );
+            array_push($parameter, $typ, JobStatus::Offen->value, JobStatus::Laeuft->value, ...$vorgaenger);
+        }
+
+        return [$sql, $parameter];
     }
 
     /**
