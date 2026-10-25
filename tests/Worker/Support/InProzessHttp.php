@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Worker\Support;
 
 use App\Api\WorkerApiController;
+use App\Api\WorkerMailController;
 use App\Domain\Worker;
 use App\Http\HttpMethod;
 use App\Http\Request;
@@ -28,8 +29,11 @@ final class InProzessHttp implements WorkerHttp
     /** @var list<string> every nonce sent */
     public array $nonces = [];
 
-    public function __construct(private readonly WorkerAuth $auth, private readonly WorkerApiController $api)
-    {
+    public function __construct(
+        private readonly WorkerAuth $auth,
+        private readonly WorkerApiController $api,
+        private readonly ?WorkerMailController $mail = null,
+    ) {
     }
 
     public function anfrage(string $methode, string $url, array $header, string $body, int $zeitlimitSekunden, bool $abbrechbar = true): HttpAntwort
@@ -64,8 +68,16 @@ final class InProzessHttp implements WorkerHttp
     private function routen(): array
     {
         $api = $this->api;
+        $mail = $this->mail;
+        $mailRouten = $mail === null ? [] : [
+            '#^POST /api/worker/mail/pruefen$#' => static fn(Request $r, array $p, Worker $w) => $mail->pruefen($r, $w),
+            '#^POST /api/worker/mail/uploads$#' => static fn(Request $r, array $p, Worker $w) => $mail->uploadAnlegen($r, $w),
+            '#^POST /api/worker/mail/uploads/(?<upload>[0-9a-f]{32})/chunks/(?<n>\d+)$#' => static fn(Request $r, array $p, Worker $w) => $mail->uploadChunk($r, $p, $w),
+            '#^POST /api/worker/mail/uploads/(?<upload>[0-9a-f]{32})/finish$#' => static fn(Request $r, array $p, Worker $w) => $mail->uploadAbschliessen($r, $p, $w),
+            '#^POST /api/worker/mail/einreichen$#' => static fn(Request $r, array $p, Worker $w) => $mail->einreichen($r, $w),
+        ];
 
-        return [
+        return $mailRouten + [
             '#^POST /api/worker/heartbeat$#' => static fn(Request $r, array $p, Worker $w) => $api->heartbeat($r, $w),
             '#^POST /api/worker/jobs/claim$#' => static fn(Request $r, array $p, Worker $w) => $api->claim($r, $w),
             '#^POST /api/worker/jobs/(?<id>\d+)/extend$#' => static fn(Request $r, array $p, Worker $w) => $api->extend($r, $p, $w),

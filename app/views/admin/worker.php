@@ -28,8 +28,12 @@
  * @var ?array{gesamt: int, mitText: int, inErkennung: int, beimWorker: int, fehlgeschlagen: int, offen: int} $bestandStand
  * @var bool $bestandLaeuft
  * @var list<\App\Domain\ArchiveImportRecord> $importLaeufe
+ * @var ?\App\Service\Worker\MailEingangEinstellungen $mailEingang
+ * @var ?array{zeit: \DateTimeImmutable, fehler: ?string, eingereicht: int, abgelehnt: int} $mailStatus
+ * @var list<\App\Domain\ImapSicherheit> $sicherheiten
  */
 
+use App\Domain\WorkerFaehigkeit;
 use App\Domain\WorkerStatus;
 use App\Service\Worker\WorkerRouting;
 
@@ -41,6 +45,17 @@ $typName = static fn(string $typ): string => match ($typ) {
     default => $typ,
 };
 
+// Error codes of the worker's mailbox run (worker/src/Mail/MailEingang.php).
+$mailFehler = static fn(string $code): string => match ($code) {
+    'imap_verbindung' => 'Server nicht erreichbar',
+    'imap_tls' => 'TLS fehlgeschlagen (Zertifikat oder Servername prüfen)',
+    'imap_starttls_fehlt' => 'Server bietet kein STARTTLS an',
+    'imap_anmeldung' => 'Anmeldung abgelehnt (Benutzer/Passwort prüfen)',
+    'imap_ordner' => 'Ordner nicht gefunden',
+    'imap_protokoll' => 'Unerwartete Antwort des Servers',
+    'webhoster' => 'Einreichen beim Webhoster fehlgeschlagen',
+    default => $code,
+};
 ?>
 <section class="schmal">
     <h2>Worker</h2>
@@ -325,5 +340,118 @@ $typName = static fn(string $typ): string => match ($typ) {
                 </p>
             </form>
         <?php endif; ?>
+    <?php endif; ?>
+    <?php if ($mailEingang !== null): ?>
+        <h3 id="mail-eingang">E-Mail-Eingang</h3>
+        <p class="gedaempft">
+            Der Worker ruft ein eigenes Postfach des Vereins per IMAP ab und legt jede Mail mit Anhängen
+            (PDF, Foto als JPEG/PNG, E-Rechnung als XML) als Beleg in den Posteingang – verschlüsselt
+            wie eine Einreichung über das Formular. Absender und Betreff landen nur verschlüsselt im
+            Beleg. Verarbeitete Mails werden markiert und, falls ein Zielordner angegeben ist, dorthin
+            verschoben – nie gelöscht. Am besten ein Postfach nur für Belege verwenden.
+        </p>
+        <?php if ($mailStatus !== null): ?>
+            <p>
+                Letzter Abruf: <?= e($mailStatus['zeit']->format('d.m.Y H:i')) ?>
+                <?php if ($mailStatus['fehler'] === null): ?>
+                    <span class="marke marke-ok">in Ordnung</span>
+                <?php else: ?>
+                    <span class="marke marke-fehler"><?= e($mailFehler($mailStatus['fehler'])) ?></span>
+                <?php endif; ?>
+                <br><span class="gedaempft">
+                    Seit dem Start des Workers eingereicht: <?= e((string) $mailStatus['eingereicht']) ?>,
+                    nicht übernommen (markiert): <?= e((string) $mailStatus['abgelehnt']) ?>
+                </span>
+            </p>
+        <?php endif; ?>
+        <?php if ($mailEingang->aktiv && !$modulAktiv): ?>
+            <p class="hinweis hinweis-info">Der Abruf beginnt, sobald das Worker-Modul eingeschaltet ist.</p>
+        <?php elseif ($mailEingang->aktiv && $worker !== null && !in_array(WorkerFaehigkeit::Mail, $worker->faehigkeiten, true)): ?>
+            <p class="hinweis hinweis-info">Der Worker meldet keinen E-Mail-Eingang – bitte den Worker aktualisieren.</p>
+        <?php endif; ?>
+        <form method="post" action="/admin/worker/mail-eingang" class="formular">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <label class="feld-ankreuz">
+                <input type="checkbox" name="aktiv" value="1"<?= $mailEingang->aktiv ? ' checked' : '' ?>>
+                E-Mail-Eingang aktiv
+            </label>
+
+            <label for="mail-eingang-host">IMAP-Server
+                <input type="text" id="mail-eingang-host" name="host" value="<?= e($mailEingang->host) ?>"
+                       autocomplete="off" spellcheck="false" placeholder="z. B. imap.example.org">
+            </label>
+
+            <fieldset>
+                <legend>Verschlüsselung</legend>
+                <?php foreach ($sicherheiten as $sicherheit): ?>
+                    <label class="feld-ankreuz">
+                        <input type="radio" name="sicherheit" value="<?= e($sicherheit->value) ?>"
+                               <?= $sicherheit === $mailEingang->sicherheit ? 'checked' : '' ?>>
+                        <?= e($sicherheit->label()) ?>
+                    </label>
+                <?php endforeach; ?>
+            </fieldset>
+            <p class="feld-hilfe">Ohne Verschlüsselung verbindet sich der Worker nicht; das Zertifikat wird immer geprüft.</p>
+
+            <label for="mail-eingang-port" class="feld-kurz">Port
+                <input type="text" id="mail-eingang-port" name="port" inputmode="numeric"
+                       value="<?= e((string) $mailEingang->port) ?>">
+            </label>
+
+            <label for="mail-eingang-benutzer">Benutzername
+                <input type="text" id="mail-eingang-benutzer" name="benutzer" value="<?= e($mailEingang->benutzer) ?>"
+                       autocomplete="off" spellcheck="false">
+            </label>
+
+            <label for="mail-eingang-passwort">Passwort
+                <input type="password" id="mail-eingang-passwort" name="passwort" autocomplete="new-password"
+                       aria-describedby="mail-eingang-passwort-hilfe">
+            </label>
+            <p class="feld-hilfe" id="mail-eingang-passwort-hilfe">
+                Leer lassen, um das gespeicherte Passwort zu behalten. Aktuell
+                <?= $mailEingang->passwort !== '' ? 'gesetzt' : 'nicht gesetzt' ?>.
+                Es geht nur verschlüsselt an den Worker.
+            </p>
+
+            <label for="mail-eingang-ordner">Abgerufener Ordner
+                <input type="text" id="mail-eingang-ordner" name="ordner" value="<?= e($mailEingang->ordner) ?>"
+                       autocomplete="off" spellcheck="false">
+            </label>
+
+            <label for="mail-eingang-ziel">Zielordner für verarbeitete Mails
+                <input type="text" id="mail-eingang-ziel" name="ziel_ordner" value="<?= e($mailEingang->zielOrdner) ?>"
+                       autocomplete="off" spellcheck="false" placeholder="optional, z. B. Belege/Erledigt"
+                       aria-describedby="mail-eingang-ziel-hilfe">
+            </label>
+            <p class="feld-hilfe" id="mail-eingang-ziel-hilfe">
+                Optional. Der Ordner muss im Postfach schon existieren. Ohne Zielordner bleiben die Mails
+                markiert im abgerufenen Ordner.
+            </p>
+
+            <label for="mail-eingang-absender">Erlaubte Absender
+                <textarea id="mail-eingang-absender" name="absender" rows="4" spellcheck="false"
+                          aria-describedby="mail-eingang-absender-hilfe"><?= e($mailEingang->absender->alsText()) ?></textarea>
+            </label>
+            <p class="feld-hilfe" id="mail-eingang-absender-hilfe">
+                Optional, eine Adresse oder <code>@domain.de</code> je Zeile. Leer = alle Absender. Mails
+                anderer Absender bleiben markiert im Postfach liegen.
+            </p>
+
+            <label for="mail-eingang-intervall" class="feld-kurz">Abruf alle (Minuten)
+                <input type="number" id="mail-eingang-intervall" name="abruf_minuten"
+                       value="<?= e((string) $mailEingang->abrufMinuten) ?>"
+                       min="<?= e((string) \App\Service\Worker\MailEingangEinstellungen::ABRUF_MINUTEN_MIN) ?>"
+                       max="<?= e((string) \App\Service\Worker\MailEingangEinstellungen::ABRUF_MINUTEN_MAX) ?>" step="1">
+            </label>
+            <p class="feld-hilfe">
+                Es gelten die Grenzen der Einreichung (Seiten, Dateigröße, Gesamtgröße). Mails darüber,
+                ohne passenden Anhang oder als Spam markiert werden nicht übernommen und bleiben markiert
+                im Postfach.
+            </p>
+
+            <p class="knopfreihe">
+                <button type="submit" class="knopf knopf-primaer">E-Mail-Eingang speichern</button>
+            </p>
+        </form>
     <?php endif; ?>
 </section>
