@@ -117,8 +117,10 @@ final readonly class KassenpruefungController
 
     /**
      * The period the page opens with: the account's released period when it
-     * has one (external auditors), else the last completed calendar year -
-     * what a Kassenprüfung usually looks at.
+     * has one (external auditors; when it spans more than
+     * ZeitraumAuswahl::MAX_JAHRE_FREI years, its last calendar year), else
+     * the last completed calendar year - what a Kassenprüfung usually looks
+     * at.
      */
     public static function standard(Berechtigungen $b, \DateTimeImmutable $heute): ZeitraumAuswahl
     {
@@ -128,6 +130,11 @@ final readonly class KassenpruefungController
         }
         $bis = $bereich->bis ?? $heute;
         $von = $bereich->von ?? new \DateTimeImmutable($bis->format('Y') . '-01-01');
+        // A released period longer than a free period may be (issue #250)
+        // opens with its last calendar year; the rest stays selectable.
+        if ($bis >= $von->modify('+' . ZeitraumAuswahl::MAX_JAHRE_FREI . ' years')) {
+            $von = new \DateTimeImmutable($bis->format('Y') . '-01-01');
+        }
 
         return ZeitraumAuswahl::frei($von, max($von, $bis));
     }
