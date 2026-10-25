@@ -11,6 +11,7 @@
 $auswertungen = [
     '/app/auswertung/geldfluss' => 'Wohin fließt das Geld',
     '/app/auswertung/kassenpruefung' => 'Kassenprüfung',
+    '/app/auswertung/budget' => 'Budget',
 ];
 ?>
 <nav aria-label="Auswertungen">

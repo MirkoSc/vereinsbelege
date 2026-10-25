@@ -155,6 +155,9 @@ enum AuditAction: string
     case SerieGeaendert = 'serie.geaendert';
     case SerieVerworfen = 'serie.verworfen';
     case SerieBelegVerknuepft = 'serie.beleg_verknuepft';
+    // Budgets (issue #92): year, category and cost center ids - never the amount.
+    case BudgetGespeichert = 'budget.gespeichert';
+    case BudgetGeloescht = 'budget.geloescht';
 
     case EinstellungMail = 'einstellung.mail';
     case EinstellungSpeicher = 'einstellung.speicher';
@@ -303,6 +306,8 @@ enum AuditAction: string
             self::SerieGeaendert => 'Wiederkehrende Serie geändert',
             self::SerieVerworfen => 'Wiederkehrende Serie verworfen',
             self::SerieBelegVerknuepft => 'Beleg einer Serie zugeordnet',
+            self::BudgetGespeichert => 'Budget gespeichert',
+            self::BudgetGeloescht => 'Budget gelöscht',
             self::EinstellungMail => 'Mail-Einstellungen geändert',
             self::EinstellungSpeicher => 'Speicher-Backend geändert',
             self::EinstellungUpdateKanal => 'Update-Kanal geändert',
@@ -377,6 +382,7 @@ enum AuditAction: string
             self::BelegDifferenzAbgeschlossen, self::BelegDifferenzGeoeffnet => 'document',
             self::SerieBestaetigt, self::SerieGeaendert, self::SerieVerworfen,
             self::SerieBelegVerknuepft => 'recurring_series',
+            self::BudgetGespeichert, self::BudgetGeloescht => 'budget',
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
@@ -416,6 +422,7 @@ enum AuditAction: string
             'document' => 'Beleg',
             'worker' => 'Worker',
             'vault' => 'Tresor-Generation',
+            'budget' => 'Budget',
             default => $entity,
         };
     }

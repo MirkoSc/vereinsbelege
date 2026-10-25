@@ -39,6 +39,7 @@ use App\App\DatevController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\AuswertungController;
+use App\App\BudgetController;
 use App\App\DashboardController;
 use App\App\ErfassungController;
 use App\App\ExportController;
@@ -235,6 +236,8 @@ use App\View\View;
  * @param (\Closure(): AuswertungController)|null $geldfluss built lazily,
  *        same reason as $mail: only the report pages need the database
  *        (issue #73/M11-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): BudgetController)|null $budgets built lazily, same
+ *        reason (issue #92). Optional like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -296,6 +299,7 @@ return static function (
     ?\Closure $datevAdmin = null,
     ?\Closure $kassenpruefung = null,
     ?\Closure $geldfluss = null,
+    ?\Closure $budgets = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -317,6 +321,7 @@ return static function (
     $datevAdmin ??= static fn(): never => throw new \LogicException('The DATEV settings are not wired into this route table.');
     $kassenpruefung ??= static fn(): never => throw new \LogicException('The Kassenprüfung is not wired into this route table.');
     $geldfluss ??= static fn(): never => throw new \LogicException('The report pages are not wired into this route table.');
+    $budgets ??= static fn(): never => throw new \LogicException('The budget page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -733,6 +738,16 @@ return static function (
     $get('/app/auswertung', $berichte, static fn() => $geldfluss()->start());
     $get('/app/auswertung/geldfluss', $berichte, static fn(Request $r) => $geldfluss()->geldfluss($r));
     $get('/app/auswertung/geldfluss/posten', $berichte, static fn(Request $r) => $geldfluss()->posten($r));
+    // Budgets with Soll/Ist (issue #92, docs/spec/05-auswertung-und-export.md
+    // section 1 "Stand #92", E-58). Reading: `report.view` with its scope (a
+    // Vereinsverantwortlicher sees only the budgets of his cost centers),
+    // the CSV `export.csv` (+ `report.view` in the controller). Keeping the
+    // budgets: `bank.book` - who keeps the club's finances (Finanzen,
+    // Admin); POST with CSRF, unlocked vault.
+    $get('/app/auswertung/budget', $berichte, static fn(Request $r) => $budgets()->seite($r));
+    $get('/app/auswertung/budget.csv', Zugriff::recht(Permission::ExportCsv), static fn(Request $r) => $budgets()->csv($r));
+    $post('/app/auswertung/budget', Zugriff::recht(Permission::BankBook), static fn(Request $r) => $budgets()->speichern($r));
+    $post('/app/auswertung/budget/{id:\d+}/loeschen', Zugriff::recht(Permission::BankBook), static fn(Request $r, array $params) => $budgets()->loeschen($r, $params));
 
     // Bank accounts and cash boxes (M9-1, issue #59, docs/spec/
     // 04-bank-und-abgleich.md section 1). Permission: `bank.view` (Admin,

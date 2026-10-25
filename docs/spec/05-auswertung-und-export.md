@@ -138,6 +138,46 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   (`AuswertungController::MAX_JAHRE_FREI`), sonst Standardjahr mit Hinweis.
 - Keine neue Tabelle, keine Migration.
 
+### Stand #92: Budget je Kategorie/Kostenstelle mit Soll/Ist (E-58)
+
+- **Seite `/app/auswertung/budget`** (`App\App\BudgetController`, Reiter
+  „Budget“, Recht `report.view` mit seinem Scope). Je Geschäftsjahr
+  (`?jahr=`, 2000 … nächstes Jahr – Budgets werden vorausgeplant; Standard
+  wie das Dashboard) eine Tabelle: Kategorie · Kostenstelle, Soll, Ist,
+  Abweichung = Soll − Ist (positiv = noch verfügbar, negativ =
+  überschritten, zusätzlich als Text „überschritten“), Abweichung in % des
+  Solls, Ausschöpfung (Ist in % des Solls) mit SVG-Balken (bei
+  Überschreitung voll). Prozente in Zehntelprozent, nur mit
+  Integer-Arithmetik, kaufmännisch gerundet (`ReportService::promilleVon()`);
+  bei Soll 0 „–“. Grundlage des Ists wählbar (Buchungen = Standard,
+  Belege). Keine Gesamtsumme, weil sich Budgets überschneiden dürfen.
+- **Budget** = geplante **Ausgaben** eines Kalenderjahres für eine
+  Kategorie, eine Kostenstelle oder das Paar (Tabelle `budget`, 02). Das
+  Ist rechnet `ReportService::budgetvergleich()` auf der Eingabe der
+  `Auswertungsquelle` (Session-Cache): Summe der Ausgaben-Posten des Jahres,
+  deren Kategorie/Kostenstelle passt (Gutschriften mindern), begrenzt auf
+  den `Zugriffsbereich` wie jede Zahl dort. `budget` steht in
+  `AuswertungsStandRepository::TABELLEN`.
+- **Scope:** ein Vereinsverantwortlicher sieht nur Budgets seiner
+  Kostenstellen (SQL, `BudgetRepository::forYear()` über `sqlBedingung()`;
+  ein Budget ohne Kostenstelle nie) und das Ist nur aus seinen
+  Kostenstellen. Ein externes Konto sieht das Ist nur im freigegebenen Teil
+  des Jahres (Hinweis „Teil des Jahres“), ein Jahr ganz außerhalb gar nicht.
+- **Pflege** auf derselben Seite (Recht `bank.book`, entsperrter Tresor,
+  CSRF): „Budget speichern“ legt an oder ersetzt den Betrag desselben
+  Jahres/Paars (neuer DEK); „Löschen“ je Zeile. Nur aktive
+  Ausgaben-Kategorien (`ausgabe`/`beide`) und aktive Kostenstellen.
+  Audit-Log `budget.gespeichert`/`budget.geloescht` (Entität `budget`,
+  Details Jahr und IDs – nie der Betrag).
+- **CSV** `GET /app/auswertung/budget.csv` (`export.csv` + `report.view`,
+  entsperrter Tresor) über `Berichtstabelle`; Prozente als Text.
+- Pflicht-Tests: `tests/Service/Report/BudgetvergleichTest.php` (Ist je
+  Kategorie/Kostenstelle/Paar, Einnahmen und Vorjahr ausgelassen,
+  Kostenstellen- und Zeitraum-Scope, Rundung), `tests/Integration/
+  BudgetFlowTest.php` (Anlegen/Ändern/Löschen, abgelehnte Eingaben, CSRF,
+  nur Chiffrat in der Tabelle und AAD-Bindung, beide Grundlagen, Scopes,
+  gesperrter Tresor, CSV, Audit ohne Betrag, Datenstand ändert sich).
+
 ## 2. ZIP-Export (`/app/export`, Recht `export.zip`)
 
 - Filter: Zeitraum (Default: Geschäftsjahr), Status (Default: alle

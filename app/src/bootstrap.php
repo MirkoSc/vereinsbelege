@@ -30,6 +30,7 @@ use App\Api\WorkerApiController;
 use App\App\AccountController;
 use App\App\CsvFormatController;
 use App\App\AuswertungController;
+use App\App\BudgetController;
 use App\App\DashboardController;
 use App\App\KassenpruefungController;
 use App\App\AuditController;
@@ -86,6 +87,7 @@ use App\Repository\CostCenterRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
 use App\Repository\BlobRepository;
+use App\Repository\BudgetRepository;
 use App\Repository\DocumentDuplicateRepository;
 use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
@@ -218,6 +220,7 @@ use App\Service\Rechtstexte\Rechtstexte;
 use App\Service\Report\AuswertungsCache;
 use App\Service\Report\Auswertungsdaten;
 use App\Service\Report\Auswertungsquelle;
+use App\Service\Report\Budgets;
 use App\Service\Report\Dashboard;
 use App\Service\Report\Geldfluss;
 use App\Service\Report\Kassenpruefung;
@@ -936,6 +939,27 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
     },
+);
+
+// Budgets with Soll/Ist (issue #92): budgets from their table, the Ist
+// through the report cache - only when the page is read or written.
+$budgetSeite = static fn(): BudgetController => new BudgetController(
+    $view,
+    new Session(),
+    new SessionVault(),
+    static function () use ($connections, $auswertungsquelleFor): Budgets {
+        $pdo = $connections->pdo();
+
+        return new Budgets(
+            $pdo,
+            new BudgetRepository($pdo),
+            new CategoryRepository($pdo),
+            new CostCenterRepository($pdo),
+            // Behind the login guard: the session holds the account.
+            $auswertungsquelleFor($pdo, new Session()->userId() ?? 0),
+        );
+    },
+    static fn(): AuditLog => $auditFor($connections->pdo()),
 );
 
 // Reimbursements for one booking (M10-3, issue #67): submissions, receipts
@@ -1972,6 +1996,7 @@ $router = new Router();
     $datevAdmin,
     $kassenpruefungSeite,
     geldfluss: $geldflussSeite,
+    budgets: $budgetSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

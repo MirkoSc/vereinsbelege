@@ -1546,3 +1546,47 @@ Offen für Mirko: ob Ausgaben und Einnahmen gleichzeitig (statt
 umschaltbar) gezeigt werden sollen; ob der Drilldown eine zweite Ebene
 (Kostenstelle → Kategorie → Beleg) braucht; ob Buchungen ohne Beleg im
 Drilldown auch ohne `bank.view` Gegenseite/Zweck zeigen sollen.
+
+## E-58 ❓ Budget je Kategorie/Kostenstelle mit Soll/Ist (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #92, 05 §1 „Stand #92“, 02 (`budget`), 01 §4*
+
+Das Issue war ein Backlog-Eintrag ohne Abnahmekriterien. Selbst gesetzt
+(konservativ):
+1. Je Geschäftsjahr (= Kalenderjahr, E-16) lassen sich Budgets für eine
+   Kategorie, eine Kostenstelle oder das Paar anlegen, ändern, löschen –
+   höchstens eines je Jahr und Paar.
+2. Der Betrag ist Tresor-Datum (`data_enc`, eigener DEK, AAD
+   `budget|id|data_enc`, Integer-Cent); Jahr/Kategorie/Kostenstelle sind
+   Klartext-Struktur.
+3. `/app/auswertung/budget` zeigt Soll, Ist (aus dem `ReportService`),
+   Abweichung absolut und in Prozent – nur Integer-Arithmetik.
+4. Lesen mit `report.view` und dessen Scope; Pflegen mit `bank.book`.
+5. Ohne entsperrten Tresor keine Beträge; Audit-Log ohne Betrag; `budget`
+   in `AuswertungsStandRepository::TABELLEN`; CSV mit `export.csv`.
+
+Entscheidungen dabei:
+- **Nur Ausgaben-Budgets.** Ein Budget ist eine Obergrenze für Ausgaben;
+  Einnahmen-Kategorien sind im Formular nicht wählbar. Einnahmen-Planziele
+  wären eine eigene Spalte `direction` (Folge-Issue, falls gewünscht).
+- **Recht zum Pflegen: `bank.book`** („Manuell buchen, Kasse führen,
+  Konten pflegen“ – Finanzen, Admin). Budgets sind Finanzplanung, also die
+  Aufgabe dessen, der die Vereinsfinanzen führt. `admin.settings` hätte
+  nur der Admin und hängt nicht am Tresor; `document.edit` ist
+  Belegprüfung. Vorstand und Kassenprüfer lesen nur.
+- **NULL = „alle“:** ein Kategorie-Budget zählt die Kategorie auf allen
+  Kostenstellen; Budgets dürfen sich überschneiden, deshalb keine
+  Gesamtsumme. Ein Budget ohne Kostenstelle liegt außerhalb jedes
+  Kostenstellen-Scopes (wie jede Zeile ohne Kostenstelle).
+- **Abweichung = Soll − Ist** (positiv = verfügbar), Prozent bezogen auf
+  das Soll, Zehntelprozent kaufmännisch gerundet; Soll 0 → „–“.
+- **Speichern ist ein Upsert** (Jahr + Paar), eine Änderung schreibt neuen
+  DEK und Chiffrat – nichts Altes muss entschlüsselt werden.
+- Kategorie/Kostenstelle gelöscht → ihr Budget geht mit (`ON DELETE
+  CASCADE`); Löschen ist ohnehin nur ohne Buchungen/Belege möglich.
+- Ein externes Konto sieht das Ist nur im freigegebenen Teil des Jahres
+  (Hinweis), das Soll gilt fürs ganze Jahr.
+
+Offen für Mirko: ob Einnahmen-Budgets gebraucht werden; ob `bank.book` das
+richtige Recht ist (oder ein eigenes `budget.manage`); ob ein „Budgets aus
+dem Vorjahr übernehmen“ nötig ist; ob das Dashboard überschrittene Budgets
+zeigen soll.
