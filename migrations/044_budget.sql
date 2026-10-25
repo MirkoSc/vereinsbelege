@@ -17,9 +17,12 @@
 -- At least one of category/cost center is set (checked by the service and
 -- the CHECK constraint).
 --
--- ON DELETE CASCADE: a category or cost center can only be deleted while
--- nothing books on it (usageCount/documentCount), so its budget has no
--- actual figure left - it goes with it.
+-- ON DELETE RESTRICT like every table with a category or cost center
+-- (docs/spec/02-datenmodell.md): CategoryRepository::usageCount() and
+-- CostCenterRepository::budgetCount() count budgets, so a category or cost
+-- center with a budget is deactivated, not deleted - no budget vanishes
+-- without its own audit entry. (RESTRICT also keeps the table valid on
+-- MySQL, which forbids CASCADE on the base column of a generated column.)
 CREATE TABLE budget (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     year SMALLINT UNSIGNED NOT NULL,
@@ -35,7 +38,7 @@ CREATE TABLE budget (
     UNIQUE KEY uq_budget_year_pair (year, category_key, cost_center_key),
     KEY idx_budget_cost_center (cost_center_id, year),
     CONSTRAINT chk_budget_target CHECK (category_id IS NOT NULL OR cost_center_id IS NOT NULL),
-    CONSTRAINT fk_budget_category FOREIGN KEY (category_id) REFERENCES category (id) ON DELETE CASCADE,
-    CONSTRAINT fk_budget_cost_center FOREIGN KEY (cost_center_id) REFERENCES cost_center (id) ON DELETE CASCADE,
+    CONSTRAINT fk_budget_category FOREIGN KEY (category_id) REFERENCES category (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_budget_cost_center FOREIGN KEY (cost_center_id) REFERENCES cost_center (id) ON DELETE RESTRICT,
     CONSTRAINT fk_budget_created_by FOREIGN KEY (created_by) REFERENCES `user` (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

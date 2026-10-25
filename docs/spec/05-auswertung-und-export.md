@@ -163,14 +163,18 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   ein Budget ohne Kostenstelle nie) und das Ist nur aus seinen
   Kostenstellen. Ein externes Konto sieht das Ist nur im freigegebenen Teil
   des Jahres (Hinweis „Teil des Jahres“), ein Jahr ganz außerhalb gar nicht.
-- **Pflege** auf derselben Seite (Recht `bank.book`, entsperrter Tresor,
-  CSRF): „Budget speichern“ legt an oder ersetzt den Betrag desselben
-  Jahres/Paars (neuer DEK); „Löschen“ je Zeile. Nur aktive
-  Ausgaben-Kategorien (`ausgabe`/`beide`) und aktive Kostenstellen.
+- **Pflege** auf derselben Seite (Recht `bank.book`, im Controller
+  zusätzlich `report.view`, entsperrter Tresor, CSRF): „Budget speichern“ legt an oder ersetzt den Betrag desselben
+  Jahres/Paars (neuer DEK; zwei gleichzeitige Erstanlagen werden zur
+  Änderung); „Löschen“ je Zeile. Nur aktive Ausgaben-Kategorien
+  (`ausgabe`/`beide`) und aktive Kostenstellen (serverseitig geprüft).
+  Eine Kategorie/Kostenstelle mit Budget gilt als verwendet (nur
+  deaktivierbar, FK `RESTRICT`).
   Audit-Log `budget.gespeichert`/`budget.geloescht` (Entität `budget`,
   Details Jahr und IDs – nie der Betrag).
 - **CSV** `GET /app/auswertung/budget.csv` (`export.csv` + `report.view`,
-  entsperrter Tresor) über `Berichtstabelle`; Prozente als Text.
+  entsperrter Tresor) über `Berichtstabelle`; Prozente als Text mit
+  Minuszeichen U+2212 (kein Formelschutz-Apostroph).
 - Pflicht-Tests: `tests/Service/Report/BudgetvergleichTest.php` (Ist je
   Kategorie/Kostenstelle/Paar, Einnahmen und Vorjahr ausgelassen,
   Kostenstellen- und Zeitraum-Scope, Rundung), `tests/Integration/

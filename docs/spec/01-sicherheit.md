@@ -662,7 +662,8 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   `/app/auswertung/budget.csv` = `export.csv` (+ `report.view` im
   Controller), `POST /app/auswertung/budget` und
   `POST /app/auswertung/budget/{id}/loeschen` = `bank.book` (issue #92,
-  E-58: wer die Vereinsfinanzen führt – Finanzen, Admin). Der Posteingang ist der erste echte Aufrufer von
+  E-58: wer die Vereinsfinanzen führt – Finanzen, Admin), im Controller
+  zusätzlich `report.view` (das Formular steht auf der Auswertungsseite). Der Posteingang ist der erste echte Aufrufer von
   `sqlBedingung()`: `document.cost_center_id` / `document.created_at`
   (`App\Repository\DocumentRepository::inbox()`/`inboxItem()`); eine ID
   außerhalb des Scopes antwortet 404 wie eine unbekannte.

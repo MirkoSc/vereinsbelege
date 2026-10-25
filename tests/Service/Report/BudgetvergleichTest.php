@@ -115,8 +115,8 @@ final class BudgetvergleichTest extends TestCase
     public function testPercentText(): void
     {
         self::assertSame('50,0 %', BudgetController::prozent(500));
-        self::assertSame('-40,0 %', BudgetController::prozent(-400));
-        self::assertSame('-0,1 %', BudgetController::prozent(-1));
+        self::assertSame("\u{2212}40,0 %", BudgetController::prozent(-400));
+        self::assertSame("\u{2212}0,1 %", BudgetController::prozent(-1));
         self::assertSame('140,5 %', BudgetController::prozent(1405));
         self::assertSame('–', BudgetController::prozent(null));
     }

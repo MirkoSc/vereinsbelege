@@ -128,6 +128,7 @@ $aktiv = '/app/auswertung/budget';
                                         <form method="post" action="/app/auswertung/budget/<?= e((string) $zeile->soll->id) ?>/loeschen">
                                             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
                                             <input type="hidden" name="jahr" value="<?= e((string) $jahr) ?>">
+                                            <input type="hidden" name="grundlage" value="<?= e($grundlage->value) ?>">
                                             <button type="submit" class="knopf knopf-gefahr">Löschen</button>
                                         </form>
                                     </td>
@@ -158,6 +159,7 @@ $aktiv = '/app/auswertung/budget';
         <form method="post" action="/app/auswertung/budget" class="formular">
             <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
             <input type="hidden" name="jahr" value="<?= e((string) $jahr) ?>">
+            <input type="hidden" name="grundlage" value="<?= e($grundlage->value) ?>">
 
             <label for="budget-kategorie">Kategorie
                 <select id="budget-kategorie" name="kategorie"<?= $fehlerAn('kategorie') ?>>

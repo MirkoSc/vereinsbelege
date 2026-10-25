@@ -8,6 +8,7 @@ use App\Domain\AuditAction;
 use App\Domain\Berechtigungen;
 use App\Domain\Permission;
 use App\Http\Cookie;
+use App\Http\HttpMethod;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
@@ -35,7 +36,8 @@ use App\View\View;
  *   Vereinsverantwortlicher sees only the budgets of his cost centers, an
  *   external account the Ist of its released period only.
  * - Saving and deleting need `bank.book` (route declaration) - the right
- *   of who keeps the club's finances (Finanzen, Admin); it has no scope.
+ *   of who keeps the club's finances (Finanzen, Admin); it has no scope -
+ *   and `report.view` as well (checked here): the form is on that page.
  *
  * The query string carries only the year and the basis; amounts are vault
  * data and need an unlocked vault. Never cached by the browser.
@@ -96,7 +98,10 @@ final readonly class BudgetController
         $jahr = preg_match('/^\d{4}$/', $roh) === 1 ? (int) $roh : 0;
         $anzeigeJahr = $this->jahr($request, true);
         if (!$this->session->checkCsrf($request)) {
-            return $this->csrfFehler($anzeigeJahr);
+            return $this->csrfFehler($request, $anzeigeJahr);
+        }
+        if (($verweigert = $this->ohneLeserecht()) !== null) {
+            return $verweigert;
         }
         $tresor = $this->tresor($request);
         if ($tresor === null) {
@@ -120,7 +125,7 @@ final readonly class BudgetController
         ]);
         $this->session->flash($gespeichert['neu'] ? 'Budget angelegt.' : 'Budget geändert.');
 
-        return Response::redirect(self::PFAD . '?jahr=' . $jahr);
+        return Response::redirect(self::ziel($request, $jahr));
     }
 
     /**
@@ -131,7 +136,10 @@ final readonly class BudgetController
         $this->session->start();
         $jahr = $this->jahr($request, true);
         if (!$this->session->checkCsrf($request)) {
-            return $this->csrfFehler($jahr);
+            return $this->csrfFehler($request, $jahr);
+        }
+        if (($verweigert = $this->ohneLeserecht()) !== null) {
+            return $verweigert;
         }
         $geloescht = ($this->budgets)()->loeschen((int) ($params['id'] ?? 0));
         if ($geloescht === null) {
@@ -144,7 +152,7 @@ final readonly class BudgetController
         ]);
         $this->session->flash('Budget gelöscht.');
 
-        return Response::redirect(self::PFAD . '?jahr=' . $geloescht->year);
+        return Response::redirect(self::ziel($request, $geloescht->year));
     }
 
     /**
@@ -172,14 +180,18 @@ final readonly class BudgetController
         );
     }
 
-    /** Tenths of a percent as "12,5 %", "-3,0 %"; null as "–". */
+    /**
+     * Tenths of a percent as "12,5 %", "−3,0 %"; null as "–". The minus is
+     * U+2212, as in the series trend: an ASCII "-" at the start of a CSV
+     * cell would get the formula guard's apostrophe.
+     */
     public static function prozent(?int $promille): string
     {
         if ($promille === null) {
             return '–';
         }
 
-        return ($promille < 0 ? '-' : '') . intdiv(abs($promille), 10) . ',' . (abs($promille) % 10) . ' %';
+        return ($promille < 0 ? "\u{2212}" : '') . intdiv(abs($promille), 10) . ',' . (abs($promille) % 10) . ' %';
     }
 
     /**
@@ -256,16 +268,39 @@ final readonly class BudgetController
         return $bis !== null && (int) $bis->format('Y') < $naechstes ? (int) $bis->format('Y') : $naechstes;
     }
 
+    /** The basis of the Ist: from the query, or from a form that keeps it. */
     private static function grundlage(Request $request): Grundlage
     {
-        return Grundlage::tryFrom(self::text($request->query['grundlage'] ?? null)) ?? Grundlage::STANDARD;
+        $wert = $request->method === HttpMethod::Post ? ($request->post['grundlage'] ?? null) : ($request->query['grundlage'] ?? null);
+
+        return Grundlage::tryFrom(self::text($wert)) ?? Grundlage::STANDARD;
     }
 
-    private function csrfFehler(int $jahr): ResponseInterface
+    /** Back to the page after a write, with the year and the basis it showed. */
+    private static function ziel(Request $request, int $jahr): string
+    {
+        return self::PFAD . '?' . http_build_query(['jahr' => (string) $jahr, 'grundlage' => self::grundlage($request)->value]);
+    }
+
+    /**
+     * Keeping budgets happens on the report page, so it needs that page's
+     * right too - a role with `bank.book` alone neither sees the page nor
+     * gets it back after an invalid form.
+     */
+    private function ohneLeserecht(): ?ResponseInterface
+    {
+        if ($this->berechtigungen()->darf(Permission::ReportView)) {
+            return null;
+        }
+
+        return $this->fehler(403, 'Kein Zugriff', 'Budgets pflegt, wer auch die Auswertungen sehen darf. Ihrem Konto fehlt das Recht „Auswertungen sehen“.');
+    }
+
+    private function csrfFehler(Request $request, int $jahr): ResponseInterface
     {
         $this->session->flash('Die Sitzung ist abgelaufen – bitte erneut versuchen.', FlashArt::Fehler);
 
-        return Response::redirect(self::PFAD . '?jahr=' . $jahr);
+        return Response::redirect(self::ziel($request, $jahr));
     }
 
     private function fehler(int $status, string $titel, string $text): ResponseInterface

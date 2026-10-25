@@ -27,7 +27,7 @@ final readonly class AuswertungsStandRepository implements Datenstand
      * `budget` (issue #92): the budget page reads it next to the cached
      * report input, so a changed budget also starts afresh.
      */
-    public const array TABELLEN = ['document', 'invoice', 'allocation', 'bank_transaction', 'bank_account', 'vault', 'budget'];
+    private const array TABELLEN = ['document', 'invoice', 'allocation', 'bank_transaction', 'bank_account', 'vault', 'budget'];
 
     public function __construct(private \PDO $pdo)
     {

@@ -19,6 +19,8 @@ use App\Domain\InvoiceData;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
+use App\Domain\Permission;
+use App\Domain\PermissionScope;
 use App\Domain\SystemRole;
 use App\Http\Cookie;
 use App\Http\HttpMethod;
@@ -54,6 +56,8 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\MasterData\CostCenterRuleViolation;
+use App\Service\MasterData\CostCenterService;
 use App\Service\Migration\Migrator;
 use App\Service\Report\AuswertungsCache;
 use App\Service\Report\Auswertungsdaten;
@@ -117,7 +121,7 @@ final class BudgetFlowTest extends DatabaseTestCase
     {
         $antwort = $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '500,00']);
         self::assertSame(302, $antwort->status);
-        self::assertSame('/app/auswertung/budget?jahr=2025', $antwort->headers['Location'] ?? null);
+        self::assertSame('/app/auswertung/budget?jahr=2025&grundlage=buchungen', $antwort->headers['Location'] ?? null);
         $this->speichern(['kostenstelle' => (string) $this->jugend, 'betrag' => '200']);
         $this->speichern(['kategorie' => (string) $this->reise, 'kostenstelle' => (string) $this->herren, 'betrag' => '100,00']);
 
@@ -130,7 +134,7 @@ final class BudgetFlowTest extends DatabaseTestCase
         // Receipt basis: Platzpflege 300 (Jugend) + 50 (no cost center);
         // Jugend 300; Reisekosten on Herren 100. "alle …" sorts first.
         self::assertSame([
-            ['alle Kategorien · Testkst Jugend', '200,00 €', '300,00 €', '-100,00 €', '-50,0 %', '150,0 %'],
+            ['alle Kategorien · Testkst Jugend', '200,00 €', '300,00 €', '-100,00 €', '−50,0 %', '150,0 %'],
             ['Testkat Platzpflege · alle Kostenstellen', '500,00 €', '350,00 €', '150,00 €', '30,0 %', '70,0 %'],
             ['Testkat Reisekosten · Testkst Herren', '100,00 €', '100,00 €', '0,00 €', '0,0 %', '100,0 %'],
         ], $this->tabelle($seite->body));
@@ -204,7 +208,7 @@ final class BudgetFlowTest extends DatabaseTestCase
             [['kategorie' => (string) $this->beitraege, 'betrag' => '100'], 'reine Einnahmen-Kategorie'],
             [['kategorie' => '999999', 'betrag' => '100'], 'Diese Kategorie gibt es nicht'],
             [['kategorie' => '1 OR 1=1', 'betrag' => '100'], 'Diese Kategorie gibt es nicht'],
-            [['kostenstelle' => '999999', 'betrag' => '100'], 'Diese Kostenstelle gibt es nicht.'],
+            [['kostenstelle' => '999999', 'betrag' => '100'], 'Diese Kostenstelle gibt es nicht oder sie ist deaktiviert.'],
         ];
         foreach ($faelle as [$felder, $meldung]) {
             $antwort = $this->speichern($felder);
@@ -212,6 +216,15 @@ final class BudgetFlowTest extends DatabaseTestCase
             self::assertStringContainsString(htmlspecialchars($meldung, ENT_QUOTES), $antwort->body);
             self::assertStringContainsString('aria-invalid="true"', $antwort->body);
         }
+        // Deactivated ones cannot be chosen - not even by a hand-made form.
+        $kategorien = new CategoryRepository($this->pdo());
+        $alt = $kategorien->create('Testkat Alt', CategoryDirection::Ausgabe, null, '');
+        $kategorien->update($alt, 'Testkat Alt', CategoryDirection::Ausgabe, null, '', false);
+        $altKst = new CostCenterRepository($this->pdo())->create('Testkst Alt');
+        new CostCenterRepository($this->pdo())->update($altKst, 'Testkst Alt', false);
+        self::assertStringContainsString('sie ist deaktiviert', $this->speichern(['kategorie' => (string) $alt, 'betrag' => '100'])->body);
+        self::assertStringContainsString('sie ist deaktiviert', $this->speichern(['kostenstelle' => (string) $altKst, 'betrag' => '100'])->body);
+
         $jahr = $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '100'], '1999');
         self::assertSame(422, $jahr->status);
         self::assertStringContainsString('Budgets gibt es für die Jahre 2000 bis ' . ((int) date('Y') + 1), $jahr->body);
@@ -227,6 +240,29 @@ final class BudgetFlowTest extends DatabaseTestCase
         self::assertSame([], $this->protokoll(AuditAction::BudgetGespeichert));
     }
 
+    public function testKeepingBudgetsAlsoNeedsTheReportRight(): void
+    {
+        // A hand-made role with bank.book alone: the form lives on the
+        // report page, so writing is refused too.
+        $rollen = new RoleRepository($this->pdo());
+        $rolle = $rollen->create('Testrolle Buchen', false, [Permission::BankBook->value => PermissionScope::Alle]);
+        $rollen->assignToUser($this->userId, [$rolle]);
+
+        $antwort = $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => 'kaputt']);
+        self::assertSame(403, $antwort->status);
+        self::assertStringNotContainsString('Testkat Platzpflege', $antwort->body);
+        self::assertSame(403, $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '1'])->status);
+        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
+    }
+
+    public function testTheBasisIsKeptAfterSaving(): void
+    {
+        $antwort = $this->post('/app/auswertung/budget', ['jahr' => '2025', 'grundlage' => 'belege', 'kategorie' => (string) $this->platz, 'kostenstelle' => '', 'betrag' => '5']);
+        self::assertSame('/app/auswertung/budget?jahr=2025&grundlage=belege', $antwort->headers['Location'] ?? null);
+        $seite = $this->get('/app/auswertung/budget', ['jahr' => '2025', 'grundlage' => 'belege']);
+        self::assertStringContainsString('<input type="hidden" name="grundlage" value="belege">', $seite->body);
+    }
+
     public function testDeleting(): void
     {
         $this->speichern(['kategorie' => (string) $this->platz, 'betrag' => '500,00']);
@@ -234,9 +270,9 @@ final class BudgetFlowTest extends DatabaseTestCase
         $seite = $this->get('/app/auswertung/budget', ['jahr' => '2025']);
         self::assertStringContainsString('action="/app/auswertung/budget/' . $id . '/loeschen"', $seite->body);
 
-        $antwort = $this->post('/app/auswertung/budget/' . $id . '/loeschen', ['jahr' => '2025']);
+        $antwort = $this->post('/app/auswertung/budget/' . $id . '/loeschen', ['jahr' => '2025', 'grundlage' => 'belege']);
         self::assertSame(302, $antwort->status);
-        self::assertSame('/app/auswertung/budget?jahr=2025', $antwort->headers['Location'] ?? null);
+        self::assertSame('/app/auswertung/budget?jahr=2025&grundlage=belege', $antwort->headers['Location'] ?? null);
         self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
         $geloescht = $this->protokoll(AuditAction::BudgetGeloescht);
         self::assertCount(1, $geloescht);
@@ -245,11 +281,27 @@ final class BudgetFlowTest extends DatabaseTestCase
 
         self::assertSame(404, $this->post('/app/auswertung/budget/' . $id . '/loeschen', ['jahr' => '2025'])->status);
 
-        // An unused category that is deleted takes its budget with it.
-        $neu = new CategoryRepository($this->pdo())->create('Testkat Neu', CategoryDirection::Ausgabe, null, '');
-        $this->speichern(['kategorie' => (string) $neu, 'betrag' => '1,00']);
-        new CategoryRepository($this->pdo())->delete($neu);
-        self::assertSame(0, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
+        // A category or cost center with a budget counts as used: it is
+        // deactivated, not deleted - no budget vanishes without an audit entry.
+        $kategorien = new CategoryRepository($this->pdo());
+        $neu = $kategorien->create('Testkat Neu', CategoryDirection::Ausgabe, null, '');
+        $kostenstelle = new CostCenterRepository($this->pdo())->create('Testkst Neu');
+        self::assertSame(0, $kategorien->usageCount($neu));
+        $this->speichern(['kategorie' => (string) $neu, 'kostenstelle' => (string) $kostenstelle, 'betrag' => '1,00']);
+        self::assertSame(1, $kategorien->usageCount($neu));
+        self::assertSame(1, new CostCenterRepository($this->pdo())->budgetCount($kostenstelle));
+        try {
+            new CostCenterService(new CostCenterRepository($this->pdo()))->loeschen($kostenstelle);
+            self::fail('a cost center with a budget is not deleted');
+        } catch (CostCenterRuleViolation $e) {
+            self::assertStringContainsString('Budgets angelegt', $e->getMessage());
+        }
+        try {
+            $kategorien->delete($neu);
+            self::fail('the schema refuses it as well');
+        } catch (\PDOException) {
+        }
+        self::assertSame(1, (int) $this->pdo()->query('SELECT COUNT(*) FROM budget')->fetchColumn());
     }
 
     public function testAnAmountMovedToAnotherRowCannotBeRead(): void
@@ -280,7 +332,7 @@ final class BudgetFlowTest extends DatabaseTestCase
         $seite = $this->get('/app/auswertung/budget', ['jahr' => '2025', 'grundlage' => 'belege']);
         self::assertSame(200, $seite->status);
         self::assertSame([
-            ['alle Kategorien · Testkst Jugend', '200,00 €', '300,00 €', '-100,00 €', '-50,0 %', '150,0 %'],
+            ['alle Kategorien · Testkst Jugend', '200,00 €', '300,00 €', '-100,00 €', '−50,0 %', '150,0 %'],
             ['Testkat Platzpflege · Testkst Jugend', '400,00 €', '300,00 €', '100,00 €', '25,0 %', '75,0 %'],
         ], $this->tabelle($seite->body));
         self::assertStringNotContainsString('Testkst Herren', $seite->body);
@@ -351,7 +403,8 @@ final class BudgetFlowTest extends DatabaseTestCase
         self::assertSame('no-store, private', $csv->headers['Cache-Control'] ?? null);
         self::assertSame(
             "\u{FEFF}Kategorie;Kostenstelle;Soll (EUR);Ist (EUR);Abweichung Soll − Ist (EUR);Abweichung (%);Ausgeschöpft (%)\r\n"
-            . "alle Kategorien;Testkst Jugend;200,00;300,00;-100,00;'-50,0 %;150,0 %\r\n"
+            // The percent minus is U+2212: no formula guard, no apostrophe.
+            . "alle Kategorien;Testkst Jugend;200,00;300,00;-100,00;−50,0 %;150,0 %\r\n"
             . "Testkat Platzpflege;alle Kostenstellen;500,00;350,00;150,00;30,0 %;70,0 %\r\n",
             $csv->body,
         );
@@ -359,7 +412,6 @@ final class BudgetFlowTest extends DatabaseTestCase
 
     public function testTheReportCacheSeesAChangedBudget(): void
     {
-        self::assertContains('budget', AuswertungsStandRepository::TABELLEN);
         $stand = new AuswertungsStandRepository($this->pdo());
         $vorher = $stand->fingerabdruck();
         self::assertNotNull($vorher);

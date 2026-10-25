@@ -111,6 +111,25 @@ final readonly class Budgets
             throw new BudgetFehler('Ein Budget kann nicht negativ sein.', 'betrag');
         }
 
+        // Two saves of the same new pair at once (a double click): the second
+        // insert hits the UNIQUE key - then it is a change of the first.
+        try {
+            [$id, $neu] = $this->schreiben($vault, $jahr, $kategorie, $kostenstelle, $betrag, $userId, $now);
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '23000') {
+                throw $e;
+            }
+            [$id, $neu] = $this->schreiben($vault, $jahr, $kategorie, $kostenstelle, $betrag, $userId, $now);
+        }
+
+        return ['id' => $id, 'neu' => $neu, 'jahr' => $jahr, 'kategorie' => $kategorie, 'kostenstelle' => $kostenstelle];
+    }
+
+    /**
+     * @return array{0: int, 1: bool} the id and whether the row is new
+     */
+    private function schreiben(Vault $vault, int $jahr, ?int $kategorie, ?int $kostenstelle, int $betrag, ?int $userId, \DateTimeImmutable $now): array
+    {
         $key = DataKey::generate();
         $this->pdo->beginTransaction();
         try {
@@ -132,7 +151,7 @@ final readonly class Budgets
             throw $e;
         }
 
-        return ['id' => $id, 'neu' => $neu, 'jahr' => $jahr, 'kategorie' => $kategorie, 'kostenstelle' => $kostenstelle];
+        return [$id, $neu];
     }
 
     /** Deletes a budget; the row as it was, null if there was none. */
@@ -167,8 +186,8 @@ final readonly class Budgets
             return null;
         }
         $kategorie = preg_match('/^[1-9]\d{0,18}$/', $wert) === 1 ? $this->kategorien->find((int) $wert) : null;
-        if ($kategorie === null || $kategorie->direction === CategoryDirection::Einnahme) {
-            throw new BudgetFehler('Diese Kategorie gibt es nicht oder sie ist eine reine Einnahmen-Kategorie.', 'kategorie');
+        if ($kategorie === null || !$kategorie->active || $kategorie->direction === CategoryDirection::Einnahme) {
+            throw new BudgetFehler('Diese Kategorie gibt es nicht, sie ist deaktiviert oder eine reine Einnahmen-Kategorie.', 'kategorie');
         }
 
         return $kategorie->id;
@@ -181,8 +200,8 @@ final readonly class Budgets
             return null;
         }
         $kostenstelle = preg_match('/^[1-9]\d{0,18}$/', $wert) === 1 ? $this->kostenstellen->find((int) $wert) : null;
-        if ($kostenstelle === null) {
-            throw new BudgetFehler('Diese Kostenstelle gibt es nicht.', 'kostenstelle');
+        if ($kostenstelle === null || !$kostenstelle->active) {
+            throw new BudgetFehler('Diese Kostenstelle gibt es nicht oder sie ist deaktiviert.', 'kostenstelle');
         }
 
         return $kostenstelle->id;

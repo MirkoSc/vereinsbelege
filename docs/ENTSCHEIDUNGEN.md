@@ -1628,7 +1628,9 @@ Entscheidungen dabei:
   Konten pflegen“ – Finanzen, Admin). Budgets sind Finanzplanung, also die
   Aufgabe dessen, der die Vereinsfinanzen führt. `admin.settings` hätte
   nur der Admin und hängt nicht am Tresor; `document.edit` ist
-  Belegprüfung. Vorstand und Kassenprüfer lesen nur.
+  Belegprüfung. Vorstand und Kassenprüfer lesen nur. Weil das Formular
+  auf der Auswertungsseite steht, braucht Pflegen zusätzlich
+  `report.view`.
 - **NULL = „alle“:** ein Kategorie-Budget zählt die Kategorie auf allen
   Kostenstellen; Budgets dürfen sich überschneiden, deshalb keine
   Gesamtsumme. Ein Budget ohne Kostenstelle liegt außerhalb jedes
@@ -1637,8 +1639,9 @@ Entscheidungen dabei:
   das Soll, Zehntelprozent kaufmännisch gerundet; Soll 0 → „–“.
 - **Speichern ist ein Upsert** (Jahr + Paar), eine Änderung schreibt neuen
   DEK und Chiffrat – nichts Altes muss entschlüsselt werden.
-- Kategorie/Kostenstelle gelöscht → ihr Budget geht mit (`ON DELETE
-  CASCADE`); Löschen ist ohnehin nur ohne Buchungen/Belege möglich.
+- Eine Kategorie/Kostenstelle mit Budget gilt als **verwendet** (FK
+  `RESTRICT`, wie die Spec es für jede Tabelle mit `category_id` will): sie
+  lässt sich nur deaktivieren, kein Budget verschwindet ohne Audit-Eintrag.
 - Ein externes Konto sieht das Ist nur im freigegebenen Teil des Jahres
   (Hinweis), das Soll gilt fürs ganze Jahr.
 
