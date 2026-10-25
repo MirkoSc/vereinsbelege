@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Repository;
 
 /**
- * The `upload_budget` table (migration 047, issue #242): bytes reserved per
+ * The `upload_budget` table (migration 048, issue #242): bytes reserved per
  * key and window for the public upload (App\Service\Submission\UploadBudget).
  *
  * The check and the reservation are one conditional UPDATE, so two parallel
