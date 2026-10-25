@@ -107,9 +107,13 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    eintragen.
 7. Der **Wiederherstellungsschlüssel** wird **genau einmal** angezeigt:
    ausdrucken („Zum Aufbewahren drucken“) oder abschreiben, dann die
-   **letzte Gruppe** eintippen. Erst danach schreibt der Installer
-   `shared/config.php` und ist abgeschlossen. Siehe
+   **letzte Gruppe** eintippen. Siehe
    [Abschnitt 5](#5-wiederherstellungsschlüssel).
+7a. **Mail-Versand (optional):** SMTP-Zugang eintragen (Felder wie in
+   [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), mit „Speichern und Testmail
+   senden“ prüfen und dann „Speichern und Installation abschließen“ – oder
+   „Überspringen“ und später unter `/admin/mail` nachholen. Erst jetzt
+   schreibt der Installer `shared/config.php` und ist abgeschlossen.
 8. Der Installer löscht `setup.php`. Gelingt das nicht (Dateirechte beim
    FTP), sagt die Abschlussseite Bescheid – dann `web/setup.php` per FTP
    löschen.
@@ -117,7 +121,7 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    oder E-Mail-Code) eingerichtet.
 10. Unter „Admin“ nacheinander einrichten:
     - **Systemcheck** (`/admin/systemcheck`) – alles grün?
-    - **Mail** (`/admin/mail`), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
+    - **Mail** (`/admin/mail`, falls im Installer übersprungen), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
     - **Cron** beim Hoster, siehe [Abschnitt 3](#3-cron-einrichten)
     - **`config.php` sichern**: per FTP `shared/config.php` herunterladen
       und zum Wiederherstellungsschlüssel legen ([Abschnitt 6](#6-backups))
@@ -137,7 +141,8 @@ Technischer Ablauf: [06 §4](spec/06-betrieb.md#4-jobs-und-session-worker)
 („Cron“, „Stand M1-5“).
 
 Der Cron erledigt nur Hintergrundarbeit, die **keine** Belegdaten braucht:
-Mails aus der Warteschlange versenden (mit Wiederholungen), Aufräumen
+Mails aus der Warteschlange versenden (mit Wiederholungen), Erinnerungen
+an offene Belege (nur Anzahlen, siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), Aufräumen
 (abgebrochene Uploads, abgelaufene Codes und Tokens, alte Jobs, Suchindexe,
 nicht bestätigte Kontoauszug-Vorschauen) und – falls der Worker genutzt
 wird – den Rückfall auf den Browser, wenn der Worker zu lange schweigt.
@@ -146,8 +151,11 @@ dagegen im Browser eines angemeldeten Benutzers.
 
 **Einrichten:**
 
-1. Per FTP `shared/config.php` öffnen und den Wert von **`cron_token`**
-   ablesen (48 Zeichen). Die Datei nicht verändern.
+1. Die fertige Cron-URL steht nach der Installation bzw. dem Restore auf
+   der Abschlussseite und jederzeit unter **Admin → Systemcheck**
+   („Cron-URL anzeigen“, Recht `admin.system`). Alternativ per FTP
+   `shared/config.php` öffnen und den Wert von **`cron_token`** ablesen
+   (48 Zeichen). Die Datei nicht verändern.
 2. Im Kundenmenü des Hosters einen Cronjob als **URL-Aufruf** anlegen:
 
    ```
@@ -163,8 +171,10 @@ Die Antwort ist ein kurzes JSON (`"status": "ok"`). Ein falsches Token gibt
 holt nach.
 
 > **Achtung nach einer Wiederherstellung:** Der Installer erzeugt beim
-> Restore ein **neues** `cron_token`. Danach den Cronjob mit dem neuen Wert
-> aus `shared/config.php` aktualisieren, sonst gehen keine Mails mehr raus.
+> Restore ein **neues** `cron_token`. Die Abschlussseite zeigt die neue
+> Cron-URL („Cronjob aktualisieren“); danach den Cronjob beim Hoster auf
+> diese Adresse umstellen, sonst gehen keine Mails mehr raus. Später steht
+> sie auch unter Admin → Systemcheck.
 
 Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets
 kopieren. Wer es kennt, kann nur den Cron auslösen, aber keine Daten lesen.
@@ -191,7 +201,17 @@ Hinweise mit Link.
 | Antwort-an, Vereinsname | optional |
 | Adresse dieser Installation | `https://<ihre-domain>` – wird für Links in Mails gebraucht. Ohne diese Angabe gehen Mails mit Link nur raus, wenn die aufgerufene Domain zur Absenderdomain gehört |
 
-Danach eine **Testmail** schicken. Die Warteschlange unten auf der Seite
+Danach eine **Testmail** schicken. (Wer Mail schon im Installer eingerichtet
+hat, findet dieselben Werte hier wieder.)
+
+**Erinnerung an offene Belege:** Auf derselben Seite lässt sich wählen, ob
+alle, die Belege bearbeiten dürfen, **wöchentlich** (Standard), **täglich**
+oder **gar nicht** morgens (ab 7 Uhr, mit dem nächsten Cron-Lauf) eine Mail
+bekommen: „N Einreichungen warten im Posteingang, M Belege warten auf
+Prüfung“ – nur die Zahlen. Wer nichts offen hat, bekommt keine Mail. Die
+Einstellung gilt für alle Konten; einzeln abbestellen lässt sie sich nicht.
+
+Die Warteschlange unten auf der Seite
 zeigt, was noch aussteht oder gescheitert ist (Empfänger maskiert). Eine
 Mail, die sofort nicht rausgeht, versucht der [Cron](#3-cron-einrichten)
 noch bis zu viermal (Abstände 1 min, 5 min, 15 min, 1 h); danach steht sie
@@ -293,6 +313,9 @@ heruntergeladen und außerhalb des Hosters aufbewahrt werden.
 - Mit Belegdateien ist jedes Backup so groß wie der ganze Belegbestand –
   zehn Backups brauchen zehnmal so viel Platz. Speicherplatz beim Hoster
   im Blick behalten.
+  Ein Backup, das größer ist als die Upload-Grenze des Hosters, lässt sich
+  trotzdem einspielen: per FTP nach `shared/var/backups/` legen und im
+  Installer auswählen ([Abschnitt 7](#7-wiederherstellung-restore)).
 - Jedes **Update** legt automatisch ein Backup an – aber nur der Datenbank,
   ohne `config.php` und ohne die Belegdateien im Dateisystem. Das schützt
   vor einem missglückten Update, ersetzt aber kein vollständiges Backup.
@@ -326,7 +349,18 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
    Schritten mit Fortschrittsanzeige; den Tab offen lassen.
    Das ZIP wird in einem Stück hochgeladen – es darf nicht größer sein als
    `upload_max_filesize`/`post_max_size` des Hosters (bei all-inkl
-   384 MiB).
+   384 MiB; das Formular nennt die Grenze).
+   **Größeres Backup:** das ZIP per FTP nach `shared/var/backups/` laden
+   (Ordner ggf. anlegen; Dateiname nur aus Buchstaben, Ziffern, `.`, `_`,
+   `-`, am besten unverändert `backup_….zip`). Der Installer nennt dann
+   unter „Backup einspielen“ den Namen einer **leeren Datei**
+   (`freigabe-….txt`), die ebenfalls per FTP in `shared/var/backups/`
+   angelegt wird – der Nachweis, dass hier jemand mit FTP-Zugang
+   installiert. Seite neu laden und das Backup unter „… oder ein per FTP
+   abgelegtes Backup“ auswählen.
+   Es wird dort gelesen und bleibt danach liegen (bei `backup_….zip`
+   erscheint es unter `/admin/backups` und fällt später unter die
+   Rotation).
 3. Danach je nach Backup:
    - **Backup enthält `config.php`:** fertig. Alle Konten melden sich wie
      bisher an.
@@ -348,8 +382,8 @@ Ein Restore läuft immer über den **Installer** einer leeren Installation:
         - SMTP-Passwort und API-Schlüssel der KI-Anbieter neu eintragen;
           nicht versendete Mails sind verloren.
 4. Nach dem Restore:
-   - [Cron-URL](#3-cron-einrichten) mit dem **neuen `cron_token`**
-     aktualisieren.
+   - [Cronjob](#3-cron-einrichten) auf die **neue Cron-URL** umstellen –
+     sie steht auf der Abschlussseite (und unter Admin → Systemcheck).
    - Neue `shared/config.php` per FTP herunterladen und sicher ablegen.
    - **Worker-Kopplungen prüfen** (`/admin/worker`): Ein älteres Backup
      bringt auch Worker zurück, die inzwischen entkoppelt waren – solche
@@ -484,7 +518,9 @@ prüft die Einstellungen, die der Hoster im Betrieb ändern könnte
 `shared/config.php` aus dem Internet abrufbar ist. Ein rotes Ergebnis bei
 „config.php abrufbar“ heißt: **sofort** die Domain-Einstellung beim Hoster
 prüfen (muss auf `web/` zeigen). Das Ergebnis lässt sich als JSON kopieren,
-z. B. für ein GitHub-Issue – es enthält keine Geheimnisse.
+z. B. für ein GitHub-Issue – es enthält keine Geheimnisse. Darunter, getrennt
+davon, lässt sich die **Cron-URL** aufklappen (enthält das Token – nicht in
+Issues kopieren).
 
 Wann ausführen: nach der Installation, nach jedem Update, nach
 Änderungen beim Hoster (PHP-Version, Tarif) und einmal im Quartal.
@@ -492,18 +528,33 @@ Wann ausführen: nach der Installation, nach jedem Update, nach
 **Code-Integritätscheck** (`/admin/integritaet`, Recht `admin.system`) –
 [01 §8](spec/01-sicherheit.md#8-integritätscheck-code): vergleicht jede
 Datei in `current/` mit der Prüfsummenliste des installierten Releases und
-meldet geänderte, fehlende und zusätzliche Dateien. Erkennt plumpe
-Manipulationen (z. B. eingeschleuste Dateien nach einem Einbruch beim
-Hoster), ist aber kein Schutz gegen einen versierten Angreifer. Jede
-Prüfung steht im Audit-Log.
+meldet geänderte, fehlende und zusätzliche Dateien. Dazu prüft er das
+Web-Verzeichnis `web/` (Startdatei `index.php`, `.htaccess`, `.user.ini`,
+fremde Dateien) sowie Rechte und Aufbau von `shared/config.php` – deren
+Inhalt nicht, der ist je Installation anders. Erkennt eingeschleuste oder
+veränderte Dateien (z. B. nach einem Einbruch beim Hoster). Sobald Releases
+signiert sind (siehe [13](#13-für-maintainer)), kann ein Angreifer die
+Prüfsummenliste nicht mehr unbemerkt anpassen; vorher erkennt der Check nur
+plumpe Manipulationen. Jede Prüfung steht im Audit-Log.
 
-- **Nach einem Rollback oder einem vor dem Umschalten abgebrochenen
-  Update** meldet er viele abweichende Dateien: die gespeicherte
-  Prüfsummenliste gehört dann zur neueren Version. Die Seite warnt in
-  diesem Fall. Nach dem nächsten vollständigen Update passt es wieder.
-- Ohne diesen Grund sind Abweichungen ernst zu nehmen: Admins informieren,
-  Release neu einspielen (Update bzw. Neuinstallation mit Restore),
-  Zugangsdaten beim Hoster ändern.
+- **Von Hand angepasste `.htaccess`** (IP-Sperre, Passwortschutz) erscheint
+  bei jeder Prüfung als Abweichung unter „Web-Verzeichnis und
+  Konfiguration“. Das ist gewollt: so fällt auf, wenn jemand anderes sie
+  ändert.
+- **`config.php` mit zu weiten Rechten** (z. B. `0644`): per FTP-Programm
+  auf `0600` setzen.
+- **Nach einem Rollback** können `web/index.php`, `.htaccess` und
+  `.user.ini` als Abweichung erscheinen: sie bleiben auf dem Stand des
+  neueren Releases. Das nächste vollständige Update bringt sie wieder in
+  Einklang.
+- **„Signatur ungültig“ oder „Liste fehlt“** ist ein Alarm, kein
+  Bedienfehler: Admins informieren, Zugangsdaten beim Hoster ändern,
+  Release neu einspielen (Update bzw. Neuinstallation mit Restore).
+- Ältere Installationen hatten die Liste in `shared/`; nach einem Rollback
+  passte sie dort nicht zur Version. Seit Issue #241 liegt sie im Release
+  selbst und wandert beim Umschalten und beim Rollback mit.
+- Ohne einen solchen Grund sind Abweichungen ernst zu nehmen: Admins
+  informieren, Release neu einspielen, Zugangsdaten beim Hoster ändern.
 
 ---
 
@@ -557,8 +608,59 @@ Dieser Abschnitt richtet sich an den Betreuer des Repositorys, nicht an
 den Verein.
 
 - Releases entstehen über den Release-Workflow (Tag `vX.Y.Z`); Assets sind
-  das Release-ZIP, `setup.php` und `checksums.txt` (inkl. Prüfsummen je
-  Datei für den Integritätscheck).
+  das Release-ZIP, `setup.php`, `checksums.txt` (inkl. Prüfsummen je
+  Datei für den Integritätscheck) und – sobald eingerichtet –
+  `checksums.txt.sig`.
+
+### Release-Signatur einrichten (einmalig)
+
+Updater und `setup.php` prüfen die Echtheit eines Releases über eine
+Ed25519-Signatur der `checksums.txt` ([06 §1](spec/06-betrieb.md#1-installer--updater--release),
+Issue #241). Solange im Code kein öffentlicher Schlüssel steht, gibt es nur
+einen Hinweis „Release nicht signiert“ – Updates funktionieren weiter. So
+wird es scharf geschaltet:
+
+1. **Schlüsselpaar erzeugen** – auf dem eigenen Rechner, mit PHP ≥ 8.3 und
+   `ext-sodium`, im Repository:
+
+   ```sh
+   php tools/release-signatur.php schluessel ~/vereinsbelege-release.key
+   ```
+
+   Der **geheime** Schlüssel landet nur in der angegebenen Datei (Rechte
+   `0600`), der **öffentliche** wird ausgegeben. Die Datei nie ins
+   Repository legen; sicher verwahren (Passwortmanager, verschlüsseltes
+   Backup). Geht sie verloren, muss ein neues Paar her (Schritt 4).
+2. **Secret anlegen:** GitHub → Repository → *Settings → Secrets and
+   variables → Actions → New repository secret*, Name
+   `RELEASE_SIGNING_KEY`, Wert = Inhalt der Datei (eine Zeile base64).
+   Mit der GitHub-CLI: `gh secret set RELEASE_SIGNING_KEY < ~/vereinsbelege-release.key`.
+3. **Öffentlichen Schlüssel festlegen** (erst wenn das Secret existiert):
+   in einem PR den ausgegebenen Schlüssel in
+   `app/src/Service/Update/ReleaseSignatur.php` als `PUBLIC_KEY`
+   eintragen, `php bin/build_setup.php` laufen lassen (aktualisiert
+   `setup.php`) und committen. Schon ab dem Setzen des Secrets signiert der
+   Workflow jedes Release (Schritt „Sign checksums.txt“; bis zum Eintrag
+   warnt das Log, dass der Schlüssel im Code fehlt). Ab dem Release mit dem
+   eingetragenen Schlüssel gilt: Installationen auf diesem Stand **lehnen
+   jedes Release ohne gültige Signatur ab**, und der Workflow bricht ab,
+   wenn das Secret fehlt oder nicht zum Schlüssel passt.
+4. **Schlüsselwechsel** (Verlust, Verdacht): neues Paar erzeugen, Secret
+   ersetzen, im selben Release den neuen `PUBLIC_KEY` eintragen. Eine
+   Installation prüft immer mit dem Schlüssel ihres **laufenden**
+   Releases – das Release mit dem neuen Schlüssel muss also noch mit dem
+   alten signiert sein. Ist der alte geheime Schlüssel verloren, geht das
+   nicht: dann muss jede Installation einmal von Hand per `setup.php` bzw.
+   Release-ZIP aktualisiert werden.
+
+Prüfen eines heruntergeladenen Releases von Hand:
+`php tools/release-signatur.php pruefen checksums.txt checksums.txt.sig`
+(nutzt den Schlüssel aus dem ausgecheckten Code), danach
+`sha256sum -c --ignore-missing checksums.txt`.
+
+**Rechte des Release-Workflows:** standardmäßig nur `contents: read`; das
+Bauen läuft ohne Secret, nur der Job „publish“ darf schreiben und sieht
+`RELEASE_SIGNING_KEY`.
 - **Worker-Image:** Das GHCR-Paket `vereinsbelege-worker` muss nach dem
   ersten Tag **einmalig auf „public“** gestellt werden, sonst kann der
   Verein es nicht herunterladen. Einzelheiten:

@@ -3,7 +3,15 @@
  * @var array<string, string> $errors
  * @var array<string, string> $values
  * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
- * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
+ * @var string $schritt one of 'schluessel', 'schluessel_offen', 'mail', 'zugang', or unset for the default form/restore/fertig
+ * @var \App\Service\Mail\MailSettings|null $mail what the mail step shows (issue #249)
+ * @var list<\App\Service\Mail\SmtpSecurity> $sicherheiten
+ * @var string $empfaenger test mail recipient
+ * @var array{ok: bool, text: string}|null $testergebnis
+ * @var bool $mailEingerichtet the mail step was saved, not skipped
+ * @var ?string $cronUrl the cron URL with the token config.php just got (issue #244), on the finished page only
+ * @var list<array{name: string, groesse: int, geaendert_am: string}>|null $serverBackups ZIPs in shared/var/backups/, null until this session proved FTP access (issue #244)
+ * @var string $ftpFreigabeDatei the file that proves FTP access for this session (issue #244)
  */
 $schritt = $schritt ?? '';
 ?>
@@ -30,6 +38,22 @@ $schritt = $schritt ?? '';
                 Installation abgeschlossen. Datenbank, erster Admin und Tresor sind angelegt, die Konfiguration
                 liegt in <code>shared/config.php</code>.
             </p>
+        <?php endif; ?>
+        <?php if (is_string($cronUrl ?? null)): ?>
+            <div class="hinweis hinweis-warnung" id="cron-url-hinweis">
+                <p>
+                    <strong>Cronjob <?= ($restore ?? false) === true ? 'aktualisieren' : 'einrichten' ?>:</strong>
+                    Die Konfiguration hat ein <strong>neues Cron-Token</strong>. Im Kundenmenü des Hosters den
+                    Cronjob (URL-Aufruf, jede Minute) auf diese Adresse setzen<?= ($restore ?? false) === true ? ' – die bisherige gilt nicht mehr, sonst gehen keine Mails mehr raus' : '' ?>:
+                </p>
+                <label for="cron-url">Cron-URL
+                    <input type="text" id="cron-url" readonly spellcheck="false" autocomplete="off" value="<?= e($cronUrl) ?>">
+                </label>
+                <p class="feld-hilfe">
+                    Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets kopieren. Admins sehen die
+                    Adresse später auch unter <em>Admin → Systemcheck</em>.
+                </p>
+            </div>
         <?php endif; ?>
         <?php if (is_array($zugangVerknuepft ?? null)): ?>
             <div class="hinweis hinweis-warnung">
@@ -60,6 +84,12 @@ $schritt = $schritt ?? '';
             <p class="hinweis hinweis-warnung">
                 <strong>Bitte noch von Hand erledigen:</strong> <code>setup.php</code> konnte nicht
                 gelöscht werden und liegt noch im Web-Verzeichnis. Bitte per FTP entfernen.
+            </p>
+        <?php endif; ?>
+        <?php if (($restore ?? false) !== true && ($mailEingerichtet ?? false) !== true): ?>
+            <p class="hinweis hinweis-warnung">
+                Mail ist noch nicht eingerichtet. Ohne Mail funktionieren Anmeldecodes per E-Mail,
+                „Passwort vergessen“ und Erinnerungen nicht – bitte unter „Admin → Mail“ nachholen.
             </p>
         <?php endif; ?>
         <p>
@@ -116,7 +146,7 @@ $schritt = $schritt ?? '';
                     <input type="text" id="schluessel-letzte-gruppe" name="schluessel_letzte_gruppe"
                         autocomplete="off" autocapitalize="characters" spellcheck="false">
                 </label>
-                <p><button type="submit" class="knopf knopf-primaer">Bestätigen und Installation abschließen</button></p>
+                <p><button type="submit" class="knopf knopf-primaer">Bestätigen und weiter</button></p>
             </form>
 
             <form method="post" action="/install/neu" class="nicht-drucken">
@@ -128,6 +158,103 @@ $schritt = $schritt ?? '';
                     Entfernt den noch unbestätigten Admin und Tresor wieder, damit das Formular erneut
                     ausgefüllt werden kann. Nichts davon wurde bisher irgendwo gespeichert, das der
                     Vereinstresor nicht ohnehin verlangt.
+                </p>
+            </form>
+        </div>
+
+    <?php elseif ($schritt === 'mail'): ?>
+        <div class="karte">
+            <h3>Mail-Versand (optional)</h3>
+            <p>
+                Der Wiederherstellungsschlüssel ist bestätigt. Zum Schluss lässt sich der Mail-Versand
+                einrichten und mit einer Testmail prüfen – oder dieser Schritt überspringen und später
+                unter „Admin → Mail“ nachholen. Das Passwort wird mit dem Server-Schlüssel
+                verschlüsselt gespeichert.
+            </p>
+
+            <?php foreach (['csrf', 'mail'] as $schluessel): ?>
+                <?php if (isset($errors[$schluessel])): ?>
+                    <p class="hinweis hinweis-fehler"><?= e($errors[$schluessel]) ?></p>
+                <?php endif; ?>
+            <?php endforeach; ?>
+            <?php if (($testergebnis ?? null) !== null): ?>
+                <p class="hinweis <?= $testergebnis['ok'] ? 'hinweis-ok' : 'hinweis-fehler' ?>"><?= e($testergebnis['text']) ?></p>
+            <?php endif; ?>
+
+            <?php if (($mail ?? null) !== null): ?>
+                <form method="post" action="/install/mail" class="formular">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+                    <fieldset>
+                        <legend>Versandweg</legend>
+                        <label class="feld-ankreuz">
+                            <input type="radio" name="transport" value="smtp"
+                                   <?= $mail->transport === 'smtp' ? 'checked' : '' ?>> SMTP
+                        </label>
+                        <label class="feld-ankreuz">
+                            <input type="radio" name="transport" value="php_mail"
+                                   <?= $mail->transport === 'php_mail' ? 'checked' : '' ?>> PHP <code>mail()</code>
+                        </label>
+                    </fieldset>
+
+                    <label for="install-mail-host">SMTP-Server
+                        <input type="text" id="install-mail-host" name="host" value="<?= e($mail->host) ?>"
+                               autocomplete="off" placeholder="z. B. mail.example.org">
+                    </label>
+                    <label for="install-mail-port" class="feld-kurz">Port
+                        <input type="text" id="install-mail-port" name="port" inputmode="numeric"
+                               value="<?= e((string) $mail->port) ?>">
+                    </label>
+                    <fieldset>
+                        <legend>Verschlüsselung</legend>
+                        <?php foreach ($sicherheiten as $sicherheit): ?>
+                            <label class="feld-ankreuz">
+                                <input type="radio" name="sicherheit" value="<?= e($sicherheit->value) ?>"
+                                       <?= $sicherheit === $mail->sicherheit ? 'checked' : '' ?>>
+                                <?= e($sicherheit->bezeichnung()) ?>
+                            </label>
+                        <?php endforeach; ?>
+                    </fieldset>
+                    <label for="install-mail-benutzer">Benutzername
+                        <input type="text" id="install-mail-benutzer" name="benutzer" value="<?= e($mail->benutzer) ?>"
+                               autocomplete="off">
+                    </label>
+                    <label for="install-mail-passwort">Passwort
+                        <input type="password" id="install-mail-passwort" name="passwort" autocomplete="off">
+                    </label>
+                    <p class="feld-hilfe">
+                        <?= $mail->passwortGesetzt ? 'Ein Passwort ist gespeichert – leer lassen, um es zu behalten.' : 'Noch kein Passwort gespeichert.' ?>
+                    </p>
+                    <label for="install-mail-absender">Absenderadresse
+                        <input type="email" id="install-mail-absender" name="absender" value="<?= e($mail->absender) ?>">
+                    </label>
+                    <label for="install-mail-antwort-an">Antwort-an-Adresse
+                        <input type="email" id="install-mail-antwort-an" name="antwort_an" value="<?= e($mail->antwortAn) ?>">
+                    </label>
+                    <label for="install-mail-vereinsname">Vereinsname im Absender
+                        <input type="text" id="install-mail-vereinsname" name="vereinsname" value="<?= e($mail->vereinsname) ?>">
+                    </label>
+                    <label for="install-mail-url">Adresse dieser Installation
+                        <input type="url" id="install-mail-url" name="oeffentliche_url" value="<?= e($mail->oeffentlicheUrl) ?>"
+                               placeholder="z. B. https://belege.example.org" autocomplete="off" spellcheck="false">
+                    </label>
+                    <p class="feld-hilfe">Grundlage für Links in Mails – optional.</p>
+                    <label for="install-mail-empfaenger">Testmail an
+                        <input type="email" id="install-mail-empfaenger" name="empfaenger" value="<?= e($empfaenger ?? '') ?>"
+                               autocomplete="off">
+                    </label>
+
+                    <p class="knopfreihe">
+                        <button type="submit" name="aktion" value="testen" class="knopf">Speichern und Testmail senden</button>
+                        <button type="submit" name="aktion" value="abschliessen" class="knopf knopf-primaer">Speichern und Installation abschließen</button>
+                    </p>
+                </form>
+            <?php endif; ?>
+
+            <form method="post" action="/install/mail">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <p>
+                    <button type="submit" name="aktion" value="ueberspringen" class="knopf">Überspringen und Installation abschließen</button>
                 </p>
             </form>
         </div>
@@ -245,6 +372,20 @@ $schritt = $schritt ?? '';
             <p id="wiederherstellung-status" role="status">Starte …</p>
             <progress id="wiederherstellung-fortschritt" max="100" value="0"></progress>
             <p id="wiederherstellung-fehler" class="hinweis hinweis-fehler" role="alert" hidden></p>
+            <div id="wiederherstellung-cron" class="hinweis hinweis-warnung" hidden>
+                <p>
+                    <strong>Cronjob aktualisieren:</strong> Die Wiederherstellung hat ein <strong>neues
+                    Cron-Token</strong> erzeugt; die bisherige Cron-URL gilt nicht mehr. Im Kundenmenü des Hosters
+                    den Cronjob auf diese Adresse setzen, sonst gehen keine Mails mehr raus:
+                </p>
+                <label for="wiederherstellung-cron-url">Cron-URL
+                    <input type="text" id="wiederherstellung-cron-url" readonly spellcheck="false" autocomplete="off">
+                </label>
+                <p class="feld-hilfe">
+                    Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets kopieren. Admins sehen die
+                    Adresse später auch unter <em>Admin → Systemcheck</em>.
+                </p>
+            </div>
             <p id="wiederherstellung-fertig" hidden>
                 <a class="knopf knopf-primaer" id="wiederherstellung-weiter" href="/">Zur Startseite</a>
             </p>
@@ -288,6 +429,34 @@ $schritt = $schritt ?? '';
                         <input type="file" id="backup-datei" name="backup" accept=".zip,application/zip"
                             <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
                     </label>
+                    <p class="feld-hilfe">
+                        Hochgeladen werden kann ein ZIP bis <?= ($uploadGrenze ?? '') !== '' ? e($uploadGrenze) : 'zur Upload-Grenze des Hosters' ?>
+                        (<code>upload_max_filesize</code>/<code>post_max_size</code>). Ein größeres Backup per FTP in
+                        <code>shared/var/backups/</code> ablegen, diese Seite neu laden und unten auswählen.
+                    </p>
+                    <?php $serverBackups = $serverBackups ?? null; ?>
+                    <?php if ($serverBackups === null): ?>
+                        <p class="feld-hilfe">
+                            Für ein per FTP abgelegtes Backup zusätzlich die <strong>leere Datei
+                            <code><?= e($ftpFreigabeDatei ?? '') ?></code></strong> in <code>shared/var/backups/</code>
+                            anlegen und die Seite neu laden – das weist nach, dass hier jemand mit FTP-Zugang
+                            installiert. Erst dann erscheint die Auswahl.
+                        </p>
+                    <?php else: ?>
+                        <label for="backup-server">… oder ein per FTP abgelegtes Backup aus <code>shared/var/backups/</code>
+                            <select id="backup-server" name="backup_server" <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
+                                <option value="">– keins, das hochgeladene ZIP verwenden –</option>
+                                <?php foreach ($serverBackups as $backup): ?>
+                                    <option value="<?= e($backup['name']) ?>" <?= ($values['backup_server'] ?? '') === $backup['name'] ? 'selected' : '' ?>>
+                                        <?= e($backup['name']) ?> (<?= e(number_format($backup['groesse'] / 1048576, 1, ',', '.')) ?> MiB, <?= e($backup['geaendert_am']) ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <p class="feld-hilfe">
+                            <?= $serverBackups === [] ? 'In <code>shared/var/backups/</code> liegt derzeit kein ZIP.' : 'Das gewählte Backup wird an Ort und Stelle gelesen und bleibt danach liegen.' ?>
+                        </p>
+                    <?php endif; ?>
                     <p class="feld-hilfe">
                         Das ZIP stammt aus der Update-Kette oder von <code>bin/backup.php</code>. Benutzer und
                         Tresor kommen aus dem Backup, das Formular „Erster Zugang“ entfällt. Enthält das ZIP

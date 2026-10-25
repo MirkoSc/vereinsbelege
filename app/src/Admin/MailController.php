@@ -10,10 +10,12 @@ use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
 use App\Repository\MailQueueRepository;
+use App\Repository\SettingRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Mail\Mailer;
 use App\Service\Mail\MailSettings;
 use App\Service\Mail\MailSettingsRepository;
+use App\Service\Mail\OffeneBelegeErinnerung;
 use App\Service\Mail\PublicUrl;
 use App\Service\Mail\SmtpSecurity;
 use App\View\Area;
@@ -45,6 +47,7 @@ final readonly class MailController
         private Mailer $mailer,
         private MailQueueRepository $queue,
         private AuditLog $audit,
+        private SettingRepository $settings,
     ) {
     }
 
@@ -74,6 +77,8 @@ final readonly class MailController
             'passwortLoeschen' => $passwortLoeschen,
             'sicherheiten' => SmtpSecurity::cases(),
             'warteschlange' => $this->queue->recent(),
+            'erinnerungTage' => OffeneBelegeErinnerung::intervall($this->settings),
+            'erinnerungIntervalle' => OffeneBelegeErinnerung::INTERVALLE,
         ], Area::Admin), $status);
     }
 
@@ -177,6 +182,37 @@ final readonly class MailController
         return Response::redirect('/admin/mail');
     }
 
+    /**
+     * The interval of the reminder mail "N Belege warten auf Prüfung"
+     * (issue #249, App\Service\Mail\OffeneBelegeErinnerung): off, daily or
+     * weekly - for the whole installation, not per account (E-71).
+     */
+    public function saveErinnerung(Request $request): ResponseInterface
+    {
+        $this->session->start();
+        if (!$this->session->checkCsrf($request)) {
+            return $this->csrfFailure();
+        }
+
+        $eingabe = (string) ($request->post['intervall'] ?? '');
+        $tage = ctype_digit($eingabe) ? (int) $eingabe : -1;
+        if (!in_array($tage, OffeneBelegeErinnerung::INTERVALLE, true)) {
+            $this->session->flash('Unbekannter Abstand für die Erinnerung.', FlashArt::Fehler);
+
+            return Response::redirect('/admin/mail');
+        }
+
+        if (OffeneBelegeErinnerung::intervall($this->settings) !== $tage) {
+            $this->settings->set(OffeneBelegeErinnerung::SETTING_INTERVALL, (string) $tage);
+            $this->audit->record(AuditAction::EinstellungMail, $this->session->userId(), $request->ip, details: [
+                'felder' => ['erinnerung'],
+            ]);
+        }
+        $this->session->flash($tage === 0 ? 'Erinnerungs-Mails sind ausgeschaltet.' : 'Erinnerungs-Mails gespeichert.');
+
+        return Response::redirect('/admin/mail');
+    }
+
     public function test(Request $request): ResponseInterface
     {
         $this->session->start();
@@ -210,25 +246,7 @@ final readonly class MailController
         string $absender,
         string $antwortAn,
     ): ?string {
-        if (filter_var($absender, FILTER_VALIDATE_EMAIL) === false) {
-            return 'Bitte eine gültige Absenderadresse angeben.';
-        }
-        if ($antwortAn !== '' && filter_var($antwortAn, FILTER_VALIDATE_EMAIL) === false) {
-            return 'Die Antwort-an-Adresse ist keine gültige E-Mail-Adresse.';
-        }
-        if ($transport === 'smtp') {
-            if ($host === '') {
-                return 'Bitte einen SMTP-Server angeben.';
-            }
-            if ($port < 1 || $port > 65535) {
-                return 'Der Port muss zwischen 1 und 65535 liegen.';
-            }
-            if ($sicherheit === null) {
-                return 'Bitte eine Verschlüsselung auswählen.';
-            }
-        }
-
-        return null;
+        return MailSettings::eingabeFehler($transport, $host, $port, $sicherheit, $absender, $antwortAn);
     }
 
     private function csrfFailure(): ResponseInterface

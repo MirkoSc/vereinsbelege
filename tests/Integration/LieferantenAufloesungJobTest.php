@@ -21,6 +21,7 @@ use App\Repository\AuditLogRepository;
 use App\Repository\BankAccountRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
@@ -47,6 +48,8 @@ use App\Service\MasterData\Aufloesung;
 use App\Service\MasterData\AufloesungsArt;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
+use App\Service\MasterData\Vereinskennung;
+use App\Service\MasterData\Vereinskennungen;
 use App\Service\Migration\Migrator;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
@@ -96,6 +99,9 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         $this->tresor = Vault::create();
         new VaultRepository($this->pdo())->insert($this->tresor->publicKey());
         $this->audit = new AuditLog(new AuditLogRepository($this->pdo()), new VaultRepository($this->pdo()), $this->crypto);
+        // An admin said the club has no VAT id or tax number (issue #245):
+        // step 6 takes the AI's. The other case has a test of its own.
+        $this->vereinskennungen();
 
         $this->userId = new UserRepository($this->pdo())->insert(
             $this->crypto->encrypt('finanzen@example.org'),
@@ -341,6 +347,35 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
         self::assertSame(self::USTID, $neu->data->vatId);
     }
 
+    public function testStep6LeavesTheIdsOutUntilTheClubsOwnAreSaved(): void
+    {
+        // Issue #245: the VAT id the AI read may be the club's ("Ihre
+        // USt-IdNr.") - until an admin said which is the club's, it is not
+        // stored, or step 1 would hand every such invoice to this supplier.
+        $this->pdo()->exec('DELETE FROM club_identity');
+
+        $aufloesung = $this->lesen(['name' => 'Sporthaus Beispiel GmbH', 'iban' => self::IBAN, 'vat_id' => self::USTID, 'tax_number' => '12/345/67890']);
+
+        self::assertSame(AufloesungsArt::Angelegt, $aufloesung->art);
+        $neu = $this->service()->finde($this->tresor, (int) $aufloesung->supplierId);
+        self::assertSame('', $neu?->data->vatId);
+        self::assertSame('', $neu->data->taxNumber);
+        self::assertSame([self::IBAN], $neu->data->ibans, 'the rest stays');
+        self::assertNotContains('vat_id', $aufloesung->felder);
+    }
+
+    public function testTheClubsOwnVatIdFindsNoSupplierInStep1(): void
+    {
+        // Typed by hand before #245 - step 1 must not trust it.
+        $this->lieferant('Sporthaus Nord', ['vat_id' => self::USTID]);
+        $richtig = $this->lieferant('Getränke Müller');
+        $this->vereinskennungen(ustId: self::USTID);
+
+        $aufloesung = $this->lesen(['name' => 'Getränke Müller', 'vat_id' => self::USTID, 'iban' => '']);
+
+        self::assertSame([AufloesungsArt::Treffer, 4, $richtig], [$aufloesung->art, $aufloesung->stufe, $aufloesung->supplierId]);
+    }
+
     public function testTheClubsOwnIbanFindsNoSupplierInStep2(): void
     {
         // Entered by hand before E-29 - step 2 must not trust it.
@@ -564,6 +599,12 @@ final class LieferantenAufloesungJobTest extends DatabaseTestCase
     }
 
     /** One of the club's own bank accounts (issue #201/M7-6b, E-29). */
+    /** The club's own VAT id and tax number as an admin saves them (issue #245). */
+    private function vereinskennungen(string $ustId = '', string $steuernummer = ''): void
+    {
+        new Vereinskennungen(new ClubIdentityRepository($this->pdo()))->speichern($this->tresor, Vereinskennung::pruefen($ustId, $steuernummer), null, new \DateTimeImmutable());
+    }
+
     private function vereinskonto(string $iban): void
     {
         new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()))->anlegen($this->tresor, BankAccountKind::Bank, [

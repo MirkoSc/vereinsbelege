@@ -321,6 +321,31 @@ final class KassenpruefungFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Zeitraum 01.04.2025 bis 30.06.2025', $quartal->body);
     }
 
+    public function testAFreePeriodOfMoreThanThreeYearsFallsBackWithANote(): void
+    {
+        $vorjahr = (int) date('Y') - 1;
+        // Issue #250: the same limit as "Wohin fließt das Geld" (E-51).
+        $lang = $this->get('/app/auswertung/kassenpruefung', ['art' => 'frei', 'von' => '2021-01-01', 'bis' => '2024-01-01']);
+        self::assertSame(200, $lang->status);
+        self::assertStringContainsString('Ein freier Zeitraum umfasst höchstens 3 Jahre; gezeigt wird das Jahr ' . $vorjahr . '.', $lang->body);
+        self::assertStringContainsString('Zeitraum 01.01.' . $vorjahr . ' bis 31.12.' . $vorjahr, $lang->body);
+        $knapp = $this->get('/app/auswertung/kassenpruefung', ['art' => 'frei', 'von' => '2021-01-02', 'bis' => '2024-01-01']);
+        self::assertStringNotContainsString('Ein freier Zeitraum umfasst höchstens', $knapp->body);
+        self::assertStringContainsString('Zeitraum 02.01.2021 bis 01.01.2024', $knapp->body);
+
+        // An auditor's default is the released period: the note names it.
+        $this->rolle(SystemRole::Kassenpruefer);
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-01-01'), new \DateTimeImmutable('2025-06-30'));
+        $pruefer = $this->get('/app/auswertung/kassenpruefung', ['art' => 'frei', 'von' => '2020-01-01', 'bis' => '2025-06-30']);
+        self::assertStringContainsString('gezeigt wird der Zeitraum vom 01.01.2025 bis 30.06.2025.', $pruefer->body);
+
+        // A released period longer than that opens with its last calendar year.
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2020-03-01'), new \DateTimeImmutable('2025-06-30'));
+        $breit = $this->get('/app/auswertung/kassenpruefung');
+        self::assertStringContainsString('Zeitraum 01.01.2025 bis 30.06.2025', $breit->body);
+        self::assertStringNotContainsString('Ein freier Zeitraum umfasst höchstens', $breit->body);
+    }
+
     // ------------------------------------------------------------ scaffolding
 
     /**

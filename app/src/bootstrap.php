@@ -21,6 +21,7 @@ use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRotationController;
 use App\Admin\VaultRecoveryController;
+use App\Admin\VereinskennungenController;
 use App\Api\CronController;
 use App\Api\EinreichungUploadController;
 use App\Api\JobController;
@@ -85,6 +86,7 @@ use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\CashCountRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\CostCenterRepository;
 use App\Repository\CsvProfileRepository;
 use App\Repository\CronLockRepository;
@@ -178,6 +180,8 @@ use App\Service\Worker\WorkerFreigaben;
 use App\Service\Worker\WorkerKonfiguration;
 use App\Service\Worker\WorkerKopplung;
 use App\Service\Cron\WorkerFallbackTask;
+use App\Service\Cron\ErinnerungTask;
+use App\Service\Mail\OffeneBelegeErinnerung;
 use App\Service\Mail\WorkerAlarm;
 use App\Service\Worker\WorkerUebernahme;
 use App\Service\Worker\WorkerFallback;
@@ -220,6 +224,7 @@ use App\Service\MasterData\CostCenterService;
 use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierAufloesung;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\Vereinskennungen;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\Processing\KiAuslese\Auslesung;
@@ -317,6 +322,7 @@ if (!is_file($configFile)) {
     $router->get('/install', $offen, $installer->form(...));
     $router->post('/install', $offen, $installer->submit(...));
     $router->post('/install/schluessel', $offen, $installer->confirmKey(...));
+    $router->post('/install/mail', $offen, $installer->mail(...));
     $router->post('/install/neu', $offen, $installer->restart(...));
     $router->post('/install/wiederherstellen', $offen, $installer->restoreStep(...));
     // The access step after a restore without server key (issue #154).
@@ -507,7 +513,7 @@ $workerFallbackFor = static fn(\PDO $pdo, ?WorkerAlarm $alarm = null): WorkerFal
     $alarm,
 );
 // Cron: like $updates, built only once the token was right.
-$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $workerFreigabenFor, $workerFallbackFor, $serverCrypto): CronRunner {
+$cron = static fn(): CronController => new CronController($config, static function () use ($connections, $logger, $paths, $mailQueueFor, $mailerFor, $mailSettingsFor, $workerFreigabenFor, $workerFallbackFor, $serverCrypto): CronRunner {
     $pdo = $connections->pdo();
     $blobs = new BlobRepository($pdo);
 
@@ -517,6 +523,17 @@ $cron = static fn(): CronController => new CronController($config, static functi
         // The mail queue (M3-1): nothing that decrypts, ever (CLAUDE.md
         // section 4) - Mailer reads and writes only server-key ciphertext.
         jedesMal: [
+            // Issue #249: "N Belege warten auf Prüfung" - counts only, ahead
+            // of the queue so a reminder goes out in the same call.
+            new ErinnerungTask(new OffeneBelegeErinnerung(
+                $mailerFor($pdo),
+                $mailSettingsFor($pdo),
+                new SettingRepository($pdo),
+                $serverCrypto,
+                new UserRepository($pdo),
+                new UserAccessRepository($pdo),
+                new DocumentRepository($pdo),
+            )),
             new MailQueueTask($mailerFor($pdo)),
             // M7b-3: worker jobs of a silent worker back to the browser/
             // session route, and the alarm mail after a day.
@@ -649,6 +666,7 @@ $mail = static function () use ($connections, $view, $mailSettingsFor, $mailerFo
         $mailerFor($pdo),
         $mailQueueFor($pdo),
         $auditFor($pdo),
+        new SettingRepository($pdo),
     );
 };
 
@@ -953,6 +971,7 @@ $geldflussSeite = static fn(): AuswertungController => new AuswertungController(
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
             new InvoiceRepository($pdo),
+            new DocumentRepository($pdo),
             new BankTransactionRepository($pdo),
             new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
         );
@@ -1160,6 +1179,19 @@ $datevAdmin = static function () use ($connections, $view, $auditFor): DatevSett
     );
 };
 
+// The club's own VAT id and tax number (issue #245, E-67): vault data.
+$vereinskennungenAdmin = static function () use ($connections, $view, $auditFor): VereinskennungenController {
+    $pdo = $connections->pdo();
+
+    return new VereinskennungenController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Vereinskennungen(new ClubIdentityRepository($pdo)),
+        $auditFor($pdo),
+    );
+};
+
 // The archive import (issue #77/M12-3, docs/spec/05-auswertung-und-
 // export.md section 3): the ZIP arrives through the chunk upload with a
 // larger limit and is read in place; the import writes documents with the
@@ -1215,6 +1247,8 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
         \Closure::fromCallable(new CurlStatusProbe()),
         $paths->sharedDir(),
     ),
+    // Shown to admins with `admin.system` (issue #244), never logged.
+    $config->cronToken,
 );
 // CSV formats for the statement import (M9-3, issue #61): plaintext column
 // names and formats, no vault needed - only these pages open the
@@ -1395,13 +1429,20 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
     );
 };
 
-// Code integrity check (issue #79/M13-2, 01 section 8): the files of current/
-// against shared/release_checksums.txt. No business data, no vault; the
-// database only for the audit row of a finished run.
+// Code integrity check (issue #79/M13-2, #241, 01 section 8): the files of
+// current/ against the release's checksums.txt (shared/release_checksums.txt
+// as fallback), plus the docroot and config.php. No business data, no vault;
+// the database only for the audit row of a finished run.
 $integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritaetController(
     $view,
     new Session(),
-    new CodeIntegritaet($paths->releaseRoot, $paths->releaseChecksumsFile(), $paths->varDir()),
+    new CodeIntegritaet(
+        $paths->releaseRoot,
+        $paths->releaseChecksumsFile(),
+        $paths->varDir(),
+        webDir: $paths->webDir(),
+        configDatei: $paths->configFile(),
+    ),
     $auditFor($connections->pdo()),
 );
 
@@ -2087,6 +2128,7 @@ $router = new Router();
     geldfluss: $geldflussSeite,
     workerMail: $workerMail,
     budgets: $budgetSeite,
+    vereinskennungenAdmin: $vereinskennungenAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

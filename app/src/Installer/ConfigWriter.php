@@ -41,8 +41,12 @@ final class ConfigWriter
     /**
      * @param array<string, mixed> $db host/port/name/user/password
      * @param ?string $serverKey base64 server key to keep (restore); null generates a new one
+     *
+     * @return string the new cron token - every write generates one, also
+     *         on a restore, so the installer shows the new cron URL (issue
+     *         #244)
      */
-    public static function write(string $configFile, array $db, ?string $serverKey = null): void
+    public static function write(string $configFile, array $db, ?string $serverKey = null): string
     {
         $config = [
             'debug' => false,
@@ -79,5 +83,7 @@ final class ConfigWriter
         // some hosts ignore it, which is why the layout keeps shared/ out of
         // the docroot in the first place.
         @chmod($configFile, 0600);
+
+        return $config['cron_token'];
     }
 }

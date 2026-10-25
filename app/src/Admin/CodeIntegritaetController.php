@@ -55,7 +55,10 @@ final readonly class CodeIntegritaetController
             'csrf' => $this->session->csrfToken(),
             'flash' => $this->session->pullFlash(),
             'hindernis' => $this->pruefung->hindernis(),
+            // A broken signature is an alarm, not just "cannot run yet".
+            'echtheitsfehler' => $this->pruefung->echtheitsfehler(),
             'warnung' => $this->pruefung->warnung(),
+            'signaturHinweis' => $this->pruefung->signaturHinweis(),
             'stand' => $this->pruefung->stand(),
         ], Area::Admin));
     }
@@ -106,6 +109,7 @@ final readonly class CodeIntegritaetController
                     'geaendert' => (int) $stand['anzahl']['geaendert'],
                     'fehlend' => (int) $stand['anzahl']['fehlend'],
                     'zusaetzlich' => (int) $stand['anzahl']['zusaetzlich'],
+                    'umgebung' => (int) ($stand['anzahl']['umgebung'] ?? 0),
                 ],
             );
         };

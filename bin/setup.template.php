@@ -5,7 +5,8 @@
  * Nextcloud style).
  *
  * GENERATED FILE - edit bin/setup.template.php and the shared classes
- * app/src/Service/Update/ReleaseDownloader.php and DenyHtaccess.php, then run
+ * app/src/Service/Update/ReleaseDownloader.php, ReleaseSignatur.php and
+ * DenyHtaccess.php, then run
  * `php bin/build_setup.php`. CI verifies freshness.
  *
  * Upload this single file via FTP into the /web docroot and open it in the
@@ -24,6 +25,7 @@ namespace {
 
 use App\Service\Update\DenyHtaccess;
 use App\Service\Update\ReleaseDownloader;
+use App\Service\Update\ReleaseSignatur;
 
 error_reporting(E_ALL);
 // Arguments out of stack traces before anything else can throw: this file
@@ -249,13 +251,18 @@ try {
     $downloader->downloadTo($release['zip_url'], $zipFile);
     $checksums = $downloader->fetchText($release['checksums_url']);
     $downloader->verifyChecksum($zipFile, $checksums);
-    // Kept for the code integrity check of the admin area
-    // (docs/spec/01-sicherheit.md section 8).
-    file_put_contents($sharedDir . '/release_checksums.txt', $checksums);
+    // Authenticity (issue #241): refused once a public key is fixed in
+    // ReleaseSignatur, a warning on the next page before that.
+    $signatur = $release['signatur_url'] === null ? null : $downloader->fetchText($release['signatur_url']);
+    $signaturHinweis = ReleaseSignatur::pruefe($checksums, $signatur);
 
     $target = $releasesDir . '/v' . $release['version'];
     $downloader->extractTo($zipFile, $target);
     unlink($zipFile);
+    // The list (and its signature) travel with the release directory: the
+    // code integrity check of the admin area compares current/ against it
+    // (docs/spec/01-sicherheit.md section 8).
+    ReleaseDownloader::speichereListe($target, $checksums, $signatur);
 
     // The three docroot files (docs/spec/06-betrieb.md section 1). They are
     // taken from the release that was just unpacked, where they live under
@@ -284,13 +291,20 @@ try {
         throw new RuntimeException('Release kann nicht nach current/ verschoben werden.');
     }
 
+    $hinweise = '';
     if ($ungeschuetzt !== []) {
-        setup_page('Hinweis', '<p class="fehlertext"><strong>Achtung:</strong> Keine'
+        $hinweise .= '<p class="fehlertext"><strong>Achtung:</strong> Keine'
             . ' .htaccess-Sperre in ' . htmlspecialchars(DenyHtaccess::describe($ungeschuetzt), ENT_QUOTES)
             . '. Solange die Domain auf den <code>web</code>-Ordner zeigt, ist das unkritisch – zeigt sie'
             . ' eine Ebene höher, wären Konfiguration und Belegdateien abrufbar.'
-            . ' Die Installation versucht es erneut.</p>'
-            . '<p><a href="/install">Weiter zur Installation</a></p>');
+            . ' Die Installation versucht es erneut.</p>';
+    }
+    if ($signaturHinweis !== null) {
+        $hinweise .= '<p>' . htmlspecialchars($signaturHinweis, ENT_QUOTES)
+            . ' Die Prüfsumme des Downloads wurde bestätigt.</p>';
+    }
+    if ($hinweise !== '') {
+        setup_page('Hinweis', $hinweise . '<p><a href="/install">Weiter zur Installation</a></p>');
     }
 
     header('Location: /install');
