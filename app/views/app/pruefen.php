@@ -60,6 +60,8 @@
  *      confirming the supplier `fuer` teaches it (issue #201/M7-6b), ticked or not, and its fingerprint
  * @var bool $kiLaeuft an AI run for this document is queued or running
  * @var bool $kiAnstossbar the page may offer to ask the AI (again)
+ * @var list<\App\Domain\Sphere>|null $sphaeren the tax spheres, null while `sphaeren_aktiv` is off (issue #84) - then no field
+ * @var string|null $sphaereVorgabe label of the chosen category's default sphere
  * @var string $csrf
  */
 
@@ -431,6 +433,21 @@ $rollenGruppe = [
             </label>
             <?php if ($kategorieHerkunft !== null): ?>
                 <p class="feld-hilfe" id="pruefen-kategorie-herkunft">Vorgeschlagen von: <?= e($kategorieHerkunft) ?></p>
+            <?php endif; ?>
+
+            <?php if ($sphaeren !== null): ?>
+                <label for="pruefen-sphaere">Steuerliche Sphäre
+                    <select id="pruefen-sphaere" name="sphaere"<?= $fehlerAn('sphaere') ?><?= $fehlerFeld !== 'sphaere' ? ' aria-describedby="pruefen-sphaere-hilfe"' : '' ?>>
+                        <option value="">Wie Kategorie</option>
+                        <?php foreach ($sphaeren as $sphaere): ?>
+                            <option value="<?= e($sphaere->value) ?>"<?= $gewaehlt('sphaere', $sphaere->value) ?>><?= e($sphaere->label()) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <p class="feld-hilfe" id="pruefen-sphaere-hilfe">
+                    „Wie Kategorie“ übernimmt die Vorgabe der Kategorie<?= $sphaereVorgabe !== null ? ' (bei der vorbelegten Kategorie: ' . e($sphaereVorgabe) . ')' : '' ?>;
+                    ohne Vorgabe bleibt der Beleg ohne Sphäre. Die Zuordnung bitte mit der Steuerberatung abstimmen.
+                </p>
             <?php endif; ?>
 
             <label for="pruefen-kostenstelle">Kostenstelle (Mannschaft/Bereich)

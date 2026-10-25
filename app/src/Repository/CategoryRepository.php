@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Domain\Category;
 use App\Domain\CategoryColor;
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 
 /**
  * The `category` table (migrations/017_category.sql, docs/spec/
@@ -117,6 +118,19 @@ final readonly class CategoryRepository
     }
 
     /**
+     * The tax sphere a receipt of this category falls into unless it names
+     * its own (issue #84). Written only while `sphaeren_aktiv` is on - with
+     * the switch off nobody touches the column (E-15).
+     */
+    public function setDefaultSphere(int $id, ?Sphere $sphere): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE category SET default_sphere = ? WHERE id = ?');
+        $stmt->bindValue(1, $sphere?->value, $sphere === null ? \PDO::PARAM_NULL : \PDO::PARAM_STR);
+        $stmt->bindValue(2, $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    /**
      * Fails on a foreign key (RESTRICT) if anything still points at this
      * category - the caller (App\Service\MasterData\CategoryService) checks
      * usageCount() first so it can give a German message instead of a
@@ -190,6 +204,7 @@ final readonly class CategoryRepository
             sort: (int) $row['sort'],
             active: (bool) $row['active'],
             aiHint: (string) $row['ai_hint'],
+            defaultSphere: Sphere::ausWert(isset($row['default_sphere']) ? (string) $row['default_sphere'] : null),
         );
     }
 }

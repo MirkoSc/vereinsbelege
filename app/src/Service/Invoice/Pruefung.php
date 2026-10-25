@@ -19,6 +19,7 @@ use App\Domain\InvoiceRecord;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
 use App\Domain\PaymentStatus;
+use App\Domain\Sphere;
 use App\Domain\Supplier;
 use App\Domain\SupplierKeyKind;
 use App\Domain\Zahlungsweg;
@@ -118,6 +119,13 @@ final readonly class Pruefung
 
     /** Purpose of `invoice.number_bi` - never rename. */
     public const string NUMMER_ZWECK = 'invoice.number';
+
+    /**
+     * The form field of the tax sphere (issue #84). Not in feldnamen(): the
+     * controller adds it only while `sphaeren_aktiv` is on, and pruefe()
+     * keeps the stored sphere when it is missing (E-15).
+     */
+    public const string FELD_SPHAERE = 'sphaere';
 
     public function __construct(
         private \PDO $pdo,
@@ -788,6 +796,12 @@ final readonly class Pruefung
         return ['felder' => $felder, 'vorschlag' => $vorschlag];
     }
 
+    /** The receipt's stored tax sphere (issue #84), null without receipt or sphere. */
+    public function gespeicherteSphaere(Document $document): ?Sphere
+    {
+        return $this->invoices->findByDocument($document->id)?->sphere;
+    }
+
     /**
      * Every field of the form, in the order a person tabs through them.
      *
@@ -1099,6 +1113,9 @@ final readonly class Pruefung
             categoryId: $this->kategorie($feld('kategorie'), $richtung, $vorher?->categoryId),
             costCenterId: $this->kostenstelle($feld('kostenstelle'), [$vorher?->costCenterId, $document->costCenterId]),
             paymentKind: $zahlungsweg,
+            // Only a form that shows the field sends it (sphaeren_aktiv,
+            // issue #84); otherwise the stored sphere stays (E-15).
+            sphere: array_key_exists(self::FELD_SPHAERE, $felder) ? self::sphaere($feld(self::FELD_SPHAERE)) : $vorher?->sphere,
         );
 
         $warnungen = [];
@@ -1162,6 +1179,20 @@ final readonly class Pruefung
         }
 
         return $lieferant->id;
+    }
+
+    /**
+     * '' = none: the category's default applies in the report.
+     *
+     * @throws InvoiceRuleViolation
+     */
+    private static function sphaere(string $wert): ?Sphere
+    {
+        if ($wert === '') {
+            return null;
+        }
+
+        return Sphere::tryFrom($wert) ?? throw new InvoiceRuleViolation('Diese Sphäre gibt es nicht.', self::FELD_SPHAERE);
     }
 
     /**
@@ -1275,6 +1306,7 @@ final readonly class Pruefung
             categoryId: $struktur->categoryId,
             costCenterId: $struktur->costCenterId,
             paymentKind: $struktur->paymentKind,
+            sphere: $struktur->sphere,
         );
     }
 

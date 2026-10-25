@@ -21,6 +21,7 @@ use App\Domain\KategorieHerkunft;
 use App\Domain\Permission;
 use App\Domain\PermissionScope;
 use App\Domain\SupplierKeyKind;
+use App\Domain\Sphere;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
 use App\Domain\Zahlungsweg;
@@ -81,6 +82,7 @@ use App\Service\Job\JobLaufStatus;
 use App\Service\Job\JobRunner;
 use App\Service\Ki\KiFaehigkeiten;
 use App\Service\Ki\LlmAntwort;
+use App\Service\MasterData\Sphaereneinstellung;
 use App\Service\MasterData\SupplierService;
 use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
@@ -560,6 +562,56 @@ final class PruefungFlowTest extends DatabaseTestCase
 
         $anderer = $this->beleg();
         self::assertSame(422, $this->post('/app/belege/pruefen/' . $anderer, $this->felder())->status);
+    }
+
+    // --------------------------------------------------- tax spheres (#84)
+
+    /**
+     * E-15: with `sphaeren_aktiv` off (the default) the form has no sphere
+     * field, and a posted value changes nothing - a sphere stored while the
+     * switch was on stays as it is.
+     */
+    public function testWithTheSpheresOffTheFormHasNoSphereAndKeepsTheStoredOne(): void
+    {
+        $id = $this->beleg();
+        $this->post('/app/belege/pruefen/' . $id, $this->felder(['aktion' => 'speichern']));
+        self::assertNull($this->rechnung($id)['sphere']);
+        $this->pdo()->prepare('UPDATE invoice SET sphere = ? WHERE document_id = ?')->execute(['zweckbetrieb', $id]);
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertStringNotContainsString('name="sphaere"', $seite);
+        self::assertStringNotContainsString('Sphäre', $seite);
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['sphaere' => 'ideell', 'aktion' => 'speichern']))->status);
+        self::assertSame('zweckbetrieb', $this->rechnung($id)['sphere']);
+        $zeilen = $this->auditZeilen($id);
+        self::assertCount(1, $zeilen, 'nothing changed, nothing logged');
+    }
+
+    public function testWithTheSpheresOnTheReceiptChoosesItsSphere(): void
+    {
+        new Sphaereneinstellung(new SettingRepository($this->pdo()))->setzen(true);
+        new CategoryRepository($this->pdo())->setDefaultSphere($this->ausgabeKategorie, Sphere::Wirtschaftlich);
+        $id = $this->beleg();
+
+        $seite = $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body;
+        self::assertMatchesRegularExpression('#<select id="pruefen-sphaere" name="sphaere"[^>]*>\s*<option value="">Wie Kategorie</option>#', $seite);
+        self::assertStringContainsString('Steuerberatung', $seite);
+
+        // "Wie Kategorie" stores no sphere of its own - the report takes the category's.
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['sphaere' => '', 'aktion' => 'speichern']))->status);
+        self::assertNull($this->rechnung($id)['sphere']);
+        self::assertStringContainsString('(bei der vorbelegten Kategorie: Wirtschaftlicher Geschäftsbetrieb)', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        self::assertSame(302, $this->post('/app/belege/pruefen/' . $id, $this->felder(['sphaere' => 'zweckbetrieb', 'aktion' => 'speichern']))->status);
+        self::assertSame('zweckbetrieb', $this->rechnung($id)['sphere']);
+        self::assertSame(['felder' => ['sphere']], $this->audit->details($this->auditZeilen($id)[0], $this->tresor));
+        self::assertMatchesRegularExpression('#<option value="zweckbetrieb" selected>Zweckbetrieb</option>#', $this->get('/app/belege/pruefen/' . $id, entsperrt: true)->body);
+
+        $falsch = $this->post('/app/belege/pruefen/' . $id, $this->felder(['sphaere' => 'steuerfrei', 'aktion' => 'speichern']));
+        self::assertSame(422, $falsch->status);
+        self::assertMatchesRegularExpression('/name="sphaere"[^>]*aria-invalid="true"/', $falsch->body);
+        self::assertSame('zweckbetrieb', $this->rechnung($id)['sphere']);
     }
 
     public function testTheSupplierMustFitTheDirection(): void
@@ -2389,6 +2441,7 @@ final class PruefungFlowTest extends DatabaseTestCase
             new CategoryRepository($pdo),
             new CostCenterRepository($pdo),
             new Duplikatpruefung($pdo, new DocumentRepository($pdo), new DocumentDuplicateRepository($pdo), new InvoiceRepository($pdo), $this->audit),
+            new Sphaereneinstellung(new SettingRepository($pdo)),
         );
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 

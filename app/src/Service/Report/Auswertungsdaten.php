@@ -17,6 +17,7 @@ use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\CryptoException;
 use App\Service\Crypto\Vault;
 use App\Service\Invoice\Pruefung;
+use App\Service\MasterData\Sphaereneinstellung;
 
 /**
  * Loads and decrypts what ReportService calculates on (issue #71, E-44) -
@@ -36,7 +37,7 @@ final readonly class Auswertungsdaten implements Auswertungsquelle
     /** Only receipts a human has checked count (KI results are suggestions until then). */
     public const array BELEG_STATUS = [DocumentStatus::Geprueft, DocumentStatus::Festgeschrieben];
 
-    public const string SETTING_SPHAEREN = 'sphaeren_aktiv';
+    public const string SETTING_SPHAEREN = Sphaereneinstellung::SETTING;
 
     private const string WAEHRUNG = 'EUR';
 
@@ -52,7 +53,7 @@ final readonly class Auswertungsdaten implements Auswertungsquelle
     /** E-15: the tax spheres are off unless the setting says '1'. */
     public function sphaerenAktiv(): bool
     {
-        return $this->settings->get(self::SETTING_SPHAEREN, '0') === '1';
+        return new Sphaereneinstellung($this->settings)->aktiv();
     }
 
     /** A ReportService for this installation's settings. */

@@ -7,6 +7,7 @@ namespace App\Service\MasterData;
 use App\Domain\Category;
 use App\Domain\CategoryColor;
 use App\Domain\CategoryDirection;
+use App\Domain\Sphere;
 use App\Repository\CategoryRepository;
 
 /**
@@ -52,6 +53,31 @@ final readonly class CategoryService
         $this->kategorie($id);
         $name = $this->pruefeName($name, $id);
         $this->kategorien->update($id, $name, self::richtung($richtung), self::farbe($farbe), self::kiHinweis($kiHinweis), $active);
+    }
+
+    /**
+     * The category's default tax sphere ('' = none) - only called while
+     * `sphaeren_aktiv` is on (issue #84); check the value with sphaere()
+     * before saving the rest of the form.
+     *
+     * @throws CategoryRuleViolation
+     */
+    public function sphaereSetzen(int $id, string $sphaere): void
+    {
+        $this->kategorie($id);
+        $this->kategorien->setDefaultSphere($id, self::sphaere($sphaere));
+    }
+
+    /**
+     * @throws CategoryRuleViolation
+     */
+    public static function sphaere(string $wert): ?Sphere
+    {
+        if ($wert === '') {
+            return null;
+        }
+
+        return Sphere::tryFrom($wert) ?? throw new CategoryRuleViolation('Diese Sphäre gibt es nicht.');
     }
 
     /**

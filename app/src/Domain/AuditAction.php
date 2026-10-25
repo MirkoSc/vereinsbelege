@@ -171,6 +171,8 @@ enum AuditAction: string
     case EinstellungRechtstexte = 'einstellung.rechtstexte';
     /** Issue #93: DATEV export settings (counts of mapped accounts only). */
     case EinstellungDatev = 'einstellung.datev';
+    /** Issue #84: tax spheres switched on or off (`aktiv` only). */
+    case EinstellungSphaeren = 'einstellung.sphaeren';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -315,6 +317,7 @@ enum AuditAction: string
             self::ExportNextcloud => 'Export in Nextcloud abgelegt',
             self::ExportDatev => 'DATEV-Export erstellt',
             self::EinstellungDatev => 'DATEV-Einstellungen geändert',
+            self::EinstellungSphaeren => 'Steuerliche Sphären ein-/ausgeschaltet',
             self::ArchivImportiert => 'Archiv importiert',
             self::WorkerKopplungscode => 'Worker-Kopplungscode erzeugt',
             self::WorkerGekoppelt => 'Worker gekoppelt',
@@ -382,7 +385,7 @@ enum AuditAction: string
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
-            self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::WorkerKopplungscode,
+            self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::EinstellungSphaeren, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen,
             self::CodeIntegritaetUnveraendert, self::CodeIntegritaetAbweichung => null,
