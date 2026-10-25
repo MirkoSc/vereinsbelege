@@ -1047,6 +1047,9 @@ return static function (
     $post('/admin/worker/koppeln', $einstellungen, static fn(Request $r) => $workerAdmin()->koppeln($r));
     $post('/admin/worker/einstellungen', $einstellungen, static fn(Request $r) => $workerAdmin()->einstellungen($r));
     $post('/admin/worker/ocr-nachholen', $einstellungen, static fn(Request $r) => $workerAdmin()->ocrNachholen($r));
+    // The archive OCR backfill (issue #88, E-55).
+    $post('/admin/worker/bestand-ocr', $einstellungen, static fn(Request $r) => $workerAdmin()->bestandStarten($r));
+    $post('/admin/worker/bestand-ocr/abbrechen', $einstellungen, static fn(Request $r) => $workerAdmin()->bestandAbbrechen($r));
     $post('/admin/worker/mail-eingang', $einstellungen, static fn(Request $r) => $workerAdmin()->mailEingang($r));
     $post('/admin/worker/{id:\d+}/bestaetigen', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->bestaetigen($r, $params));
     $post('/admin/worker/{id:\d+}/entkoppeln', $einstellungen, static fn(Request $r, array $params) => $workerAdmin()->entkoppeln($r, $params));

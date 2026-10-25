@@ -11,10 +11,12 @@ use App\Domain\JobExecutor;
 use App\Domain\JobStatus;
 use App\Domain\WorkerFaehigkeit;
 use App\Domain\WorkerStatus;
+use App\Repository\ArchiveImportRepository;
 use App\Repository\DocumentArtifactRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Crypto\DataKey;
 use App\Service\Upload\MagicBytes;
+use App\Service\Worker\BestandsOcr;
 use App\Service\Worker\WorkerRouting;
 use App\Http\HttpMethod;
 use App\Http\Request;
@@ -51,6 +53,8 @@ final class WorkerControllerTest extends WorkerTestCase
             new DocumentArtifactRepository($this->pdo()),
             $this->settings,
             new SessionVault(),
+            new BestandsOcr($this->uebergabe, $this->documents, $this->jobs, new ArchiveImportRepository($this->pdo())),
+            new ArchiveImportRepository($this->pdo()),
             $this->mailEingang,
             new \App\Service\Audit\AuditLog(new \App\Repository\AuditLogRepository($this->pdo()), new \App\Repository\VaultRepository($this->pdo()), $this->crypto),
         );
@@ -188,6 +192,26 @@ final class WorkerControllerTest extends WorkerTestCase
 
         self::assertSame(302, $antwort->status);
         self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE typ = 'ocr'")->fetchColumn());
+    }
+
+    public function testTheArchiveBackfillNeedsAnUnlockedVaultAndShowsItsProgress(): void
+    {
+        $antwort = $this->controller->bestandStarten($this->post('/admin/worker/bestand-ocr', ['import' => 'alle']));
+        self::assertSame(302, $antwort->status);
+        self::assertSame(0, (int) $this->pdo()->query("SELECT COUNT(*) FROM job WHERE typ = 'bestand_ocr'")->fetchColumn(), 'No vault: not started.');
+
+        // Started elsewhere (a session with the vault): the page shows it and can stop it.
+        $blob = $this->blobService->storeString('Bild', new BlobMeta(MagicBytes::JPEG), $this->vault);
+        $this->documents->insert(DocumentSource::Archiv, null, [$blob->id], $this->vault->sealDataKey(DataKey::generate()), new \DateTimeImmutable(), \App\Domain\DocumentStatus::Festgeschrieben, \App\Domain\OcrStatus::Uebersprungen);
+        new BestandsOcr($this->uebergabe, $this->documents, $this->jobs, new ArchiveImportRepository($this->pdo()))->starten(null, new \DateTimeImmutable());
+        $seite = $this->controller->page(new Request(HttpMethod::Get, '/admin/worker'))->body;
+        self::assertStringContainsString('alle Archiv-Belege', $seite);
+        self::assertStringContainsString('0 von 1 Belegen haben eine Textebene', $seite);
+        self::assertStringContainsString('/admin/worker/bestand-ocr/abbrechen', $seite);
+
+        $this->controller->bestandAbbrechen($this->post('/admin/worker/bestand-ocr/abbrechen'));
+        self::assertSame('uebersprungen', $this->pdo()->query("SELECT status FROM job WHERE typ = 'bestand_ocr'")->fetchColumn());
+        self::assertStringContainsString('abgebrochen', $this->controller->page(new Request(HttpMethod::Get, '/admin/worker'))->body);
     }
 
     private function dokument(): int

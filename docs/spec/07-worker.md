@@ -34,7 +34,8 @@ Session-Verarbeitung wie in 03 und 06 beschrieben). Der Worker ist ein
 Zusätzlich (kein Job, eigene Fähigkeit `mail`): **Beleg-Eingang per E-Mail**
 – der Worker ruft ein IMAP-Postfach des Vereins ab und reicht Anhänge wie die
 öffentliche Einreichung in den Posteingang ein (§9, issue #87, E-54).
-Später erweiterbar (Backlog): Nachverarbeitung des Bestandsarchivs mit OCR.
+Die Nachverarbeitung des Bestandsarchivs mit OCR ist umgesetzt
+(§6 „Stand #88“).
 
 ## 3. Verschlüsselung – Minimalrechte
 
@@ -342,6 +343,38 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
   - Alarm-Mail (`worker-ausfall`) an alle aktiven Konten mit
     `admin.settings`: Modul an, Worker > 24 h ohne Meldung, in diesem
     Ausfall Jobs zurückgefallen oder noch frei; einmal je Ausfall.
+- **Stand #88 (OCR-Nachverarbeitung des Bestandsarchivs, E-55):**
+  - Belege aus dem Archiv-Import (`source = archiv`, 05 §3) gehen **nicht**
+    einzeln an den Worker: `extract_text` lässt `ocr_status =
+    uebersprungen` stehen, „OCR nachholen“ lässt sie aus.
+  - Stattdessen Admin-Seite „Worker“, Abschnitt „Archiv nachträglich
+    durchsuchbar machen“: Auswahl eines Import-Laufs (dessen
+    Dokument-ID-Bereich aus `archive_import.stats`) oder aller
+    Archiv-Belege, Start nur mit entsperrtem Tresor, immer nur ein Lauf,
+    Abbrechen. Fortschritt: Belege mit Textebene / gesamt, beim Worker,
+    noch ohne, in diesem Lauf übergeben/ausgelassen.
+  - Ablauf: Session-Job `bestand_ocr` (`App\Service\Worker\BestandsOcr`,
+    Recht `admin.settings`). Kandidaten: Archiv, `ocr_status =
+    uebersprungen`, nicht `abgelehnt` – **festgeschriebene eingeschlossen**
+    –, ohne wartenden/fertigen `ocr`-Job, ohne übernommenen Worker-Text.
+    Je Schritt höchstens 25 geprüft; die Worker-Warteschlange für `ocr`
+    wird nur bis **5** aufgefüllt (OCR-Jobs neuer Belege zählen mit, der
+    Worker holt die ältesten zuerst). Voll → 20 s warten, Worker nicht
+    verfügbar oder keine Grants möglich (Tresor-Rotation) → 5 min warten,
+    Zeiger bleibt stehen; zwischen zwei Schritten 2 s Pause. Am Ende ein
+    weiterer Durchlauf von vorn, solange im Bereich noch eine eigene
+    Texterkennung (`extract_text`) aussteht oder OCR-Jobs beim Worker
+    sind. Ein Beleg, dessen `ocr`-Job in diesem Lauf endgültig
+    gescheitert ist (`fehler`), ist kein Kandidat mehr (angezeigt als
+    „gescheitert“; ein neuer Lauf versucht ihn erneut). Nur abgeschlossene
+    Import-Läufe sind wählbar; Prüfen und Anlegen des Laufs unter
+    `GET_LOCK`, damit zwei gleichzeitige Starts nur einen Lauf ergeben. Zeiger und Zähler in
+    `job.state` → Wiederaufnahme nach Pause, Abmelden, Worker-Ausfall.
+    Der Job zählt nicht zur Kopfzeile „N Belege in Verarbeitung“
+    (`App\Service\Job\HintergrundJob`).
+  - Festschreibung (01 §7): Die Übernahme ergänzt nur Text-Artefakte,
+    `ocr_status` und ein PDF/A-Artefakt; Angaben, Original und
+    `pdf_blob_id` bleiben unverändert, kein KI-Auslesen folgt.
 
 ## 7. Paketierung und Betrieb
 
@@ -554,7 +587,13 @@ abgelehnt (localhost nur mit Testoption), leere Profilliste verwirft die
 Schlüssel, Backoff, Arbeitsverzeichnis nur auf tmpfs und nach jedem Job
 leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
 `ai_extract` gegen den echten Controller und die echte Übernahme,
-Prozess-Aufrufe nur in `worker/src/Prozess.php`; E-Mail-Eingang (#87):
+Prozess-Aufrufe nur in `worker/src/Prozess.php`; Bestandsarchiv (#88):
+Auswahl nach Import-Lauf, festgeschriebene eingeschlossen und unverändert,
+Drosselung auf 5 wartende OCR-Jobs mit Vorrang neuer Belege, Warten ohne
+Worker mit Wiederaufnahme am Zeiger, ein Lauf zugleich und abbrechbar,
+Archiv-Belege nie einzeln an den Worker, nicht in der Kopfzeilen-Zahl,
+dauerhaft scheiternde OCR beendet den Lauf statt ihn endlos zu wiederholen;
+E-Mail-Eingang (#87):
 STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
 (selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
 STARTTLS-Injektion abgelehnt, Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,

@@ -63,6 +63,19 @@ final readonly class WorkerFreigaben
     }
 
     /**
+     * Whether ausSession() would accept this session's vault at all - not
+     * locked, no rotation running, the current generation. A refusal for
+     * these reasons hits every document alike (issue #88: the archive
+     * backfill waits instead of walking past all of them).
+     */
+    public function sitzungTauglich(Vault $vault): bool
+    {
+        return $vault->isUnlocked()
+            && !($this->rotationLaeuft)()
+            && $this->vaults->current()?->version === $vault->version;
+    }
+
+    /**
      * Grants the active worker every blob of the document (originals,
      * processed versions, working PDF) plus the AI context of its
      * submission. The caller loaded $item through the user's own access

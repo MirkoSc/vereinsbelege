@@ -1547,6 +1547,62 @@ umschaltbar) gezeigt werden sollen; ob der Drilldown eine zweite Ebene
 (Kostenstelle → Kategorie → Beleg) braucht; ob Buchungen ohne Beleg im
 Drilldown auch ohne `bank.view` Gegenseite/Zweck zeigen sollen.
 
+## E-55 ❓ OCR-Nachverarbeitung des Bestandsarchivs über den Worker (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #88, 07 §2 und §6 („Stand #88“), 05 §3, 01 §7; keine Migration*
+
+Das Issue hatte keine Abnahmekriterien. Selbst gesetzt (konservativ):
+Archiv-Belege lassen sich nach Import-Lauf (oder alle) an die
+Texterkennung des Workers geben; das blockiert den Worker nicht, neue
+Belege haben Vorrang; Fortschritt sichtbar; Wiederaufnahme nach Pause,
+Abmelden oder Worker-Ausfall; Abbrechen möglich; festgeschriebene Belege
+bleiben inhaltlich unverändert.
+
+Getroffen ohne Rückfrage:
+
+- **Archiv-Belege gehen nicht mehr einzeln an den Worker.** Bisher
+  reihte `extract_text` für jeden Scan sofort einen `ocr`-Job ein – ein
+  Jahresarchiv (400+ Scans) hätte den Worker stundenlang belegt, neue
+  Belege dahinter. Jetzt bleibt `ocr_status = uebersprungen`, das
+  KI-Auslesen läuft wie ohne Worker auf den Seitenbildern. Die
+  Sammelaktion „OCR nachholen“ (#53) lässt Archiv-Belege aus.
+- **Nachverarbeitung als Hintergrund-Session-Job `bestand_ocr`**
+  (`App\Service\Worker\BestandsOcr`), gestartet auf der Admin-Seite
+  „Worker“ für einen Import-Lauf (Dokument-ID-Bereich aus
+  `archive_import.stats`, keine neue Spalte) oder alle Archiv-Belege.
+  Immer nur ein Lauf. Recht `admin.settings` (wie die Worker-Seite),
+  Start nur mit entsperrtem Tresor (E-43: Grants entstehen in der
+  Session). Der Job läuft also nur, solange jemand mit `admin.settings`
+  angemeldet ist – ohne Anmeldung ruht er und macht danach weiter.
+- **Drosselung ohne Prioritätsspalte:** Der Job füllt die
+  Worker-Warteschlange für `ocr` nur bis **5** Jobs auf und zählt dabei
+  die OCR-Jobs neuer Belege mit. Der Worker holt die ältesten zuerst; ein
+  neuer Beleg wartet also höchstens hinter 5 Archiv-Scans. Ist die
+  Warteschlange voll, wartet der Job 20 s, ohne Worker oder ohne mögliche
+  Grants (Tresor-Rotation) 5 min
+  (`JobSchrittErgebnis::warten`). Der Job zählt nicht zu „N Belege in
+  Verarbeitung“ in der Kopfzeile (Marker `HintergrundJob`).
+- **Wiederaufnahme:** Zeiger und Zähler stehen in `job.state`. Ein Beleg,
+  der sich nicht übergeben lässt (kein lesbarer Blob, Grant verweigert),
+  wird übersprungen und gezählt („ausgelassen“), ein neuer Start versucht
+  ihn erneut. Geht der Worker mitten im Schritt weg, bleibt der Zeiger
+  stehen. Am Ende folgt ein weiterer Durchlauf, solange im Bereich noch
+  eine eigene Texterkennung aussteht oder OCR-Jobs beim Worker sind. Ein
+  Beleg, dessen OCR in diesem Lauf endgültig scheitert (`fehler`, z. B.
+  verschlüsseltes PDF), wird in diesem Lauf nicht erneut übergeben und als
+  „gescheitert“ gezählt; ein neuer Start versucht ihn wieder. Nur
+  abgeschlossene Import-Läufe sind wählbar; der Start läuft unter
+  `GET_LOCK` (kein Doppelstart). „Abbrechen“ setzt den Job auf
+  `uebersprungen`; was schon beim Worker ist, wird fertig.
+- **Festgeschriebene Belege (01 §7) sind eingeschlossen.** OCR ergänzt nur
+  abgeleitete Daten: Text-Artefakte, `ocr_status` (wie `content_bi` aus
+  den unveränderlichen Originalen abgeleitet) und ein PDF/A-Artefakt
+  neben den Dateien. Angaben des Belegs, Original und erzeugtes PDF
+  (`pdf_blob_id`) bleiben unverändert; ein KI-Auslesen wird dadurch nicht
+  ausgelöst. Der Volltext-Index nimmt den neuen Text auf.
+- **Kein Jahresfilter:** Das Belegdatum ist verschlüsselt, `created_at`
+  ist bei Archiv-Belegen der Importtag. Ein Import-Lauf entspricht in der
+  Praxis einem Jahr.
+
 ## E-54 ❓ E-Mail-Eingang über den Worker (IMAP) (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #87 (Backlog), 07 §2 und §9, 02 „Betrieb“; keine Migration*
 
