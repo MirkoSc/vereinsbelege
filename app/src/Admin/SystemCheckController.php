@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Admin;
 
+use App\Api\CronController;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
@@ -29,6 +30,13 @@ use App\View\View;
  * findings are the hoster's settings an update or a maintenance run depends
  * on.
  * ---------------------------------------------------------------------
+ *
+ * Below the findings the page shows the cron URL with the token from
+ * shared/config.php (issue #244), so an admin can set up or repair the
+ * hoster's cronjob without FTP - after a restore the token is a new one.
+ * It is deliberately not one of the findings: those end up in the JSON that
+ * is meant to be copied into an issue. Nothing logs it; the response is
+ * not cached.
  */
 final readonly class SystemCheckController
 {
@@ -36,6 +44,7 @@ final readonly class SystemCheckController
         private View $view,
         private Session $session,
         private SystemCheck $check,
+        #[\SensitiveParameter] private ?string $cronToken = null,
     ) {
     }
 
@@ -49,8 +58,13 @@ final readonly class SystemCheckController
         // knocks: the domain this page was opened under.
         $ergebnisse = $this->check->all($request->ownOrigin());
 
-        return Response::html($this->view->render('admin/systemcheck', [
+        $cronUrl = $this->cronToken === null || $this->cronToken === ''
+            ? null
+            : CronController::url($request->ownOrigin(), $this->cronToken);
+
+        $antwort = Response::html($this->view->render('admin/systemcheck', [
             'title' => 'Systemcheck',
+            'cronUrl' => $cronUrl,
             // External file, never inline: script-src 'self' without
             // 'unsafe-inline' (CLAUDE.md section 4).
             'scripts' => ['/js/systemcheck.js'],
@@ -58,5 +72,7 @@ final readonly class SystemCheckController
             'gesamt' => SystemCheck::worstOf($ergebnisse),
             'json' => SystemCheck::toJson($ergebnisse),
         ], Area::Admin));
+
+        return new Response($antwort->status, [...$antwort->headers, 'Cache-Control' => 'no-store'], $antwort->body);
     }
 }

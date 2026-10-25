@@ -4,6 +4,8 @@
  * @var array<string, string> $values
  * @var string $ungeschuetzt directories without a deny-all .htaccess and why, '' when all are locked (issue #101)
  * @var string $schritt one of 'schluessel', 'schluessel_offen', or unset for the default form/restore/fertig
+ * @var ?string $cronUrl the cron URL with the token config.php just got (issue #244), on the finished page only
+ * @var list<array{name: string, groesse: int, geaendert_am: string}> $serverBackups ZIPs in shared/var/backups/ (issue #244)
  */
 $schritt = $schritt ?? '';
 ?>
@@ -30,6 +32,22 @@ $schritt = $schritt ?? '';
                 Installation abgeschlossen. Datenbank, erster Admin und Tresor sind angelegt, die Konfiguration
                 liegt in <code>shared/config.php</code>.
             </p>
+        <?php endif; ?>
+        <?php if (is_string($cronUrl ?? null)): ?>
+            <div class="hinweis hinweis-warnung" id="cron-url-hinweis">
+                <p>
+                    <strong>Cronjob <?= ($restore ?? false) === true ? 'aktualisieren' : 'einrichten' ?>:</strong>
+                    Die Konfiguration hat ein <strong>neues Cron-Token</strong>. Im Kundenmenü des Hosters den
+                    Cronjob (URL-Aufruf, jede Minute) auf diese Adresse setzen<?= ($restore ?? false) === true ? ' – die bisherige gilt nicht mehr, sonst gehen keine Mails mehr raus' : '' ?>:
+                </p>
+                <label for="cron-url">Cron-URL
+                    <input type="text" id="cron-url" readonly spellcheck="false" autocomplete="off" value="<?= e($cronUrl) ?>">
+                </label>
+                <p class="feld-hilfe">
+                    Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets kopieren. Admins sehen die
+                    Adresse später auch unter <em>Admin → Systemcheck</em>.
+                </p>
+            </div>
         <?php endif; ?>
         <?php if (is_array($zugangVerknuepft ?? null)): ?>
             <div class="hinweis hinweis-warnung">
@@ -245,6 +263,20 @@ $schritt = $schritt ?? '';
             <p id="wiederherstellung-status" role="status">Starte …</p>
             <progress id="wiederherstellung-fortschritt" max="100" value="0"></progress>
             <p id="wiederherstellung-fehler" class="hinweis hinweis-fehler" role="alert" hidden></p>
+            <div id="wiederherstellung-cron" class="hinweis hinweis-warnung" hidden>
+                <p>
+                    <strong>Cronjob aktualisieren:</strong> Die Wiederherstellung hat ein <strong>neues
+                    Cron-Token</strong> erzeugt; die bisherige Cron-URL gilt nicht mehr. Im Kundenmenü des Hosters
+                    den Cronjob auf diese Adresse setzen, sonst gehen keine Mails mehr raus:
+                </p>
+                <label for="wiederherstellung-cron-url">Cron-URL
+                    <input type="text" id="wiederherstellung-cron-url" readonly spellcheck="false" autocomplete="off">
+                </label>
+                <p class="feld-hilfe">
+                    Das Token ist ein Geheimnis: nicht weitergeben, nicht in Tickets kopieren. Admins sehen die
+                    Adresse später auch unter <em>Admin → Systemcheck</em>.
+                </p>
+            </div>
             <p id="wiederherstellung-fertig" hidden>
                 <a class="knopf knopf-primaer" id="wiederherstellung-weiter" href="/">Zur Startseite</a>
             </p>
@@ -288,6 +320,30 @@ $schritt = $schritt ?? '';
                         <input type="file" id="backup-datei" name="backup" accept=".zip,application/zip"
                             <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
                     </label>
+                    <p class="feld-hilfe">
+                        Hochgeladen werden kann ein ZIP bis <?= ($uploadGrenze ?? '') !== '' ? e($uploadGrenze) : 'zur Upload-Grenze des Hosters' ?>
+                        (<code>upload_max_filesize</code>/<code>post_max_size</code>). Ein größeres Backup per FTP in
+                        <code>shared/var/backups/</code> ablegen, diese Seite neu laden und unten auswählen.
+                    </p>
+                    <?php $serverBackups = $serverBackups ?? []; ?>
+                    <label for="backup-server">… oder ein per FTP abgelegtes Backup aus <code>shared/var/backups/</code>
+                        <select id="backup-server" name="backup_server" <?= $modusAktuell !== 'restore' ? 'disabled' : '' ?>>
+                            <option value="">– keins, das hochgeladene ZIP verwenden –</option>
+                            <?php foreach ($serverBackups as $backup): ?>
+                                <option value="<?= e($backup['name']) ?>" <?= ($values['backup_server'] ?? '') === $backup['name'] ? 'selected' : '' ?>>
+                                    <?= e($backup['name']) ?> (<?= e(number_format($backup['groesse'] / 1048576, 1, ',', '.')) ?> MiB, <?= e($backup['geaendert_am']) ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <?php if ($serverBackups === []): ?>
+                        <p class="feld-hilfe">In <code>shared/var/backups/</code> liegt derzeit kein ZIP.</p>
+                    <?php else: ?>
+                        <p class="feld-hilfe">
+                            Ein ausgewähltes Backup hat Vorrang vor einem hochgeladenen. Es wird an Ort und Stelle
+                            gelesen und bleibt danach liegen.
+                        </p>
+                    <?php endif; ?>
                     <p class="feld-hilfe">
                         Das ZIP stammt aus der Update-Kette oder von <code>bin/backup.php</code>. Benutzer und
                         Tresor kommen aus dem Backup, das Formular „Erster Zugang“ entfällt. Enthält das ZIP

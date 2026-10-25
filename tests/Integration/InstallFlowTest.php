@@ -286,6 +286,9 @@ final class InstallFlowTest extends DatabaseTestCase
         $config = Config::fromFile($this->paths()->configFile());
         self::assertSame(self::dbName(), $config->dbName);
         self::assertNotSame('', $config->cronToken);
+        // Issue #244: the finished page names the cron URL with its token.
+        self::assertStringContainsString('value="http://localhost/cron?token=' . $config->cronToken . '"', $fertig->body);
+        self::assertSame('no-store', $fertig->headers['Cache-Control'] ?? null);
 
         // every migration applied, including the user/vault tables of M3-2
         $tables = $this->pdo()
@@ -738,6 +741,12 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertSame($alterSchluessel, $config['server_key'], 'the old server key is kept');
         self::assertNotSame('', Config::fromFile($this->paths()->configFile())->cronToken);
 
+        // Issue #244: the restore wrote a new cron token, and the last step
+        // hands the page the new cron URL to show.
+        $quelle = require $this->base . '/quelle_config.php';
+        self::assertNotSame($quelle['cron_token'], $config['cron_token'], 'a restore gets a new cron token');
+        self::assertSame('http://localhost/cron?token=' . $config['cron_token'], $ende['cron_url'] ?? null);
+
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary dump removed');
         self::assertFileDoesNotExist($this->base . '/web/setup.php');
     }
@@ -809,6 +818,91 @@ final class InstallFlowTest extends DatabaseTestCase
             glob($this->paths()->varDir() . '/install_restore_*') ?: [],
             'neither the temporary dump nor the temporary ZIP is left behind',
         );
+    }
+
+    /**
+     * @param array<string, string> $post
+     */
+    private function submitServerRestore(string $name, array $post = []): Response
+    {
+        $session = new Session();
+        $session->start();
+
+        $response = $this->controller()->submit(new Request(
+            method: HttpMethod::Post,
+            path: '/install',
+            post: [...$this->validPost(), 'modus' => 'restore', '_csrf' => $session->csrfToken(), 'backup_server' => $name, ...$post],
+        ));
+        self::assertInstanceOf(Response::class, $response);
+
+        return $response;
+    }
+
+    /**
+     * Issue #244 (E-66): a backup larger than upload_max_filesize goes into
+     * shared/var/backups/ by FTP and is chosen in the form. It is read in
+     * place - not copied for the blob phase - and stays there afterwards.
+     */
+    public function testABackupPutIntoSharedVarBackupsByFtpIsRestoredInPlaceAndKept(): void
+    {
+        new Migrator($this->pdo(), $this->paths()->migrationsDir())->migrate();
+        new SettingRepository($this->pdo())->set('probe', 'vom FTP');
+        $name = str_repeat('3c', 16);
+        mkdir($this->base . '/quelle_blobs/' . substr($name, 0, 2), 0775, true);
+        file_put_contents($this->base . '/quelle_blobs/' . substr($name, 0, 2) . '/' . $name, 'Chiffrat per FTP');
+        $zip = $this->makeBackup(mitConfig: true);
+        $this->wipeDatabase();
+
+        mkdir($this->paths()->backupDir(), 0775, true);
+        $abgelegt = $this->paths()->backupDir() . '/' . basename($zip);
+        copy($zip, $abgelegt);
+        $inhalt = hash_file('sha256', $abgelegt);
+
+        $formular = $this->controller()->form(new Request(HttpMethod::Get, '/install'));
+        self::assertInstanceOf(Response::class, $formular);
+        self::assertStringContainsString('<option value="' . basename($zip) . '"', $formular->body, 'the form offers it');
+        self::assertStringContainsString('shared/var/backups/', $formular->body);
+
+        $response = $this->submitServerRestore(basename($zip));
+        self::assertSame(200, $response->status, $response->body);
+        self::assertSame($abgelegt, $_SESSION['install_restore']['zip_datei'] ?? null, 'read in place, not copied');
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*.zip') ?: []);
+
+        $ende = $this->runRestoreSteps();
+
+        self::assertTrue($ende['fertig']);
+        self::assertSame('blobs', $ende['phase']);
+        self::assertSame('vom FTP', new SettingRepository($this->pdo())->get('probe'));
+        self::assertSame('Chiffrat per FTP', file_get_contents($this->paths()->blobDir() . '/' . substr($name, 0, 2) . '/' . $name));
+        self::assertFileExists($abgelegt, 'the admin\'s file stays');
+        self::assertSame($inhalt, hash_file('sha256', $abgelegt));
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'only the temporary dump was removed');
+        self::assertFileExists($this->paths()->configFile());
+    }
+
+    /**
+     * The installer answers without a login: the chosen name is a client's
+     * claim and never leads out of shared/var/backups/.
+     */
+    public function testTheChosenServerBackupNeverLeadsOutOfTheBackupDirectory(): void
+    {
+        mkdir($this->paths()->backupDir(), 0775, true);
+        $aussen = $this->paths()->varDir() . '/aussen.zip';
+        $archiv = new \ZipArchive();
+        $archiv->open($aussen, \ZipArchive::CREATE);
+        $archiv->addFromString('dump.sql', 'SELECT 1;');
+        $archiv->close();
+        symlink($aussen, $this->paths()->backupDir() . '/verweis.zip');
+        copy($aussen, $this->paths()->backupDir() . '/.versteckt.zip');
+
+        foreach (['../aussen.zip', '/etc/passwd', 'verweis.zip', '.versteckt.zip', 'fehlt.zip', 'aussen'] as $name) {
+            $response = $this->submitServerRestore($name);
+            self::assertSame(422, $response->status, $name);
+            self::assertStringContainsString('liegt nicht (mehr) in shared/var/backups/', $response->body, $name);
+            self::assertArrayNotHasKey('install_restore', $_SESSION, $name);
+        }
+        self::assertFileDoesNotExist($this->paths()->configFile());
+        self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: []);
     }
 
     // ------------------------------------------------- restore without key
@@ -889,6 +983,7 @@ final class InstallFlowTest extends DatabaseTestCase
         $ende = $this->runRestoreSteps();
         self::assertTrue($ende['fertig']);
         self::assertSame('/install', $ende['weiter'] ?? null, 'the page is sent on to the access step');
+        self::assertArrayNotHasKey('cron_url', $ende, 'no token exists before config.php is written');
         self::assertFileDoesNotExist($this->paths()->configFile(), 'config.php waits for the access step');
         self::assertSame(InstallController::PHASE_ZUGANG, $_SESSION['install_restore']['phase'] ?? null);
         self::assertSame([], glob($this->paths()->varDir() . '/install_restore_*') ?: [], 'temporary files are gone already');
@@ -929,6 +1024,7 @@ final class InstallFlowTest extends DatabaseTestCase
 
         $config = Config::fromFile($this->paths()->configFile());
         self::assertNotSame($sicherung['alterSchluessel'], base64_encode($config->serverKey), 'a new server key');
+        self::assertStringContainsString('value="http://localhost/cron?token=' . $config->cronToken . '"', $response->body, 'issue #244');
         $neu = new ServerCrypto($config->serverKey);
 
         // The login finds the account under the new key, and reads it.
@@ -1145,6 +1241,8 @@ final class InstallFlowTest extends DatabaseTestCase
 
         $config = require $this->paths()->configFile();
         self::assertSame($sicherung['alterSchluessel'], $config['server_key'], 'the old key is kept');
+        self::assertStringContainsString('value="http://localhost/cron?token=' . $config['cron_token'] . '"', $richtig->body, 'issue #244');
+        self::assertStringContainsString('Cronjob aktualisieren', $richtig->body);
         $alt = new ServerCrypto((string) base64_decode($sicherung['alterSchluessel'], true));
         $user = new UserRepository($this->pdo())->findByEmailBlindIndex($alt->blindIndex()->forValue('user.email', $this->validPost()['admin_email']));
         self::assertNotNull($user, 'the login finds the account as before');

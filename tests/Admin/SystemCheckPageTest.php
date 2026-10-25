@@ -36,18 +36,54 @@ final class SystemCheckPageTest extends TestCase
         $_SESSION = [];
     }
 
-    private function seite(?SystemCheck $check = null): string
+    private function seite(?SystemCheck $check = null, ?string $cronToken = null): string
+    {
+        return $this->antwort($check, $cronToken)->body;
+    }
+
+    private function antwort(?SystemCheck $check = null, ?string $cronToken = null): Response
     {
         $view = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test');
         $view->setCurrentPath(self::PFAD);
-        $controller = new SystemCheckController($view, new Session(), $check ?? new SystemCheck());
+        $controller = new SystemCheckController($view, new Session(), $check ?? new SystemCheck(), $cronToken);
 
-        $antwort = $controller->page(new Request(HttpMethod::Get, self::PFAD));
+        $antwort = $controller->page(new Request(HttpMethod::Get, self::PFAD, headers: ['host' => 'verein.example']));
 
         self::assertInstanceOf(Response::class, $antwort);
         self::assertSame(200, $antwort->status);
 
-        return $antwort->body;
+        return $antwort;
+    }
+
+    /**
+     * Issue #244: the admin sees the cron URL with the token of
+     * shared/config.php - after a restore that is a new one - without FTP.
+     * It is not one of the findings, so it never ends up in the JSON that
+     * is meant to be pasted into an issue, and the page is not cached.
+     * Who may open the page at all (`admin.system`) is
+     * RoutePermissionMatrixTest's job.
+     */
+    public function testTheCronUrlIsShownButNotPartOfTheCopyableReport(): void
+    {
+        $token = str_repeat('ab12', 12);
+        $antwort = $this->antwort(cronToken: $token);
+        $html = $antwort->body;
+
+        self::assertStringContainsString('<h3>Cron-URL</h3>', $html);
+        self::assertStringContainsString(
+            'id="systemcheck-cron-url" readonly spellcheck="false" autocomplete="off" value="http://verein.example/cron?token=' . $token . '"',
+            $html,
+        );
+        self::assertSame('no-store', $antwort->headers['Cache-Control'] ?? null);
+
+        self::assertSame(1, preg_match('#<textarea id="systemcheck-json"[^>]*>(.*?)</textarea>#s', $html, $treffer));
+        self::assertStringNotContainsString($token, $treffer[1], 'the copyable JSON stays free of the token');
+        self::assertDoesNotMatchRegularExpression('#\son[a-z]+\s*=#i', $html, 'no inline handler (CSP)');
+    }
+
+    public function testWithoutATokenThereIsNoCronSection(): void
+    {
+        self::assertStringNotContainsString('Cron-URL', $this->seite());
     }
 
     public function testThePageListsEveryCheckWithExpectationActualValueAndStatus(): void

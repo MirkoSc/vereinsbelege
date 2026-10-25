@@ -173,11 +173,12 @@ final readonly class MysqlDumper
         // Everything the connection needs to know about the table is asked
         // here: nothing else may travel over it while the unbuffered SELECT
         // below is being read. PDO::quote() is client-side and therefore fine.
-        $binary = $this->binaryColumns($table);
+        $spaltenInfo = $this->columns($table);
+        $binary = $spaltenInfo['binary'];
         $schluessel = in_array($table, self::TABLES_IN_PORTIONS, true) ? $this->primaryKey($table) : [];
 
         $nach = is_array($stand['nach']) ? $stand['nach'] : null;
-        [$sql, $parameter] = $this->auswahl($table, $schluessel, $binary, $nach);
+        [$sql, $parameter] = $this->auswahl($table, $spaltenInfo['auswahl'], $schluessel, $binary, $nach);
 
         $columns = null;
         $batch = [];
@@ -257,12 +258,15 @@ final readonly class MysqlDumper
      * gives the optimizer a plain range on the primary key, so a portion
      * deep inside file_blob_chunk costs no more than the first one.
      *
+     * `$auswahl` is the column list of the SELECT - every column the
+     * INSERT may write, i.e. all but the generated ones (columns()).
+     *
      * @param list<string> $schluessel
      * @param array<string, true> $binary
      * @param list<int|string>|null $nach
      * @return array{string, list<int|string>}
      */
-    private function auswahl(string $table, array $schluessel, array $binary, ?array $nach): array
+    private function auswahl(string $table, string $auswahl, array $schluessel, array $binary, ?array $nach): array
     {
         if ($schluessel === []) {
             if ($nach !== null) {
@@ -271,11 +275,11 @@ final readonly class MysqlDumper
                 throw new \RuntimeException('Der Stand des Datenbank-Dumps passt nicht zur Tabelle.');
             }
 
-            return [sprintf('SELECT * FROM `%s`', $table), []];
+            return [sprintf('SELECT %s FROM `%s`', $auswahl, $table), []];
         }
 
         $platzhalter = static fn(string $spalte): string => isset($binary[$spalte]) ? 'UNHEX(?)' : '?';
-        $sql = sprintf('SELECT * FROM `%s`', $table);
+        $sql = sprintf('SELECT %s FROM `%s`', $auswahl, $table);
         $parameter = [];
         if ($nach !== null) {
             if (count($nach) !== count($schluessel)) {
@@ -318,22 +322,50 @@ final readonly class MysqlDumper
     }
 
     /**
-     * Column names of `$table` whose values are bytes rather than text.
+     * What the dump needs to know about the columns of `$table`: which ones
+     * hold bytes rather than text, and the column list of the SELECT.
      *
-     * @return array<string, true>
+     * Generated columns (`... AS (expr) VIRTUAL|STORED`, issue #244) are left
+     * out of the SELECT and thus of the INSERT: the server computes them, and
+     * an INSERT that names one fails on the way back in (MariaDB 1906 in
+     * strict mode, MySQL 3105). Their definition is part of SHOW CREATE
+     * TABLE, so the restored table computes them again. `Extra` reads
+     * `VIRTUAL GENERATED`/`STORED GENERATED` (MySQL, MariaDB 10.2+) or
+     * `VIRTUAL`/`PERSISTENT` (older MariaDB) - but MySQL 8 also writes
+     * `DEFAULT_GENERATED` for a plain column with an expression default,
+     * which must stay in the dump.
+     *
+     * @return array{binary: array<string, true>, auswahl: string}
      */
-    private function binaryColumns(string $table): array
+    private function columns(string $table): array
     {
         $binary = [];
+        $spalten = [];
         $columns = $this->pdo->query(sprintf('SHOW COLUMNS FROM `%s`', $table));
-        while (($column = $columns->fetch()) !== false) {
+        while (($column = $columns->fetch(\PDO::FETCH_ASSOC)) !== false) {
+            $name = (string) $column['Field'];
+            if (self::isGenerated((string) ($column['Extra'] ?? ''))) {
+                continue;
+            }
+            $spalten[] = '`' . str_replace('`', '``', $name) . '`';
             $type = strtolower((string) ($column['Type'] ?? ''));
             if (preg_match('/\b(?:(?:tiny|medium|long)?blob|(?:var)?binary)\b/', $type) === 1) {
-                $binary[(string) $column['Field']] = true;
+                $binary[$name] = true;
             }
         }
 
-        return $binary;
+        return [
+            'binary' => $binary,
+            // A table of generated columns only cannot exist, but SELECT *
+            // is the harmless answer should SHOW COLUMNS ever come back empty.
+            'auswahl' => $spalten === [] ? '*' : implode(', ', $spalten),
+        ];
+    }
+
+    /** Whether the `Extra` of SHOW COLUMNS marks a generated column (columns()). */
+    public static function isGenerated(string $extra): bool
+    {
+        return preg_match('/(?<![A-Za-z_])(?:VIRTUAL|STORED|PERSISTENT)(?![A-Za-z_])/i', $extra) === 1;
     }
 
     /**
