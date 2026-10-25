@@ -416,6 +416,7 @@ final readonly class BackupErstellung
             @unlink($zielPfad);
             throw new \RuntimeException('Das fertige Backup konnte nicht abgelegt werden.');
         }
+        BackupService::nurFuerBesitzer($zielPfad);
 
         return $this->abschliessen([...$stand, 'ziel' => $name], $name);
     }

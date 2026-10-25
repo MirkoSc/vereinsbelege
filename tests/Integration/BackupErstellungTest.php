@@ -158,6 +158,8 @@ final class BackupErstellungTest extends DatabaseTestCase
         $zip->close();
         self::assertTrue(new RestoreService()->manifestAusZip($pfad)['config_enthalten']);
         self::assertTrue($this->backups()->containsConfig(basename($pfad)));
+        clearstatcache();
+        self::assertSame(0600, fileperms($pfad) & 0777, 'a backup with the server key is readable by its owner only (#78)');
     }
 
     public function testManyBlobFilesAreAddedInPortions(): void
