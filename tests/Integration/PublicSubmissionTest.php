@@ -46,6 +46,9 @@ use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
 use App\Service\Submission\Spamschutz;
+use App\Service\Submission\FreierSpeicher;
+use App\Service\Submission\UploadBudget;
+use App\Repository\UploadBudgetRepository;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\UploadService;
@@ -543,6 +546,11 @@ final class PublicSubmissionTest extends DatabaseTestCase
             new RateLimiter(new RateLimitRepository($this->pdo()), RateLimiter::SUBMISSION_WINDOW_SECONDS),
             $this->proofOfWork(),
             $this->einstellungen(),
+            new UploadBudget(
+                new UploadBudgetRepository($this->pdo()),
+                $this->einstellungen(),
+                new FreierSpeicher($this->uploadDir, static fn(): float => 1e12),
+            ),
         );
     }
 

@@ -23,12 +23,15 @@ enum EinreichungAbgelehnt: string
     case ProofOfWorkFehlt = 'pow_ungueltig';
     case BotVerdacht = 'bot_verdacht';
     case DateiZuGross = 'datei_zu_gross';
+    case BudgetIp = 'budget_ip';
+    case BudgetGesamt = 'budget_gesamt';
+    case SpeicherKnapp = 'speicher_knapp';
 
     public function status(): int
     {
         return match ($this) {
-            self::Pausiert => 503,
-            self::ZuVieleVonIp, self::ZuVieleGesamt => 429,
+            self::Pausiert, self::SpeicherKnapp => 503,
+            self::ZuVieleVonIp, self::ZuVieleGesamt, self::BudgetIp, self::BudgetGesamt => 429,
             self::ProofOfWorkFehlt => 403,
             self::BotVerdacht => 422,
             self::DateiZuGross => 413,
@@ -38,8 +41,9 @@ enum EinreichungAbgelehnt: string
     public function message(): string
     {
         return match ($this) {
-            self::Pausiert => 'Die Einreichung ist vorübergehend nicht möglich. Bitte später erneut versuchen.',
+            self::Pausiert, self::SpeicherKnapp => 'Die Einreichung ist vorübergehend nicht möglich. Bitte später erneut versuchen.',
             self::ZuVieleVonIp, self::ZuVieleGesamt => 'Zu viele Einreichungen. Bitte später erneut versuchen.',
+            self::BudgetIp, self::BudgetGesamt => 'Es wurden zu viele Dateien hochgeladen. Bitte später erneut versuchen.',
             self::ProofOfWorkFehlt => 'Das Formular ist abgelaufen – bitte die Seite neu laden.',
             self::BotVerdacht => 'Bitte kurz warten und das Formular erneut absenden.',
             self::DateiZuGross => 'Die Datei ist zu groß.',

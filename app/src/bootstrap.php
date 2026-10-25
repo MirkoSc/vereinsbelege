@@ -117,6 +117,7 @@ use App\Repository\SupplierRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\TransferRepository;
 use App\Repository\TrustedDeviceRepository;
+use App\Repository\UploadBudgetRepository;
 use App\Repository\UserKeyRepository;
 use App\Repository\UserAccessRepository;
 use App\Repository\UserRepository;
@@ -171,6 +172,7 @@ use App\Service\Cron\SubmissionUploadCleanupTask;
 use App\Service\Cron\SuchindexCleanupTask;
 use App\Service\Cron\BankImportCleanupTask;
 use App\Service\Cron\UploadCleanupTask;
+use App\Service\Cron\UploadBudgetCleanupTask;
 use App\Service\Cron\WorkerCleanupTask;
 use App\Service\Worker\BestandsOcr;
 use App\Service\Worker\WorkerArtefakte;
@@ -253,6 +255,9 @@ use App\Service\Tresor\Schluesselrotation;
 use App\Service\Tresor\TresorAnkerAlarm;
 use App\Service\Submission\SubmissionService;
 use App\Service\Submission\SubmissionUploadStore;
+use App\Service\Submission\FreierSpeicher;
+use App\Service\Submission\UploadBudget;
+use App\Service\Submission\UploadBudgetStand;
 use App\Service\Suche\ERechnungQuelle;
 use App\Service\Suche\KiQuelle;
 use App\Service\Suche\SitzungsSuchindex;
@@ -388,11 +393,22 @@ $proofOfWork = new ProofOfWork($config->serverKey);
 $einreichungEinstellungenFor = static fn(\PDO $pdo): EinreichungsEinstellungen => EinreichungsEinstellungen::fromSettings(
     new SettingRepository($pdo),
 );
-$spamschutzFor = static function (\PDO $pdo) use ($proofOfWork, $einreichungEinstellungenFor): Spamschutz {
+// The byte budget of the public upload and its free-space threshold (issue
+// #242): counters in `upload_budget`, free space of shared/var.
+$uploadBudgetFor = static fn(\PDO $pdo, ?EinreichungsEinstellungen $einstellungen = null): UploadBudget => new UploadBudget(
+    new UploadBudgetRepository($pdo),
+    $einstellungen ?? $einreichungEinstellungenFor($pdo),
+    new FreierSpeicher($paths->varDir()),
+);
+$spamschutzFor = static function (\PDO $pdo) use ($proofOfWork, $einreichungEinstellungenFor, $uploadBudgetFor): Spamschutz {
+    // One read of the settings for both, so they never disagree.
+    $einstellungen = $einreichungEinstellungenFor($pdo);
+
     return new Spamschutz(
         new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
         $proofOfWork,
-        $einreichungEinstellungenFor($pdo),
+        $einstellungen,
+        $uploadBudgetFor($pdo, $einstellungen),
     );
 };
 
@@ -587,6 +603,9 @@ $cron = static fn(): CronController => new CronController($config, static functi
             new RateLimitCleanupTask(
                 new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
             ),
+            // Issue #242: byte budget counters of the public upload whose
+            // window (an hour per address, a day overall) has ended.
+            new UploadBudgetCleanupTask(new UploadBudgetRepository($pdo), new UploadService($paths->uploadDir())),
             // M3-4: remembered devices whose 30 days are over.
             new TrustedDeviceCleanupTask(new TrustedDeviceRepository($pdo)),
             // M3-5: password reset links whose 30 minutes are over.
@@ -1268,6 +1287,9 @@ $systemcheck = static fn(): SystemCheckController => new SystemCheckController(
         \Closure::fromCallable(new CurlStatusProbe()),
         $paths->sharedDir(),
         static fn(): array => $vaultsFor($connections->pdo())->ankerStand(),
+        // Issue #242: today's byte budget of the public upload and the
+        // free-space threshold - counters and sizes only.
+        static fn(): UploadBudgetStand => $uploadBudgetFor($connections->pdo())->stand(),
     ),
     // Shown to admins with `admin.system` (issue #244), never logged.
     $config->cronToken,
@@ -1393,10 +1415,16 @@ $einreichen = static function () use (
 // pause switch. Permission: `admin.settings`, the same right as Mail,
 // Speicher and Kostenstellen. Built lazily like $mail - only this page
 // needs the database.
-$einreichungAdmin = static function () use ($connections, $view, $auditFor): SubmissionSettingsController {
+$einreichungAdmin = static function () use ($connections, $view, $auditFor, $uploadBudgetFor): SubmissionSettingsController {
     $pdo = $connections->pdo();
 
-    return new SubmissionSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+    return new SubmissionSettingsController(
+        $view,
+        new Session(),
+        new SettingRepository($pdo),
+        $auditFor($pdo),
+        static fn(): UploadBudgetStand => $uploadBudgetFor($pdo)->stand(),
+    );
 };
 
 // Impressum, Datenschutzerklärung and the notice on /einreichen (issue

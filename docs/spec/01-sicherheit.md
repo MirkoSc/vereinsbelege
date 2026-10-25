@@ -845,11 +845,48 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
     `einreichung_*`, siehe 02 §Betrieb). Das Dateilimit kann
     `App\Service\Upload\UploadService::MAX_FILE_BYTES` nur unterschreiten,
     nie überschreiten.
+  - **Byte-Budget** (issue #242, Befund N-04, E-64,
+    `App\Service\Submission\UploadBudget`), drei Zähler, Adressen je IP
+    (IPv6 zusammengefasst auf das /64, IPv4-mapped als IPv4):
+    - **offen** je Adresse (Vorgabe 30 MB, `einreichung_offen_mb_ip`):
+      `create()` reserviert die angekündigte Größe – mehr nimmt
+      `UploadService` nie an –, Rückgabe bei Abschluss, Abbruch oder durch
+      den Cron, sobald das Upload-Aufräumen das Verzeichnis entfernt hat (24 h nach dem letzten Chunk). Begrenzt
+      `var/tmp`.
+    - je Adresse und **Stunde** (Vorgabe 100 MB,
+      `einreichung_budget_ip_mb_stunde`): angekündigte Größe, ohne Rückgabe.
+    - **je Kalendertag** für alle zusammen (Vorgabe 500 MB,
+      `einreichung_budget_gesamt_mb_tag`): nur **tatsächlich gespeicherte**
+      Bytes, gebucht beim Abschluss direkt vor dem Speichern; ein voller Tag
+      lehnt schon `create()` ab. Ankündigen allein berührt ihn nie – sonst
+      sperrten wenige Anfragen ohne ein gesendetes Byte `/einreichen` für
+      alle bis Mitternacht (Koordinator-Review zu #242).
+
+    Prüfen und Zählen ist je Zähler **ein** bedingtes `UPDATE` (Tabellen
+    `upload_budget`, `upload_offen`, `upload_reservierung`; Schlüssel nur
+    als SHA-256 über Zweck und Adresse; Zeilen gelöscht, sobald ihr Fenster
+    endet bzw. der Zähler leer ist – `Cron\UploadBudgetCleanupTask`). Kein
+    Budget liegt unter der größten erlaubten Datei. Ablehnung
+    mit 429 und „Es wurden zu viele Dateien hochgeladen …“, ohne Log-Eintrag
+    (ein Log je abgewiesener Anfrage wäre selbst ein Weg, die Platte zu
+    füllen); ein abgewiesener Upload kostet kein Upload-Kontingent.
+  - **Freier Speicher:** liegt `disk_free_space(shared/var)` unter
+    `einreichung_min_frei_mb` (Vorgabe 1024 MB), antworten Eröffnen und
+    Abschluss öffentlicher Uploads 503 wie bei der Pause; angemeldete
+    Funktionen prüfen das nicht und laufen weiter. Sperrt der Hoster die
+    Funktion oder liefert sie nichts, gilt allein das Tagesbudget (auf
+    Shared Hosting meldet sie ohnehin eher die Server-Platte als die Quote;
+    beim Speicher-Backend `db` sagt sie über die Datenbank nichts).
+    Admin-Seite (`/admin/einreichung`: „Heute hochgeladen … von …“) und
+    Systemcheck (`upload_budget`, Warnung) zeigen, wenn das Tagesbudget
+    erreicht oder der Speicher knapp ist.
   - Dieselbe Seite pausiert auch die Einreichung insgesamt
     (`einreichung_pausiert`): `/einreichen` zeigt dann nur einen Hinweis,
     Absenden und Upload antworten mit 503 – für den Fall, dass trotzdem
     Spam auftritt.
-- Dateiprüfung serverseitig über Magic Bytes (JPEG, PNG, HEIC als Original
+- Dateiprüfung serverseitig über Magic Bytes – seit #242 (N-13) auf genau
+  den Bytes, die danach versiegelt werden (Chunks einmal geöffnet, kein
+  erneutes Lesen, 03 §4) – (JPEG, PNG, HEIC als Original
   (im Browser zusätzlich nach JPEG gewandelt, 03 §1), PDF; seit M7-4 E-Rechnungs-XML nur
   mit CII-/UBL-Wurzel und ohne DOCTYPE, ausgeliefert nur als Download –
   03 §3).

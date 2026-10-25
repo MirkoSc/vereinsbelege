@@ -34,7 +34,8 @@ use App\Support\FileLogger;
  * create() is also where App\Service\Submission\Spamschutz is checked
  * (issue #25/M4-3, docs/spec/01-sicherheit.md section 5): proof of work
  * (`X-Pow-Loesung`, the same header on every request the page sends,
- * public/js/upload.js), the per-file size limit and the rate limit. Every
+ * public/js/upload.js), the per-file size limit, the rate limit and the
+ * byte budget (App\Service\Submission\UploadBudget, issue #242). Every
  * accepted call counts against the budget immediately - chunk(), finish()
  * and abort() only continue an upload create() already let through, so they
  * check nothing but the token - except that finish() also honours the pause
@@ -49,8 +50,8 @@ final readonly class EinreichungUploadController
 
     /**
      * @param \Closure(): Spamschutz $spamschutz built lazily: it opens the
-     *        database connection (the rate limit), which only create() and
-     *        finish() must pay for.
+     *        database connection (the rate limit, the byte budget), which
+     *        only create(), finish() and abort() must pay for.
      * @param \Closure(): SubmissionUploadStore $store built lazily: it opens
      *        the database connection, which the chunk requests must not pay
      *        for.
@@ -79,17 +80,30 @@ final readonly class EinreichungUploadController
             return Response::json(['fehler' => 'Ungültige Dateigröße.'], 422);
         }
 
-        $abgelehnt = ($this->spamschutz)()->pruefeUpload(
+        // Known before the upload exists: the byte budget reserves under it
+        // and gives the reservation back by it (issue #242).
+        $id = UploadService::neueId();
+        $spamschutz = ($this->spamschutz)();
+        $abgelehnt = $spamschutz->pruefeUpload(
             $request->ip,
             $tokenData,
             $request->header('x-pow-loesung'),
             (int) $groesse,
+            $id,
         );
         if ($abgelehnt !== null) {
             return Response::json(['fehler' => $abgelehnt->message()], $abgelehnt->status());
         }
 
-        return $this->ausgefuehrt($request, fn(): Response => Response::json($this->uploads->create((int) $groesse)->toArray(), 201));
+        return $this->ausgefuehrt($request, function () use ($groesse, $id, $spamschutz): Response {
+            try {
+                return Response::json($this->uploads->create((int) $groesse, id: $id)->toArray(), 201);
+            } catch (\Throwable $e) {
+                $spamschutz->uploadBeendet($id);
+
+                throw $e;
+            }
+        });
     }
 
     /**
@@ -127,10 +141,12 @@ final readonly class EinreichungUploadController
 
             // Paused in the meantime: an upload opened before the pause must
             // not become a stored blob after it (issue #78). Chunks before
-            // this only reach var/tmp, which the cleanup empties anyway.
-            $pausiert = ($this->spamschutz)()->pruefePause();
+            // this only reach var/tmp, which the cleanup empties anyway. The
+            // same holds while free space is low (issue #242).
+            $spamschutz = ($this->spamschutz)();
+            $pausiert = $spamschutz->pruefePause();
             if ($pausiert !== null) {
-                $this->uploads->discard($id);
+                $this->verwerfen($spamschutz, $id);
 
                 return Response::json(['fehler' => $pausiert->message()], $pausiert->status());
             }
@@ -143,24 +159,48 @@ final readonly class EinreichungUploadController
                 ], UploadError::Incomplete->status());
             }
 
-            $typ = MagicBytes::detect($this->uploads->head($id));
-            if ($typ === null) {
-                $this->uploads->discard($id);
-
-                throw new UploadException(UploadError::UnsupportedType);
-            }
-
             $name = self::dateiname($request->post['name'] ?? '');
             $tokenData = $this->formToken->pruefen($request->header('x-csrf-token') ?? '');
             \assert($tokenData !== null); // guarded() already refused an invalid token.
 
-            $blob = ($this->store)()->store(
-                $this->uploads->chunks($id),
-                new BlobMeta($typ, $name),
-                $tokenData->hash(),
-                new \DateTimeImmutable(),
-            );
-            $this->uploads->discard($id);
+            // Opened once: the magic bytes are checked on exactly the bytes
+            // that are sealed (security review N-13, issue #242).
+            $offen = $this->uploads->oeffnen($id);
+            try {
+                $typ = MagicBytes::detect($offen->kopf());
+                if ($typ === null) {
+                    $offen->schliessen();
+                    $this->verwerfen($spamschutz, $id);
+
+                    throw new UploadException(UploadError::UnsupportedType);
+                }
+
+                // Today's budget counts what is stored, charged right before
+                // it is (issue #242) - announcing alone never touched it.
+                $voll = $spamschutz->uploadVerbuchen($offen->groesse);
+                if ($voll !== null) {
+                    $offen->schliessen();
+                    $this->verwerfen($spamschutz, $id);
+
+                    return Response::json(['fehler' => $voll->message()], $voll->status());
+                }
+
+                try {
+                    $blob = ($this->store)()->store(
+                        $offen->chunks(),
+                        new BlobMeta($typ, $name),
+                        $tokenData->hash(),
+                        new \DateTimeImmutable(),
+                    );
+                } catch (\Throwable $e) {
+                    $spamschutz->uploadZurueckbuchen($offen->groesse);
+
+                    throw $e;
+                }
+            } finally {
+                $offen->schliessen();
+            }
+            $this->verwerfen($spamschutz, $id);
 
             return Response::json([
                 'blob_id' => $blob->id,
@@ -176,10 +216,20 @@ final readonly class EinreichungUploadController
     public function abort(Request $request, array $params): Response
     {
         return $this->guarded($request, function () use ($params): Response {
-            $this->uploads->discard($params['id']);
+            $this->verwerfen(($this->spamschutz)(), $params['id']);
 
             return Response::json(['status' => 'geloescht']);
         });
+    }
+
+    /**
+     * The upload goes, and with it its open reservation in the byte budget
+     * (issue #242) - both idempotent.
+     */
+    private function verwerfen(Spamschutz $spamschutz, string $id): void
+    {
+        $this->uploads->discard($id);
+        $spamschutz->uploadBeendet($id);
     }
 
     /**

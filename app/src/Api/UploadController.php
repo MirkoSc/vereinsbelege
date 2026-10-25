@@ -141,18 +141,24 @@ final readonly class UploadController
                 ], UploadError::Incomplete->status());
             }
 
-            $typ = MagicBytes::detect($this->uploads->head($id));
-            if ($typ === null) {
-                // Nothing will come of this upload, so it goes now instead of
-                // waiting 24 h for the cron.
-                $this->uploads->discard($id);
+            // Opened once: the magic bytes are checked on exactly the bytes
+            // that are stored (security review N-13, issue #242).
+            $offen = $this->uploads->oeffnen($id);
+            try {
+                $typ = MagicBytes::detect($offen->kopf());
+                $blob = $typ === null
+                    ? null
+                    : ($this->store)()->store($offen->chunks(), new BlobMeta($typ, self::dateiname($request->post['name'] ?? '')));
+            } finally {
+                $offen->schliessen();
+            }
+            // Stored, or nothing will come of it - either way it goes now
+            // instead of waiting 24 h for the cron.
+            $this->uploads->discard($id);
 
+            if ($blob === null) {
                 throw new UploadException(UploadError::UnsupportedType);
             }
-
-            $name = self::dateiname($request->post['name'] ?? '');
-            $blob = ($this->store)()->store($this->uploads->chunks($id), new BlobMeta($typ, $name));
-            $this->uploads->discard($id);
 
             $userId = $this->session->userId();
             if ($erfassung !== null && $this->vermerke !== null && $userId !== null) {

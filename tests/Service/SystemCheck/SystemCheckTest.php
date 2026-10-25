@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\SystemCheck;
 
+use App\Service\Submission\UploadBudgetStand;
 use App\Service\SystemCheck\CheckResult;
 use App\Service\SystemCheck\CheckStatus;
 use App\Service\SystemCheck\SystemCheck;
@@ -136,6 +137,39 @@ final class SystemCheckTest extends TestCase
         self::assertSame(CheckStatus::Fail, $fehlt->status);
         self::assertSame('fehlt', $fehlt->actual);
         self::assertSame('ext-gibt_es_nicht', $fehlt->key);
+    }
+
+    /**
+     * Issue #242: the public upload's daily budget and free-space threshold
+     * - open is ok, a full day or a full disk is a warning, sizes only.
+     */
+    public function testTheUploadBudgetWarnsWhenTheDayOrTheDiskIsFull(): void
+    {
+        $mib = 1024 * 1024;
+        $check = new SystemCheck();
+
+        $offen = $check->uploadBudget(new UploadBudgetStand(10 * $mib, 500 * $mib, 10 * $mib, 5000 * $mib, 1024 * $mib));
+        self::assertSame(CheckStatus::Ok, $offen->status);
+        self::assertSame('upload_budget', $offen->key);
+        self::assertSame('10 MiB heute, 4,9 GiB frei', $offen->actual);
+
+        $voll = $check->uploadBudget(new UploadBudgetStand(495 * $mib, 500 * $mib, 10 * $mib, null, 1024 * $mib));
+        self::assertSame(CheckStatus::Warn, $voll->status);
+        self::assertStringContainsString('Tagesbudget', $voll->detail);
+        self::assertStringContainsString('nicht ermittelbar', $voll->actual);
+
+        $knapp = $check->uploadBudget(new UploadBudgetStand(0, 500 * $mib, 10 * $mib, 100 * $mib, 1024 * $mib));
+        self::assertSame(CheckStatus::Warn, $knapp->status);
+        self::assertStringContainsString('pausiert', $knapp->detail);
+
+        $keys = array_map(
+            static fn($r): string => $r->key,
+            new SystemCheck(uploadBudget: static fn(): UploadBudgetStand => new UploadBudgetStand(0, 1, 1, null, 1))->all(),
+        );
+        self::assertSame('upload_budget', end($keys));
+
+        $kaputt = new SystemCheck(uploadBudget: static fn(): never => throw new \PDOException('no table'))->all();
+        self::assertSame(CheckStatus::Warn, end($kaputt)->status, 'an unreadable budget does not take the page down');
     }
 
     public function testArgon2idFollowsWhatPasswordHashCanDo(): void

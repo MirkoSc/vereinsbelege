@@ -292,7 +292,7 @@ final readonly class WorkerArtefakte
             $groesse = WorkerKrypto::klartextGroesse($upload->cipherSize) ?? throw new WorkerArtefaktFehler('groesse_ungueltig', 422);
             try {
                 $blob = $this->blobs->storeCipher(
-                    $this->ablage->chunks($upload->uploadId),
+                    $this->inhalt($upload->uploadId),
                     $zeile['dek_sealed'],
                     (string) $upload->header,
                     $groesse,
@@ -311,7 +311,7 @@ final readonly class WorkerArtefakte
             }
         } else {
             $daten = '';
-            foreach ($this->ablage->chunks($upload->uploadId) as $stueck) {
+            foreach ($this->inhalt($upload->uploadId) as $stueck) {
                 $daten .= $stueck;
             }
             if (strlen($daten) !== $upload->cipherSize || !WorkerKrypto::istFeldChiffrat($daten)) {
@@ -431,4 +431,21 @@ final readonly class WorkerArtefakte
             'fehlend' => $stand->fehlend,
         ];
     }
+
+    /**
+     * The uploaded ciphertext in pieces, read through one opened upload
+     * (App\Service\Upload\OffenesUpload) and closed afterwards.
+     *
+     * @return \Generator<int, string>
+     */
+    private function inhalt(string $uploadId): \Generator
+    {
+        $offen = $this->ablage->oeffnen($uploadId);
+        try {
+            yield from $offen->chunks();
+        } finally {
+            $offen->schliessen();
+        }
+    }
+
 }
