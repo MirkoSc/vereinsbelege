@@ -998,7 +998,10 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
 - Admin-Seite vergleicht die Dateien in `current/` gegen die
   `checksums`-Liste des installierten Releases (vom Updater gespeichert) und
   zeigt Abweichungen. Kein Schutz gegen einen versierten Angreifer, aber
-  erkennt plumpe Manipulationen.
+  erkennt plumpe Manipulationen. Seit issue #241 ist die Liste signiert,
+  sobald ein Release-Signaturschlüssel festgelegt ist – dann kann auch
+  wer per FTP schreibt sie nicht mehr unbemerkt anpassen –, und der Check
+  sieht zusätzlich `web/` und `shared/config.php` (siehe unten).
 
 ### Umsetzung (M13-2, issue #79)
 
@@ -1030,23 +1033,74 @@ Menge von Rechten (Admin kann Rollen anlegen/anpassen). Mitgelieferte Rollen:
   letzten Prüfung. Ändern sich die Liste oder `current/VERSION` während der
   Prüfung (Update oder Rollback dazwischen), bricht der nächste Schritt mit
   Hinweis ab.
-- **Keine Prüfung möglich**, mit Erklärung auf der Seite: ohne
-  `shared/release_checksums.txt` (Entwicklungsumgebung) oder ohne
-  `release/`-Zeilen (älteres Release).
+- **Keine Prüfung möglich**, mit Erklärung auf der Seite: ohne Liste
+  (Entwicklungsumgebung) oder ohne `release/`-Zeilen (älteres Release).
 - **Andere Version:** Nennt die Liste eine andere Version als
-  `current/VERSION`, warnt die Seite, prüft aber trotzdem. Der Updater
-  speichert die Liste schon beim Download – nach einem Rollback oder einem
-  vor dem Umschalten abgebrochenen Update passt sie bis zum nächsten
-  vollständigen Update nicht. Bewusst keine Sperre: eine manipulierte
-  `VERSION`-Datei darf die Prüfung nicht abschalten, sie ist ein geänderter
-  Befund wie jede andere Datei.
+  `current/VERSION`, warnt die Seite, prüft aber trotzdem. Bei der Liste in
+  `shared/` (Installationen vor #241) passiert das nach einem Rollback oder
+  einem vor dem Umschalten abgebrochenen Update. Bewusst keine Sperre: eine
+  manipulierte `VERSION`-Datei darf die Prüfung nicht abschalten, sie ist
+  ein geänderter Befund wie jede andere Datei.
+
+### Härtung (issue #241, Befunde N-03 und N-19, E-63)
+
+- **Liste je Release:** gelesen wird `current/checksums.txt` (von
+  `setup.php` bzw. dem Updater ins Release gelegt, wandert bei Umschalten
+  und Rollback mit, 06 §1); nur wenn sie fehlt, die alte
+  `shared/release_checksums.txt`. Ein Symlink zählt nie als Liste.
+  `checksums.txt` und `checksums.txt.sig` im Wurzelverzeichnis von
+  `current/` sind keine „zusätzlichen“ Dateien (anderswo schon).
+- **Signatur der Liste (N-19):** Ist `ReleaseSignatur::PUBLIC_KEY`
+  gesetzt, muss `current/checksums.txt.sig` die Liste bestätigen. Fehlt die
+  Signatur, ist sie ungültig, oder fehlt die Liste ganz, obwohl
+  `current/VERSION` existiert (das Löschen der Liste darf die Prüfung nicht
+  still abschalten), startet keine Prüfung; die Seite zeigt das als Alarm
+  (`hinweis-fehler`, `CodeIntegritaet::echtheitsfehler()`). Die
+  `shared/`-Liste hat nie eine Signatur – mit festgelegtem Schlüssel ist
+  die Prüfung dann erst nach dem nächsten Update möglich. Ohne Schlüssel
+  läuft die Prüfung; die Seite sagt, dass die Liste ungeschützt ist.
+- **Web-Verzeichnis und Konfiguration (N-03):** ein letzter Schritt
+  (Phase `umgebung`, eigene Befundart „Web-Verzeichnis und Konfiguration“)
+  prüft, was außerhalb von `current/` mit jedem Request läuft:
+  - `web/index.php` Byte für Byte gegen `ReleaseSwitcher::SHIM`;
+  - `web/.htaccess` und `web/.user.ini` gegen die Vorlagen des
+    installierten Releases (`current/docker/web/`). Eine von Hand
+    angepasste Datei lässt der Updater stehen (06 §1), hier erscheint sie
+    trotzdem als Befund „von Hand geändert?“ – so fällt eine fremde
+    Änderung auf; fehlt sie, ebenso;
+  - jeder weitere Eintrag in `web/` ist „nicht Teil der Installation“
+    (auch ein liegengebliebenes `setup.php`; Verzeichnisse mit `/`), ein
+    Symlink statt einer der drei Dateien und ein fehlendes `web/` sind
+    Befunde. Ausnahme: `.well-known/`, solange es nur
+    `acme-challenge/` mit Token-Dateien (Name nur `[A-Za-z0-9_-]`, keine
+    Links) enthält – dort legt die Let's-Encrypt-Prüfung des Hosters kurz
+    Dateien ab; ein Skript oder eine `.htaccess` darin bleibt ein Befund;
+  - nach einem **Rollback** bleiben Shim, `.htaccess` und `.user.ini` auf
+    dem Stand des neueren Releases (der Rollback tauscht nur `current/`);
+    unterscheiden sie sich von den Vorlagen des älteren, erscheinen sie als
+    Befund, bis das nächste Update durchläuft;
+  - `shared/config.php`: keine Inhaltsprüfung (individuell), aber ein
+    Symlink, eine fehlende oder unlesbare Datei, Rechte mit Gruppen-Schreib-
+    oder irgendeinem Recht für andere (erlaubt 0600 und 0640) und ein
+    Aufbau, der mehr ist als `<?php return <Array aus Literalen>;` plus
+    Kommentare (Aufrufe – auch über einen String oder ein Array als
+    Callable, deshalb „(“ nur direkt nach `array` und „[“ nur, wo ein Wert
+    beginnt –, Variablen, `include`, Backticks, Konstanten,
+    Ausgabe vor oder nach dem PHP-Block – per `token_get_all()`; ohne
+    `ext-tokenizer` entfällt nur diese Teilprüfung). Die Datei wird dafür
+    gelesen, nie ausgeführt; ihr Inhalt landet nirgends.
+  Befunde dieser Art sind kurze Texte („web/shell.php – nicht Teil der
+  Installation“), ohne Dateiinhalte. Das Audit-Log zählt sie als
+  `umgebung`. Eine vor dem Update begonnene Prüfung ohne diese Befundart
+  läuft nach dem Update zu Ende.
 - **Audit-Log:** jede abgeschlossene Prüfung genau einmal – geschrieben
   unter der Sperre, bevor der Endstand gespeichert wird; scheitert das
   Schreiben, bleibt die Prüfung offen und der nächste Schritt versucht es
   erneut. Das Ergebnis steckt in der Aktion selbst –
   `code.integritaet_unveraendert` bzw. `code.integritaet_abweichung` –, damit
   die Liste eine Abweichung auch ohne entsperrten Tresor zeigt. Details nur
-  Version und Anzahlen (Dateien, geändert, fehlend, zusätzlich), keine Pfade.
+  Version und Anzahlen (Dateien, geändert, fehlend, zusätzlich,
+  Web-Verzeichnis/Konfiguration), keine Pfade.
 - Kein Tresor nötig: ein Release enthält keine fachlichen Daten.
 
 ## Pflicht-Tests
@@ -1102,4 +1156,16 @@ Request fortsetzbar, genau ein Abschluss-Schritt, gescheiterter Abschluss
 wird wiederholt; ohne Liste oder ohne Dateizeilen keine Prüfung; fremde
 Version warnt nur, manipulierte `VERSION` ist ein Befund; geänderte Liste
 oder Version bricht ab; Seite, CSRF, Recht `admin.system`, Audit-Eintrag
-mit Anzahlen ohne Pfade.
+mit Anzahlen ohne Pfade. Härtung (issue #241): Liste im Release hat Vorrang
+und ist kein Befund (anderswo schon); gültige Signatur lässt prüfen,
+umgeschriebene signierte Liste, fehlende Signatur und gelöschte Liste sind
+mit festgelegtem Schlüssel ein Alarm (nicht in der Entwicklungsumgebung),
+ohne Schlüssel nur Hinweis; unverändertes `web/` und `config.php` ohne
+Befund; geänderter Shim, fehlende `.htaccess`, geänderte `.user.ini`,
+fremde Dateien/Verzeichnisse, Symlink-Shim und fehlendes `web/` erkannt;
+`config.php`-Rechte (0640 erlaubt, 0644 nicht), eingeschleuster Code,
+fehlende Datei; was `ConfigWriter` schreibt, besteht die Strukturprüfung,
+Code davor/danach, Interpolation, Backticks, Konstanten, Aufrufe (auch
+String-/Array-Callables), Ausgabe und `include` nicht; ACME-Token in
+`.well-known/acme-challenge/` kein Befund, ein Skript dort schon;
+Prüfstand von vor dem Update läuft zu Ende.

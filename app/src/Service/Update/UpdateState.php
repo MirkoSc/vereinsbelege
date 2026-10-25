@@ -30,6 +30,8 @@ final readonly class UpdateState
         public ?string $fehler = null,
         public array $meldungen = [],
         public bool $weiter = false,
+        /** checksums.txt.sig of the release, null when it has none (issue #241) */
+        public ?string $signaturUrl = null,
     ) {
     }
 
@@ -50,6 +52,7 @@ final readonly class UpdateState
             fehler: $fehler,
             meldungen: $meldung !== null ? [...$this->meldungen, $meldung] : $this->meldungen,
             weiter: $weiter,
+            signaturUrl: $this->signaturUrl,
         );
     }
 
@@ -68,6 +71,7 @@ final readonly class UpdateState
             'fehler' => $this->fehler,
             'meldungen' => $this->meldungen,
             'weiter' => $this->weiter,
+            'signatur_url' => $this->signaturUrl,
         ];
     }
 
@@ -88,6 +92,8 @@ final readonly class UpdateState
             fehler: isset($data['fehler']) ? (string) $data['fehler'] : null,
             meldungen: array_values(array_map(strval(...), (array) ($data['meldungen'] ?? []))),
             weiter: (bool) ($data['weiter'] ?? false),
+            // Missing in a state written by a release before issue #241.
+            signaturUrl: isset($data['signatur_url']) ? (string) $data['signatur_url'] : null,
         );
     }
 }

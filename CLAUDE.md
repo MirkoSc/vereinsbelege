@@ -78,7 +78,8 @@ abrufbar ist, der Systemcheck.
    config.php        DB-Zugang, Cron-Token, Server-Schlüssel (Abschnitt 4)
    maintenance.flag  gesetzt, solange der Updater umschaltet (Shim prüft sie)
    update_state.json Stand der Update-Schrittkette
-   release_checksums.txt  Prüfsummen des installierten Releases
+   release_checksums.txt  nur Altbestand; die Prüfsummenliste liegt seit #241
+                     als checksums.txt(.sig) im Release selbst (01 §8)
    var/blobs/        verschlüsselte Dateien (Storage-Backend „Dateisystem")
    var/backups/      Backups (enthalten nur Chiffrat für fachliche Daten)
    var/log/app.log
@@ -92,7 +93,8 @@ Datendateien, die mit ins Release-ZIP kommen, z. B. die Liste häufiger
 Passwörter für `App\Service\Account\PasswordPolicy`), `public/` (CSS, JS,
 vendored JS-Libs), `bin/`, `migrations/`, `tests/`, `setup.php`. Dazu
 `tools/` für eigenständige, abhängigkeitsfreie Hilfsskripte, die **nicht**
-Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5),
+Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5,
+und `tools/release-signatur.php` für die Release-Signatur, 06 §1),
 und `worker/` für das Worker-Programm (`worker/src/`, Namespace
 `App\Worker`, Einstieg `bin/worker.php`; ebenfalls nicht im Release, 07 §8).
 

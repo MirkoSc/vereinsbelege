@@ -102,8 +102,11 @@ final readonly class Paths
     }
 
     /**
-     * checksums.txt of the installed release, kept by the updater for the
-     * code integrity check (docs/spec/01-sicherheit.md section 8).
+     * checksums.txt as releases before issue #241 kept it for the code
+     * integrity check. Since #241 the list lives in the release directory
+     * (ReleaseDownloader::LISTE); this file is only the fallback for an
+     * installation whose release has no list of its own yet
+     * (docs/spec/01-sicherheit.md section 8).
      */
     public function releaseChecksumsFile(): string
     {
