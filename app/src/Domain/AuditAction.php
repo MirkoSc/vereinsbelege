@@ -160,6 +160,8 @@ enum AuditAction: string
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
     /** Issue #66/M10-2: points and thresholds of the matching (field names only). */
     case EinstellungAbgleich = 'einstellung.abgleich';
+    /** Issue #80/M13-3: Impressum/Datenschutz/notice changed (names of the texts only). */
+    case EinstellungRechtstexte = 'einstellung.rechtstexte';
 
     // The ZIP export (issue #76/M12-2): filter, counts, who - never a name.
     case ExportErstellt = 'export.erstellt';
@@ -260,6 +262,7 @@ enum AuditAction: string
             self::UmbuchungGeloest => 'Umbuchung zwischen eigenen Konten gelöst',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
+            self::EinstellungRechtstexte => 'Rechtstexte geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
@@ -350,7 +353,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
-            self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
+            self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::ExportErstellt, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen => null,

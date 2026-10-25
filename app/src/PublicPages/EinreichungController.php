@@ -10,6 +10,8 @@ use App\Repository\CostCenterRepository;
 use App\Repository\VaultRepository;
 use App\Service\Mail\MailSettingsRepository;
 use App\Service\Mail\PublicUrl;
+use App\Service\Rechtstexte\Rechtstext;
+use App\Service\Rechtstexte\Rechtstexte;
 use App\Service\Submission\EinreichungsEinstellungen;
 use App\Service\Submission\FormToken;
 use App\Service\Submission\ProofOfWork;
@@ -49,6 +51,8 @@ final readonly class EinreichungController
         private EinreichungsEinstellungen $einstellungen,
         /** For the link in the notice to the inbox (issue #27/M4-5). */
         private ?MailSettingsRepository $mailSettings = null,
+        /** The privacy notice above the consent checkbox (issue #80/M13-3). */
+        private ?Rechtstexte $rechtstexte = null,
     ) {
     }
 
@@ -67,6 +71,7 @@ final readonly class EinreichungController
             'pausiert' => $this->einstellungen->pausiert,
             'maxSeiten' => $this->einstellungen->maxSeiten,
             'maxDateiMb' => $this->einstellungen->maxDateiMb,
+            'datenschutzHinweis' => $this->rechtstexte?->lesen(Rechtstext::EinreichungHinweis),
             'scripts' => ['/js/upload.js', '/js/iban.js', ...ScannerSkripte::LISTE, '/js/einreichen.js'],
         ], Area::Oeffentlich));
     }

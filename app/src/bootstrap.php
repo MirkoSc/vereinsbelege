@@ -11,6 +11,7 @@ use App\Admin\RoleController;
 use App\Admin\StorageController;
 use App\Admin\ExportSettingsController;
 use App\Admin\NextcloudSettingsController;
+use App\Admin\RechtstexteController;
 use App\Admin\SubmissionSettingsController;
 use App\Admin\SystemCheckController;
 use App\Admin\UpdateController;
@@ -194,6 +195,7 @@ use App\Service\MasterData\SupplierZusammenfuehrung;
 use App\Service\Migration\Migrator;
 use App\Service\Processing\KiAuslese\Auslesung;
 use App\Service\RateLimiter;
+use App\Service\Rechtstexte\Rechtstexte;
 use App\Service\Storage\BlobService;
 use App\Service\Storage\DbBlobBackend;
 use App\Service\Storage\FsBlobBackend;
@@ -223,6 +225,7 @@ use App\Service\Upload\UploadStore;
 use App\Support\FileLogger;
 use App\Support\Version;
 use App\PublicPages\EinreichungController;
+use App\PublicPages\RechtstextController;
 use App\View\View;
 
 // -------------------------------------------------------------------------
@@ -1023,7 +1026,12 @@ $kontoauszuege = static function () use ($connections, $view, $auditFor, $paths)
 // validates and stores what comes back. Built lazily like $mail - rendering
 // the cost-center dropdown and checking whether a vault exists both need the
 // database.
+// The maintained legal texts (issue #80/M13-3): read by /einreichen, the
+// public pages and their admin page below.
+$rechtstexteFor = static fn(\PDO $pdo): Rechtstexte => new Rechtstexte(new SettingRepository($pdo), $paths->dataDir());
+
 $einreichen = static function () use (
+    $rechtstexteFor,
     $connections,
     $view,
     $formToken,
@@ -1067,6 +1075,7 @@ $einreichen = static function () use (
         $spamschutzFor($pdo),
         $einstellungen,
         $mailSettingsFor($pdo),
+        $rechtstexteFor($pdo),
     );
 };
 
@@ -1079,6 +1088,25 @@ $einreichungAdmin = static function () use ($connections, $view, $auditFor): Sub
     $pdo = $connections->pdo();
 
     return new SubmissionSettingsController($view, new Session(), new SettingRepository($pdo), $auditFor($pdo));
+};
+
+// Impressum, Datenschutzerklärung and the notice on /einreichen (issue
+// #80/M13-3, E-46): public pages without a session and their admin page
+// (`admin.settings`). Built lazily like $mail - only these routes need the
+// database. $rechtstexteFor is defined above $einreichen.
+$rechtstexteSeiten = static function () use ($connections, $view, $rechtstexteFor): RechtstextController {
+    return new RechtstextController($view, $rechtstexteFor($connections->pdo()));
+};
+$rechtstexteAdmin = static function () use ($connections, $view, $auditFor, $rechtstexteFor, $serverCrypto): RechtstexteController {
+    $pdo = $connections->pdo();
+
+    return new RechtstexteController(
+        $view,
+        new Session(),
+        $rechtstexteFor($pdo),
+        $auditFor($pdo),
+        new AiProviderRepository($pdo, $serverCrypto),
+    );
 };
 
 // The ZIP export's path pattern (issue #75/M12-1, docs/spec/
@@ -1694,6 +1722,8 @@ $router = new Router();
     $offenSeite,
     $tresorRotation,
     $erstattungen,
+    $rechtstexteSeiten,
+    $rechtstexteAdmin,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

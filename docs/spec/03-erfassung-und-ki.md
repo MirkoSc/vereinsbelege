@@ -149,6 +149,38 @@ Bedienung:
 - Der Posteingang zeigt die aufbereitete Fassung mit „Original öffnen“
   (`Posteingang::seiten()`, `Document::blobIds()` enthält beide).
 
+### Rechtstexte (M13-3, issue #80, E-46 vorläufig)
+
+- **Pflegbar unter `/admin/rechtstexte`** (Recht `admin.settings`, Audit
+  `einstellung.rechtstexte` nur mit den Namen der geänderten Texte):
+  Impressum, Datenschutzerklärung und der Datenschutz-Hinweis über der
+  Checkbox auf `/einreichen`. Gespeichert als Klartext-Settings
+  `rechtstext_impressum`, `rechtstext_datenschutz`,
+  `rechtstext_einreichung_hinweis` (öffentliche Texte, keine Fachdaten;
+  höchstens 60 000 Byte). `App\Service\Rechtstexte\Rechtstexte`.
+- **Vorlagen** unter `app/data/rechtstexte/*.md` mit Platzhaltern in
+  eckigen Klammern (`[Name des Vereins]`). Ohne gespeicherten Text gilt die
+  Vorlage; ein leeres Feld oder die unveränderte Vorlage wird nicht
+  gespeichert (spätere Vorlagen-Updates kommen an). Solange die Vorlage
+  gilt oder Platzhalter offen sind, zeigt die öffentliche Seite „noch eine
+  Vorlage“, die Admin-Seite „Vorlage“/„Platzhalter offen“ – und immer den
+  Hinweis „keine Rechtsberatung“.
+- **Inhalt der Vorlagen:** Impressum nach § 5 DDG/§ 18 MStV;
+  Datenschutzerklärung mit KI-Abschnitt (Anbieter sieht Belege im
+  Klartext, AV-Vertrag nach Art. 28 DSGVO für OpenAI/Anthropic, eigener
+  llama.cpp-Server als datensparsame Option – 01 §1, E-08), Aufbewahrung
+  und Löschung (Fristen als Platzhalter, mit Steuerberater zu klären –
+  E-10), Rechte, Cookies. Die Admin-Seite listet die aktiven KI-Profile
+  (Name, Host) als Erinnerung.
+- **Format:** `App\View\EinfachesMarkdown` – Absätze, Zeilenumbruch,
+  `##`/`###`, `- ` Listen, `**fett**`, Links nur auf `https://`, `http://`,
+  `mailto:`, `tel:` und eigene Pfade. Jedes Zeichen der Eingabe wird
+  escaped, es gibt kein Roh-HTML; abgelehnte Links bleiben als Text sichtbar.
+- **Öffentlich ohne Session** (`Area::Oeffentlich`): `GET /impressum`,
+  `GET /datenschutz`; jede Seite verlinkt beide im Fuß. Auf `/einreichen`
+  steht der Hinweis über der Checkbox, darunter Links auf beide Seiten
+  (neuer Tab, damit erfasste Seiten nicht verloren gehen).
+
 ### HEIC (Issue #147, vorläufig)
 
 - **Server:** `MagicBytes` erkennt HEIC/HEIF am `ftyp`-Kopf (Hauptmarke
@@ -1701,7 +1733,14 @@ liegt (CLAUDE.md §5, E-24).
 
 ## Pflicht-Tests
 
-Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
+Rechtstexte (M13-3: `EinfachesMarkdownTest`: Überschriften/Listen/Absätze,
+nur eigene Tags und `href`, kein Skript/Event-Attribut/`javascript:`/
+`data:`/`//host`, Platzhalter-Erkennung; `RechtstexteFlowTest`: Seiten ohne
+Session mit Vorlage-Hinweis, Fuß-Links, Speichern escaped, unveränderte
+Vorlage nicht gespeichert, leeres Feld = Vorlage, zu lang → nichts
+gespeichert, CSRF, 403 ohne `admin.settings`, Audit nur bei Änderung,
+KI-Anbieter-Liste; `PublicSubmissionTest`: Hinweis escaped mit Links;
+`RoutePermissionMatrixTest`); Scanner-Mathematik (Homographie-Roundtrip, Schwelle auf Referenzbild,
 Viereck-Auswahl); Eck-Editor (Standardrahmen, Anzeige-/Bildkoordinaten-
 Umrechnung, Eckpunkt-Verschieben mit Ablehnung entarteter Vierecke,
 Farbmodus-Anwendung je Modus); Scanner-Einbau (`tests/js/scanner.test.js`:

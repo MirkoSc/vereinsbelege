@@ -989,3 +989,30 @@ soll; ob Kassenprüfer/Vorstand (`report.view`) den Code sehen sollen oder
 nur, wer zahlt (`bank.book`/`matching.edit`); ob die Rechnungsnummer allein
 als Zweck reicht (z. B. Kundennummer dazu); bei mehreren IBANs die IBAN
 von der Rechnung (KI/E-Rechnung) vorziehen.
+
+## E-46 ❓ Rechtstexte: Vorlagen im Setting, Mini-Markdown, öffentlich ohne Session (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*M13-3 (issue #80), 03 §1 „Rechtstexte“*
+
+- **Drei pflegbare Texte** unter `/admin/rechtstexte` (`admin.settings`):
+  Impressum, Datenschutzerklärung, Datenschutz-Hinweis auf `/einreichen`.
+  Gespeichert als Klartext-Settings (öffentliche Texte), keine Migration.
+- **Mitgelieferte Vorlagen** (`app/data/rechtstexte/*.md`) mit Platzhaltern
+  in eckigen Klammern statt echter Angaben; die App trifft keine
+  Rechtsaussage (wie E-10). Solange Vorlage/Platzhalter: sichtbarer Hinweis
+  auf der öffentlichen Seite. Die unveränderte Vorlage wird nicht
+  gespeichert, damit verbesserte Vorlagen mit Updates ankommen.
+- **Format:** minimales Markdown-Subset ohne Roh-HTML
+  (`App\View\EinfachesMarkdown`) – genug für Überschriften, Absätze,
+  Adresszeilen, Listen, Links; kein HTML-Injection-Weg.
+- **Aufbewahrungsfristen nur als Platzhalter** („z. B. 8 bzw. 10 Jahre – mit
+  dem Steuerberater zu klären“), weil die App selbst (noch) nichts
+  automatisch löscht außer nicht abgesendeten Uploads (24 h).
+- Die Admin-Seite listet die aktiven KI-Profile, damit die
+  Datenschutzerklärung den richtigen Anbieter nennt (E-08).
+
+Offen für Mirko: Vorlagentexte juristisch prüfen lassen (Impressumspflicht
+des Vereins, Rechtsgrundlagen, Fristen); ob abgelehnte Einreichungen
+automatisch nach einer Frist gelöscht werden sollen (eigenes Issue); ob die
+Einwilligungs-Checkbox auf `/einreichen` bleiben soll, obwohl die
+Verarbeitung auf Art. 6 Abs. 1 lit. b/c DSGVO beruht (sie bestätigt jetzt
+„Hinweis gelesen“, keine Einwilligung).

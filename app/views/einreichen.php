@@ -25,6 +25,9 @@
  * @var bool $pausiert
  * @var int $maxSeiten
  * @var int $maxDateiMb
+ * @var ?\App\Service\Rechtstexte\RechtstextInhalt $datenschutzHinweis the
+ *      club's notice (issue #80/M13-3); html() escapes every character of
+ *      the maintained text (App\View\EinfachesMarkdown)
  */
 ?>
 <section class="schmal" id="einreichen" data-token="<?= e($token) ?>" data-max-seiten="<?= e($maxSeiten) ?>"
@@ -141,11 +144,22 @@
                 </label>
             <?php endif; ?>
 
+            <?php if (($datenschutzHinweis ?? null) !== null): ?>
+                <div class="feld-hilfe" id="einreichen-datenschutz-hinweis">
+                    <?= $datenschutzHinweis->html() ?>
+                </div>
+            <?php endif; ?>
+
             <label class="feld-ankreuz">
-                <input type="checkbox" name="datenschutz" required>
-                Meine Angaben werden zur Bearbeitung dieser Einreichung gespeichert
-                (Datenschutz-Hinweis).
+                <input type="checkbox" name="datenschutz" required<?= ($datenschutzHinweis ?? null) !== null ? ' aria-describedby="einreichen-datenschutz-hinweis"' : '' ?>>
+                Ich habe den Datenschutz-Hinweis gelesen. Meine Angaben werden zur Bearbeitung dieser
+                Einreichung gespeichert.
             </label>
+            <?php /* New tab: the pages already taken would be lost on leaving the form. */ ?>
+            <p class="feld-hilfe">
+                <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>
+                · <a href="/impressum" target="_blank" rel="noopener">Impressum</a>
+            </p>
             <p class="feld-fehler" data-fehler-fuer="datenschutz" hidden></p>
 
             <p class="feld-fehler" data-fehler-fuer="seiten" hidden></p>
