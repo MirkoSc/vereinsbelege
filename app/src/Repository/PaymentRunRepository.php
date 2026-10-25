@@ -8,7 +8,6 @@ use App\Domain\DocumentStatus;
 use App\Domain\PaymentStatus;
 use App\Domain\ZahllaufRecord;
 use App\Domain\ZahllaufStatus;
-use App\Domain\Zahlungsweg;
 use App\Domain\Zugriffsbereich;
 
 /**
@@ -82,9 +81,28 @@ final readonly class PaymentRunRepository
     }
 
     /**
-     * Locks the documents and then the receipts of $invoiceIds, each in
-     * ascending order - the order App\Service\Bank\Zuordnung locks in, so a
-     * run and an allocation never wait for each other in a circle.
+     * The documents of $invoiceIds - to lock them first with
+     * DocumentRepository::sperreAlle(), in the order App\Service\Bank\
+     * Zuordnung uses (documents -> receipts).
+     *
+     * @param list<int> $invoiceIds
+     *
+     * @return list<int>
+     */
+    public function dokumente(array $invoiceIds): array
+    {
+        if ($invoiceIds === []) {
+            return [];
+        }
+        $stmt = $this->pdo->prepare(sprintf('SELECT document_id FROM invoice WHERE id IN (%s)', implode(', ', array_fill(0, count($invoiceIds), '?'))));
+        $stmt->execute($invoiceIds);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Locks the receipts of $invoiceIds in ascending order (after their
+     * documents).
      *
      * @param list<int> $invoiceIds
      */
@@ -93,11 +111,11 @@ final readonly class PaymentRunRepository
         if ($invoiceIds === []) {
             return;
         }
-        $platz = implode(', ', array_fill(0, count($invoiceIds), '?'));
-        $this->pdo->prepare(
-            "SELECT d.id FROM document d WHERE d.id IN (SELECT i.document_id FROM invoice i WHERE i.id IN ({$platz})) ORDER BY d.id FOR UPDATE",
-        )->execute($invoiceIds);
-        $this->pdo->prepare("SELECT id FROM invoice WHERE id IN ({$platz}) ORDER BY id FOR UPDATE")->execute($invoiceIds);
+        $ids = array_values(array_unique($invoiceIds));
+        sort($ids);
+        $stmt = $this->pdo->prepare(sprintf('SELECT id FROM invoice WHERE id IN (%s) ORDER BY id FOR UPDATE', implode(', ', array_fill(0, count($ids), '?'))));
+        $stmt->execute($ids);
+        $stmt->fetchAll();
     }
 
     /**
@@ -227,16 +245,15 @@ final readonly class PaymentRunRepository
             "SELECT r.*,
                     (SELECT COUNT(*) FROM payment_run_item ci WHERE ci.payment_run_id = r.id) AS anzahl_belege,
                     (SELECT COUNT(*) FROM payment_run_item oi JOIN invoice o ON o.id = oi.invoice_id
-                      WHERE oi.payment_run_id = r.id AND o.payment_kind = ? AND o.payment_status IN (?, ?)) AS offene_belege
+                      WHERE oi.payment_run_id = r.id AND o.payment_status NOT IN (?, ?)) AS offene_belege
              FROM payment_run r
              WHERE NOT EXISTS (
                  SELECT 1 FROM payment_run_item sp JOIN invoice si ON si.id = sp.invoice_id
                  WHERE sp.payment_run_id = r.id AND COALESCE({$scope}, 0) = 0
              )",
             [
-                Zahlungsweg::Erstattung->value,
-                PaymentStatus::ErstattungOffen->value,
-                PaymentStatus::Teilbezahlt->value,
+                PaymentStatus::Bezahlt->value,
+                PaymentStatus::Erstattet->value,
                 ...$parameter,
             ],
         ];

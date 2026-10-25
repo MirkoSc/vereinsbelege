@@ -56,11 +56,7 @@ use App\Service\Processing\Betrag;
                             <td data-label="Ausführung"><?= e($lauf->record->executionDate->format('d.m.Y')) ?></td>
                             <td data-label="Überweisungen" class="zahl"><?= e((string) count($lauf->ueberweisungen)) ?></td>
                             <td data-label="Summe" class="zahl"><?= e(Betrag::format($lauf->summe()) . ' €') ?></td>
-                            <td data-label="Status"><span class="marke <?= match ($lauf->statusText()) {
-                                'ausgeglichen' => 'marke-ok',
-                                'verworfen' => 'marke-fehler',
-                                default => 'marke-warnung',
-                            } ?>"><?= e($lauf->statusText()) ?></span></td>
+                            <td data-label="Status"><span class="marke <?= e($lauf->markeKlasse()) ?>"><?= e($lauf->statusText()) ?></span></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

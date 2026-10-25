@@ -212,6 +212,7 @@ final readonly class Uebersichten
                 ($einreichung?->name ?? '') !== '' ? $einreichung->name : ($einreichung?->kontoinhaber ?? ''),
                 $einreichung?->iban ?? '',
                 $einreichung?->erstattung,
+                $einreichung?->kontoinhaber ?? '',
             );
         }
 

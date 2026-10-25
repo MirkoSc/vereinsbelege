@@ -11,6 +11,7 @@
  * @var int $unlesbar
  * @var string|null $belegPfad
  * @var bool $darfZahllauf
+ * @var array<int, int> $angewiesen invoice id => payment run id
  */
 
 use App\Service\Processing\Betrag;
@@ -81,7 +82,12 @@ use App\Service\Processing\Betrag;
                                     <?php endif; ?>
                                 </td>
                                 <td class="zahl"><?= e(Betrag::format($p->brutto) . ' ' . $p->waehrung) ?></td>
-                                <td class="zahl"><?= e(Betrag::format($p->offen) . ' ' . $p->waehrung) ?></td>
+                                <td class="zahl">
+                                    <?= e(Betrag::format($p->offen) . ' ' . $p->waehrung) ?>
+                                    <?php if (isset(($angewiesen ?? [])[$p->record->id])): ?>
+                                        <br><span class="marke marke-warnung"><?= e('in Zahllauf ' . $angewiesen[$p->record->id] . ' angewiesen') ?></span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

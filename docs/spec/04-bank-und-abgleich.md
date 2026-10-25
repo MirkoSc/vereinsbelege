@@ -883,7 +883,13 @@ mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
   überweisen), ohne Namen, ohne/mit ungültiger IBAN, mit der IBAN eines
   Vereinskontos; je Beleg: nicht „per Überweisung“, nicht EUR, Dokument
   nicht `geprueft`/`festgeschrieben`, schon in einem angewiesenen Lauf,
-  nichts offen. Die Seite nennt den Grund.
+  nichts offen; ebenso eine Gruppe, deren Einreichungen verschiedene
+  Kontoinhaber nennen. Die Seite nennt den Grund. Empfängername in der
+  Datei ist der **Kontoinhaber** laut Einreichung (sonst der Name) – die
+  Bank kann ihn mit der IBAN abgleichen. „Offene Erstattungen“ markiert
+  Belege, die ein angewiesener Lauf enthält, damit niemand sie zusätzlich
+  von Hand überweist; ein Konto mit Zahllauf lässt sich nicht löschen
+  (nur deaktivieren).
 - **Anlegen:** Auswahl per Beleg (vorbelegt: alle wählbaren), Auftraggeber-
   konto (aktives Bankkonto mit gültiger IBAN, BIC falls hinterlegt),
   Kontoinhaber (vorbelegt mit dem Vereinsnamen der Mail-Einstellungen),
@@ -909,8 +915,8 @@ mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
 - **Status:** `angewiesen`, bis der Abgleich jede Überweisung gefunden hat –
   dann zeigt der Lauf **ausgeglichen** (abgeleitet aus den
   `payment_status` seiner Belege, nicht gespeichert); je Überweisung
-  „zugeordnet“/„offen“. **Verwerfen** (nur `angewiesen` und nicht
-  ausgeglichen) gibt die Belege frei – gedacht für eine abgelehnte oder
+  „zugeordnet“/„offen“ (ausgeglichen = `bezahlt`/`erstattet`). **Verwerfen**
+  (serverseitig nur `angewiesen` und nicht ausgeglichen) gibt die Belege frei – gedacht für eine abgelehnte oder
   nie eingereichte Datei.
 - **Zugriffsbereich:** Ein Lauf ist nur sichtbar (und herunterladbar,
   verwerfbar), wenn **alle** seine Belege im Bereich liegen – die Datei

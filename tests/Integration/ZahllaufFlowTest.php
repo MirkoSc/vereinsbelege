@@ -64,6 +64,7 @@ use App\Service\Crypto\FieldCipher;
 use App\Service\Crypto\FieldContext;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Crypto\Vault;
+use App\Service\Mail\MailSettingsRepository;
 use App\Service\MasterData\SupplierService;
 use App\Service\Migration\Migrator;
 use App\Tests\Service\Bank\Sepa\Pain001Test;
@@ -357,6 +358,63 @@ final class ZahllaufFlowTest extends DatabaseTestCase
         self::assertSame('verworfen', $this->zeile('payment_run', (int) basename($ort))['status']);
     }
 
+    public function testThePayeeIsTheAccountHolderTheSubmissionNamed(): void
+    {
+        $beleg = $this->erstattung(2500, 'Max Becker', self::IBAN_ANNA, kontoinhaber: 'Anna Becker');
+        $id = $this->anlegen([$beleg]);
+
+        self::assertSame('Anna Becker', $this->zahllaeufe()->finde($this->tresor, $id, Zugriffsbereich::unbeschraenkt())?->ueberweisungen[0]->name);
+
+        // Two holders for one IBAN: a human decides.
+        $this->erstattung(1000, 'Bert Beispiel', self::IBAN_BERT, kontoinhaber: 'Bert Beispiel');
+        $this->erstattung(1000, 'Bert Beispiel', self::IBAN_BERT, kontoinhaber: 'Berta Beispiel');
+        self::assertStringContainsString('verschiedene Kontoinhaber', (string) $this->gruppe('Bert Beispiel')->sperrgrund);
+    }
+
+    public function testASettledRunCannotBeDiscardedAndItsAccountNotDeleted(): void
+    {
+        $beleg = $this->erstattung(2500, 'Anna Auslage', self::IBAN_ANNA);
+        $id = $this->anlegen([$beleg]);
+        $this->erstattungen()->zuordnen($this->tresor, $this->buchung(-2500, self::IBAN_ANNA), [$beleg], Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
+
+        try {
+            $this->zahllaeufe()->verwerfen($id, Zugriffsbereich::unbeschraenkt(), $this->userId, self::IP, new \DateTimeImmutable());
+            self::fail('discarded a settled run');
+        } catch (BankRuleViolation $e) {
+            self::assertStringContainsString('ausgeglichen', $e->getMessage());
+        }
+        self::assertSame('ausgeglichen', $this->zahllaeufe()->finde($this->tresor, $id, Zugriffsbereich::unbeschraenkt())?->statusText());
+
+        $konten = new BankAccountService($this->pdo(), new BankAccountRepository($this->pdo()));
+        $leer = $konten->anlegen($this->tresor, BankAccountKind::Bank, ['name' => 'Tagesgeld', 'iban' => self::IBAN_FREMD, 'bic' => '', 'bank' => '', 'opening_balance' => '0,00', 'opening_date' => '2026-01-01'], new \DateTimeImmutable())->id;
+        $zweiter = $this->erstattung(700, 'Bert Beispiel', self::IBAN_BERT);
+        $this->zahllaeufe()->anlegen($this->tresor, Zugriffsbereich::unbeschraenkt(), [$zweiter], $leer, 'TSV', new \DateTimeImmutable('today'), $this->userId, self::IP, new \DateTimeImmutable());
+        $this->expectException(BankRuleViolation::class);
+        $konten->loeschen($leer);
+    }
+
+    public function testTheOpenReimbursementsMarkWhatARunHasOrdered(): void
+    {
+        $beleg = $this->erstattung(2500, 'Anna Auslage', self::IBAN_ANNA);
+        $id = $this->anlegen([$beleg]);
+        $empfaenger = $this->uebersichten()->erstattungen($this->tresor, Zugriffsbereich::unbeschraenkt(), new \DateTimeImmutable())['empfaenger'];
+
+        $html = new View(dirname(__DIR__, 2) . '/app/views', '0.0.0-test')->render('app/offen-erstattungen', [
+            'title' => 'Offene Erstattungen',
+            'flash' => null,
+            'entsperrt' => true,
+            'empfaenger' => $empfaenger,
+            'unlesbar' => 0,
+            'belegPfad' => null,
+            'reiter' => [],
+            'darfZahllauf' => true,
+            'angewiesen' => new PaymentRunRepository($this->pdo())->angewieseneBelege([$beleg]),
+        ], \App\View\Area::App);
+
+        self::assertStringContainsString('in Zahllauf ' . $id . ' angewiesen', $html);
+        self::assertStringContainsString('href="/app/zahllaeufe/neu"', $html);
+    }
+
     /**
      * @param list<int> $belege
      */
@@ -392,23 +450,30 @@ final class ZahllaufFlowTest extends DatabaseTestCase
         return array_map(static fn(int $id) => $nachId[$id] ?? self::fail('missing ' . $id), $ids);
     }
 
-    private function zahllaeufe(): Zahllaeufe
+    private function uebersichten(): Uebersichten
     {
         $pdo = $this->pdo();
         $kategorien = new CategoryRepository($pdo);
-        $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+
+        return new Uebersichten(
+            new InvoiceRepository($pdo),
+            new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+            ZuordnungFabrik::bauen($pdo, $this->audit),
+            new Buchungen($pdo, new BankTransactionRepository($pdo), new BankAccountService($pdo, new BankAccountRepository($pdo)), $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
+        );
+    }
+
+    private function zahllaeufe(): Zahllaeufe
+    {
+        $pdo = $this->pdo();
 
         return new Zahllaeufe(
             $pdo,
             new PaymentRunRepository($pdo),
-            new Uebersichten(
-                new InvoiceRepository($pdo),
-                new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
-                ZuordnungFabrik::bauen($pdo, $this->audit),
-                new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings(new SettingRepository($pdo))),
-            ),
-            $konten,
+            $this->uebersichten(),
+            new BankAccountService($pdo, new BankAccountRepository($pdo)),
             $this->audit,
+            new DocumentRepository($pdo),
         );
     }
 
@@ -431,6 +496,7 @@ final class ZahllaufFlowTest extends DatabaseTestCase
         DocumentStatus $status = DocumentStatus::Geprueft,
         string $datum = '2026-02-14',
         string $nummer = '',
+        ?string $kontoinhaber = null,
     ): int {
         ++$this->laufnummer;
         $einreichungen = new SubmissionRepository($this->pdo());
@@ -439,7 +505,7 @@ final class ZahllaufFlowTest extends DatabaseTestCase
         $payload = json_encode([
             'name' => $name,
             'email' => null,
-            'erstattung' => ['art' => $art, 'iban' => $iban, 'kontoinhaber' => $name],
+            'erstattung' => ['art' => $art, 'iban' => $iban, 'kontoinhaber' => $kontoinhaber ?? $name],
             'freitext' => '',
             'kostenstelle_hinweis' => null,
         ], JSON_THROW_ON_ERROR);
@@ -557,7 +623,7 @@ final class ZahllaufFlowTest extends DatabaseTestCase
                 return $user === null ? null : new SessionUser($user, 'Test', new UserAccessRepository($pdo)->berechtigungen($id));
             },
         );
-        $zahllaeufe = fn(): ZahllaufController => new ZahllaufController($view, new Session(), new SessionVault(), $this->zahllaeufe(), new SettingRepository($pdo));
+        $zahllaeufe = fn(): ZahllaufController => new ZahllaufController($view, new Session(), new SessionVault(), $this->zahllaeufe(), new MailSettingsRepository(new SettingRepository($pdo), new ServerCrypto(random_bytes(32))));
         $unerreichbar = static fn(): never => throw new \LogicException('Diese Route gehört nicht zu diesem Test.');
 
         $controller = array_fill(0, 38, $unerreichbar);

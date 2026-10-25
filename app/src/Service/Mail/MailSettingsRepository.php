@@ -35,7 +35,7 @@ final readonly class MailSettingsRepository
 
     private const string ANTWORT_AN = 'mail_antwort_an';
 
-    public const string VEREINSNAME = 'mail_vereinsname';
+    private const string VEREINSNAME = 'mail_vereinsname';
 
     private const string OEFFENTLICHE_URL = 'oeffentliche_url';
 
@@ -43,6 +43,12 @@ final readonly class MailSettingsRepository
         private SettingRepository $settings,
         private ServerCrypto $crypto,
     ) {
+    }
+
+    /** The club's name alone - the payer of a SEPA payment run (issue #85) - without decrypting anything. */
+    public function vereinsname(): string
+    {
+        return $this->settings->get(self::VEREINSNAME);
     }
 
     public function get(): MailSettings

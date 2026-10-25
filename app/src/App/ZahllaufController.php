@@ -12,7 +12,6 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
-use App\Repository\SettingRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Bank\BankRuleViolation;
 use App\Service\Bank\Zahllaeufe;
@@ -44,7 +43,7 @@ final readonly class ZahllaufController
         private Session $session,
         private SessionVault $sessionVault,
         private Zahllaeufe $zahllaeufe,
-        private SettingRepository $settings,
+        private MailSettingsRepository $mailSettings,
     ) {
     }
 
@@ -77,7 +76,7 @@ final readonly class ZahllaufController
             'title' => 'Neuer SEPA-Zahllauf',
             'flash' => $this->session->pullFlash(),
             'vorbereitung' => $this->zahllaeufe->vorbereitung($tresor, $this->bereich(), $heute),
-            'auftraggeber' => $this->settings->get(MailSettingsRepository::VEREINSNAME),
+            'auftraggeber' => $this->mailSettings->vereinsname(),
             'ausfuehrung' => $heute->format('Y-m-d'),
         ], Area::App));
     }

@@ -24,11 +24,7 @@ $angewiesen = $lauf->record->status === ZahllaufStatus::Angewiesen;
     <div class="tabelle-rahmen">
         <table class="tabelle">
             <tbody>
-                <tr><th scope="row">Status</th><td><span class="marke <?= match ($lauf->statusText()) {
-                    'ausgeglichen' => 'marke-ok',
-                    'verworfen' => 'marke-fehler',
-                    default => 'marke-warnung',
-                } ?>"><?= e($lauf->statusText()) ?></span></td></tr>
+                <tr><th scope="row">Status</th><td><span class="marke <?= e($lauf->markeKlasse()) ?>"><?= e($lauf->statusText()) ?></span></td></tr>
                 <tr><th scope="row">Auftraggeber</th><td><?= e($lauf->auftraggeber) ?></td></tr>
                 <tr><th scope="row">Konto</th><td><?= e($lauf->kontoName) ?><br><span class="gedaempft"><?= e(Iban::formatieren($lauf->iban) . ($lauf->bic !== '' ? ' · ' . $lauf->bic : '')) ?></span></td></tr>
                 <tr><th scope="row">Angelegt</th><td><?= e($lauf->erstellt->format('d.m.Y H:i')) ?></td></tr>

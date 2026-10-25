@@ -38,8 +38,8 @@ final readonly class Zahllauf
     }
 
     /**
-     * Ordered and every receipt matched with its booking: nothing of the
-     * run is open any more.
+     * Ordered and every receipt settled (`bezahlt`/`erstattet`): nothing
+     * of the run is open any more.
      */
     public function ausgeglichen(): bool
     {
@@ -51,12 +51,22 @@ final readonly class Zahllauf
     {
         foreach ($u->belege as $beleg) {
             $status = $this->belegStatus[$beleg] ?? null;
-            if ($status === null || $status === PaymentStatus::ErstattungOffen || $status === PaymentStatus::Teilbezahlt) {
+            if ($status === null || !$status->ausgeglichen()) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /** The badge class of /admin/designsystem for statusText(). */
+    public function markeKlasse(): string
+    {
+        return match (true) {
+            $this->record->status === ZahllaufStatus::Verworfen => 'marke-fehler',
+            $this->ausgeglichen() => 'marke-ok',
+            default => 'marke-warnung',
+        };
     }
 
     public function statusText(): string

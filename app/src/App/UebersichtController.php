@@ -12,6 +12,7 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\ResponseInterface;
 use App\Http\Session;
+use App\Repository\PaymentRunRepository;
 use App\Service\Account\SessionVault;
 use App\Service\Bank\Uebersichten;
 use App\Service\Crypto\CryptoException;
@@ -48,6 +49,7 @@ final readonly class UebersichtController
         private Uebersichten $uebersichten,
         private Serien $serien,
         private ?MailSettingsRepository $mailSettings = null,
+        private ?PaymentRunRepository $zahllaeufe = null,
     ) {
     }
 
@@ -102,6 +104,11 @@ final readonly class UebersichtController
             ...$ergebnis,
             // The payment runs (issue #85) need `matching.edit`.
             'darfZahllauf' => $this->berechtigungen()->darf(Permission::MatchingEdit),
+            // Receipts already ordered in a run: nobody pays them by hand as well.
+            'angewiesen' => $this->zahllaeufe?->angewieseneBelege(array_merge(...array_map(
+                static fn($g): array => array_map(static fn($p): int => $p->record->id, $g->posten),
+                $ergebnis['empfaenger'],
+            ))) ?? [],
         ]);
     }
 

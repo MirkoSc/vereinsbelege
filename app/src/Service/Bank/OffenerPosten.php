@@ -30,6 +30,7 @@ final readonly class OffenerPosten
         public string $einreicher = '',
         public string $iban = '',
         public ?Erstattungsart $erstattungsart = null,
+        public string $kontoinhaber = '',
     ) {
     }
 }

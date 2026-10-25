@@ -473,6 +473,10 @@ Die Spec (03 §7) legt die sechs Stufen fest, nicht die Details. Umgesetzt:
   sichtbar, wenn **alle** seine Belege im Bereich liegen. Kein eigenes
   Recht (die Spec sieht keines vor). **Offen für Mirko:** ob ein
   Vier-Augen-Prinzip (Anlegen ≠ Herunterladen) gewünscht ist.
+- **Empfängername = Kontoinhaber** laut Einreichung (sonst Name des
+  Einreichers), weil die Bank Name und IBAN abgleichen kann (Empfänger-
+  überprüfung); nennen Einreichungen derselben IBAN verschiedene Inhaber,
+  wird die Gruppe nicht angeboten.
 - **Auftraggeber-Name** frei eingebbar, vorbelegt mit dem Vereinsnamen aus
   den Mail-Einstellungen (kein eigenes Setting), Umlaute ausgeschrieben.
 

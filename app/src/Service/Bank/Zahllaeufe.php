@@ -13,6 +13,7 @@ use App\Domain\Iban;
 use App\Domain\ZahllaufRecord;
 use App\Domain\ZahllaufStatus;
 use App\Domain\Zugriffsbereich;
+use App\Repository\DocumentRepository;
 use App\Repository\PaymentRunRepository;
 use App\Service\Audit\AuditLog;
 use App\Service\Bank\Sepa\Pain001;
@@ -69,6 +70,7 @@ final readonly class Zahllaeufe
         private Uebersichten $uebersichten,
         private BankAccountService $konten,
         private AuditLog $audit,
+        private DocumentRepository $dokumente,
     ) {
     }
 
@@ -127,6 +129,7 @@ final readonly class Zahllaeufe
 
         $this->pdo->beginTransaction();
         try {
+            $this->dokumente->sperreAlle($this->laeufe->dokumente($belege));
             $this->laeufe->sperreBelege($belege);
             // Read again under the locks: an allocation or another run in
             // the meantime changes what is open.
@@ -207,7 +210,7 @@ final readonly class Zahllaeufe
         $kontoNamen = $this->kontoNamen($vault);
         foreach ($this->laeufe->liste($bereich) as $record) {
             try {
-                $laeufe[] = $this->entschluesseln($vault, $record, $kontoNamen);
+                $laeufe[] = $this->entschluesseln($vault, $record, $kontoNamen[$record->bankAccountId] ?? null);
             } catch (CryptoException | \JsonException) {
                 ++$unlesbar;
             }
@@ -225,20 +228,13 @@ final readonly class Zahllaeufe
         if ($record === null) {
             return null;
         }
-        $lauf = $this->entschluesseln($vault, $record, $this->kontoNamen($vault));
+        try {
+            $kontoName = $this->konten->finde($vault, $record->bankAccountId)?->data->name;
+        } catch (CryptoException | \JsonException) {
+            $kontoName = null;
+        }
 
-        return new Zahllauf(
-            $lauf->record,
-            $lauf->kontoName,
-            $lauf->auftraggeber,
-            $lauf->iban,
-            $lauf->bic,
-            $lauf->msgId,
-            $lauf->pmtInfId,
-            $lauf->erstellt,
-            $lauf->ueberweisungen,
-            $this->laeufe->belegeDesLaufs($id),
-        );
+        return $this->entschluesseln($vault, $record, $kontoName, $this->laeufe->belegeDesLaufs($id));
     }
 
     /**
@@ -276,8 +272,13 @@ final readonly class Zahllaeufe
         $this->pdo->beginTransaction();
         try {
             $record = $this->laeufe->find($id, $bereich, sperren: true);
-            if ($record === null || !$this->laeufe->verwerfen($id, $userId, $now)) {
+            if ($record === null || $record->status !== ZahllaufStatus::Angewiesen) {
                 throw new BankRuleViolation('Dieser Zahllauf ist nicht (mehr) angewiesen.');
+            }
+            // Settled means the money went out: discarding would free the
+            // receipts for a second payment.
+            if ($record->offeneBelege === 0 || !$this->laeufe->verwerfen($id, $userId, $now)) {
+                throw new BankRuleViolation('Dieser Zahllauf ist bereits ausgeglichen und lässt sich nicht verwerfen.');
             }
             $this->audit->record(AuditAction::ZahllaufVerworfen, $userId, $ip, $id, ['belege' => $record->anzahlBelege], $now);
             $this->pdo->commit();
@@ -316,10 +317,19 @@ final readonly class Zahllaeufe
 
         $gruppen = [];
         foreach ($empfaenger as $g) {
-            $sepaName = SepaText::bereinigen($g->name, Pain001::NAME_LAENGE);
+            // The payee of a transfer is the account holder the submission
+            // gave (the bank may check it against the IBAN), else the name.
+            $inhaber = [];
+            foreach ($g->posten as $p) {
+                $text = trim((string) preg_replace('/\s+/u', ' ', $p->kontoinhaber));
+                $inhaber[mb_strtolower($text)] ??= $text;
+            }
+            $inhaber = array_values(array_filter($inhaber, static fn(string $t): bool => $t !== ''));
+            $sepaName = SepaText::bereinigen($inhaber[0] ?? $g->name, Pain001::NAME_LAENGE);
             $sperrgrund = match (true) {
                 $g->name === '' => 'Ohne Namen des Einreichers – bitte von Hand erstatten.',
                 $g->mehrdeutig => 'Derselbe Name kommt mit einer anderen oder ohne IBAN vor. Bitte prüfen, wem das Konto gehört, und von Hand überweisen.',
+                count($inhaber) > 1 => 'Die Einreichungen nennen verschiedene Kontoinhaber für diese IBAN. Bitte prüfen und von Hand überweisen.',
                 $g->iban === '' || !Iban::istGueltig($g->iban) => 'Keine gültige IBAN in der Einreichung.',
                 isset($eigene[$g->iban]) => 'Die IBAN ist ein Konto des Vereins.',
                 $sepaName === '' => 'Der Name lässt sich nicht in SEPA-Zeichen schreiben.',
@@ -464,11 +474,12 @@ final readonly class Zahllaeufe
     }
 
     /**
-     * @param array<int, string> $kontoNamen
+     * @param string|null $kontoName the account's current name, null: the one the run stored
+     * @param array<int, \App\Domain\PaymentStatus> $belegStatus
      *
      * @throws CryptoException|\JsonException
      */
-    private function entschluesseln(Vault $vault, ZahllaufRecord $record, array $kontoNamen): Zahllauf
+    private function entschluesseln(Vault $vault, ZahllaufRecord $record, ?string $kontoName, array $belegStatus = []): Zahllauf
     {
         $daten = $this->daten($vault, $record);
 
@@ -480,7 +491,7 @@ final readonly class Zahllaeufe
 
         return new Zahllauf(
             $record,
-            $kontoNamen[$record->bankAccountId] ?? self::text($daten, 'konto_name'),
+            $kontoName ?? self::text($daten, 'konto_name'),
             self::text($daten, 'auftraggeber'),
             self::text($daten, 'iban'),
             self::text($daten, 'bic'),
@@ -488,6 +499,7 @@ final readonly class Zahllaeufe
             self::text($daten, 'pmt_inf_id'),
             $erstellt,
             self::ueberweisungen($daten),
+            $belegStatus,
         );
     }
 
