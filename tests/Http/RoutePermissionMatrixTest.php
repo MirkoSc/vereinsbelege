@@ -769,7 +769,9 @@ final class RoutePermissionMatrixTest extends TestCase
     public function testEveryWritingRouteWantsACsrfToken(): void
     {
         $router = $this->router();
-        $alleRechte = new Berechtigungen([new Role(1, 'Alles', null, false, Permission::cases())]);
+        // Admin holds every right (issue #19: "Admin fest"), so a 403 below
+        // can only come from the token - checked by the valid-token call.
+        $alleRechte = self::berechtigungen(SystemRole::Admin);
         $geprueft = 0;
 
         foreach ($router->routes() as $route) {
@@ -802,6 +804,8 @@ final class RoutePermissionMatrixTest extends TestCase
                     self::assertStringStartsWith('text/html', $antwort->headers['Content-Type'] ?? '', $route->pattern);
                 }
             }
+            $mitToken = $this->aufrufen($router, HttpMethod::Post, $pfad);
+            self::assertTrue($this->erreicht($mitToken), 'POST ' . $route->pattern . ' with a valid token must reach its handler, or the 403 above proves nothing');
             ++$geprueft;
         }
 

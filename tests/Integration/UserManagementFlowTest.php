@@ -640,7 +640,6 @@ final class UserManagementFlowTest extends DatabaseTestCase
         // The account also had an authenticator app - its secret is under the
         // lost key as well.
         new MfaTotpRepository($this->pdo())->putConfirmed($id, $fremd->encrypt('JBSWY3DPEHPK3PXP'), 0);
-        new MfaTotpRepository($this->pdo())->confirm($id);
         new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
 
         // An invalid address does not touch anything, the authenticator included.
@@ -706,7 +705,6 @@ final class UserManagementFlowTest extends DatabaseTestCase
         $stmt->execute();
         // ... but the authenticator secret is under the CURRENT key.
         new MfaTotpRepository($this->pdo())->putConfirmed($id, $this->crypto->encrypt('JBSWY3DPEHPK3PXP'), 0);
-        new MfaTotpRepository($this->pdo())->confirm($id);
         new UserRepository($this->pdo())->updateMfaMethod($id, MfaMethod::Totp);
 
         $admin = $this->anmelden(self::ADMIN, self::ADMIN_PW);
