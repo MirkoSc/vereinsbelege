@@ -23,7 +23,8 @@
     },
     "autoload": {
         "psr-4": {
-            "App\\": "app/src/"
+            "App\\": "app/src/",
+            "App\\Worker\\": "worker/src/"
         },
         "files": [
             "app/src/View/helpers.php"

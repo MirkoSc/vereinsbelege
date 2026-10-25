@@ -32,6 +32,10 @@ aktuelle Issue verlinkt**, nicht alle.
   Angriffsfläche. Weil der Hoster einen Verstoß nicht verhindert, setzt die
   lokale Docker-Umgebung `disable_functions` und `NoShellExecutionTest` prüft
   den Quellcode – ein Verstoß fällt in den Tests auf, nicht erst im Betrieb.
+  Einzige Ausnahme: der optionale Worker (eigener Container, nie auf dem
+  Webhoster) startet Poppler/OCRmyPDF – nur über `worker/src/Prozess.php`
+  (`proc_open` mit Argumentliste), `worker/` ist nicht im Release-ZIP
+  (07 §8, E-50).
 - Deployment ausschließlich über Release-ZIPs (GitHub Releases) +
   `setup.php`/Self-Updater – **übernommen aus `MirkoSc/vereinskalender`**.
 - **PHP 8.5**, fehler- und deprecation-frei; Enums, readonly, Promotion,
@@ -88,7 +92,9 @@ Datendateien, die mit ins Release-ZIP kommen, z. B. die Liste häufiger
 Passwörter für `App\Service\Account\PasswordPolicy`), `public/` (CSS, JS,
 vendored JS-Libs), `bin/`, `migrations/`, `tests/`, `setup.php`. Dazu
 `tools/` für eigenständige, abhängigkeitsfreie Hilfsskripte, die **nicht**
-Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5).
+Teil eines Releases sind (derzeit `tools/hosting-check.php`, siehe 06 §5),
+und `worker/` für das Worker-Programm (`worker/src/`, Namespace
+`App\Worker`, Einstieg `bin/worker.php`; ebenfalls nicht im Release, 07 §8).
 
 ## 3. Bereiche der Anwendung
 

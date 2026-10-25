@@ -17,6 +17,7 @@ use App\Http\ResponseInterface;
 use App\Http\StreamResponse;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\DocumentRepository;
 use App\Repository\JobRepository;
 use App\Repository\VaultRepository;
 use App\Repository\WorkerGrantRepository;
@@ -84,6 +85,8 @@ final readonly class WorkerApiController
         // Issue #53: module switch, AI key release, fallback after failure.
         private WorkerRouting $routing,
         private WorkerFallback $fallback,
+        // Issue #54: which granted blob is which original, for bin/worker.php.
+        private DocumentRepository $documents,
     ) {
     }
 
@@ -376,10 +379,20 @@ final readonly class WorkerApiController
         $dokument = null;
         if ($job->refType === 'document' && $job->refId !== null) {
             $kontext = $this->grants->kontextFuer($worker->id, $job->refId, $now);
+            $blobs = $this->grants->blobIdsFuer($worker->id, $job->refId, $now);
+            $gewaehrt = static fn(?int $id): ?int => $id !== null && in_array($id, $blobs, true) ? $id : null;
+            $document = $this->documents->find($job->refId);
             $dokument = [
                 'id' => $job->refId,
-                'blobs' => $this->grants->blobIdsFuer($worker->id, $job->refId, $now),
+                'blobs' => $blobs,
                 'kontext' => $kontext === null ? null : base64_encode($kontext),
+                // Ids only (issue #54): the worker numbers its `text` and
+                // `pdfa` results by the original's place, and prefers the
+                // processed scan of an image page. Content and type of each
+                // blob it learns only by opening its grant.
+                'originale' => $document?->originalBlobIds ?? [],
+                'verarbeitet' => array_map($gewaehrt, $document?->processedBlobIds ?? []),
+                'pdf' => $gewaehrt($document?->pdfBlobId),
             ];
         }
 

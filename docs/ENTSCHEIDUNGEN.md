@@ -1234,3 +1234,66 @@ Getroffen ohne Rückfrage:
 - „OCR nachholen“ gibt es vorerst nur als Sammelaktion im Admin (50 je
   Klick); der Knopf je Beleg im Posteingang folgt mit der Posteingangs-
   Oberfläche des Workers (offen).
+
+## E-50 ❓ Worker-Programm: Prozess-Grenze, Eingaben, Beenden (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: issue #54/M7b-4, CLAUDE.md §1/§2, 07 §5 und §8; keine Migration*
+
+Getroffen ohne Rückfrage:
+
+- **Abgrenzung des Verbots von Prozess-Aufrufen** (CLAUDE.md §1): Es gilt
+  weiter für alles, was auf dem Webhoster läuft. Der Worker-Code liegt in
+  `worker/src/` (Namespace `App\Worker`) und damit **nicht** im
+  Release-ZIP; `bin/worker.php` ist nur der Einstieg (ohne eigene
+  Prozess-Aufrufe, verweigert alles außer CLI). Programme startet genau
+  **eine** Datei, `worker/src/Prozess.php`: nur `proc_open()` mit
+  Argumentliste (keine Shell), stdin `/dev/null`, Umgebung auf `PATH`,
+  `HOME`, `TMPDIR`, `LANG` reduziert, Zeitlimit, Abbruch per SIGTERM →
+  SIGKILL. `exec`, `shell_exec`, `system`, `passthru`, `popen`, Backticks
+  bleiben auch im Worker verboten. Geprüft von `NoShellExecutionTest`
+  (scannt jetzt auch `worker/`) und `WorkerProzessGrenzeTest` (kein Web-Code
+  nennt `App\Worker`, `worker/` nicht im ZIP, Argumentliste).
+  `ProcessingArchitectureTest` prüft `worker/src/` wie `Service/Processing`.
+- **Job-Kontext um Rollen der Blobs erweitert:** `GET /jobs/{id}/context`
+  liefert zusätzlich `dokument.originale` (IDs in Seitenreihenfolge),
+  `verarbeitet` (parallel, nur gewährte) und `pdf`. Ohne das kann der
+  Worker `text`/`pdfa` nicht je Original nummerieren. Nur IDs, keine
+  Inhalte; Typen erkennt der Worker an den Magic Bytes nach dem
+  Entschlüsseln.
+- **`ai_extract` auf dem Worker** nutzt `Auslesung` + `KiAbfrage`
+  unverändert, sammelt die Eingabe aber selbst: E-Rechnung aus XML/PDF,
+  Text aus den eigenen Textebenen der PDFs, sonst – wenn OCR-Werkzeuge da
+  sind – eigener Tesseract-Text (die gespeicherten OCR-Ergebnisse sind an
+  den Tresor versiegelt und für den Worker unlesbar), sonst Seitenbilder
+  (verarbeiteter Scan, Foto, PDF-Seiten per Poppler). Wie in der Session:
+  brauchbarer Text **ersetzt** die Bilder. Keine Lieferanten-Vorauswahl
+  (braucht den Blind-Index des Tresors). Ohne Standardprofil oder ohne
+  Lesbares → endgültiges `fail` (`KiNichtEingerichtet`/`KiNichtLesbar`),
+  die Session übernimmt.
+- **`ocr`** liest ein Bild aus seinem verarbeiteten Scan, falls vorhanden.
+  Ein Original, das OCR nicht lesen kann (XML, HEIC ohne Scan) oder ohne
+  erkannten Text, beendet den Job endgültig – der Webhoster übernimmt nur
+  vollständige Läufe, OCR entfällt dann für diesen Beleg.
+- **`image_cleanup`** wird nirgends eingereiht und ist im Worker nicht
+  umgesetzt: ein solcher Job wird endgültig zurückgegeben
+  (`JobTypNichtUnterstuetzt`).
+- **Beenden (SIGTERM/SIGINT):** laufendes Werkzeug wird beendet, laufende
+  Übertragung abgebrochen, der Job mit `fail` ohne `endgueltig`
+  (`WorkerBeendet`) zurückgegeben. Das verbraucht einen der drei Versuche –
+  eine Rückgabe ohne Versuchszählung gibt die API nicht her (offen).
+- **Arbeitsverzeichnis nur im RAM:** Der Worker startet nicht, wenn das
+  Arbeitsverzeichnis laut `/proc/self/mounts` nicht auf `tmpfs`/`ramfs`
+  liegt – ohne Schalter zum Abschalten. Je Job ein eigenes Verzeichnis
+  (0700), im `finally` gelöscht; Reste eines abgestürzten Workers räumt der
+  Start weg.
+- **http:// nur für Tests auf demselben Rechner:** `WORKER_ERLAUBE_HTTP_
+  LOCALHOST=1` erlaubt http:// ausschließlich zu `localhost`, `127.0.0.1`,
+  `[::1]`. Ein End-to-End-Test zweier Container (#55) braucht damit TLS
+  oder eine Erweiterung dieser Regel (offen).
+- **Uhrzeit vom Webhoster:** Der Pi hat keine gepufferte Uhr. Der Worker
+  übernimmt den Versatz aus `server_zeit` des Heartbeats und – einmal – aus
+  dem `Date`-Header einer 401-Antwort, und signiert mit der Zeit des
+  Webhosters.
+- **Wiederholungen:** Netzfehler, 429 und 5xx bis zu 4 Versuche mit
+  2/4/8 s Pause, jeder mit neuem Nonce und Zeitstempel; die Schleife
+  weicht bei Fehlern 5 s … 5 min (±20 %) zurück. `pair` wird nie
+  wiederholt (der Code ist verbraucht).
