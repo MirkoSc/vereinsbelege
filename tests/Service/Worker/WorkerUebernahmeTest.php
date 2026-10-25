@@ -122,6 +122,50 @@ final class WorkerUebernahmeTest extends WorkerTestCase
         self::assertSame('RE-2026-0815', $auszug->extraktion['invoice_number'] ?? null);
     }
 
+    public function testTheWorkersAiCallsAppearInTheCallLogOnceWithoutContent(): void
+    {
+        $doc = $this->dokument();
+        [$id, $schluessel, $job] = $this->workerJob(KiAuslesung::JOB_TYP, $doc);
+        // The first attempt as an odd worker might report it: text where an
+        // identifier belongs, numbers outside their columns.
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 0, $this->extraktion(false, aufruf: [
+            'anbieter_id' => 999,
+            'anbieter_name' => 'Rechnung RE-2026-0815 Müller',
+            'modell' => 'Sportartikel Müller GmbH',
+            'dauer_ms' => -5,
+            'http_status' => 70000,
+            'prompt_tokens' => 12,
+        ]));
+        $this->datenArtefakt($doc, ArtifactKind::Extraction, $job['id'], 1, $this->extraktion(true));
+        $this->abschliessen($id, $schluessel, $job);
+
+        $uebernahme = $this->jobs->claim(JobExecutor::Session, 'sitzung', 60, WorkerUebernahme::JOB_TYP);
+        self::assertNotNull($uebernahme);
+        $this->uebernahme->schritt($uebernahme, $this->vault, new \DateTimeImmutable());
+        // The same step again (its request died before it was marked done).
+        $ergebnis = $this->uebernahme->schritt($uebernahme, $this->vault, new \DateTimeImmutable());
+        $this->jobs->schrittErledigt($uebernahme->id, 'sitzung', $ergebnis);
+
+        $zeilen = $this->pdo()->query('SELECT * FROM ai_call_log ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
+        self::assertCount(2, $zeilen, 'each worker call once, also after a repeated takeover');
+        self::assertSame(['kein_json', 'gueltig'], array_column($zeilen, 'status'));
+        // Profile 1 is the web host's own (KiAuslesungFabrik): its name and
+        // model count, not the worker's "Test"/"test". Profile 999 is unknown.
+        $profil = $this->pdo()->query('SELECT name, model FROM ai_provider WHERE id = 1')->fetch(\PDO::FETCH_ASSOC);
+        self::assertIsArray($profil);
+        self::assertSame(['unbekannt', $profil['model']], array_column($zeilen, 'model'), 'no free text from the worker');
+        self::assertSame(['Worker', $profil['name']], array_column($zeilen, 'provider_name'), 'an unknown profile is not named by the worker');
+        self::assertSame([null, 1], array_map(static fn(mixed $id): ?int => $id === null ? null : (int) $id, array_column($zeilen, 'provider_id')));
+        self::assertSame(['extract-v1', 'extract-v1'], array_column($zeilen, 'prompt_version'));
+        self::assertNull($zeilen[0]['duration_ms']);
+        self::assertNull($zeilen[0]['http_status']);
+        self::assertSame(12, (int) $zeilen[0]['prompt_tokens']);
+        // Operating data only: no column carries what the AI read.
+        $alles = json_encode($zeilen, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        self::assertStringNotContainsString('RE-2026-0815', $alles);
+        self::assertStringNotContainsString('Müller', $alles);
+    }
+
     public function testTheExtractionIsRebuiltWithTheServersChecksNotTakenFromTheWorker(): void
     {
         $doc = $this->dokument();
@@ -317,12 +361,13 @@ final class WorkerUebernahmeTest extends WorkerTestCase
      *
      * @param array<string, mixed>|null $daten
      * @param array<string, mixed>|null $extraktion
+     * @param array<string, mixed> $aufruf overrides of the stored call
      */
-    private function extraktion(bool $gueltig, ?array $daten = null, ?array $extraktion = null): string
+    private function extraktion(bool $gueltig, ?array $daten = null, ?array $extraktion = null, array $aufruf = []): string
     {
         $antwort = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/llm/extract-v1/gueltig.json'), true, flags: JSON_THROW_ON_ERROR);
         $daten ??= json_decode($antwort['choices'][0]['message']['content'], true, flags: JSON_THROW_ON_ERROR);
-        $aufruf = [
+        $aufruf += [
             'anbieter_id' => 1,
             'anbieter_name' => 'Test',
             'modell' => 'test',

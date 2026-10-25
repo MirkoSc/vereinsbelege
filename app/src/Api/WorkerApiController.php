@@ -62,6 +62,13 @@ final readonly class WorkerApiController
     /** Like App\Service\Job\JobRunner: a job that failed this often stops. */
     public const int MAX_VERSUCHE = 3;
 
+    /**
+     * Releases on shutdown that do not use up an attempt (issue #248) - after
+     * that a release counts like a failed attempt, so a job that is cut off
+     * again and again (a restart loop) still ends and falls back.
+     */
+    public const int MAX_FREIGABEN = 3;
+
     /** Section 5: polling interval without work. */
     public const int POLL_SEKUNDEN = 60;
 
@@ -228,6 +235,13 @@ final readonly class WorkerApiController
 
                 continue;
             }
+            // An earlier attempt that died (lock ran out) may have
+            // committed part of its results: this attempt starts clean
+            // (issue #248).
+            // Always, not only from the second attempt on: a release whose
+            // cleanup failed leaves the attempt number unchanged (review of
+            // #248). Cheap when there is nothing.
+            $this->artefakte->abgebrochenenVersuchVerwerfen($job);
             $jobs[] = self::jobDaten($job, $lock);
         }
 
@@ -328,8 +342,47 @@ final readonly class WorkerApiController
         if (!$this->jobs->zurueckgebenMitFehler($job->id, $lock, $code)) {
             return self::sperreVerloren();
         }
-        // The grants stay for the next attempt; this attempt's unfinished
-        // uploads cannot be committed any more (the attempt changes).
+        // The grants stay for the next attempt; this attempt's uploads and
+        // what it already committed go (issue #248) - the next attempt
+        // delivers a complete run of its own.
+        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
+        $this->freigaben->nachJob($job);
+
+        return Response::json(['status' => JobStatus::Offen->value]);
+    }
+
+    /**
+     * `POST /api/worker/jobs/{id}/release` `{lock}` (issue #248): the worker
+     * was told to stop (SIGTERM) and gives the job back WITHOUT using up an
+     * attempt - unlike `fail`, the cut-off run says nothing about the job.
+     * Up to MAX_FREIGABEN times per job; later releases keep the attempt.
+     * What the attempt uploaded or committed is dropped; the grants stay.
+     * Idempotent: a repeat by the same holder (its answer got lost) is
+     * answered 200 again as long as nobody claimed the job since.
+     *
+     * @param array<string, string> $params
+     */
+    public function release(Request $request, array $params, Worker $worker): Response
+    {
+        $geprueft = $this->eigenerJob($request, $params, $worker);
+        if ($geprueft instanceof Response) {
+            return $geprueft;
+        }
+        [$job, $lock] = $geprueft;
+        // A repeat: the release kept `locked_by`, so the job is still "ours".
+        if ($job->status === JobStatus::Offen) {
+            return Response::json(['status' => JobStatus::Offen->value]);
+        }
+        if ($job->status !== JobStatus::Laeuft) {
+            return self::sperreVerloren();
+        }
+        // Clean up while the job is still held - before it becomes
+        // claimable again; the next claim cleans once more anyway.
+        $this->artefakte->abgebrochenenVersuchVerwerfen($job);
+        $freigaben = is_int($job->state['freigaben'] ?? null) ? $job->state['freigaben'] : 0;
+        if (!$this->jobs->zurueckgebenOhneVersuch($job->id, $lock, ['freigaben' => $freigaben + 1] + $job->state, $freigaben < self::MAX_FREIGABEN)) {
+            return self::sperreVerloren();
+        }
         $this->freigaben->nachJob($job);
 
         return Response::json(['status' => JobStatus::Offen->value]);

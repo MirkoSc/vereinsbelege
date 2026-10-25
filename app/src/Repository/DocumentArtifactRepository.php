@@ -108,6 +108,41 @@ final readonly class DocumentArtifactRepository
         return $stmt->rowCount();
     }
 
+    /**
+     * The blob ids of job $jobId's committed worker artifacts (not
+     * reserved, not defective) - an aborted attempt's results, which
+     * App\Service\Worker\WorkerArtefakte::abgebrochenenVersuchVerwerfen()
+     * deletes with their blobs (`ON DELETE CASCADE` takes the rows along).
+     *
+     * @return list<int>
+     */
+    public function workerLaufBlobIds(int $jobId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT blob_id FROM document_artifact
+             WHERE job_id = ? AND producer = ? AND blob_id IS NOT NULL AND kind NOT LIKE ? AND kind NOT LIKE ?',
+        );
+        $stmt->execute([$jobId, JobExecutor::Worker->value, self::PENDING . '%', self::DEFEKT . '%']);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Deletes job $jobId's committed worker artifacts without a blob
+     * (`text`, `extraction`) - the other half of an aborted attempt.
+     * Returns how many.
+     */
+    public function workerLaufDatenLoeschen(int $jobId): int
+    {
+        $stmt = $this->pdo->prepare(
+            'DELETE FROM document_artifact
+             WHERE job_id = ? AND producer = ? AND blob_id IS NULL AND kind NOT LIKE ? AND kind NOT LIKE ?',
+        );
+        $stmt->execute([$jobId, JobExecutor::Worker->value, self::PENDING . '%', self::DEFEKT . '%']);
+
+        return $stmt->rowCount();
+    }
+
     /** How many worker artifacts are marked defective - for the admin page. */
     public function zaehleDefekte(): int
     {

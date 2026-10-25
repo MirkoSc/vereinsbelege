@@ -14,6 +14,19 @@ use PHPUnit\Framework\TestCase;
  */
 final class WorkerProtokollTest extends TestCase
 {
+    public function testAnOlderWorkerReleaseIsOutdatedADevBuildNever(): void
+    {
+        self::assertTrue(WorkerProtokoll::versionVeraltet('1.3.9', '1.4.0'));
+        self::assertTrue(WorkerProtokoll::versionVeraltet('1.4.0', '1.10.0'), 'numeric, not text order');
+        self::assertTrue(WorkerProtokoll::versionVeraltet('v1.4.0-beta', '1.4.0'));
+        self::assertFalse(WorkerProtokoll::versionVeraltet('1.4.0', '1.4.0'));
+        self::assertFalse(WorkerProtokoll::versionVeraltet('1.5.0', '1.4.0'), 'a newer worker is fine');
+        self::assertFalse(WorkerProtokoll::versionVeraltet('0.0.0-dev', '1.4.0'));
+        self::assertFalse(WorkerProtokoll::versionVeraltet('1.0.0', '0.0.0-dev'));
+        self::assertFalse(WorkerProtokoll::versionVeraltet('', '1.4.0'));
+        self::assertFalse(WorkerProtokoll::versionVeraltet('kaputt', '1.4.0'));
+    }
+
     public function testTheCanonicalStringCoversMethodPathTimeNonceAndBodyHash(): void
     {
         self::assertSame(

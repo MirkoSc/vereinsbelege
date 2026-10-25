@@ -24,7 +24,7 @@ use App\Service\Mail\WorkerAlarm;
  *   them when the module is off, no worker is ready or the worker has been
  *   silent for the fallback period; else those of a type the worker no
  *   longer reports. `render_pages` to the browser, `ai_extract` to the
- *   session, `ocr`/`image_cleanup` end `uebersprungen` (OCR can be caught
+ *   session, `ocr` ends `uebersprungen` (OCR can be caught
  *   up later). Moved in place by a conditional UPDATE, so a job the worker
  *   claims at the same moment stays with it.
  * - nachFehlschlag(): a worker job that failed for good (or ran out of

@@ -302,9 +302,27 @@ final class WorkerProgrammTest extends WorkerTestCase
 
         $job = $this->jobs->find($jobId);
         self::assertSame(JobStatus::Offen, $job?->status, 'back in the queue, not failed');
-        self::assertSame('WorkerBeendet', $job->lastError);
+        self::assertSame(0, $job->attempts, 'a release on shutdown uses up no attempt (issue #248)');
+        self::assertNull($job->lastError);
+        self::assertContains('POST /api/worker/jobs/' . $jobId . '/release', $this->http->anfragen);
+        self::assertNotContains('POST /api/worker/jobs/' . $jobId . '/fail', $this->http->anfragen);
         self::assertNotSame([], $this->grants->blobIdsFuer($this->workerId, $doc, new \DateTimeImmutable()), 'the grants stay for the next attempt');
         $this->assertArbeitsverzeichnisLeer();
+    }
+
+    public function testAStopRequestFallsBackToFailOnAWebHostWithoutRelease(): void
+    {
+        $doc = $this->dokument([['%PDF-1.4 Rechnung', MagicBytes::PDF]]);
+        $jobId = $this->anWorker('render_pages', $doc);
+        $this->werkzeuge->danach = $this->abbruch->anfordern(...);
+        $this->http->ohneRelease = true;
+
+        $this->schleife->runde();
+
+        $job = $this->jobs->find($jobId);
+        self::assertSame(JobStatus::Offen, $job?->status);
+        self::assertSame('WorkerBeendet', $job->lastError);
+        self::assertSame(1, $job->attempts);
     }
 
     public function testEveryRequestCarriesItsOwnNonce(): void

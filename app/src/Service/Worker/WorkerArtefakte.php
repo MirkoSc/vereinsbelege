@@ -83,7 +83,6 @@ final readonly class WorkerArtefakte
         return match ($jobTyp) {
             'render_pages' => [ArtifactKind::PageImage],
             'ocr' => [ArtifactKind::Pdfa, ArtifactKind::Text],
-            'image_cleanup' => [ArtifactKind::Pdfa],
             'ai_extract' => [ArtifactKind::Extraction],
             default => [],
         };
@@ -337,6 +336,35 @@ final readonly class WorkerArtefakte
         $this->ablage->discard($upload->uploadId);
         $this->artefakte->reservierungVerwerfen($upload->artifactId);
         $this->uploads->loesche($upload->artifactId);
+    }
+
+    /**
+     * Drops everything an aborted attempt of $job left behind (issue #248):
+     * its open uploads and the artifacts it already committed - with their
+     * blobs. Called when the worker gives the job back (`fail` without
+     * `endgueltig`, `release`) and when a job is claimed again (a worker
+     * that died leaves its lock to run out). The next attempt then starts
+     * from nothing: `vorhanden` in anmelden() only ever finds the current
+     * attempt's results, never a half run of an earlier one - which also
+     * makes reusing the attempt number after a `release` harmless.
+     * Defective (`!`) rows stay: the admin counts them. Returns how many
+     * artifacts were dropped.
+     */
+    public function abgebrochenenVersuchVerwerfen(Job $job): int
+    {
+        foreach ($this->uploads->fuerJob($job->id) as $upload) {
+            $this->verwerfen($upload);
+        }
+        $anzahl = 0;
+        foreach ($this->artefakte->workerLaufBlobIds($job->id) as $blobId) {
+            $blob = $this->blobs->find($blobId);
+            if ($blob !== null) {
+                $this->blobs->delete($blob);
+                ++$anzahl;
+            }
+        }
+
+        return $anzahl + $this->artefakte->workerLaufDatenLoeschen($job->id);
     }
 
     /** The cron: announcements never committed, and stray ciphertext directories. */
