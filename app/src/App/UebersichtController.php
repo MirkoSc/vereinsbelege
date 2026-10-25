@@ -98,7 +98,11 @@ final readonly class UebersichtController
             ? ['empfaenger' => [], 'unlesbar' => 0]
             : $this->uebersichten->erstattungen($tresor, $this->berechtigungen()->zugriffsbereich(Permission::ReportView), new \DateTimeImmutable());
 
-        return $this->seite('offen-erstattungen', 'Offene Erstattungen', $tresor !== null, $ergebnis);
+        return $this->seite('offen-erstattungen', 'Offene Erstattungen', $tresor !== null, [
+            ...$ergebnis,
+            // The payment runs (issue #85) need `matching.edit`.
+            'darfZahllauf' => $this->berechtigungen()->darf(Permission::MatchingEdit),
+        ]);
     }
 
     public function buchungen(Request $request): ResponseInterface

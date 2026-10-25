@@ -10,6 +10,7 @@
  * @var list<\App\Service\Bank\Erstattungsempfaenger> $empfaenger
  * @var int $unlesbar
  * @var string|null $belegPfad
+ * @var bool $darfZahllauf
  */
 
 use App\Service\Processing\Betrag;
@@ -22,6 +23,12 @@ use App\Service\Processing\Betrag;
         Belege, die jemand für den Verein ausgelegt hat und die noch nicht (ganz) erstattet sind – je Einreicher und
         IBAN mit der offenen Summe. Erstattet ist ein Beleg, sobald ihm die Überweisung an den Einreicher zugeordnet ist.
     </p>
+    <?php if ($darfZahllauf ?? false): ?>
+        <p class="knopfreihe">
+            <a class="knopf" href="/app/zahllaeufe/neu">Als SEPA-Sammelüberweisung anweisen</a>
+            <a class="knopf" href="/app/zahllaeufe">Zahlläufe</a>
+        </p>
+    <?php endif; ?>
 </section>
 
 <?php if ($entsperrt): ?>

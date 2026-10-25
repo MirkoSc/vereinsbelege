@@ -35,7 +35,7 @@ final readonly class MailSettingsRepository
 
     private const string ANTWORT_AN = 'mail_antwort_an';
 
-    private const string VEREINSNAME = 'mail_vereinsname';
+    public const string VEREINSNAME = 'mail_vereinsname';
 
     private const string OEFFENTLICHE_URL = 'oeffentliche_url';
 

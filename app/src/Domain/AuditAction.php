@@ -119,6 +119,9 @@ enum AuditAction: string
     // ids and the method, never an amount.
     case UmbuchungVerknuepft = 'umbuchung.verknuepft';
     case UmbuchungGeloest = 'umbuchung.geloest';
+    case ZahllaufAngelegt = 'zahllauf.angelegt';
+    case ZahllaufHeruntergeladen = 'zahllauf.heruntergeladen';
+    case ZahllaufVerworfen = 'zahllauf.verworfen';
 
     /** No acting user (public submission, issue #24/M4-2): $userId is null. */
     case EinreichungEingegangen = 'einreichung.eingegangen';
@@ -258,6 +261,9 @@ enum AuditAction: string
             self::BelegDifferenzGeoeffnet => 'Zahlungsdifferenz des Belegs wieder geöffnet',
             self::UmbuchungVerknuepft => 'Umbuchung zwischen eigenen Konten verknüpft',
             self::UmbuchungGeloest => 'Umbuchung zwischen eigenen Konten gelöst',
+            self::ZahllaufAngelegt => 'SEPA-Zahllauf für Erstattungen angelegt',
+            self::ZahllaufHeruntergeladen => 'SEPA-Datei eines Zahllaufs heruntergeladen',
+            self::ZahllaufVerworfen => 'SEPA-Zahllauf verworfen',
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
@@ -339,6 +345,7 @@ enum AuditAction: string
             self::RegelAktiviert, self::RegelDeaktiviert, self::RegelAngewendet => 'assignment_rule',
             self::ZuordnungAngelegt, self::ZuordnungGeloest => 'allocation',
             self::UmbuchungVerknuepft, self::UmbuchungGeloest => 'transfer',
+            self::ZahllaufAngelegt, self::ZahllaufHeruntergeladen, self::ZahllaufVerworfen => 'payment_run',
             self::EinreichungEingegangen, self::BelegErfasst,
             self::BelegAngenommen, self::BelegAbgelehnt, self::BelegWiedervorlage, self::BelegKostenstelle,
             self::BelegBearbeitet, self::BelegGeprueft,
@@ -380,6 +387,7 @@ enum AuditAction: string
             'assignment_rule' => 'Buchungsregel',
             'allocation' => 'Zuordnung Beleg ↔ Buchung',
             'transfer' => 'Umbuchung',
+            'payment_run' => 'Zahllauf',
             'document' => 'Beleg',
             'worker' => 'Worker',
             'vault' => 'Tresor-Generation',

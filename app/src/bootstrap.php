@@ -32,6 +32,7 @@ use App\App\AuthController;
 use App\App\BuchungController;
 use App\App\AbgleichController;
 use App\App\ErstattungController;
+use App\App\ZahllaufController;
 use App\App\BuchungsregelController;
 use App\App\ArchivImportController;
 use App\App\ExportController;
@@ -84,6 +85,7 @@ use App\Repository\ExportRunRepository;
 use App\Repository\ExportRunUploadRepository;
 use App\Repository\NextcloudTargetRepository;
 use App\Repository\InvoiceRepository;
+use App\Repository\PaymentRunRepository;
 use App\Repository\JobRepository;
 use App\Repository\MailQueueRepository;
 use App\Repository\MfaBackupCodeRepository;
@@ -137,6 +139,7 @@ use App\Service\Bank\Kassensturz;
 use App\Service\Bank\Umbuchungen;
 use App\Service\Bank\Import\KontoauszugImport;
 use App\Service\Bank\Uebersichten;
+use App\Service\Bank\Zahllaeufe;
 use App\Service\Bank\Zuordnung;
 use App\Service\Crypto\ServerCrypto;
 use App\Service\Cron\CronRunner;
@@ -773,6 +776,34 @@ $erstattungen = static function () use ($connections, $view, $zuordnungFor): Ers
         new Session(),
         new SessionVault(),
         new Erstattungen($pdo, new ErstattungRepository($pdo), new InvoiceRepository($pdo), new BankTransactionRepository($pdo), $zuordnungFor($pdo)),
+    );
+};
+
+// SEPA payment runs (issue #85): reimbursements, accounts and runs are
+// vault data - only these pages open the connection.
+$zahllaeufe = static function () use ($connections, $view, $zuordnungFor, $auditFor): ZahllaufController {
+    $pdo = $connections->pdo();
+    $kategorien = new CategoryRepository($pdo);
+    $konten = new BankAccountService($pdo, new BankAccountRepository($pdo));
+    $settings = new SettingRepository($pdo);
+
+    return new ZahllaufController(
+        $view,
+        new Session(),
+        new SessionVault(),
+        new Zahllaeufe(
+            $pdo,
+            new PaymentRunRepository($pdo),
+            new Uebersichten(
+                new InvoiceRepository($pdo),
+                new SupplierService($pdo, new SupplierRepository($pdo), $kategorien),
+                $zuordnungFor($pdo),
+                new Buchungen($pdo, new BankTransactionRepository($pdo), $konten, $kategorien, BelegStandard::fromSettings($settings)),
+            ),
+            $konten,
+            $auditFor($pdo),
+        ),
+        $settings,
     );
 };
 
@@ -1642,6 +1673,7 @@ $router = new Router();
     $offenSeite,
     $tresorRotation,
     $erstattungen,
+    $zahllaeufe,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

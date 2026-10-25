@@ -805,8 +805,8 @@ Kategorie; Leserechte; Zeitraum-Scope; ohne Tresor, CSRF, 404),
 
 ### Übersichten
 - **Unbezahlte Rechnungen** (offen, teilbezahlt, fällig/überfällig)
-- **Offene Erstattungen** je Einreicher (mit Summe; Backlog: SEPA-
-  Sammelüberweisung pain.001 erzeugen)
+- **Offene Erstattungen** je Einreicher (mit Summe; daraus eine SEPA-
+  Sammelüberweisung pain.001 – „Stand SEPA-Zahllauf“ unten)
 - **Buchungen ohne Beleg** (doc_required, nicht zugeordnet) – mit Aktion
   „Beleg anfordern" (Mail-Vorlage) oder „Beleg hochladen"
 - **Erwartete, aber fehlende Belege** aus wiederkehrenden Serien
@@ -868,6 +868,67 @@ Regel/„nicht nötig“/Einnahme/zugeordnet ausgeschlossen, Sammelüberweisung
 mit Rest, Mail-Text; Kostenstellen-Scope und Rechte; ohne Tresor nichts),
 `SerienFlowTest::testTheWorkListShowsOnlyConfirmedSeriesWhoseReceiptIsMissing`,
 `RoutePermissionMatrixTest`.
+
+#### Stand SEPA-Zahllauf: Sammelüberweisung pain.001 für Erstattungen (issue #85, E-42)
+
+- **Seiten** `/app/zahllaeufe` (Liste), `/app/zahllaeufe/neu`, `/app/zahllaeufe/{id}`,
+  `/app/zahllaeufe/{id}/datei` (Download), `POST …/verwerfen` – alle
+  `matching.edit`, verlinkt von „Offene Erstattungen“. Ohne entsperrten
+  Tresor zeigen und schreiben sie nichts. `App\App\ZahllaufController`,
+  Logik `App\Service\Bank\Zahllaeufe`, Datei `App\Service\Bank\Sepa\Pain001`.
+- **Kandidaten** = die Gruppen aus „Offene Erstattungen“ (Name **und** IBAN
+  aus der Einreichung, `Uebersichten::erstattungen()`) im Zugriffsbereich von
+  `matching.edit`. **Nie angeboten:** Gruppen, deren Name auch mit anderer
+  oder ohne IBAN vorkommt (Warnung aus M10-5 – von Hand prüfen und
+  überweisen), ohne Namen, ohne/mit ungültiger IBAN, mit der IBAN eines
+  Vereinskontos; je Beleg: nicht „per Überweisung“, nicht EUR, Dokument
+  nicht `geprueft`/`festgeschrieben`, schon in einem angewiesenen Lauf,
+  nichts offen. Die Seite nennt den Grund.
+- **Anlegen:** Auswahl per Beleg (vorbelegt: alle wählbaren), Auftraggeber-
+  konto (aktives Bankkonto mit gültiger IBAN, BIC falls hinterlegt),
+  Kontoinhaber (vorbelegt mit dem Vereinsnamen der Mail-Einstellungen),
+  Ausführungsdatum (heute bis + 1 Jahr). Eine Transaktion: Dokumente →
+  Belege sperren, Kandidaten neu lesen, je Gruppe **eine** Überweisung über
+  die Summe der offenen Beträge der gewählten Belege (Integer-Cent),
+  Verwendungszweck „Auslagenerstattung Beleg(e) <Nummer bzw. vom Datum>, …“
+  (≤ 140, sonst „u. a.“), End-to-End-ID `VB-Z<lauf>-<n>`, MsgId
+  `VB-Z<lauf>-<Zeitstempel>`. Jeder Beleg wird über
+  `payment_run_item.active_invoice_id` (`UNIQUE`) reserviert – doppelte
+  Anweisung ist auch bei gleichzeitigen Anfragen ausgeschlossen. Die Datei
+  wird vor dem Speichern einmal erzeugt; was sie verletzen würde, wird nicht
+  gespeichert.
+- **Datei** pain.001.001.09 (DK, Anlage 3 DFÜ-Abkommen): Service-Level
+  `SEPA`, `ChrgBr` `SLEV`, nur EUR, `BtchBookg` **false** (jede Überweisung
+  einzeln auf dem Auszug, damit der Erstattungs-Abgleich M10-3 sie über die
+  IBAN findet), Auftraggeberbank per BIC oder `NOTPROVIDED`, Empfängerbank
+  weggelassen (IBAN-only). Texte im SEPA-Zeichensatz (Umlaute
+  ausgeschrieben, sonstige Zeichen → Leerzeichen, `App\Service\Bank\Sepa\SepaText`),
+  Namen ≤ 70, Referenzen ≤ 35 ohne `/` am Rand und ohne `//`. Erzeugt bei
+  jedem Download im Speicher aus `payment_run.data_enc` – nie auf Platte,
+  Antwort `Content-Disposition: attachment`, `Cache-Control: no-store`.
+- **Status:** `angewiesen`, bis der Abgleich jede Überweisung gefunden hat –
+  dann zeigt der Lauf **ausgeglichen** (abgeleitet aus den
+  `payment_status` seiner Belege, nicht gespeichert); je Überweisung
+  „zugeordnet“/„offen“. **Verwerfen** (nur `angewiesen` und nicht
+  ausgeglichen) gibt die Belege frei – gedacht für eine abgelehnte oder
+  nie eingereichte Datei.
+- **Zugriffsbereich:** Ein Lauf ist nur sichtbar (und herunterladbar,
+  verwerfbar), wenn **alle** seine Belege im Bereich liegen – die Datei
+  nennt alle Empfänger und Beträge.
+- **Audit:** `zahllauf.angelegt` (bank_account_id, Zahl der Überweisungen
+  und Belege), `zahllauf.heruntergeladen`, `zahllauf.verworfen` (Zahl der
+  Belege) – Entität `payment_run`. Nie Name, IBAN oder Betrag.
+
+**Pflicht-Tests SEPA-Zahllauf:** `Pain001Test` (gültig gegen das
+ISO-20022-Schema `tests/fixtures/sepa/pain.001.001.09.xsd`, mit und ohne
+BIC, Summen/Anzahl/DK-Regeln, Cent → Dezimal, Transliteration,
+Referenzregeln, Ablehnung ungültiger Aufträge ohne Werte in der Meldung),
+`ZahllaufFlowTest` (eine Überweisung je Empfänger mit offener Summe, Datei
+gültig, nichts im Klartext in DB und Audit; nie doppelt angewiesen, nach
+Verwerfen wieder frei; mehrdeutiger Name, Vereins-IBAN, bar, ungeprüft
+nicht angeboten; Auftragsprüfung; Abgleich gleicht den Lauf aus;
+Zugriffsbereich; Seiten, Download-Header, CSRF),
+`RoutePermissionMatrixTest` (`matching.edit`).
 
 ## Pflicht-Tests
 
