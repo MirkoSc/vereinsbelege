@@ -1704,11 +1704,26 @@ mit dieser Entscheidung vorläufig. Getroffen ohne Rückfrage:
   Abgelehnte Mails bleiben im abgerufenen Ordner. Ein Postfach nur für Belege
   ist empfohlen.
 - **Absturzschutz im Postfach:** Der Worker speichert nichts dauerhaft, also
-  liegt die Versuchs-Marke als Keyword (`$VereinsbelegeVersuch`, sonst
-  `\Flagged`) an der Mail selbst. Eine Mail, an der der Worker gestorben ist,
-  wird beim nächsten Abruf als „unlesbar“ markiert statt erneut geholt –
-  auch dann, wenn der Abbruch nur ein Verbindungsabriss mitten in der Mail
-  war (dann bleibt sie markiert im Postfach für einen Menschen).
+  liegt der Versuchszähler als Keywords (`$VereinsbelegeVersuch`, `…2`,
+  `…3`) an der Mail selbst. *Geändert mit issue #243 (vorläufig, autonom
+  getroffen – Bestätigung durch Mirko offen):* Statt einer einmaligen Marke,
+  nach der eine Mail beim nächsten Abruf sofort „unlesbar“ war, wird eine
+  Mail nach Verbindungsabbruch oder hartem Kill **bis zu dreimal** versucht;
+  erst danach wird sie abgelehnt – und vorher über ihre Message-ID mit dem
+  Posteingang abgeglichen, damit eine schon eingereichte Mail „erledigt“
+  statt „abgelehnt“ wird. Fällt der Webhoster als Ganzes aus, zählt der
+  Versuch nicht. **Ohne eigene Keywords** gibt es keine Versuchs-Marke mehr
+  im Postfach (vorher `\Flagged`, das von Hand markierte Mails fälschlich
+  beiseitelegte); gezählt wird nur im Speicher des Workers, ein harter Kill
+  wird dort also nicht erkannt – bewusst in Kauf genommen, weil der
+  MIME-Leser jetzt unter 3× Mailgröße bleibt (N-16) und Mails über der
+  Größengrenze gar nicht geholt werden.
+- **Mengengrenze auch beim Webhoster** (issue #243, N-17, vorläufig): je
+  Worker und Stunde höchstens 60 Mails und 500 MiB (Settings mit Vorgabe,
+  ohne Admin-Formularfeld). Darüber 429 `mail_limit`; der Worker beendet
+  den Abruf, die Mail wartet unmarkiert.
+- **Quelle im Posteingang:** „per E-Mail“ in Liste und Detail, gelesen aus
+  dem versiegelten Payload (`kanal`), also nur mit entsperrtem Tresor.
 - **Kein Altbestand:** eingereicht wird nur, was seit dem Einschalten des
   Eingangs im Postfach ankam (IMAP `SINCE`); wer alte Mails übernehmen will,
   nutzt den Archiv-Import oder lädt sie einzeln hoch.

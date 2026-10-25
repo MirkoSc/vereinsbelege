@@ -17,6 +17,7 @@ use App\Service\Submission\SubmissionUploadStore;
 use App\Service\Upload\MagicBytes;
 use App\Service\Upload\UploadException;
 use App\Service\Upload\UploadService;
+use App\Service\Worker\MailEingangGrenze;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Worker\WorkerProtokoll;
 use App\Service\Worker\WorkerRouting;
@@ -43,7 +44,8 @@ use App\Support\FileLogger;
  * protocol, the module on, the mail intake switched on and `mail`
  * reported - otherwise 409 `mail_eingang_aus`. File types are decided by
  * the magic bytes here, not by the worker; sizes and page counts by the
- * public submission's limits.
+ * public submission's limits; mails and bytes per worker and hour by
+ * App\Service\Worker\MailEingangGrenze (429 `mail_limit`, issue #243).
  */
 final readonly class WorkerMailController
 {
@@ -67,6 +69,7 @@ final readonly class WorkerMailController
         private UploadService $uploads,
         private SubmissionUploadStore $store,
         private EinreichungsEinstellungen $einstellungen,
+        private MailEingangGrenze $grenze,
         private ?\Closure $linkBasis = null,
         private ?FileLogger $logger = null,
     ) {
@@ -83,7 +86,7 @@ final readonly class WorkerMailController
 
     public function uploadAnlegen(Request $request, Worker $worker): Response
     {
-        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request): Response {
+        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request, $worker): Response {
             $groesse = $daten['groesse'] ?? null;
             if (!is_int($groesse) || $groesse < 1) {
                 return self::fehler(422, 'groesse_ungueltig', 'Ungültige Dateigröße.');
@@ -91,8 +94,16 @@ final readonly class WorkerMailController
             if ($groesse > $this->einstellungen->maxDateiBytes()) {
                 return self::fehler(413, 'zu_gross', 'Die Datei ist zu groß.');
             }
+            if (!$this->grenze->mailErlaubt($worker->id) || !$this->grenze->bytesErlaubt($worker->id, $groesse)) {
+                return self::mengenGrenze();
+            }
 
-            return $this->ausgefuehrt($request, fn(): Response => Response::json($this->uploads->create($groesse)->toArray(), 201));
+            return $this->ausgefuehrt($request, function () use ($groesse, $worker): Response {
+                $ticket = $this->uploads->create($groesse);
+                $this->grenze->bytesZaehlen($worker->id, $groesse);
+
+                return Response::json($ticket->toArray(), 201);
+            });
         });
     }
 
@@ -158,7 +169,10 @@ final readonly class WorkerMailController
 
     public function einreichen(Request $request, Worker $worker): Response
     {
-        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request): Response {
+        return $this->bereit($worker) ?? $this->mitSchluessel($request, function (string $schluessel, array $daten) use ($request, $worker): Response {
+            if (!$this->grenze->mailErlaubt($worker->id)) {
+                return self::mengenGrenze();
+            }
             $absender = is_array($daten['absender'] ?? null) ? $daten['absender'] : [];
             $blobs = $daten['blobs'] ?? null;
             if (!is_array($blobs) || !array_is_list($blobs)) {
@@ -175,6 +189,10 @@ final readonly class WorkerMailController
                 new \DateTimeImmutable(),
                 $this->linkBasis === null ? null : ($this->linkBasis)($request),
             );
+
+            if ($ergebnis->status === MailEinreichungErgebnis::EINGEREICHT) {
+                $this->grenze->mailZaehlen($worker->id);
+            }
 
             return match ($ergebnis->status) {
                 MailEinreichungErgebnis::EINGEREICHT => Response::json(['status' => $ergebnis->status, 'referenz' => $ergebnis->referenz], 201),
@@ -250,6 +268,12 @@ final readonly class WorkerMailController
         $sauber = preg_replace('/[\x00-\x1F\x7F]/u', '', basename(str_replace('\\', '/', $name)));
 
         return mb_substr(trim($sauber ?? ''), 0, self::MAX_NAME);
+    }
+
+    /** The worker ends its run and tries again later; the mail waits in the mailbox. */
+    private static function mengenGrenze(): Response
+    {
+        return self::fehler(429, 'mail_limit', 'Die Mengengrenze des E-Mail-Eingangs ist für diese Stunde erreicht.');
     }
 
     private static function fehler(int $status, string $fehler, string $meldung): Response

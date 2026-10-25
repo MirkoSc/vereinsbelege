@@ -182,6 +182,7 @@ use App\Service\Worker\WorkerUebernahme;
 use App\Service\Worker\WorkerFallback;
 use App\Service\Worker\WorkerUebergabe;
 use App\Service\Worker\WorkerRouting;
+use App\Service\Worker\MailEingangGrenze;
 use App\Service\Worker\MailEingangSpeicher;
 use App\Service\Submission\MailEinreichung;
 use App\Service\Mail\PublicUrl;
@@ -1952,6 +1953,11 @@ $workerMail = static function () use ($connections, $workerRoutingFor, $einreich
             new SubmissionUploadRepository($pdo),
         ),
         $einstellungen,
+        // Issue #243 (N-17): mails and bytes per worker and hour.
+        new MailEingangGrenze(
+            new RateLimiter(new RateLimitRepository($pdo), RateLimiter::SUBMISSION_WINDOW_SECONDS),
+            new SettingRepository($pdo),
+        ),
         static fn(Request $r): ?string => PublicUrl::resolve($mailSettings->get(), $r->header('host') ?? '', Request::httpsFromGlobals()),
         $logger,
     );

@@ -136,7 +136,7 @@ final class ImapClientTest extends TestCase
             self::GRUSS . "* CAPABILITY IMAP4rev1 MOVE\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1 MOVE\r\nA0003 OK\r\n"
             . "* 3 EXISTS\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged \\*)] ok\r\nA0004 OK [READ-WRITE] SELECT\r\n"
             . "* SEARCH 12 7\r\nA0005 OK\r\n"
-            . "* 1 FETCH (UID 7 RFC822.SIZE 120)\r\n* 2 FETCH (RFC822.SIZE 4000 UID 12)\r\nA0006 OK\r\n"
+            . "* 1 FETCH (UID 7 RFC822.SIZE 120 FLAGS ())\r\n* 2 FETCH (RFC822.SIZE 4000 FLAGS (\\Flagged \$VereinsbelegeVersuch) UID 12)\r\nA0006 OK\r\n"
             . '* 1 FETCH (UID 7 BODY[] {' . strlen($mail) . "}\r\n" . $mail . ")\r\nA0007 OK\r\n"
             . "A0008 OK\r\n"
             . "A0009 OK\r\n"
@@ -147,7 +147,10 @@ final class ImapClientTest extends TestCase
 
         self::assertTrue($client->auswaehlen('Belege/Eingang'));
         self::assertSame([7, 12], $client->offene(true));
-        self::assertSame([7 => 120, 12 => 4000], $client->groessen([7, 12]));
+        self::assertSame([
+            7 => ['groesse' => 120, 'flags' => []],
+            12 => ['groesse' => 4000, 'flags' => ['\\Flagged', '$VereinsbelegeVersuch']],
+        ], $client->angaben([7, 12]));
         self::assertSame($mail, $client->holen(7, 1024));
         $client->markieren(7, [ImapClient::KEYWORD_ERLEDIGT, '\\Seen']);
         self::assertTrue($client->verschieben(7, 'Erledigt'));
@@ -155,12 +158,53 @@ final class ImapClientTest extends TestCase
 
         self::assertStringContainsString('A0004 SELECT "Belege/Eingang"', $strom->gesendet);
         self::assertStringContainsString('A0005 UID SEARCH UNKEYWORD $Vereinsbelege UNKEYWORD $VereinsbelegeAbgelehnt UNDELETED', $strom->gesendet);
+        self::assertStringContainsString('A0006 UID FETCH 7,12 (RFC822.SIZE FLAGS)', $strom->gesendet);
         self::assertStringContainsString('A0007 UID FETCH 7 (BODY.PEEK[])', $strom->gesendet, 'reading sets no \Seen');
         self::assertStringContainsString('A0008 UID STORE 7 +FLAGS.SILENT ($Vereinsbelege \Seen)', $strom->gesendet);
         self::assertStringContainsString('A0009 UID MOVE 7 "Erledigt"', $strom->gesendet);
         self::assertStringNotContainsString('EXPUNGE', $strom->gesendet);
         self::assertStringNotContainsString('\Deleted', $strom->gesendet);
         self::assertTrue($strom->geschlossen);
+    }
+
+    /**
+     * Issue #243: the Message-ID of a mail that is not fetched again (all
+     * attempts used up) comes from its header alone.
+     */
+    public function testTheMessageIdIsReadWithoutTheMail(): void
+    {
+        $kopf = "Message-ID: <r-1@mueller-getraenke.de>\r\n\r\n";
+        $strom = new SkriptStrom(
+            self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
+            . '* 1 FETCH (UID 7 BODY[HEADER.FIELDS (MESSAGE-ID)] {' . strlen($kopf) . "}\r\n" . $kopf . ")\r\nA0004 OK\r\n"
+            . "* 2 FETCH (UID 8 BODY[HEADER.FIELDS (\"MESSAGE-ID\")] {2}\r\n\r\n)\r\nA0005 OK\r\n"
+            . "* 3 FETCH (UID 9 BODY[HEADER.FIELDS (MESSAGE-ID)] {900000}\r\n",
+            tls: true,
+        );
+        $client = ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p');
+
+        self::assertSame('r-1@mueller-getraenke.de', $client->messageId(7));
+        self::assertStringContainsString('A0004 UID FETCH 7 (BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])', $strom->gesendet, 'only the header, without \\Seen');
+        self::assertNull($client->messageId(8), 'a mail without Message-ID');
+        try {
+            $client->messageId(9);
+            self::fail('expected a refusal');
+        } catch (ImapFehler $e) {
+            self::assertSame('imap_protokoll', $e->fehlercode, 'a header block is small');
+        }
+    }
+
+    public function testOwnKeywordsNeedTheAttemptCounterToo(): void
+    {
+        $alle = '$Vereinsbelege $VereinsbelegeAbgelehnt $VereinsbelegeVersuch $VereinsbelegeVersuch2 $VereinsbelegeVersuch3';
+        foreach ([$alle => true, '$Vereinsbelege $VereinsbelegeAbgelehnt $VereinsbelegeVersuch' => false] as $flags => $erwartet) {
+            $strom = new SkriptStrom(
+                self::GRUSS . "* CAPABILITY IMAP4rev1\r\nA0001 OK\r\nA0002 OK\r\n* CAPABILITY IMAP4rev1\r\nA0003 OK\r\n"
+                . "* OK [PERMANENTFLAGS (\\Seen \\Flagged " . $flags . ")] ok\r\nA0004 OK\r\n",
+                tls: true,
+            );
+            self::assertSame($erwartet, ImapClient::verbinden($strom, ImapSicherheit::Ssl, 'u', 'p')->auswaehlen('INBOX'), $flags);
+        }
     }
 
     public function testAMailLargerThanAnnouncedIsNotRead(): void

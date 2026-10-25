@@ -238,6 +238,22 @@ final class InboxFlowTest extends DatabaseTestCase
         self::assertStringContainsString('Getränke Sommerfest', $seite->body);
     }
 
+    /** Issue #243: what came in through the mail intake says so. */
+    public function testASubmissionByMailShowsItsSource(): void
+    {
+        $perMail = $this->einreichung(name: 'Müller Getränke', kanal: 'mail');
+        $formular = $this->einreichung(name: 'Erika Musterfrau');
+
+        $liste = $this->get('/app/posteingang', entsperrt: true)->body;
+        self::assertSame(1, substr_count($liste, '<span class="marke">per E-Mail</span>'));
+        self::assertMatchesRegularExpression('/Müller Getränke <span class="marke">per E-Mail<\/span>/', $liste);
+
+        self::assertStringContainsString('<dt>Quelle</dt>', $detail = $this->get('/app/posteingang/' . $perMail, entsperrt: true)->body);
+        self::assertStringContainsString('<dd>per E-Mail</dd>', $detail);
+        self::assertStringContainsString('<dd>Formular „Beleg einreichen“</dd>', $this->get('/app/posteingang/' . $formular, entsperrt: true)->body);
+        self::assertStringNotContainsString('per E-Mail', $this->get('/app/posteingang')->body, 'the channel is in the sealed payload only');
+    }
+
     public function testTheViewsSplitByStatus(): void
     {
         $gestern = new \DateTimeImmutable('yesterday');
@@ -595,6 +611,7 @@ final class InboxFlowTest extends DatabaseTestCase
         ?array $seiten = null,
         BlobStorage $storage = BlobStorage::Fs,
         array $aufbereitet = [],
+        ?string $kanal = null,
     ): int {
         $erstellt ??= new \DateTimeImmutable();
         $seiten ??= [[FakeJpeg::bauen(10, 10), MagicBytes::JPEG]];
@@ -615,7 +632,7 @@ final class InboxFlowTest extends DatabaseTestCase
             'name' => $name,
             'erstattung' => ['art' => 'ueberweisung', 'iban' => 'DE89370400440532013000', 'kontoinhaber' => $name],
             'freitext' => $freitext,
-        ], JSON_THROW_ON_ERROR);
+        ] + ($kanal === null ? [] : ['kanal' => $kanal]), JSON_THROW_ON_ERROR);
         $submissions->complete(
             $submissionId,
             sprintf('R-2026-%04d', ++$this->laufnummer),

@@ -116,6 +116,40 @@ final readonly class RateLimiter
     }
 
     /**
+     * How much this key has counted in the current window (0 when its
+     * window ran out) - for a limit on an amount rather than on attempts:
+     * the mail intake's bytes per worker (issue #243, N-17).
+     */
+    public function stand(string $purpose, string $value, ?\DateTimeImmutable $now = null): int
+    {
+        $row = $this->rows->find($this->keyHash($purpose, $value));
+
+        return $row !== null && $row['windowStart'] === $this->windowStart($now ?? new \DateTimeImmutable()) ? $row['count'] : 0;
+    }
+
+    /**
+     * Counts $menge more for this key - register() for amounts.
+     */
+    public function registerMenge(string $purpose, string $value, int $menge, ?\DateTimeImmutable $now = null): void
+    {
+        if ($value === '' || $menge < 1) {
+            return;
+        }
+
+        $key = $this->keyHash($purpose, $value);
+        $window = $this->windowStart($now ?? new \DateTimeImmutable());
+        $row = $this->rows->find($key);
+
+        if ($row === null || $row['windowStart'] !== $window) {
+            $this->rows->startWindow($key, $window, $menge);
+
+            return;
+        }
+
+        $this->rows->increment($key, $menge);
+    }
+
+    /**
      * Clears the counter - what a successful attempt does, so that a user
      * who mistyped their password twice starts the next day from zero.
      */

@@ -23,19 +23,20 @@ interface Postfach
     public function offene(bool $mitKeywords, ?string $seit = null): array;
 
     /**
-     * UIDs among the open ones that still carry the attempt mark - the
-     * worker died while handling them.
+     * Size (RFC822.SIZE) and flags of each mail - the flags carry the
+     * attempt counter (ImapClient::KEYWORDS_VERSUCH).
      *
-     * @return list<int>
-     */
-    public function inArbeit(bool $mitKeywords, ?string $seit = null): array;
-
-    /**
      * @param list<int> $uids
      *
-     * @return array<int, int> uid => size in bytes (RFC822.SIZE)
+     * @return array<int, array{groesse: int, flags: list<string>}>
      */
-    public function groessen(array $uids): array;
+    public function angaben(array $uids): array;
+
+    /**
+     * The Message-ID alone, without fetching the mail (null: it has none) -
+     * to find a mail in the inbox that is not fetched again (issue #243).
+     */
+    public function messageId(int $uid): ?string;
 
     /** The whole mail, without setting \Seen; refused when larger than $maxBytes. */
     public function holen(int $uid, int $maxBytes): string;

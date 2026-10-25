@@ -26,7 +26,14 @@ final readonly class EinreichungsDaten
         public ?string $kontoinhaber,
         public string $freitext,
         public ?int $kostenstelleHinweis,
+        public ?string $kanal = null,
     ) {
+    }
+
+    /** Came in through the mail intake (issue #87/#243), not the form. */
+    public function perMail(): bool
+    {
+        return $this->kanal === 'mail';
     }
 
     private const string TABLE = 'submission';
@@ -93,6 +100,7 @@ final readonly class EinreichungsDaten
             kontoinhaber: is_string($erstattung['kontoinhaber'] ?? null) ? $erstattung['kontoinhaber'] : null,
             freitext: is_string($payload['freitext'] ?? null) ? $payload['freitext'] : '',
             kostenstelleHinweis: is_int($payload['kostenstelle_hinweis'] ?? null) ? $payload['kostenstelle_hinweis'] : null,
+            kanal: is_string($payload['kanal'] ?? null) ? $payload['kanal'] : null,
         );
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Worker\Support;
 
 use App\Worker\Mail\ImapFehler;
+use App\Worker\Mail\MimeNachricht;
 use App\Worker\Mail\Postfach;
 
 /**
@@ -37,6 +38,20 @@ final class FakePostfach implements Postfach
 
     /** @var list<int> UIDs whose FETCH the server cannot answer */
     public array $kaputt = [];
+
+    /**
+     * Called when a mail is fetched - a test throws from here what happens
+     * mid-mail (the connection breaks, the worker is killed).
+     *
+     * @var ?\Closure(int): void
+     */
+    public ?\Closure $beimHolen = null;
+
+    /** @var array<int, int> uid => how often the whole mail was fetched */
+    public array $geholt = [];
+
+    /** @var list<int> UIDs whose Message-ID alone was asked for */
+    public array $messageIdAbgefragt = [];
 
     public function hinzufuegen(string $roh): int
     {
@@ -80,25 +95,25 @@ final class FakePostfach implements Postfach
         return $offen;
     }
 
-    public function groessen(array $uids): array
+    public function angaben(array $uids): array
     {
-        $g = [];
+        $a = [];
         foreach ($uids as $uid) {
-            $g[$uid] = strlen($this->mails[$uid]);
+            $a[$uid] = ['groesse' => strlen($this->mails[$uid]), 'flags' => $this->flags[$uid]];
         }
 
-        return $g;
+        return $a;
     }
 
     /** @var array<int, list<string>> the flags of each mail at the moment it was fetched */
     public array $flagsBeimHolen = [];
 
-    public function inArbeit(bool $mitKeywords, ?string $seit = null): array
+    public function messageId(int $uid): ?string
     {
-        return array_values(array_filter(
-            $this->offene($mitKeywords, $seit),
-            fn(int $uid): bool => in_array($mitKeywords ? '$VereinsbelegeVersuch' : '\\Flagged', $this->flags[$uid], true),
-        ));
+        $this->messageIdAbgefragt[] = $uid;
+        $kopf = preg_split('/\r?\n\r?\n/', $this->mails[$uid], 2)[0] ?? '';
+
+        return MimeNachricht::messageIdAusKopf($kopf);
     }
 
     public function entmarkieren(int $uid, array $flags): void
@@ -109,6 +124,10 @@ final class FakePostfach implements Postfach
     public function holen(int $uid, int $maxBytes): string
     {
         $this->flagsBeimHolen[$uid] = $this->flags[$uid];
+        $this->geholt[$uid] = ($this->geholt[$uid] ?? 0) + 1;
+        if ($this->beimHolen !== null) {
+            ($this->beimHolen)($uid);
+        }
         if (in_array($uid, $this->kaputt, true)) {
             throw new ImapFehler('imap_protokoll');
         }

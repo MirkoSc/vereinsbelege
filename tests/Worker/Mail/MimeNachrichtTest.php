@@ -124,4 +124,65 @@ final class MimeNachrichtTest extends TestCase
             unset($n, $roh, $rumpf);
         }
     }
+
+    /**
+     * N-16 (issue #243): a forwarded mail that is itself base64 encoded
+     * needs a decoded copy - one, not one per level, and decoded piece by
+     * piece without copying the encoded part: below three times the mail.
+     */
+    public function testAnEncodedForwardedMailStaysBelowThreeTimesItsSize(): void
+    {
+        $pdf = self::PDF . str_repeat('A', 6 * 1024 * 1024);
+        $innen = "From: lieferant@example.org\r\nContent-Type: multipart/mixed; boundary=i\r\n\r\n--i\r\n"
+            . "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=r.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            . chunk_split(base64_encode($pdf), 76, "\r\n") . "--i--\r\n";
+        $weiter = static fn(string $mail, string $grenze, string $kodierung): string => "Content-Type: multipart/mixed; boundary={$grenze}\r\n\r\n--{$grenze}\r\n"
+            . "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: {$kodierung}\r\n\r\n"
+            . ($kodierung === 'base64' ? chunk_split(base64_encode($mail), 76, "\r\n") : quoted_printable_encode($mail)) . "\r\n--{$grenze}--\r\n";
+
+        $faelle = [
+            'base64' => $weiter($innen, 'a', 'base64'),
+            'quoted-printable' => $weiter($innen, 'a', 'quoted-printable'),
+        ];
+        // Quoted-printable does not shrink: forwards encoded inside each
+        // other were one full copy per level before. An encoded forward
+        // inside an encoded forward is not opened.
+        $qp = static fn(string $mail): string => "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . quoted_printable_encode($mail);
+        $faelle['verschachtelt'] = $qp($qp($qp("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($pdf), 76, "\r\n"))));
+        foreach ($faelle as $fall => $rumpf) {
+            $roh = "From: x@y.de\r\nSubject: weitergeleitet\r\n" . $rumpf;
+            unset($rumpf);
+
+            gc_collect_cycles();
+            memory_reset_peak_usage();
+            $vorher = memory_get_usage();
+            $n = MimeNachricht::lesen($roh);
+            $spitze = memory_get_peak_usage() - $vorher;
+
+            self::assertLessThan(3 * strlen($roh), $spitze, $fall . ': ' . intdiv($spitze, 1024 * 1024) . ' MiB for ' . intdiv(strlen($roh), 1024 * 1024) . ' MiB');
+            if ($fall === 'verschachtelt') {
+                self::assertSame([], $n->anhaenge);
+            } else {
+                self::assertCount(1, $n->anhaenge, $fall);
+                self::assertSame($pdf, $n->anhaenge[0]->inhalt, $fall . ': decoded piece by piece, byte for byte');
+            }
+            unset($n, $roh);
+        }
+    }
+
+    /** Decoding in pieces gives the same bytes as decoding at once, whatever the line length. */
+    public function testPiecewiseDecodingMatchesTheWhole(): void
+    {
+        $daten = random_bytes(3 * 1024 * 1024 + 7);
+        foreach (['base64' => chunk_split(base64_encode($daten), 1000, "\n"), 'quoted-printable' => quoted_printable_encode($daten)] as $kodierung => $text) {
+            $roh = "From: x@y.de\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\nContent-Transfer-Encoding: {$kodierung}\r\n\r\n" . $text;
+            self::assertSame($daten, MimeNachricht::lesen($roh)->anhaenge[0]->inhalt, $kodierung);
+        }
+    }
+
+    public function testTheMessageIdFromAHeaderAlone(): void
+    {
+        self::assertSame('a.b@c.de', MimeNachricht::messageIdAusKopf("Message-ID:\r\n <a.b@c.de>\r\n\r\n"));
+        self::assertNull(MimeNachricht::messageIdAusKopf("\r\n"));
+    }
 }

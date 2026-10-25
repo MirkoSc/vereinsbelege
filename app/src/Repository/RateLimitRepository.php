@@ -40,29 +40,32 @@ final readonly class RateLimitRepository
     }
 
     /**
-     * Opens a fresh window for this key at count 1 - either the first attempt
-     * ever, or the first one after the previous window ran out.
+     * Opens a fresh window for this key at $count (1 for an attempt) -
+     * either the first attempt ever, or the first one after the previous
+     * window ran out.
      */
-    public function startWindow(string $keyHash, string $windowStart): void
+    public function startWindow(string $keyHash, string $windowStart, int $count = 1): void
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO rate_limit (key_hash, window_start, `count`) VALUES (?, ?, 1)
-             ON DUPLICATE KEY UPDATE window_start = VALUES(window_start), `count` = 1',
+            'INSERT INTO rate_limit (key_hash, window_start, `count`) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE window_start = VALUES(window_start), `count` = VALUES(`count`)',
         );
         $stmt->bindValue(1, $keyHash, \PDO::PARAM_LOB);
         $stmt->bindValue(2, $windowStart);
+        $stmt->bindValue(3, $count, \PDO::PARAM_INT);
         $stmt->execute();
     }
 
     /**
-     * Counts one more attempt inside the window that is already open. The
+     * Counts $by more inside the window that is already open. The
      * increment happens in the database, so two parallel requests cannot
      * read the same value and write it back twice.
      */
-    public function increment(string $keyHash): void
+    public function increment(string $keyHash, int $by = 1): void
     {
-        $stmt = $this->pdo->prepare('UPDATE rate_limit SET `count` = `count` + 1 WHERE key_hash = ?');
-        $stmt->bindValue(1, $keyHash, \PDO::PARAM_LOB);
+        $stmt = $this->pdo->prepare('UPDATE rate_limit SET `count` = `count` + ? WHERE key_hash = ?');
+        $stmt->bindValue(1, $by, \PDO::PARAM_INT);
+        $stmt->bindValue(2, $keyHash, \PDO::PARAM_LOB);
         $stmt->execute();
     }
 

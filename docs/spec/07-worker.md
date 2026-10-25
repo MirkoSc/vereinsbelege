@@ -592,16 +592,59 @@ Markierung: Keywords `$Vereinsbelege` (+ `\Seen`) bzw.
 `$VereinsbelegeAbgelehnt`; erlaubt der Server keine eigenen Keywords,
 `\Seen` bzw. `\Seen \Flagged` und nur ungelesene Mails gelten als neu.
 Verschieben nur mit `MOVE` (RFC 6851), sonst bleibt die Mail markiert
-liegen. Eine Mail, an der der Worker dreimal scheitert, wird als abgelehnt
-markiert. Vor dem Holen bekommt eine Mail das Keyword `$VereinsbelegeVersuch`
-(ohne eigene Keywords `\Flagged`), danach wird es entfernt; trägt eine offene
-Mail es beim nächsten Abruf noch, ist der Worker an ihr gestorben (z. B.
-Speicher) – sie wird als abgelehnt („unlesbar“) markiert statt erneut
-geholt. Der MIME-Leser arbeitet mit Byte-Offsets im einen Mailpuffer
-(höchstens 4 Ebenen, nur behaltene Anhänge werden dekodiert, Spitze unter
-dem Dreifachen der Mailgröße); das geholte Literal ist auf
-`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt. Eine Mail, die nur für sich scheitert (FETCH nicht beantwortbar,
-Webhoster lehnt einen Anhang mit 5xx ab), hält spätere nicht auf. Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_eingereicht`.
+liegen.
+
+**Versuchszähler (Stand issue #243).** Vor dem n-ten Versuch bekommt eine
+Mail das n-te Keyword aus `$VereinsbelegeVersuch`, `$VereinsbelegeVersuch2`,
+`$VereinsbelegeVersuch3` (gelesen mit `RFC822.SIZE FLAGS` in einem FETCH);
+ist sie erledigt oder abgelehnt, werden alle entfernt – nach dem Setzen von
+`$Vereinsbelege`, vor dem Verschieben. Trägt eine offene Mail noch Marken,
+ist ein Versuch nicht fertig geworden (Verbindungsabbruch, harter Kill,
+Speicher): sie wird erneut versucht, **höchstens dreimal**, auch wenn ein
+Versuch nur für sich scheiterte (FETCH nicht beantwortbar, Webhoster lehnt
+einen Anhang mit 5xx ab) – eine solche Mail hält spätere nicht auf. Nach dem dritten wird sie nicht mehr geholt, sondern
+nur ihre Message-ID (`BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]`, höchstens
+64 KiB) gelesen und per `mail/pruefen` abgeglichen: schon im Posteingang →
+„erledigt“ (Absturz zwischen Einreichen und Markieren), sonst „abgelehnt“
+(`unlesbar`). Ohne Message-ID lässt sie sich ohne Holen nicht abgleichen
+und wird abgelehnt. Fällt der Webhoster als Ganzes aus (Netz, 401/403,
+`mail_eingang_aus`, `mail_limit`) oder wird der Worker angehalten, nimmt der
+Worker die gerade gesetzte Marke zurück – das zählt nicht gegen die Mail.
+**Ohne eigene Keywords** setzt der Worker keine Versuchs-Marke im Postfach:
+`\Flagged` gehört dem Menschen (von Hand markierte Mails werden normal
+eingereicht und behalten ihr Fähnchen), die Versuche zählt der Worker nur im
+Speicher – Verbindungsabbrüche ja, ein harter Kill nein (dafür gibt es ohne
+Keywords keinen Ort im Postfach).
+
+**Speicher (N-16).** Der MIME-Leser arbeitet mit Byte-Offsets im einen
+Mailpuffer (höchstens 4 Ebenen, Text des Mailkörpers wird nicht dekodiert)
+und dekodiert base64/quoted-printable stückweise (1 MiB) direkt aus dem
+Puffer – ohne Kopie des kodierten Teils. Eine selbst kodierte
+`message/rfc822` (RFC 2046 verbietet es, manche Programme tun es) bekommt
+eine dekodierte Kopie; eine kodierte weitergeleitete Mail **in** dieser
+Kopie wird nicht geöffnet. Damit bleibt die Spitze unter dem Dreifachen der
+Mailgröße (Kopie < 1×, Anhänge < 1×), auch bei ineinander kodierten
+Weiterleitungen (getestet). Der Idempotenz-Schlüssel ohne Message-ID wird
+inkrementell gehasht (keine Kopie der Mail). Das geholte Literal ist auf
+`max_einreichung_bytes · 4/3 + 1 MiB` begrenzt.
+
+**Mengengrenze des Webhosters (N-17).** Unabhängig von den Grenzen des
+Workers nimmt der Webhoster je Worker und Stunde höchstens
+`mail_eingang_limit_stunde` Mails (Vorgabe 60) und
+`mail_eingang_limit_mb_stunde` MiB (Vorgabe 500) an
+(`App\Service\Worker\MailEingangGrenze` auf `rate_limit`, Fenster
+`RateLimiter::SUBMISSION_WINDOW_SECONDS`). Bytes zählen beim Ausgeben des
+Upload-Tickets (vor dem Schreiben), Mails beim Einreichen; darüber 429
+`mail_limit`. Der Worker beendet dann den Abruf, nimmt die Marke zurück und
+meldet `mail_limit` im `mail_status`; die Mail wartet unmarkiert. Kein
+Admin-Formularfeld (Setting mit Vorgabe), die Admin-Seite zeigt die Werte.
+
+Log: `mail_abruf`, `mail_abgelehnt` (UID, Grund), `mail_fehler` (UID,
+Fehler, Versuch), `mail_eingereicht`.
+
+**Posteingang.** Einreichungen mit `kanal: "mail"` zeigen in Liste und
+Detail die Quelle „per E-Mail“ (`EinreichungsDaten::perMail()`; der Kanal
+steht nur im versiegelten Payload, ohne Tresor ist er nicht sichtbar).
 
 ## Pflicht-Tests
 
@@ -636,7 +679,13 @@ STARTTLS erzwungen und Zugangsdaten nie vor TLS, Zertifikat geprüft
 (selbstsigniert abgelehnt), Zugang nur versiegelt und nur mit Freigabe,
 STARTTLS-Injektion abgelehnt, Mail → Beleg mit Tresor lesbar, mit `W_priv` nicht, keine Doppel-Einreichung,
 Ablehnungen markiert statt gelöscht, Grenzen, verschachtelte große Mail
-bleibt im Speicher begrenzt, Mail mit Versuchs-Marke wird nicht erneut geholt, keine Mailinhalte im Log;
+bleibt im Speicher begrenzt, keine Mailinhalte im Log;
+Mail-Eingang-Härtung (#243): Verbindungsabbruch → bis zu drei Versuche, dann
+„unlesbar“ ohne erneutes Holen, Absturz nach dem Einreichen → „erledigt“
+über die Message-ID, ausgefallener Webhoster zählt keinen Versuch, von Hand
+`\Flagged` ohne eigene Keywords bleibt unberührt, kodierte und ineinander
+kodierte `message/rfc822` unter 3× Mailgröße, Mengengrenze je Worker und
+Stunde (Mails, Bytes) mit 429 `mail_limit`, Quelle „per E-Mail“ im Posteingang;
 Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).

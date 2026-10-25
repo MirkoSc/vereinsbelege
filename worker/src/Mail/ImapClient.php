@@ -29,11 +29,16 @@ final class ImapClient implements Postfach
     public const string KEYWORD_ABGELEHNT = '$VereinsbelegeAbgelehnt';
 
     /**
-     * Set before a mail is fetched and removed after it was handled: a mail
-     * that still carries it crashed the worker (review of #87) and is set
-     * aside instead of being fetched again on every start.
+     * The attempt counter, kept at the mail itself because the worker keeps
+     * nothing (review of #87, issue #243): before the n-th attempt the mail
+     * gets the n-th keyword, all go once it is handled. A mail still
+     * carrying them was not finished - the connection broke or the worker
+     * died - and is tried again; after the last one it is set aside.
      */
-    public const string KEYWORD_VERSUCH = '$VereinsbelegeVersuch';
+    public const array KEYWORDS_VERSUCH = ['$VereinsbelegeVersuch', '$VereinsbelegeVersuch2', '$VereinsbelegeVersuch3'];
+
+    /** Largest Message-ID header block accepted. */
+    private const int MAX_KOPF_LITERAL = 64 * 1024;
 
     /** Largest literal accepted unless a command sets a smaller one. */
     private const int MAX_LITERAL = 96 * 1024 * 1024;
@@ -85,7 +90,7 @@ final class ImapClient implements Postfach
                 $flags = preg_split('/\s+/', trim($t[1])) ?: [];
 
                 return in_array('\\*', $flags, true)
-                    || (in_array(self::KEYWORD_ERLEDIGT, $flags, true) && in_array(self::KEYWORD_ABGELEHNT, $flags, true) && in_array(self::KEYWORD_VERSUCH, $flags, true));
+                    || array_diff([self::KEYWORD_ERLEDIGT, self::KEYWORD_ABGELEHNT, ...self::KEYWORDS_VERSUCH], $flags) === [];
             }
         }
 
@@ -126,29 +131,38 @@ final class ImapClient implements Postfach
         return $uids;
     }
 
-    public function inArbeit(bool $mitKeywords, ?string $seit = null): array
-    {
-        $kriterien = $mitKeywords
-            ? 'KEYWORD ' . self::KEYWORD_VERSUCH . ' UNKEYWORD ' . self::KEYWORD_ERLEDIGT . ' UNKEYWORD ' . self::KEYWORD_ABGELEHNT . ' UNDELETED'
-            : 'UNSEEN FLAGGED UNDELETED';
-
-        return $this->suchen($kriterien, $seit);
-    }
-
-    public function groessen(array $uids): array
+    public function angaben(array $uids): array
     {
         if ($uids === []) {
             return [];
         }
-        [$antworten] = $this->befehlOk('UID FETCH ' . implode(',', array_map(intval(...), $uids)) . ' (RFC822.SIZE)');
-        $groessen = [];
+        [$antworten] = $this->befehlOk('UID FETCH ' . implode(',', array_map(intval(...), $uids)) . ' (RFC822.SIZE FLAGS)');
+        $angaben = [];
         foreach ($antworten as [$text]) {
             if (preg_match('/\bUID (\d+)/i', $text, $u) === 1 && preg_match('/\bRFC822\.SIZE (\d+)/i', $text, $g) === 1) {
-                $groessen[(int) $u[1]] = (int) $g[1];
+                $flags = preg_match('/\bFLAGS \(([^)]*)\)/i', $text, $f) === 1 ? (preg_split('/\s+/', trim($f[1]), -1, PREG_SPLIT_NO_EMPTY) ?: []) : [];
+                $angaben[(int) $u[1]] = ['groesse' => (int) $g[1], 'flags' => array_values($flags)];
             }
         }
 
-        return $groessen;
+        return $angaben;
+    }
+
+    public function messageId(int $uid): ?string
+    {
+        $this->maxLiteral = self::MAX_KOPF_LITERAL;
+        try {
+            [$antworten] = $this->befehlOk('UID FETCH ' . $uid . ' (BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])');
+        } finally {
+            $this->maxLiteral = self::MAX_LITERAL;
+        }
+        foreach ($antworten as [$text, $literale]) {
+            if ($literale !== [] && preg_match('/BODY\[HEADER\.FIELDS \("?MESSAGE-ID"?\)\] \{\d+\+?\}/i', $text) === 1) {
+                return MimeNachricht::messageIdAusKopf($literale[0]);
+            }
+        }
+
+        throw new ImapFehler('imap_protokoll', 'Die Mail konnte nicht gelesen werden.');
     }
 
     public function holen(int $uid, int $maxBytes): string
@@ -177,22 +191,23 @@ final class ImapClient implements Postfach
 
     public function markieren(int $uid, array $flags): void
     {
-        foreach ($flags as $flag) {
-            if (preg_match('/^\\\\?\$?[A-Za-z][A-Za-z0-9]*$/', $flag) !== 1) {
-                throw new \InvalidArgumentException('Invalid flag.');
-            }
-        }
-        $this->befehlOk('UID STORE ' . $uid . ' +FLAGS.SILENT (' . implode(' ', $flags) . ')');
+        $this->speichern($uid, '+', $flags);
     }
 
     public function entmarkieren(int $uid, array $flags): void
+    {
+        $this->speichern($uid, '-', $flags);
+    }
+
+    /** @param list<string> $flags */
+    private function speichern(int $uid, string $richtung, array $flags): void
     {
         foreach ($flags as $flag) {
             if (preg_match('/^\\\\?\$?[A-Za-z][A-Za-z0-9]*$/', $flag) !== 1) {
                 throw new \InvalidArgumentException('Invalid flag.');
             }
         }
-        $this->befehlOk('UID STORE ' . $uid . ' -FLAGS.SILENT (' . implode(' ', $flags) . ')');
+        $this->befehlOk('UID STORE ' . $uid . ' ' . $richtung . 'FLAGS.SILENT (' . implode(' ', $flags) . ')');
     }
 
     public function verschieben(int $uid, string $ordner): bool
