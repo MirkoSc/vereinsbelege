@@ -38,7 +38,7 @@ $paths = new Paths($releaseRoot);
 try {
     $config = Config::fromFile(getenv('APP_CONFIG_FILE') ?: $paths->configFile());
     $pdo = ConnectionFactory::create($config);
-    // Right after migration 046: the first MAC of every existing vault
+    // Right after migration 047: the first MAC of every existing vault
     // generation (issue #240) - like the updater's migrate step.
     $crypto = new ServerCrypto($config->serverKey);
     $vaults = new VaultRepository($pdo, $crypto->tresorAnker());

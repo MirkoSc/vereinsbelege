@@ -12,7 +12,7 @@ use App\Service\Migration\Migration;
 /**
  * Trust on first use for the vault anchor (issue #240,
  * docs/spec/01-sicherheit.md section 2 "Anker des Tresor-Schlüssels"):
- * installations from before migration 046 have generations without
+ * installations from before migration 047 have generations without
  * `public_key_mac`. Right after that migration - in the same request, via
  * the Migrator's after-hook - every such row is anchored as it stands.
  *
@@ -28,7 +28,7 @@ use App\Service\Migration\Migration;
  */
 final readonly class Erstbeglaubigung
 {
-    /** The name of migration 046 - by name, not number, should it be renumbered. */
+    /** The name of migration 047 - by name, not number, should it be renumbered. */
     public const string MIGRATION = 'vault_anchor';
 
     /**

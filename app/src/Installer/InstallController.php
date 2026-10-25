@@ -237,7 +237,7 @@ final readonly class InstallController
         $setup = new FirstAdminSetup($pdo);
         // Looked at BEFORE the migrations too (an empty database has no
         // vault table yet): on an existing installation from before
-        // migration 046 they would use up the one first-use anchoring of
+        // migration 047 they would use up the one first-use anchoring of
         // its vault key (issue #240) without writing it.
         try {
             $schonEinTresor = $setup->vaultExists();
@@ -638,7 +638,7 @@ final readonly class InstallController
             // Everything is in: only migrations newer than the backup remain.
             $migrator = new Migrator($pdo, $this->paths->migrationsDir());
             // Noted BEFORE migrating, and kept: a request that dies after
-            // migration 046 but before config.php must not lose the vault
+            // migration 047 but before config.php must not lose the vault
             // anchor's first use (issue #240) - its retry finds nothing pending.
             if (Erstbeglaubigung::darunter($migrator->pending())) {
                 $_SESSION['install_restore']['erstbeglaubigung'] = true;

@@ -142,7 +142,7 @@ verändert. Er läuft noch mit dem Code des alten Releases – das Update von
 einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
-Wendet `migrate` die Migration 046 an, beglaubigt derselbe Request die
+Wendet `migrate` die Migration 047 an, beglaubigt derselbe Request die
 bestehenden Tresor-Generationen (Erstbeglaubigung, 01 §2 „Anker des
 Tresor-Schlüssels“, issue #240); zwischen `switch` und `migrate` wird
 nichts versiegelt.
@@ -535,8 +535,8 @@ im Backup ausgetauschter `vault.public_key` fällt unter dem echten
 Server-Schlüssel durch, es wird nichts an ihn versiegelt (Systemcheck,
 Audit). Weg 2 beglaubigt die aktuelle Generation im selben Zug per
 Wiederherstellungsschlüssel unter dem neuen Server-Schlüssel neu (Audit
-`tresor.anker_gesetzt`). Ein Backup von vor Migration 046 hat keine MACs:
-der Restore, der 046 anwendet, merkt das in der Sitzung
+`tresor.anker_gesetzt`). Ein Backup von vor Migration 047 hat keine MACs:
+der Restore, der 047 anwendet, merkt das in der Sitzung
 (`install_restore.erstbeglaubigung`) und beglaubigt die Zeilen ohne MAC
 mit dem Schlüssel, den `config.php` bekommt – bevor sie geschrieben wird.
 

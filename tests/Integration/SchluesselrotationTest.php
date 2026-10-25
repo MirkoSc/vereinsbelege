@@ -523,7 +523,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
      * Between the updater's 'switch' and 'migrate' steps the new code runs on
      * the old schema: the guard and the login must not fail on the missing
      * columns of migration 040. (Such a schema predates the vault anchor of
-     * migration 046 as well: the login then succeeds with the vault locked,
+     * migration 047 as well: the login then succeeds with the vault locked,
      * issue #240 - nothing is sealed until 'migrate' has run.)
      */
     public function testVorMigration040GibtEsKeineRotationUndDieAnmeldungGeht(): void

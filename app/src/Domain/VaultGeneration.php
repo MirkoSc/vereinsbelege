@@ -9,7 +9,7 @@ namespace App\Domain;
  * docs/spec/01-sicherheit.md section 2 "Schlüsselrotation"): when it was
  * created, when its printed recovery key was confirmed, and when a newer
  * generation replaced it. `publicKeyMac` is the anchor of the public key
- * (migration 046, issue #240) - null when the row has none or the schema
+ * (migration 047, issue #240) - null when the row has none or the schema
  * predates it; only App\Repository\VaultRepository judges it.
  */
 final readonly class VaultGeneration

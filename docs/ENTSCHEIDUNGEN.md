@@ -1968,7 +1968,7 @@ unbeglaubigt in der Datenbank. Entschieden:
 
 1. **Anker = HMAC-SHA256 über Version und Schlüssel**, Schlüssel aus dem
    Server-Schlüssel abgeleitet, in der Spalte `public_key_mac` (Migration
-   046). Keine Signatur (es gibt keinen Signaturschlüssel außerhalb des
+   047). Keine Signatur (es gibt keinen Signaturschlüssel außerhalb des
    Servers), keine Datei in `shared/` (der Server-Schlüssel ist schon der
    Teil, der getrennt gesichert wird; eine zweite Datei müsste Backup,
    Restore und Rotation zusätzlich mitführen).
@@ -1984,12 +1984,12 @@ unbeglaubigt in der Datenbank. Entschieden:
    Tresor-Freigabe beim Login ist **kein** Beweis (jeder kann an `U_pub`
    versiegeln) – darum beglaubigt der Login nie.
 4. **Bestehende Installationen: Erstbeglaubigung (TOFU)** genau in dem
-   Request, der Migration 046 anwendet (Nach-Haken des `Migrator`,
+   Request, der Migration 047 anwendet (Nach-Haken des `Migrator`,
    erkannt am Namen `vault_anchor`, nicht an der Nummer). Danach wird ein
    fehlender MAC nie wieder still ergänzt. Annahme: im Moment des Updates
    ist der Schlüssel unverfälscht – ein schon vorher ausgetauschter würde
    beglaubigt (Stand ohne Anker, nicht schlechter). Gleiches beim Restore
-   eines Backups von vor 046.
+   eines Backups von vor 047.
 5. **Restore:** mit `config.php` bzw. altem Server-Schlüssel gelten die
    MACs des Dumps; Weg 2 (neuer Schlüssel) beglaubigt die aktuelle
    Generation per Wiederherstellungsschlüssel neu. Eine vorgemerkte

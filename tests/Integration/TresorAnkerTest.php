@@ -206,7 +206,7 @@ final class TresorAnkerTest extends DatabaseTestCase
     }
 
     /**
-     * An installation from before migration 046: the update that applies it
+     * An installation from before migration 047: the update that applies it
      * anchors the existing generations, in the same request, and audits it.
      */
     public function testTheAnchorMigrationAnchorsExistingGenerationsOnFirstUse(): void

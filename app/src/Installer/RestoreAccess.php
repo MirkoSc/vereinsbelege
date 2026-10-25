@@ -219,7 +219,7 @@ final readonly class RestoreAccess
         try {
             // First: the grant and the audit entry below seal with it.
             $vaults->beglaubige($aktuell->version, $aktuell->publicKey());
-            // A backup from before migration 046 carries no MACs at all; the
+            // A backup from before migration 047 carries no MACs at all; the
             // generations the recovery key does not cover (a rotation's
             // pending one) are taken over as they stand - the same first use
             // as an update (App\Service\Tresor\Erstbeglaubigung).
@@ -291,7 +291,7 @@ final readonly class RestoreAccess
 
     /**
      * The first-use anchor after restoring a backup from before migration
-     * 046 (issue #240), with the server key config.php is about to get - the
+     * 047 (issue #240), with the server key config.php is about to get - the
      * one in the backup or the old one handed in at the access step. Only
      * rows without a MAC; one that carries a MAC keeps it, right or wrong:
      * a doctored public key in a newer backup fails the check under the

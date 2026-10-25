@@ -439,7 +439,7 @@ die Datenbank schreiben kann (oder ein manipuliertes Backup einspielen
 lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
 (Befund N-01, H-05). Gegenmittel: ein Anker außerhalb der Datenbank.
 
-- **MAC je Generation:** `vault.public_key_mac` (Migration 046) =
+- **MAC je Generation:** `vault.public_key_mac` (Migration 047) =
   `HMAC-SHA256(K_A, "vault-anchor-v1" | 0x00 | version (4 Byte) | public_key)`,
   `K_A = BLAKE2b(Server-Schlüssel, "vault-anchor-v1")` – abgeleitet wie der
   Login-Index, nie der Server-Schlüssel selbst (`App\Service\Crypto\
@@ -470,9 +470,9 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
   Benutzerverwaltung, Tresor-Freigaben, Worker-Freigabe aus der Sitzung),
   nutzen `currentUngeprueft()` und bleiben erreichbar.
 - Die Erstbeglaubigung (unten) setzt sich nicht selbst zurück: scheitert
-  der Request nach Migration 046 (Datenbankfehler genau dann), bleibt der
+  der Request nach Migration 047 (Datenbankfehler genau dann), bleibt der
   MAC leer – Ausweg ist der Wiederherstellungsschlüssel. Der Installer
-  merkt sich vor dem Migrieren, dass 046 aussteht, damit ein
+  merkt sich vor dem Migrieren, dass 047 aussteht, damit ein
   wiederholter Schritt sie nicht verliert, und prüft bei einer frischen
   Installation vor dem Migrieren, ob schon ein Tresor existiert.
 - **Wer den Anker setzt** – nur, wer den Schlüssel *beweisen* kann:
@@ -489,10 +489,10 @@ lässt), künftige Belege an einen eigenen Schlüssel versiegeln lassen
      zu dieser Installation“) – dann Audit-Log prüfen und ein Backup von
      vor der Änderung einspielen.
   4. **Erstbeglaubigung** (trust on first use) für Generationen ohne MAC –
-     nur in dem Request, der Migration 046 anwendet
+     nur in dem Request, der Migration 047 anwendet
      (`App\Service\Tresor\Erstbeglaubigung` als Nach-Haken des
      `Migrator`: Update-Schritt `migrate`, `bin/migrate.php`; beim Restore
-     eines Backups von vor 046 mit dem Schlüssel, den `config.php`
+     eines Backups von vor 047 mit dem Schlüssel, den `config.php`
      bekommt). Ein MAC, der später fehlt, wird nie wieder still ergänzt;
      ein falscher MAC wird nie überschrieben.
 - **Annahme (dokumentiert, nicht prüfbar):** zum Zeitpunkt des Updates auf
@@ -1060,7 +1060,7 @@ Freigabe gesperrt, ein gelöschter MAC wird nicht wieder ergänzt (auch nicht
 von einem erneuten Migrationslauf), die Migration beglaubigt bestehende
 Generationen genau einmal, der Wiederherstellungsschlüssel beglaubigt einen
 echten Schlüssel neu und einen ausgetauschten nicht, Rotation und Restore
-(mit/ohne `config.php`, Backup von vor 046) setzen den Anker, Systemcheck,
+(mit/ohne `config.php`, Backup von vor 047) setzen den Anker, Systemcheck,
 jede `VaultRepository` der Anwendung hat den Anker;
 Rechte-Matrix als DataProvider über alle Routen (jede Route hat eine
 Rechte-Deklaration – Test schlägt an, wenn eine Route keine hat);

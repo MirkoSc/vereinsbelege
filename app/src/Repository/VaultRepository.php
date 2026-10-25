@@ -146,7 +146,7 @@ final readonly class VaultRepository
      * Trust on first use, for installations from before the anchor existed
      * (issue #240): every generation WITHOUT a MAC gets one, as it stands.
      * Only App\Service\Tresor\Erstbeglaubigung calls this, and only in the
-     * request that applied migration 046 - a MAC that goes missing later is
+     * request that applied migration 047 - a MAC that goes missing later is
      * not filled in again, it stays a failed check until a recovery key
      * proves the key. A row whose MAC is set but wrong is never touched.
      *
@@ -243,7 +243,7 @@ final readonly class VaultRepository
     {
         $stmt = $this->ersteGelungene([
             'SELECT version, public_key, public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
-            // Before migration 046 (update between 'switch' and 'migrate'):
+            // Before migration 047 (update between 'switch' and 'migrate'):
             // no MAC - with an anchor configured nothing verifies then, so
             // nothing is sealed for those few seconds.
             'SELECT version, public_key, NULL AS public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault ORDER BY version',
@@ -402,7 +402,7 @@ final readonly class VaultRepository
     {
         $abfragen = [
             'SELECT version, public_key, public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
-            // Before migration 046 (between the updater's 'switch' and
+            // Before migration 047 (between the updater's 'switch' and
             // 'migrate'): no MAC, so with an anchor nothing verifies.
             'SELECT version, public_key, NULL AS public_key_mac, created_at, recovery_confirmed_at, retired_at FROM vault WHERE recovery_confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1',
             // Before migration 040: every generation counts as confirmed.

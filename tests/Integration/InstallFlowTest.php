@@ -1607,7 +1607,7 @@ final class InstallFlowTest extends DatabaseTestCase
         return new VaultRepository($this->pdo(), new ServerCrypto((string) base64_decode($serverKeyBase64, true))->tresorAnker());
     }
 
-    /** What an installation from before migration 046 would have backed up. */
+    /** What an installation from before migration 047 would have backed up. */
     private function schemaVorDemAnker(): void
     {
         $version = null;
@@ -1619,8 +1619,8 @@ final class InstallFlowTest extends DatabaseTestCase
         self::assertNotNull($version);
         $this->pdo()->exec('ALTER TABLE vault DROP COLUMN public_key_mac');
         $this->pdo()->prepare('DELETE FROM schema_version WHERE version >= ?')->execute([$version]);
-        // Migrations after 046 (other issues) are in the dump already; the
-        // restore must apply 046 alone, as from a release that ended there.
+        // Migrations after 047 (other issues) are in the dump already; the
+        // restore must apply 047 alone, as from a release that ended there.
         foreach (Migration::discover($this->paths()->migrationsDir()) as $migration) {
             if ($migration->version > $version) {
                 unlink($migration->path);
@@ -1708,7 +1708,7 @@ final class InstallFlowTest extends DatabaseTestCase
     }
 
     /**
-     * A backup from before migration 046 has no MAC at all: the restore that
+     * A backup from before migration 047 has no MAC at all: the restore that
      * applies the migration takes the key over (first use) - with the server
      * key handed in at the access step.
      */

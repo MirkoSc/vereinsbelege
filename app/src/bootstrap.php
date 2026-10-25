@@ -448,7 +448,7 @@ $updates = static fn(): UpdateController => new UpdateController(
         settings: new SettingRepository($connections->pdo()),
         downloader: new ReleaseDownloader(),
         switcher: new ReleaseSwitcher(dirname($paths->releaseRoot), $maintenance),
-        // Right after migration 046, in the same request: the first MAC of
+        // Right after migration 047, in the same request: the first MAC of
         // every existing vault generation (issue #240, trust on first use).
         migrator: new Migrator(
             $connections->pdo(),
