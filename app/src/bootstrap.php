@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\BackupController;
 use App\Admin\CategoryController;
+use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
@@ -166,6 +167,7 @@ use App\Service\Document\Duplikatpruefung;
 use App\Service\Document\PdfErzeugung;
 use App\Service\Document\PdfRasterung;
 use App\Service\Inbox\Posteingang;
+use App\Service\Integritaet\CodeIntegritaet;
 use App\Service\Export\Nextcloud\CurlWebDav;
 use App\Service\Export\Nextcloud\NextcloudAblage;
 use App\Service\Export\Nextcloud\NextcloudZielSpeicher;
@@ -1115,6 +1117,16 @@ $backupsSeite = static function () use ($connections, $view, $auditFor, $paths, 
     );
 };
 
+// Code integrity check (issue #79/M13-2, 01 section 8): the files of current/
+// against shared/release_checksums.txt. No business data, no vault; the
+// database only for the audit row of a finished run.
+$integritaetSeite = static fn(): CodeIntegritaetController => new CodeIntegritaetController(
+    $view,
+    new Session(),
+    new CodeIntegritaet($paths->releaseRoot, $paths->releaseChecksumsFile(), $paths->varDir()),
+    $auditFor($connections->pdo()),
+);
+
 // The Nextcloud target of the export (issue #95, 05 section 2): vault data,
 // the page needs the session's unlocked vault. Permission: `admin.settings`.
 $nextcloudAdmin = static function () use ($connections, $view, $auditFor): NextcloudSettingsController {
@@ -1694,6 +1706,7 @@ $router = new Router();
     $offenSeite,
     $tresorRotation,
     $erstattungen,
+    $integritaetSeite,
 );
 
 // No PDO connection here: ConnectionFactory opens one lazily when a route

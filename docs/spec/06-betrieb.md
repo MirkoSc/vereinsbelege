@@ -121,7 +121,9 @@ einem Release ohne `backup`-Schritt legt deshalb noch kein Backup an, die
 Schrittliste kommt ja vom laufenden Stand. Schlägt er fehl, bricht die Kette
 vor dem Umschalten ab.
 Der Updater speichert die `checksums.txt` des Releases als
-`shared/release_checksums.txt` für den Code-Integritätscheck (01 §8).
+`shared/release_checksums.txt` für den Code-Integritätscheck (01 §8); seit
+M13-2 enthält sie neben den Assets je Datei des Releases eine Zeile
+`release/<pfad>` (vom Release-Workflow erzeugt).
 
 Während der Wartungsmodus gesetzt ist, lässt der Shim außer `/admin` auch
 `/css/` und `/js/` durch: sonst käme genau die Seite, die die Wartung beendet

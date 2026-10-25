@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Admin\BackupController;
 use App\Admin\CategoryController;
+use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
@@ -199,7 +200,10 @@ use App\View\View;
  *        $nextcloudAdmin.
  * @param (\Closure(): ErstattungController)|null $erstattungen built lazily,
  *        same reason as $mail: only the reimbursement page needs the
- *        database (issue #67/M10-3). Optional and last like $nextcloudAdmin.
+ *        database (issue #67/M10-3). Optional like $nextcloudAdmin.
+ * @param (\Closure(): CodeIntegritaetController)|null $integritaet built
+ *        lazily (issue #79/M13-2): only the integrity check writes the audit
+ *        log. Optional and last like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -252,9 +256,11 @@ return static function (
     ?\Closure $offen = null,
     ?\Closure $tresorRotation = null,
     ?\Closure $erstattungen = null,
+    ?\Closure $integritaet = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
+    $integritaet ??= static fn(): never => throw new \LogicException('The code integrity check is not wired into this route table.');
     $serien ??= static fn(): never => throw new \LogicException('The recurring series pages are not wired into this route table.');
     // Not wired = closed: a worker route answers with an error, never
     // without its signature check.
@@ -994,4 +1000,12 @@ return static function (
     // Permission: `admin.system`, the same right as Update - the findings are
     // what an update or a maintenance run depends on.
     $get('/admin/systemcheck', $system, static fn(Request $r) => $systemcheck()->page($r));
+
+    // Code integrity check (01 section 8, issue #79/M13-2): current/ against
+    // the per-file checksums of the installed release, as a step chain.
+    // Permission: `admin.system`, like Update - it checks what the updater
+    // installed. CSRF on both writes; they answer JSON to the page's script.
+    $get('/admin/integritaet', $system, static fn(Request $r) => $integritaet()->page($r));
+    $post('/admin/integritaet', $system->alsApi(), static fn(Request $r) => $integritaet()->starten($r));
+    $post('/admin/integritaet/schritt', $system->alsApi(), static fn(Request $r) => $integritaet()->schritt($r));
 };
