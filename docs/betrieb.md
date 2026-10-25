@@ -107,9 +107,13 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    eintragen.
 7. Der **Wiederherstellungsschlüssel** wird **genau einmal** angezeigt:
    ausdrucken („Zum Aufbewahren drucken“) oder abschreiben, dann die
-   **letzte Gruppe** eintippen. Erst danach schreibt der Installer
-   `shared/config.php` und ist abgeschlossen. Siehe
+   **letzte Gruppe** eintippen. Siehe
    [Abschnitt 5](#5-wiederherstellungsschlüssel).
+7a. **Mail-Versand (optional):** SMTP-Zugang eintragen (Felder wie in
+   [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), mit „Speichern und Testmail
+   senden“ prüfen und dann „Speichern und Installation abschließen“ – oder
+   „Überspringen“ und später unter `/admin/mail` nachholen. Erst jetzt
+   schreibt der Installer `shared/config.php` und ist abgeschlossen.
 8. Der Installer löscht `setup.php`. Gelingt das nicht (Dateirechte beim
    FTP), sagt die Abschlussseite Bescheid – dann `web/setup.php` per FTP
    löschen.
@@ -117,7 +121,7 @@ für all-inkl stehen in [`docs/hosting-befunde.md`](hosting-befunde.md).
    oder E-Mail-Code) eingerichtet.
 10. Unter „Admin“ nacheinander einrichten:
     - **Systemcheck** (`/admin/systemcheck`) – alles grün?
-    - **Mail** (`/admin/mail`), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
+    - **Mail** (`/admin/mail`, falls im Installer übersprungen), siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)
     - **Cron** beim Hoster, siehe [Abschnitt 3](#3-cron-einrichten)
     - **`config.php` sichern**: per FTP `shared/config.php` herunterladen
       und zum Wiederherstellungsschlüssel legen ([Abschnitt 6](#6-backups))
@@ -137,7 +141,8 @@ Technischer Ablauf: [06 §4](spec/06-betrieb.md#4-jobs-und-session-worker)
 („Cron“, „Stand M1-5“).
 
 Der Cron erledigt nur Hintergrundarbeit, die **keine** Belegdaten braucht:
-Mails aus der Warteschlange versenden (mit Wiederholungen), Aufräumen
+Mails aus der Warteschlange versenden (mit Wiederholungen), Erinnerungen
+an offene Belege (nur Anzahlen, siehe [Abschnitt 4](#4-mail-smtp-spf-und-dkim)), Aufräumen
 (abgebrochene Uploads, abgelaufene Codes und Tokens, alte Jobs, Suchindexe,
 nicht bestätigte Kontoauszug-Vorschauen) und – falls der Worker genutzt
 wird – den Rückfall auf den Browser, wenn der Worker zu lange schweigt.
@@ -196,7 +201,17 @@ Hinweise mit Link.
 | Antwort-an, Vereinsname | optional |
 | Adresse dieser Installation | `https://<ihre-domain>` – wird für Links in Mails gebraucht. Ohne diese Angabe gehen Mails mit Link nur raus, wenn die aufgerufene Domain zur Absenderdomain gehört |
 
-Danach eine **Testmail** schicken. Die Warteschlange unten auf der Seite
+Danach eine **Testmail** schicken. (Wer Mail schon im Installer eingerichtet
+hat, findet dieselben Werte hier wieder.)
+
+**Erinnerung an offene Belege:** Auf derselben Seite lässt sich wählen, ob
+alle, die Belege bearbeiten dürfen, **wöchentlich** (Standard), **täglich**
+oder **gar nicht** morgens (ab 7 Uhr, mit dem nächsten Cron-Lauf) eine Mail
+bekommen: „N Einreichungen warten im Posteingang, M Belege warten auf
+Prüfung“ – nur die Zahlen. Wer nichts offen hat, bekommt keine Mail. Die
+Einstellung gilt für alle Konten; einzeln abbestellen lässt sie sich nicht.
+
+Die Warteschlange unten auf der Seite
 zeigt, was noch aussteht oder gescheitert ist (Empfänger maskiert). Eine
 Mail, die sofort nicht rausgeht, versucht der [Cron](#3-cron-einrichten)
 noch bis zu viermal (Abstände 1 min, 5 min, 15 min, 1 h); danach steht sie
