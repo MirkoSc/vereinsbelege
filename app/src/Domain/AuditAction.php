@@ -114,6 +114,10 @@ enum AuditAction: string
     case BelegDifferenzGeoeffnet = 'beleg.differenz_geoeffnet';
     // The matching run (M10-2, issue #66): counts only.
     case AbgleichAusgefuehrt = 'abgleich.ausgefuehrt';
+    // The matching page (M10-4, issue #68): a suggested pair discarded or
+    // taken back - the two ids only.
+    case AbgleichVorschlagVerworfen = 'abgleich.vorschlag_verworfen';
+    case AbgleichVorschlagZurueckgenommen = 'abgleich.vorschlag_zurueckgenommen';
 
     // Transfers between own accounts (M10-6, issue #70): the two booking
     // ids and the method, never an amount.
@@ -261,6 +265,8 @@ enum AuditAction: string
             self::EinstellungBelegStandard => 'Beleg-Standard für Einnahmen geändert',
             self::EinstellungAbgleich => 'Punktebewertung des Abgleichs geändert',
             self::AbgleichAusgefuehrt => 'Abgleich ausgeführt',
+            self::AbgleichVorschlagVerworfen => 'Abgleich-Vorschlag verworfen',
+            self::AbgleichVorschlagZurueckgenommen => 'Verworfenen Abgleich-Vorschlag wieder zugelassen',
             self::EinreichungEingegangen => 'Einreichung eingegangen',
             self::BelegErfasst => 'Beleg intern erfasst',
             self::BelegAngenommen => 'Beleg angenommen',
@@ -351,6 +357,7 @@ enum AuditAction: string
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
             self::EinstellungNextcloud, self::EinstellungAbgleich, self::AbgleichAusgefuehrt,
+            self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::WorkerKopplungscode,
             self::UpdateUmgeschaltet, self::UpdateZurueckgerollt, self::WartungAufgehoben,
             self::BackupErstellt, self::BackupHeruntergeladen => null,

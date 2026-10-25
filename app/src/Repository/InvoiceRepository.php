@@ -470,6 +470,71 @@ final readonly class InvoiceRepository
     }
 
     /**
+     * The receipts a report counts on the receipt basis (issue #71, E-44):
+     * receipt date in [$von, $bis], document in one of $status, within
+     * $bereich (receipt date and cost center), by date then id. With the
+     * plaintext sphere (NULL while the spheres are switched off, E-15).
+     *
+     * @param list<DocumentStatus> $status
+     *
+     * @return list<array{record: InvoiceRecord, sphaere: ?string}>
+     */
+    public function fuerAuswertung(\DateTimeImmutable $von, \DateTimeImmutable $bis, array $status, Zugriffsbereich $bereich): array
+    {
+        if ($status === []) {
+            return [];
+        }
+        [$scope, $scopeParameter] = $bereich->sqlBedingung('i.invoice_date', 'i.cost_center_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT i.* FROM invoice i JOIN document d ON d.id = i.document_id
+             WHERE i.invoice_date >= ? AND i.invoice_date <= ?
+               AND d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ') AND ' . $scope . '
+             ORDER BY i.invoice_date, i.id',
+        );
+        $stmt->execute([
+            $von->format('Y-m-d'),
+            $bis->format('Y-m-d'),
+            ...array_map(static fn(DocumentStatus $s): string => $s->value, $status),
+            ...$scopeParameter,
+        ]);
+
+        return array_map(self::auswertungsZeile(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The same rows by invoice id, without any scope - only plaintext
+     * structure, used to classify the allocated parts of bookings (the
+     * report narrows by scope per line). Receipts whose document is not in
+     * $status are left out. In chunks, so the IN list stays short.
+     *
+     * @param list<int> $ids
+     * @param list<DocumentStatus> $status
+     *
+     * @return array<int, array{record: InvoiceRecord, sphaere: ?string}> by invoice id
+     */
+    public function auswertungNachIds(array $ids, array $status): array
+    {
+        $ergebnis = [];
+        if ($status === []) {
+            return $ergebnis;
+        }
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $teil) {
+            $stmt = $this->pdo->prepare(
+                'SELECT i.* FROM invoice i JOIN document d ON d.id = i.document_id
+                 WHERE i.id IN (' . implode(', ', array_fill(0, count($teil), '?')) . ')
+                   AND d.status IN (' . implode(', ', array_fill(0, count($status), '?')) . ')',
+            );
+            $stmt->execute([...$teil, ...array_map(static fn(DocumentStatus $s): string => $s->value, $status)]);
+            foreach ($stmt->fetchAll() as $row) {
+                $zeile = self::auswertungsZeile($row);
+                $ergebnis[$zeile['record']->id] = $zeile;
+            }
+        }
+
+        return $ergebnis;
+    }
+
+    /**
      * The suppliers the export page may offer as a filter (issue #76/M12-2):
      * those of receipts within $bereich that are not rejected - a scoped
      * role must not learn the names of suppliers it never sees a receipt of.
@@ -486,6 +551,18 @@ final readonly class InvoiceRepository
         $stmt->execute([DocumentStatus::Abgelehnt->value, ...$parameter]);
 
         return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array{record: InvoiceRecord, sphaere: ?string}
+     */
+    private static function auswertungsZeile(array $row): array
+    {
+        $sphaere = $row['sphere'] ?? null;
+
+        return ['record' => InvoiceRecord::fromRow($row), 'sphaere' => $sphaere === null || $sphaere === '' ? null : (string) $sphaere];
     }
 
     /**
