@@ -376,6 +376,22 @@ final readonly class Zuordnung
     }
 
     /**
+     * The allocations of many bookings at once, decrypted, by transaction
+     * id (the reports, issue #71). Bookings without any are left out.
+     *
+     * @param list<int> $transactionIds
+     *
+     * @return array<int, list<Allocation>>
+     */
+    public function fuerBuchungen(Vault $vault, array $transactionIds): array
+    {
+        return array_map(
+            fn(array $liste): array => array_map(fn(AllocationRecord $r): Allocation => $this->entschluesseln($vault, $r), $liste),
+            $this->zuordnungen->forTransactions($transactionIds),
+        );
+    }
+
+    /**
      * What the ZIP export writes about the payment of each receipt (issue
      * #76, "bezahlt am", "Konto", "Referenz", `{kasse}`): filled from the
      * settling bookings once the receipt is settled - a partly paid receipt

@@ -9,6 +9,7 @@ use App\Domain\BankTransactionDocStatus;
 use App\Domain\BankTransactionRecord;
 use App\Domain\BankTransactionSetBy;
 use App\Domain\BankTransactionSource;
+use App\Domain\DocumentStatus;
 use App\Domain\Zugriffsbereich;
 use App\Service\Bank\BuchungFilter;
 
@@ -228,6 +229,41 @@ final readonly class BankTransactionRepository
         $stmt = $this->pdo->prepare(
             'SELECT t.* FROM bank_transaction t WHERE ' . implode(' AND ', $teile) . ' ORDER BY t.booking_date DESC, t.id DESC',
         );
+        $stmt->execute($parameter);
+
+        return array_map(self::hydrate(...), $stmt->fetchAll());
+    }
+
+    /**
+     * The bookings a report counts on the booking basis (issue #71, E-44):
+     * booking date in [$von, $bis], transfers between own accounts left out
+     * (E-38), by date then id. Bookings carry no cost center: within a
+     * cost-center scope only bookings allocated to a receipt of one of its
+     * cost centers (document in $belegStatus) are returned - the report then
+     * counts only those allocated parts; none for an empty scope.
+     *
+     * @param list<DocumentStatus> $belegStatus
+     *
+     * @return list<BankTransactionRecord>
+     */
+    public function fuerAuswertung(\DateTimeImmutable $von, \DateTimeImmutable $bis, array $belegStatus, Zugriffsbereich $bereich): array
+    {
+        [$bedingung, $parameter] = new Zugriffsbereich(null, $bereich->von, $bereich->bis)->sqlBedingung('t.booking_date', null);
+        $teile = ['t.booking_date >= ?', 't.booking_date <= ?', 't.doc_source <> ?', $bedingung];
+        $parameter = [$von->format('Y-m-d'), $bis->format('Y-m-d'), BankTransactionSetBy::Umbuchung->value, ...$parameter];
+
+        if ($bereich->kostenstellen !== null) {
+            if ($bereich->kostenstellen === [] || $belegStatus === []) {
+                return [];
+            }
+            $teile[] = 'EXISTS (SELECT 1 FROM allocation a JOIN invoice i ON i.id = a.invoice_id JOIN document d ON d.id = i.document_id
+                                WHERE a.transaction_id = t.id
+                                  AND d.status IN (' . implode(', ', array_fill(0, count($belegStatus), '?')) . ')
+                                  AND i.cost_center_id IN (' . implode(', ', array_fill(0, count($bereich->kostenstellen), '?')) . '))';
+            array_push($parameter, ...array_map(static fn(DocumentStatus $s): string => $s->value, $belegStatus), ...$bereich->kostenstellen);
+        }
+
+        $stmt = $this->pdo->prepare('SELECT t.* FROM bank_transaction t WHERE ' . implode(' AND ', $teile) . ' ORDER BY t.booking_date, t.id');
         $stmt->execute($parameter);
 
         return array_map(self::hydrate(...), $stmt->fetchAll());
