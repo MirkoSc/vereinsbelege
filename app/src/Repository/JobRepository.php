@@ -495,6 +495,44 @@ final readonly class JobRepository
     }
 
     /**
+     * The newest job of a type that is not tied to one row (issue #88: the
+     * archive OCR backfill, App\Service\Worker\BestandsOcr), any status -
+     * the running one, or the last finished one while the cron has not
+     * cleaned it up yet.
+     */
+    public function letzterVomTyp(string $typ): ?Job
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM job WHERE typ = ? ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$typ]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : Job::fromRow($row);
+    }
+
+    /**
+     * Stops a job that is still `offen` or `laeuft` from the outside (issue
+     * #88: "Abbrechen" of the archive OCR backfill): `uebersprungen`, state
+     * kept for the report. A step running right now loses its lock, so its
+     * schrittErledigt() writes nothing. Returns whether the job was stopped.
+     */
+    public function abbrechen(int $id, ?\DateTimeImmutable $now = null): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE job SET status = ?, locked_by = NULL, locked_until = NULL, updated_at = ?
+             WHERE id = ? AND status IN (?, ?)',
+        );
+        $stmt->execute([
+            JobStatus::Uebersprungen->value,
+            ($now ?? new \DateTimeImmutable())->format(self::FORMAT),
+            $id,
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+        ]);
+
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
      * Whether a worker job still waits or runs for this row - while one
      * does, the worker grants of the document stay (issue #52/M7b-2,
      * docs/spec/07-worker.md section 3).

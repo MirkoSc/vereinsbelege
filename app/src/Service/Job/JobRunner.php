@@ -76,7 +76,7 @@ final readonly class JobRunner
         $lockedBy = 'session:' . bin2hex(random_bytes(8));
         $job = $this->jobs->claim(JobExecutor::Session, $lockedBy, self::LOCK_SECONDS, now: $now, typen: $typen);
         if ($job === null) {
-            return JobLauf::leer($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::leer($this->zaehleSession($typen));
         }
 
         // A crashed or cut-off request never reaches schrittErledigt()/
@@ -86,7 +86,7 @@ final readonly class JobRunner
         if ($job->attempts > self::MAX_VERSUCHE) {
             $this->jobs->fail($job->id, JobAbgebrochen::class, $now, $lockedBy);
 
-            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::gearbeitet($this->zaehleSession($typen));
         }
 
         try {
@@ -96,7 +96,7 @@ final readonly class JobRunner
                 // The call may take longer than a normal step: the lock has
                 // to outlast it, or a second tab claims the job meanwhile.
                 if (!$this->jobs->heartbeat($job->id, $lockedBy, $aufruf->hoechstensSekunden + self::AUFRUF_PUFFER_SEKUNDEN, $now)) {
-                    return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+                    return JobLauf::gearbeitet($this->zaehleSession($typen));
                 }
 
                 return JobLauf::aufruf($job, $lockedBy, $aufruf);
@@ -108,12 +108,12 @@ final readonly class JobRunner
             // exception can quote the row it failed on.
             $this->jobs->fail($job->id, $e::class, $now, $lockedBy);
 
-            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::gearbeitet($this->zaehleSession($typen));
         }
 
         $this->jobs->schrittErledigt($job->id, $lockedBy, $ergebnis, $now);
 
-        return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+        return JobLauf::gearbeitet($this->zaehleSession($typen));
     }
 
     /**
@@ -139,13 +139,13 @@ final readonly class JobRunner
 
         $job = $this->jobs->find($lauf->job->id);
         if ($job === null || $job->status !== JobStatus::Laeuft || $job->lockedBy !== $lockedBy) {
-            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::gearbeitet($this->zaehleSession($typen));
         }
 
         if ($ergebnis instanceof \Throwable) {
             $this->jobs->fail($job->id, $ergebnis::class, $now, $lockedBy);
 
-            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::gearbeitet($this->zaehleSession($typen));
         }
 
         try {
@@ -157,12 +157,12 @@ final readonly class JobRunner
         } catch (\Throwable $e) {
             $this->jobs->fail($job->id, $e::class, $now, $lockedBy);
 
-            return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+            return JobLauf::gearbeitet($this->zaehleSession($typen));
         }
 
         $this->jobs->schrittErledigt($job->id, $lockedBy, $schritt, $now);
 
-        return JobLauf::gearbeitet($this->jobs->zaehleOffen(JobExecutor::Session, $typen));
+        return JobLauf::gearbeitet($this->zaehleSession($typen));
     }
 
     /**
@@ -183,7 +183,7 @@ final readonly class JobRunner
 
         $summe = 0;
         if ($sessionTypen !== []) {
-            $summe += $this->jobs->zaehleOffen(JobExecutor::Session, $sessionTypen);
+            $summe += $this->zaehleSession($sessionTypen);
         }
         if ($browserTypen !== []) {
             $summe += $this->jobs->zaehleOffen(JobExecutor::Browser, $browserTypen);
@@ -207,6 +207,25 @@ final readonly class JobRunner
         }
 
         return $erlaubt;
+    }
+
+    /**
+     * Pending session jobs of $typen for the header count, background job
+     * types (HintergrundJob, issue #88) left out.
+     *
+     * @param list<string> $typen
+     */
+    private function zaehleSession(array $typen): int
+    {
+        $hintergrund = [];
+        foreach ($this->handler as $handler) {
+            if ($handler instanceof HintergrundJob) {
+                $hintergrund[] = $handler->typ();
+            }
+        }
+        $gezaehlt = array_values(array_diff($typen, $hintergrund));
+
+        return $gezaehlt === [] ? 0 : $this->jobs->zaehleOffen(JobExecutor::Session, $gezaehlt);
     }
 
     private function handlerFuer(string $typ): JobHandler

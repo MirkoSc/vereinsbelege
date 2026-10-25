@@ -444,6 +444,9 @@ Monatsordnern, „Kasse"-Unterordner) einmalig übernehmen.
     Format `archiv-v1`) und die drei Session-Jobs `pdf_erzeugen`,
     `detect_duplicate`, `extract_text` wie bei jeder Erfassung. Ein
     zweimal importiertes PDF fällt über die Duplikaterkennung auf.
+    Gescannte Archiv-Belege gehen dabei nicht einzeln an die Texterkennung
+    des Workers; sie werden auf Wunsch gedrosselt nachverarbeitet (07 §6
+    „Stand #88“, E-55).
   - **Idempotenz:** eine Transaktion je Datei, eröffnet mit
     `ArchiveImportRepository::advance()` (`next_index` nur vom gelesenen
     Wert aus, Zeilensperre) – ein wiederholter oder paralleler Schritt

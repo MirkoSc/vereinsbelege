@@ -40,7 +40,17 @@ final readonly class DocumentRepository
 
     /** ocrNachholbar(): see there. */
     private const string OCR_NACHHOLBAR =
-        'd.ocr_status = ? AND d.status NOT IN (?, ?)
+        'd.ocr_status = ? AND d.status NOT IN (?, ?) AND d.source <> ?
+         AND NOT EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.status IN (?, ?, ?))
+         AND NOT EXISTS (SELECT 1 FROM document_artifact a WHERE a.document_id = d.id AND a.producer = ? AND a.kind = ?)';
+
+    /**
+     * bestandOcrNachholbar(): like OCR_NACHHOLBAR, but archive documents
+     * only and locked ones included (E-55) - OCR adds a derived text layer,
+     * it never changes the receipt or its files.
+     */
+    private const string BESTAND_OCR =
+        'd.source = ? AND d.ocr_status = ? AND d.status <> ? AND d.id >= ? AND (? = 0 OR d.id <= ?)
          AND NOT EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.status IN (?, ?, ?))
          AND NOT EXISTS (SELECT 1 FROM document_artifact a WHERE a.document_id = d.id AND a.producer = ? AND a.kind = ?)';
 
@@ -151,7 +161,8 @@ final readonly class DocumentRepository
     /**
      * Documents whose OCR is to be caught up (docs/spec/07-worker.md section
      * 6 "OCR nachholen", issue #53): page images needed (`ocr_status`
-     * `uebersprungen`), not fixed or rejected, and no `ocr` job that is pending or
+     * `uebersprungen`), not fixed or rejected, not from the archive import
+     * (E-55: bestandOcrNachholbar()), and no `ocr` job that is pending or
      * done and no taken-over OCR text of the worker - a failed or skipped
      * one (the worker fell out) may be repeated.
      * Oldest first, ids only.
@@ -177,6 +188,86 @@ final readonly class DocumentRepository
     }
 
     /**
+     * Archive documents whose OCR is to be caught up by the throttled
+     * backfill (docs/spec/07-worker.md section 6 "Stand #88", E-55): source
+     * `archiv`, `ocr_status` `uebersprungen`, not rejected - locked ones
+     * included -, id within $von..$bis ($bis 0 = no upper end) and above
+     * $nachId, no `ocr` job pending or done and no taken-over worker text.
+     * Oldest first, ids only.
+     *
+     * @return list<int>
+     */
+    public function bestandOcrNachholbar(int $von, int $bis, int $nachId, int $limit): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.id FROM document d WHERE ' . self::BESTAND_OCR . ' AND d.id > ? ORDER BY d.id LIMIT ' . max(1, $limit),
+        );
+        $stmt->execute([...self::bestandOcrParameter($von, $bis), $nachId]);
+
+        return array_map(intval(...), $stmt->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Progress of the backfill over archive documents $von..$bis ($bis 0 =
+     * no upper end, rejected ones left out): all of them, those with a text
+     * layer (`ocr_status` `fertig`), those with an `ocr` job at the worker
+     * right now, and those still to be caught up (bestandOcrNachholbar()).
+     *
+     * @return array{gesamt: int, mitText: int, beimWorker: int, offen: int}
+     */
+    public function bestandOcrStand(int $von, int $bis): array
+    {
+        $bereich = 'd.source = ? AND d.status <> ? AND d.id >= ? AND (? = 0 OR d.id <= ?)';
+        $bereichParameter = [DocumentSource::Archiv->value, DocumentStatus::Abgelehnt->value, $von, $bis, $bis];
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) AS gesamt, COALESCE(SUM(d.ocr_status = ?), 0) AS mit_text,
+                    COALESCE(SUM(EXISTS (SELECT 1 FROM job j WHERE j.typ = ? AND j.ref_type = ? AND j.ref_id = d.id AND j.executor = ? AND j.status IN (?, ?))), 0) AS beim_worker
+             FROM document d WHERE ' . $bereich,
+        );
+        $stmt->execute([
+            OcrStatus::Fertig->value,
+            'ocr',
+            'document',
+            JobExecutor::Worker->value,
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+            ...$bereichParameter,
+        ]);
+        $zeile = $stmt->fetch(\PDO::FETCH_ASSOC);
+        $offen = $this->pdo->prepare('SELECT COUNT(*) FROM document d WHERE ' . self::BESTAND_OCR);
+        $offen->execute(self::bestandOcrParameter($von, $bis));
+
+        return [
+            'gesamt' => (int) ($zeile['gesamt'] ?? 0),
+            'mitText' => (int) ($zeile['mit_text'] ?? 0),
+            'beimWorker' => (int) ($zeile['beim_worker'] ?? 0),
+            'offen' => (int) $offen->fetchColumn(),
+        ];
+    }
+
+    /**
+     * @return list<int|string>
+     */
+    private static function bestandOcrParameter(int $von, int $bis): array
+    {
+        return [
+            DocumentSource::Archiv->value,
+            OcrStatus::Uebersprungen->value,
+            DocumentStatus::Abgelehnt->value,
+            $von,
+            $bis,
+            $bis,
+            'ocr',
+            'document',
+            JobStatus::Offen->value,
+            JobStatus::Laeuft->value,
+            JobStatus::Fertig->value,
+            JobExecutor::Worker->value,
+            ArtifactKind::Text->value,
+        ];
+    }
+
+    /**
      * @return list<string>
      */
     private static function ocrNachholbarParameter(): array
@@ -185,6 +276,9 @@ final readonly class DocumentRepository
             OcrStatus::Uebersprungen->value,
             DocumentStatus::Festgeschrieben->value,
             DocumentStatus::Abgelehnt->value,
+            // Archive documents are caught up by the throttled backfill
+            // (bestandOcrNachholbar(), E-55), not in 50s at a click.
+            DocumentSource::Archiv->value,
             'ocr',
             'document',
             JobStatus::Offen->value,
