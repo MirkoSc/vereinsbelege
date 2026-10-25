@@ -24,6 +24,7 @@ use App\Repository\BankImportRepository;
 use App\Repository\BankTransactionRepository;
 use App\Repository\BlobRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Repository\RateLimitRepository;
@@ -57,6 +58,8 @@ use App\Service\Crypto\VaultGrant;
 use App\Service\Document\Duplikatindex;
 use App\Service\Invoice\Pruefung;
 use App\Service\MasterData\SupplierService;
+use App\Service\MasterData\Vereinskennung;
+use App\Service\MasterData\Vereinskennungen;
 use App\Service\Migration\Migrator;
 use App\Service\RateLimiter;
 use App\Service\Storage\BlobService;
@@ -569,6 +572,9 @@ final class SchluesselrotationTest extends DatabaseTestCase
         // #201) and a VAT id (#245): learnt keys must come out of the
         // rotation as well.
         $service = $this->supplierService();
+        // The club's own ids (#245): saved, so a VAT id is learnt - and
+        // re-sealed by the rotation like every other vault row.
+        new Vereinskennungen(new ClubIdentityRepository($this->pdo()))->speichern($tresor, new Vereinskennung('DE111111111', ''), $this->adminId, $now);
         $gelernt = $service->finde($tresor, $lieferant) ?? self::fail();
         $partner = ['name' => 'Müller Sport', 'iban' => self::GELERNTE_IBAN, 'vat_id' => self::GELERNTE_USTID];
         $merkmale = $service->lernbar($tresor, $gelernt, $partner, '');
@@ -695,6 +701,7 @@ final class SchluesselrotationTest extends DatabaseTestCase
             new SupplierRepository($this->pdo())->idsWithKey(SupplierKeyKind::VatId, $index->forValue(SupplierKeyKind::VatId->purpose(), self::GELERNTE_USTID)),
             'Die gelernte USt-ID wird unter dem neuen Schlüssel gefunden.',
         );
+        self::assertSame('DE111111111', new Vereinskennungen(new ClubIdentityRepository($this->pdo()))->lesen($neu)?->ustId, 'Die Vereinskennungen sind unter dem neuen Schlüssel lesbar.');
         self::assertSame($d['konto'], new BankAccountRepository($this->pdo())->idWithIban($index->forValue(BankAccountService::IBAN_PURPOSE, self::KONTO_IBAN)));
         self::assertSame(
             $index->forValue(Pruefung::NUMMER_ZWECK, 'RE2026-0815'),

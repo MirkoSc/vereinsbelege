@@ -1486,7 +1486,7 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
   - *Unberührt:* festgeschriebene Belege (Speichern ist dort gesperrt) und
     zusammengeführte Lieferanten (weder wählbar noch lernbar).
 
-- **Stand #245** (keine Migration; vorläufige Details E-67): ergänzt M7-6b.
+- **Stand #245** (Migration 046; vorläufige Details E-67): ergänzt M7-6b.
   - *USt-ID und Steuernummer* werden gelernt wie die Gläubiger-ID: gültig
     (USt-ID nach dem Formular-Muster `SupplierService::USTID_MUSTER`,
     Steuernummer nur als deutsche: 10–13 Ziffern ohne Schrägstriche/
@@ -1497,6 +1497,20 @@ doppelter IBAN, Rollen, Zeitraum-Scope, veralteter Stand wird nicht
     (`SupplierKeys::kennung()` bzw. `::steuernummer()`). Felder im Audit:
     `vat_id`, `tax_number`. Eindeutigkeit gegen andere Lieferanten wie bei
     IBAN/Gläubiger-ID (`lernbar()`, Blind Index nur in der Session).
+  - *Vereinskennungen:* die eigene USt-ID und Steuernummer des Vereins
+    (`club_identity`, `/admin/vereinskennungen`, Recht `admin.settings`,
+    Tresor entsperrt; Audit `einstellung.vereinskennungen` nur mit „gesetzt
+    ja/nein“). Reverse-Charge- und B2B-Rechnungen drucken „Ihre USt-IdNr.“,
+    die KI liest sie als die des Verkäufers. Wie die Vereins-IBAN (E-29)
+    wird sie **nie gelernt** (Hinweis „die des Vereins“, kein Konflikt),
+    bei der KI-Neuanlage (Stufe 6) weggelassen, in Stufe 1 der Auflösung,
+    in der Vorbelegung über Kennungen (`Pruefung::lieferantZu()`) und in der
+    Vorauswahl für den KI-Prompt (`SupplierAufloesung::vorauswahl()`)
+    übergangen. **Solange die Seite nie gespeichert wurde, werden USt-ID und
+    Steuernummer gar nicht gelernt** (Hinweis mit Verweis auf die Seite);
+    zwei leere Felder speichern heißt „der Verein hat keine“. Verglichen wird
+    nach dem Entschlüsseln in der Sitzung, kein Blind Index – die Rotation
+    versiegelt die Zeile mit.
   - *Konflikt markiert:* ein Wert, der schon einem **anderen** Lieferanten
     gehört (IBAN, Gläubiger-ID, USt-ID, Steuernummer, Name/Alias), wird nicht
     gelernt; `Merkmale::$konflikte` hält Feld → ID des anderen. Beim Speichern

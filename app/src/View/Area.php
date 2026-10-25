@@ -101,6 +101,7 @@ enum Area: string
                 new NavItem('Rechtstexte', '/admin/rechtstexte', recht: Permission::AdminSettings),
                 new NavItem('Export', '/admin/export', recht: Permission::AdminSettings),
                 new NavItem('DATEV', '/admin/datev', recht: Permission::AdminSettings),
+                new NavItem('Vereinskennungen', '/admin/vereinskennungen', recht: Permission::AdminSettings),
                 new NavItem('Kategorien', '/admin/kategorien', recht: Permission::AdminSettings),
                 new NavItem('Speicher', '/admin/speicher', recht: Permission::AdminSettings),
                 new NavItem('Mail', '/admin/mail', recht: Permission::AdminSettings),

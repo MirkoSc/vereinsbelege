@@ -172,6 +172,8 @@ enum AuditAction: string
     case EinstellungExport = 'einstellung.export';
     /** Nextcloud target of the export stored or removed (issue #95). */
     case EinstellungNextcloud = 'einstellung.nextcloud';
+    /** Issue #245: the club's own VAT id / tax number saved - which are set, never the values. */
+    case EinstellungVereinskennungen = 'einstellung.vereinskennungen';
     /** Issue #64/M9-6: whether income needs a receipt by default (E-17). */
     case EinstellungBelegStandard = 'einstellung.beleg_standard';
     /** Issue #66/M10-2: points and thresholds of the matching (field names only). */
@@ -325,6 +327,7 @@ enum AuditAction: string
             self::EinstellungEinreichung => 'Einreichungs-Einstellungen geändert',
             self::EinstellungExport => 'Export-Muster geändert',
             self::EinstellungNextcloud => 'Nextcloud-Ablage eingerichtet/geändert',
+            self::EinstellungVereinskennungen => 'Vereinskennungen geändert',
             self::ExportErstellt => 'ZIP-Export erstellt',
             self::ExportMarkiert => 'Export als vollständig bestätigt',
             self::ExportZurueckgesetzt => 'Export-Markierung zurückgesetzt',
@@ -399,7 +402,7 @@ enum AuditAction: string
             self::LoginFehlgeschlagen,
             self::EinstellungMail, self::EinstellungSpeicher, self::EinstellungUpdateKanal,
             self::EinstellungEinreichung, self::EinstellungExport, self::EinstellungBelegStandard,
-            self::EinstellungNextcloud, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
+            self::EinstellungNextcloud, self::EinstellungVereinskennungen, self::EinstellungAbgleich, self::EinstellungRechtstexte, self::AbgleichAusgefuehrt,
             self::AbgleichVorschlagVerworfen, self::AbgleichVorschlagZurueckgenommen,
             self::ExportErstellt, self::ExportDatev, self::EinstellungDatev, self::EinstellungSphaeren, self::WorkerKopplungscode,
             self::EinstellungMailEingang,

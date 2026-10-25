@@ -1854,11 +1854,24 @@ zeigen soll.
   übernehmen); gibt es nur Konflikte und nichts zu lernen, zeigt die Seite
   kein Ankreuzfeld und markiert beim Speichern immer.
 
-Offen für Mirko: Eine Vereins-USt-ID/-Steuernummer kennt die Anwendung
-nicht (keine Einstellung) – anders als die Vereins-IBAN kann sie deshalb
-nicht ausgeschlossen werden; liest die KI sie fälschlich als die des
-Lieferanten, steht sie sichtbar in der Liste vor dem Speichern (Haken
-herausnehmen). Ob dafür eine Einstellung nötig ist; ob Konflikte statt (nur) im Audit-Log als eigene Liste
+- **Vereinskennungen** (Hinweis aus dem Koordinator-Review): die eigene USt-ID
+  und Steuernummer des Vereins stehen auf vielen Rechnungen („Ihre
+  USt-IdNr.“, Reverse Charge) und würden, gelernt, in Stufe 1 jede solche
+  Rechnung einem Lieferanten zuordnen. Eine Admin-Seite
+  `/admin/vereinskennungen` hält sie im Tresor (Tabelle `club_identity`);
+  sie werden nie gelernt, bei der KI-Neuanlage weggelassen und bei Auflösung,
+  Vorbelegung und KI-Vorauswahl übergangen. **Konservativ:** solange die Seite
+  nie gespeichert wurde, lernt kein Lieferant USt-ID oder Steuernummer (wie
+  vor #245); zwei leere Felder speichern bestätigt „der Verein hat keine“.
+- **Im Tresor statt als Blind Index:** ein Blind Index unter dem
+  Tresor-Schlüssel ließe sich nach einer Schlüsselrotation (#90) nicht neu
+  berechnen (der Klartext liegt nirgends); verschlüsselt mit eigenem DEK
+  versiegelt die Rotation die Zeile wie jede andere, verglichen wird nach dem
+  Entschlüsseln in der Sitzung. Der Server-Schlüssel wäre für Daten, die
+  ohne Anmeldung gebraucht werden – hier nicht nötig.
+
+Offen für Mirko: ob die Vereinskennungen besser zu den Konten (eigene IBANs)
+als unter „Admin“ passen; ob Konflikte statt (nur) im Audit-Log als eigene Liste
 „Mögliche Doppelte“ unter „Lieferanten“ erscheinen sollen; ob eine
 abweichende USt-ID den Lieferanten doch ersetzen oder zur Prüfung markieren
 soll.

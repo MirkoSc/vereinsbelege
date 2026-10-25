@@ -15,6 +15,7 @@ use App\Admin\RoleController;
 use App\Admin\UserController;
 use App\Admin\VaultGrantController;
 use App\Admin\VaultRecoveryController;
+use App\Admin\VereinskennungenController;
 use App\Admin\StorageController;
 use App\Admin\ExportSettingsController;
 use App\Admin\SubmissionSettingsController;
@@ -238,6 +239,8 @@ use App\View\View;
  *        (issue #73/M11-3). Optional like $nextcloudAdmin.
  * @param (\Closure(): BudgetController)|null $budgets built lazily, same
  *        reason (issue #92). Optional like $nextcloudAdmin.
+ * @param (\Closure(): VereinskennungenController)|null $vereinskennungenAdmin
+ *        built lazily, same reason (issue #245). Optional like $nextcloudAdmin.
  */
 return static function (
     Router $router,
@@ -301,6 +304,7 @@ return static function (
     ?\Closure $geldfluss = null,
     ?\Closure $workerMail = null,
     ?\Closure $budgets = null,
+    ?\Closure $vereinskennungenAdmin = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
     $backups ??= static fn(): never => throw new \LogicException('The backups page is not wired into this route table.');
@@ -324,6 +328,7 @@ return static function (
     $kassenpruefung ??= static fn(): never => throw new \LogicException('The Kassenprüfung is not wired into this route table.');
     $geldfluss ??= static fn(): never => throw new \LogicException('The report pages are not wired into this route table.');
     $budgets ??= static fn(): never => throw new \LogicException('The budget page is not wired into this route table.');
+    $vereinskennungenAdmin ??= static fn(): never => throw new \LogicException('The club identity page is not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
     // guard check that declaration asks for - one value, both jobs. The
@@ -1109,6 +1114,10 @@ return static function (
     // `admin.settings`; plaintext configuration, CSRF on the write.
     $get('/admin/datev', $einstellungen, static fn(Request $r) => $datevAdmin()->page($r));
     $post('/admin/datev', $einstellungen, static fn(Request $r) => $datevAdmin()->save($r));
+    // The club's own VAT id and tax number (issue #245, E-67): vault data,
+    // the page needs the unlocked vault. Permission `admin.settings`; CSRF.
+    $get('/admin/vereinskennungen', $einstellungen, static fn(Request $r) => $vereinskennungenAdmin()->page($r));
+    $post('/admin/vereinskennungen', $einstellungen, static fn(Request $r) => $vereinskennungenAdmin()->save($r));
     // Nextcloud target of the export (05 §2, issue #95): WebDAV address,
     // user, app password - vault data, so the page needs the unlocked
     // vault. Permission: `admin.settings`; CSRF on all writes.

@@ -13,6 +13,7 @@ use App\Domain\SupplierRecord;
 use App\Domain\SupplierRole;
 use App\Repository\BankAccountRepository;
 use App\Repository\CategoryRepository;
+use App\Repository\ClubIdentityRepository;
 use App\Repository\SupplierRepository;
 use App\Service\Bank\BankAccountService;
 use App\Service\Crypto\DataKey;
@@ -240,6 +241,7 @@ final readonly class SupplierService
             'rolle' => $rolle->value,
         ];
         $gueltig = $basis;
+        $verein = null;
         foreach ($felder as $feld => $wert) {
             if (in_array($feld, ['name', 'rolle', 'kategorie', 'notes'], true) || trim($wert) === '') {
                 continue;
@@ -247,6 +249,13 @@ final readonly class SupplierService
             // The club's own account is nobody's supplier IBAN (E-29).
             if ($feld === 'ibans' && $this->istVereinsIban($vault, $wert)) {
                 continue;
+            }
+            // Nor its own VAT id or tax number (#245, E-67).
+            if (in_array($feld, ['vat_id', 'tax_number'], true)) {
+                $verein ??= $this->vereinskennung($vault) ?? new Vereinskennung();
+                if ($feld === 'vat_id' ? $verein->istUstId($wert) : $verein->istSteuernummer($wert)) {
+                    continue;
+                }
             }
             try {
                 $this->pruefe([...$basis, $feld => $wert], null);
@@ -350,6 +359,16 @@ final readonly class SupplierService
     }
 
     /**
+     * The club's own VAT id and tax number (issue #245, E-67), or null while
+     * no admin saved them (/admin/vereinskennungen). Like the club's IBANs,
+     * they name no supplier.
+     */
+    public function vereinskennung(Vault $vault): ?Vereinskennung
+    {
+        return (new Vereinskennungen(new ClubIdentityRepository($this->pdo)))->lesen($vault);
+    }
+
+    /**
      * What a confirmed receipt would teach $lieferant (issue #201/M7-6b):
      * LieferantenMerkmale::neue(), minus an IBAN of the club's own
      * (istVereinsIban()), minus an IBAN, creditor id, VAT id or tax number that
@@ -369,6 +388,22 @@ final readonly class SupplierService
         $merkmale = LieferantenMerkmale::neue($lieferant->data, $partner, $mandat);
         if ($merkmale->iban !== null && $this->istVereinsIban($vault, $merkmale->iban)) {
             $merkmale = $merkmale->ohne('iban', 'Die IBAN des Belegs ist ein Konto des Vereins – nicht übernommen.');
+        }
+        // The club's own VAT id / tax number is nobody's supplier id (#245,
+        // E-67) - and while an admin has not said which they are, neither is
+        // learnt: a reverse-charge invoice prints the club's as "Ihre USt-IdNr.".
+        if ($merkmale->vatId !== null || $merkmale->taxNumber !== null) {
+            $verein = $this->vereinskennung($vault);
+            foreach ([['vat_id', $merkmale->vatId, 'USt-ID'], ['tax_number', $merkmale->taxNumber, 'Steuernummer']] as [$feld, $wert, $was]) {
+                if ($wert === null) {
+                    continue;
+                }
+                if ($verein === null) {
+                    $merkmale = $merkmale->ohne($feld, sprintf('Die %s des Belegs wird erst übernommen, wenn unter „Admin → Vereinskennungen“ die eigene USt-ID und Steuernummer des Vereins eingetragen sind.', $was));
+                } elseif ($feld === 'vat_id' ? $verein->istUstId($wert) : $verein->istSteuernummer($wert)) {
+                    $merkmale = $merkmale->ohne($feld, sprintf('Die %s des Belegs ist die des Vereins – nicht übernommen.', $was));
+                }
+            }
         }
         $index = $vault->blindIndex();
         $pruefen = [

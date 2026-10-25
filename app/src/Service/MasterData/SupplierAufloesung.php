@@ -75,9 +75,14 @@ final readonly class SupplierAufloesung
         $wert = static fn(string $schluessel): string => is_string($partner[$schluessel] ?? null) ? trim($partner[$schluessel]) : '';
         $richtung = InvoiceDirection::tryFrom(is_string($extraktion['direction'] ?? null) ? $extraktion['direction'] : '') ?? InvoiceDirection::Ausgabe;
         $iban = Iban::normalisieren($wert('iban'));
+        // Nor do the club's own VAT id and tax number (#245, E-67).
+        $verein = $this->service->vereinskennung($vault) ?? new Vereinskennung();
 
         $stufen = [
-            1 => [[SupplierKeyKind::VatId, SupplierKeys::kennung($wert('vat_id'))], [SupplierKeyKind::TaxNumber, SupplierKeys::steuernummer($wert('tax_number'))]],
+            1 => [
+                [SupplierKeyKind::VatId, $verein->istUstId($wert('vat_id')) ? '' : SupplierKeys::kennung($wert('vat_id'))],
+                [SupplierKeyKind::TaxNumber, $verein->istSteuernummer($wert('tax_number')) ? '' : SupplierKeys::steuernummer($wert('tax_number'))],
+            ],
             // The club's own account names no supplier (a direct debit, an income).
             2 => [[SupplierKeyKind::Iban, Iban::istGueltig($iban) && !$this->service->istVereinsIban($vault, $iban) ? $iban : '']],
             3 => [[SupplierKeyKind::CreditorId, SupplierKeys::kennung($wert('creditor_id'))]],
@@ -190,6 +195,14 @@ final readonly class SupplierAufloesung
         foreach ($texte as $text) {
             array_push($schluessel, ...LieferantenKandidaten::aus($text));
         }
+        // The club's own VAT id and tax number name no supplier (#245, E-67):
+        // printed as "Ihre USt-IdNr." they would put one in front every time.
+        $verein = $this->service->vereinskennung($vault) ?? new Vereinskennung();
+        $schluessel = array_filter($schluessel, static fn(array $s): bool => match ($s[0]) {
+            SupplierKeyKind::VatId => !$verein->istUstId($s[1]),
+            SupplierKeyKind::TaxNumber => !$verein->istSteuernummer($s[1]),
+            default => true,
+        });
 
         $index = $vault->blindIndex();
         $ids = [];
