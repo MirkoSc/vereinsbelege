@@ -1753,6 +1753,35 @@ Offen für Mirko: Vorgabe beim Festschreiben einfrieren (statt dynamisch)?
 Soll die KI die Sphäre vorschlagen? Reichen die Beispieltexte, oder sollen
 sie entfallen?
 
+## E-56 ❓ Performance-Test: Datensatz, Messweg, Ziele in der CI (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
+*Betrifft: M13-5 (issue #82), 05 §1 „Stand M13-5“, CLAUDE.md §1/§5*
+
+- **Ziele als harte Grenze:** Auswertungen < 3 s, Posteingang < 1 s je
+  Request (Median aus 3 Läufen, kalt und warm). Ein verfehltes Ziel macht
+  den CI-Job rot – die Grenzen sind großzügig gegenüber den gemessenen
+  Werten (≈ 0,1–1 s), Ausreißer eines CI-Runners sollen also nicht
+  anschlagen.
+- **Eigener Job, nicht in der normalen Suite:** PHPUnit-Gruppe
+  `performance`, in `phpunit.xml` ausgeschlossen; die CI startet sie als
+  paralleler Job, der die normale Testlaufzeit nicht verlängert.
+- **Datensatz generiert, nicht importiert:** 3 000 Belege (davon 150 im
+  Posteingang/in Prüfung/abgelehnt), 5 000 Buchungen über 4 Kalenderjahre.
+  Geschrieben über die echten Verschlüsselungspfade; Buchungen so, wie der
+  Kontoauszug-Import sie schreibt, aber ohne dessen Upload-Schrittkette
+  (die liest keine Auswertung). Belege liegen als `geprueft` vor (nicht
+  `festgeschrieben`) – für das Lesen macht das keinen Unterschied.
+- **Messweg:** ganzer Request über den echten `bootstrap.php`, nicht nur
+  die Services – so zählt alles, was ein Seitenaufruf auf dem Host kostet,
+  außer dem Webserver selbst und OPcache (auf dem Host schneller).
+- **Shared Hosting:** dort misst Mirko selbst, mit echten Daten im
+  Browser (Entwicklerwerkzeuge → Netzwerk → „Wartezeit/TTFB“ des
+  Seitenaufrufs; kalt = erster Aufruf nach Anmeldung oder einer Änderung,
+  warm = erneutes Laden). Ein Generator auf dem Webspace ist bewusst nicht
+  vorgesehen (keine erfundenen Belege in einer echten Installation).
+
+Offen für Mirko: ob die Ziele für Shared Hosting so passen; Messung auf
+dem Webspace, sobald dort ein Jahr echter Daten liegt.
+
 ## E-58 ❓ Budget je Kategorie/Kostenstelle mit Soll/Ist (vorläufig, autonom getroffen – Bestätigung durch Mirko offen)
 *Betrifft: issue #92, 05 §1 „Stand #92“, 02 (`budget`), 01 §4*
 
