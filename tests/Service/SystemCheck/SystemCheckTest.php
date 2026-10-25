@@ -8,6 +8,7 @@ use App\Service\SystemCheck\CheckResult;
 use App\Service\SystemCheck\CheckStatus;
 use App\Service\SystemCheck\SystemCheck;
 use App\Service\Update\DenyHtaccess;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 
 final class SystemCheckTest extends TestCase
@@ -164,6 +165,10 @@ final class SystemCheckTest extends TestCase
         self::assertSame(CheckStatus::Warn, SystemCheck::rateMin(null, 256 * $mib, 128 * $mib), 'unreadable');
     }
 
+    // Own process: lowering the limit below 256 MiB fails once the rest of
+    // the suite has used more than that - which depends on how many tests
+    // ran before, not on the check.
+    #[RunInSeparateProcess]
     public function testMemoryLimitFollowsTheEffectiveSetting(): void
     {
         $previous = ini_get('memory_limit');
