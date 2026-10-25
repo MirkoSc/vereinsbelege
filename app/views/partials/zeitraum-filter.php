@@ -5,7 +5,9 @@
  * section 1: Kalenderjahr/Quartal/Monat/frei; App\Service\Report\
  * ZeitraumAuswahl reads it back). A plain GET form: works without
  * JavaScript - the chosen "Art" decides which fields count, the others are
- * ignored. Not printed.
+ * ignored. Not printed - except the note that a requested free period was
+ * longer than ZeitraumAuswahl::MAX_JAHRE_FREI years and the default shows
+ * instead (E-51, issue #250).
  *
  * @var \App\Service\Report\ZeitraumAuswahl $auswahl
  * @var string $aktion the page's path
@@ -64,3 +66,6 @@ $monate = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August
         <button type="submit" class="knopf">Anzeigen</button>
     </p>
 </form>
+<?php if ($auswahl->zuLang): ?>
+    <p class="hinweis hinweis-warnung">Ein freier Zeitraum umfasst höchstens <?= e((string) ZeitraumAuswahl::MAX_JAHRE_FREI) ?> Jahre; gezeigt wird <?= $auswahl->art === 'jahr' ? 'das Jahr ' . e($z->von->format('Y')) : 'der Zeitraum vom ' . e($z->von->format('d.m.Y')) . ' bis ' . e($z->bis->format('d.m.Y')) ?>.</p>
+<?php endif; ?>

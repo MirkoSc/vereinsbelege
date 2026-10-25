@@ -88,8 +88,11 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Controller`, Recht `report.view`, zusätzlich `bank.view` im Controller;
   Navigationspunkt „Kassenprüfung“). Zeitraum per `App\Service\Report\
   ZeitraumAuswahl` (`?art=jahr|quartal|monat|frei`, Jahre 2000 … nächstes
-  Jahr, Ungültiges → Standard); Formular als Baustein
-  `app/views/partials/zeitraum-filter.php` für alle Auswertungsseiten.
+  Jahr, Ungültiges → Standard; ein freier Zeitraum umfasst höchstens
+  `ZeitraumAuswahl::MAX_JAHRE_FREI` = 3 Jahre, länger → Standard mit
+  `zuLang` und Hinweis im Filter – seit #250 für alle Seiten, E-51);
+  Formular als Baustein `app/views/partials/zeitraum-filter.php` für alle
+  Auswertungsseiten.
   Standard: der freigegebene Zeitraum des Kontos, sonst das Vorjahr.
 - `App\Service\Report\Kassenpruefung` baut den `KassenpruefungBericht`:
   Salden je Konto über `Auswertungsquelle::kontobewegungen()` +
@@ -133,10 +136,14 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `sphaeren_aktiv`, issue #84).
 - URLs tragen nur Struktur (Zeitraum, Grundlage, Seite, Dimension, ID oder
   `ohne`). Der Beleg-Link geht auf die normale Belegseite (Prüfansicht bzw.
-  Posteingang), die Recht und Scope selbst prüft; Buchungs-Link nur mit
-  `bank.view`, Gegenseite/Zweck einer Buchung zusätzlich nur in dessen
-  Scope. Ein freier Zeitraum umfasst hier höchstens 3 Jahre
-  (`AuswertungController::MAX_JAHRE_FREI`), sonst Standardjahr mit Hinweis.
+  Posteingang), die Recht und Scope selbst prüft; er erscheint nur, wenn
+  das Dokument im Scope dieser Seite liegt (`DocumentRepository::
+  idsImBereich()`, dieselbe Bedingung wie `inboxItem()`: Upload-Datum und
+  Kostenstelle des Dokuments) – sonst kein Link statt 404 (#250). Buchungs-
+  Link nur mit `bank.view`, Gegenseite/Zweck einer Buchung zusätzlich nur
+  in dessen Scope. Ein freier Zeitraum umfasst höchstens 3 Jahre
+  (`ZeitraumAuswahl::MAX_JAHRE_FREI`, für alle Seiten mit dem
+  Zeitraumfilter), sonst Standard mit Hinweis.
 - Keine neue Tabelle, keine Migration.
 
 ### Stand issue #84: Steuerliche Sphären (E-57)
@@ -186,10 +193,13 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   Entschlüsselung, View. Je Seite kalt (leerer `AuswertungsCache`) und
   warm, je 3 Läufe, Median zählt; dazu der Speicher-Spitzenwert je Request.
   Gemessen: Dashboard, Geldfluss (Buchungen, Belege, 3 Jahre frei,
-  Drilldown), Kassenprüfung (Seite, CSV), Posteingang (offen, alle).
+  Drilldown), Kassenprüfung (Seite, CSV), Budget (#250; der Datensatz legt
+  je Jahr Budgets für jede Ausgaben-Kategorie, jede Kostenstelle und die
+  Paare der drei größten Kategorien an), Posteingang (offen, alle).
 - **Aufruf:** PHPUnit-Gruppe `performance`, in `phpunit.xml`
   standardmäßig ausgeschlossen (`vendor/bin/phpunit --group performance`);
-  in der CI ein eigener, paralleler Job `performance`, der die Messwerte in
+  in der CI ein eigener, paralleler Job `performance` (`timeout-minutes:
+  30`), der die Messwerte in
   die Job-Zusammenfassung schreibt (`PERF_REPORT_FILE`) und bei
   verfehltem Ziel rot wird.
 - Auf dem Webspace selbst misst niemand automatisch (kein SSH/CLI): dort

@@ -299,6 +299,37 @@ final class GeldflussFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('9,99', $vorher->body);
     }
 
+    /**
+     * Issue #250: the receipt pages scope by upload date (and the
+     * document's cost center), the report by invoice or booking date. A
+     * receipt uploaded outside the released period shows as a line but
+     * gets no link - its page would answer 404.
+     */
+    public function testAReceiptOutsideTheScopeOfItsPageGetsNoLink(): void
+    {
+        $this->rolle(SystemRole::Kassenpruefer);
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-01-01'), new \DateTimeImmutable('2025-04-30'));
+        $drinnen = $this->beleg(2500, '2025-02-03', $this->platz, null, null, 'D-1', 'Dünger', hochgeladen: '2025-02-04 10:00:00');
+
+        $seite = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'grundlage' => 'belege', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz]);
+        self::assertStringContainsString('2 Posten', $seite->body);
+        // Uploaded within the period: the inbox entry opens (Kassenprüfer has no document.edit).
+        self::assertStringContainsString('href="/app/posteingang/' . $this->dokumentVon($drinnen) . '">Beleg</a>', $seite->body);
+        // Uploaded today, after the period: the line, but no link.
+        self::assertStringContainsString('Rasen Testbetrieb', $seite->body);
+        self::assertStringNotContainsString('/app/posteingang/' . $this->dokumentVon($this->belegRasen) . '"', $seite->body);
+        self::assertSame(1, substr_count($seite->body, '>Beleg</a>'));
+        // The same check as the inbox entry's own (which answers 404 on null).
+        $bereich = new UserAccessRepository($this->pdo())->berechtigungen($this->userId)->zugriffsbereich(Permission::InboxView);
+        self::assertNull(new DocumentRepository($this->pdo())->inboxItem($this->dokumentVon($this->belegRasen), $bereich));
+        self::assertNotNull(new DocumentRepository($this->pdo())->inboxItem($this->dokumentVon($drinnen), $bereich));
+
+        // The booking basis: the booking lies in the period, its receipt was uploaded after it.
+        $buchungen = $this->get('/app/auswertung/geldfluss/posten', ['art' => 'jahr', 'jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->platz]);
+        self::assertStringContainsString('Rasen Testbetrieb', $buchungen->body);
+        self::assertStringNotContainsString('>Beleg</a>', $buchungen->body);
+    }
+
     public function testBookingDetailsOnlyInsideTheBankViewScope(): void
     {
         // Reports for everything, bookings only for a cost center: a booking
@@ -428,7 +459,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         return $lieferanten->anlegen($this->tresor, ['name' => $name, 'rolle' => SupplierRole::Lieferant->value], new \DateTimeImmutable())->id;
     }
 
-    private function beleg(int $brutto, string $datum, ?int $kategorie, ?int $kostenstelle, ?int $lieferant, string $nummer, string $zweck, InvoiceType $typ = InvoiceType::Rechnung): int
+    private function beleg(int $brutto, string $datum, ?int $kategorie, ?int $kostenstelle, ?int $lieferant, string $nummer, string $zweck, InvoiceType $typ = InvoiceType::Rechnung, ?string $hochgeladen = null): int
     {
         ++$this->laufnummer;
         $dokument = new DocumentRepository($this->pdo())->insert(
@@ -436,7 +467,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
             null,
             [],
             $this->tresor->sealDataKey(DataKey::generate()),
-            new \DateTimeImmutable()->modify('-' . $this->laufnummer . ' seconds'),
+            $hochgeladen === null ? new \DateTimeImmutable()->modify('-' . $this->laufnummer . ' seconds') : new \DateTimeImmutable($hochgeladen),
             DocumentStatus::Geprueft,
             costCenterId: $kostenstelle,
             createdBy: $this->userId,
@@ -561,6 +592,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
                 new CategoryRepository($pdo),
                 new CostCenterRepository($pdo),
                 new InvoiceRepository($pdo),
+                new DocumentRepository($pdo),
                 new BankTransactionRepository($pdo),
                 new SupplierService($pdo, new SupplierRepository($pdo), new CategoryRepository($pdo)),
             ),

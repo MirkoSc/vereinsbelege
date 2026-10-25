@@ -11,6 +11,7 @@ use App\Domain\Zugriffsbereich;
 use App\Repository\BankTransactionRepository;
 use App\Repository\CategoryRepository;
 use App\Repository\CostCenterRepository;
+use App\Repository\DocumentRepository;
 use App\Repository\InvoiceRepository;
 use App\Service\Bank\Buchungen;
 use App\Service\Crypto\CryptoException;
@@ -40,6 +41,7 @@ final readonly class Geldfluss
         private CategoryRepository $kategorien,
         private CostCenterRepository $kostenstellen,
         private InvoiceRepository $belege,
+        private DocumentRepository $dokumente,
         private BankTransactionRepository $buchungen,
         private SupplierService $lieferanten,
     ) {
@@ -96,6 +98,12 @@ final readonly class Geldfluss
      *        scope, null without that right: a booking's counterparty and
      *        purpose show only for a booking inside it; otherwise a booking
      *        without a receipt shows as such, nothing more
+     * @param Zugriffsbereich|null $belegBereich the scope of the receipt page
+     *        a line links to (`document.edit` or `inbox.view`), null when
+     *        the reader may open none: a line carries its document id only
+     *        when that page would show it - never a link that ends in a 404
+     *        (issue #250; receipt pages scope by upload date and the
+     *        document's cost center, the report by invoice or booking date)
      */
     public function posten(
         Vault $vault,
@@ -106,6 +114,7 @@ final readonly class Geldfluss
         Dimension $dimension,
         ?int $schluessel,
         ?Zugriffsbereich $buchungsBereich,
+        ?Zugriffsbereich $belegBereich = null,
     ): GeldflussDrilldown {
         if (!in_array($dimension, self::DIMENSIONEN, true)) {
             throw new \InvalidArgumentException('Unsupported dimension.');
@@ -127,6 +136,10 @@ final readonly class Geldfluss
         foreach ($this->belege->nachIds($belegIds) as $record) {
             $records[$record->id] = $record;
         }
+        $oeffenbar = $belegBereich === null ? [] : array_flip($this->dokumente->idsImBereich(
+            array_values(array_unique(array_map(static fn(InvoiceRecord $r): int => $r->documentId, $records))),
+            $belegBereich,
+        ));
 
         // The bookings whose counterparty may show, in one query.
         $buchungen = [];
@@ -157,7 +170,7 @@ final readonly class Geldfluss
                 $detail,
                 self::name(Dimension::Kategorie, $posten->kategorieId, $kategorien),
                 self::name(Dimension::Kostenstelle, $posten->kostenstelleId, $kostenstellen),
-                $record?->documentId,
+                $record !== null && isset($oeffenbar[$record->documentId]) ? $record->documentId : null,
                 $posten->buchungId,
             );
         }
