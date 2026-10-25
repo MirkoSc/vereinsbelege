@@ -105,7 +105,8 @@ final readonly class Budgets
         if ($kategorie === null && $kostenstelle === null) {
             throw new BudgetFehler('Bitte eine Kategorie, eine Kostenstelle oder beides wählen.', 'kategorie');
         }
-        if ($bereich->kostenstellen !== null && ($kostenstelle === null || !in_array($kostenstelle, $bereich->kostenstellen, true))) {
+        // Only the cost centers count: a year is no date for the period scope.
+        if (!new Zugriffsbereich($bereich->kostenstellen)->erlaubt($kostenstelle, $now)) {
             throw new BudgetFehler('Budgets pflegen Sie nur für Ihre eigenen Kostenstellen. Bitte eine davon wählen.', 'kostenstelle');
         }
         // Betrag::parse() refuses anything above Betrag::MAX_CENT (999.999.999,99).

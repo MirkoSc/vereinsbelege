@@ -7,13 +7,16 @@ $pfad = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 
 // Plain HTTP -> HTTPS (security review N-11, docs/betrieb.md section 2).
 // Only GET and HEAD - a redirected POST would lose its body - and never
-// /cron, which a hoster's cron may call over plain HTTP. Local hosts stay
-// on HTTP (docker compose). The request counts as HTTPS when the web
-// server says so (HTTPS, REQUEST_SCHEME, port 443) or a proxy in front
-// sends X-Forwarded-Proto: https - that header can only switch the
-// redirect off for the request carrying it, never mark a request as
-// secure for the application, so it cannot be abused. If a host still
-// loops, shared/https_umleitung_aus.flag (created by FTP) switches it off.
+// /cron, which a hoster's cron may call over plain HTTP. Only a host name
+// on the default port: localhost, *.localhost, IP addresses and any other
+// port (docker compose on :8080) stay on HTTP. The request counts as
+// HTTPS when the web server says so (HTTPS, REQUEST_SCHEME, port 443) or
+// a proxy in front sends X-Forwarded-Proto: https - that header can only
+// switch the redirect off for the request carrying it, never mark a
+// request as secure for the application, so it cannot be abused. 302,
+// not 301: no browser caches it, so if a host still loops,
+// shared/https_umleitung_aus.flag (created by FTP) ends it at once. HSTS
+// in .htaccess keeps browsers on HTTPS after the first visit anyway.
 $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
 $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
 if (($https === '' || $https === 'off')
@@ -22,10 +25,13 @@ if (($https === '' || $https === 'off')
     && !str_contains(strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')), 'https')
     && in_array($_SERVER['REQUEST_METHOD'] ?? '', ['GET', 'HEAD'], true)
     && rtrim($pfad, '/') !== '/cron'
-    && preg_match('/^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)(?::\d{1,5})?$/D', $host, $teile) === 1
-    && !in_array(strtolower($teile[1]), ['localhost', '127.0.0.1'], true)
+    && preg_match('/^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)(?::(\d{1,5}))?$/D', $host, $teile) === 1
+    && in_array($teile[2] ?? '', ['', '80'], true)
+    && strtolower($teile[1]) !== 'localhost'
+    && !str_ends_with(strtolower($teile[1]), '.localhost')
+    && filter_var($teile[1], FILTER_VALIDATE_IP) === false
     && !is_file($basis . '/shared/https_umleitung_aus.flag')) {
-    header('Location: https://' . $teile[1] . ($_SERVER['REQUEST_URI'] ?? '/'), true, 301);
+    header('Location: https://' . $teile[1] . ($_SERVER['REQUEST_URI'] ?? '/'), true, 302);
     exit;
 }
 

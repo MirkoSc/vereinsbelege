@@ -230,6 +230,7 @@ final readonly class BudgetController
             'entsperrt' => $tresor !== null,
             'ergebnis' => $ergebnis,
             'pflegen' => $pflegen,
+            'pflegeKostenstellen' => $pflegen ? $this->pflegebereich()->kostenstellen : [],
             'auswahl' => $auswahl,
             'csvErlaubt' => $b->darf(Permission::ExportCsv),
             'csrf' => $this->session->csrfToken(),

@@ -135,8 +135,9 @@ final class ShimContentTest extends TestCase
     /**
      * Security review N-11: plain HTTP is redirected to HTTPS - but only for
      * GET/HEAD, never for /cron (a hoster's cron may only speak HTTP), never
-     * for local hosts, and with a kill switch in shared/ against a loop
-     * behind an unusual proxy. Pinned as strings like the conditions above:
+     * for local hosts, IP addresses or another port than 80, and with a kill
+     * switch in shared/ against a loop behind an unusual proxy - a 302, so
+     * the switch is not undone by a browser cache. Pinned as strings like the conditions above:
      * the shim cannot be run in-process (it ends with exit and require).
      */
     public function testPlainHttpIsRedirectedExceptForCronAndPosts(): void
@@ -144,10 +145,12 @@ final class ShimContentTest extends TestCase
         $shim = ReleaseSwitcher::SHIM;
 
         foreach ([
-            "header('Location: https://' . \$teile[1] . (\$_SERVER['REQUEST_URI'] ?? '/'), true, 301);",
+            "header('Location: https://' . \$teile[1] . (\$_SERVER['REQUEST_URI'] ?? '/'), true, 302);",
             "in_array(\$_SERVER['REQUEST_METHOD'] ?? '', ['GET', 'HEAD'], true)",
             "rtrim(\$pfad, '/') !== '/cron'",
-            "['localhost', '127.0.0.1']",
+            "in_array(\$teile[2] ?? '', ['', '80'], true)",
+            "strtolower(\$teile[1]) !== 'localhost'",
+            "filter_var(\$teile[1], FILTER_VALIDATE_IP) === false",
             "shared/https_umleitung_aus.flag",
             "(string) (\$_SERVER['SERVER_PORT'] ?? '') !== '443'",
             "strtolower((string) (\$_SERVER['REQUEST_SCHEME'] ?? '')) !== 'https'",
@@ -173,9 +176,10 @@ final class ShimContentTest extends TestCase
         self::assertSame(1, preg_match("~preg_match\\('(/\\^.+\\$/D)'~", ReleaseSwitcher::SHIM, $treffer));
         $muster = $treffer[1];
 
-        foreach (['verein.example' => 'verein.example', 'belege.verein.example:443' => 'belege.verein.example', 'localhost:8080' => 'localhost'] as $host => $erwartet) {
+        foreach (['verein.example' => ['verein.example', ''], 'belege.verein.example:80' => ['belege.verein.example', '80'], 'localhost:8080' => ['localhost', '8080']] as $host => [$name, $port]) {
             self::assertSame(1, preg_match($muster, $host, $teile), $host);
-            self::assertSame($erwartet, $teile[1]);
+            self::assertSame($name, $teile[1]);
+            self::assertSame($port, $teile[2] ?? '');
         }
         foreach (['evil.example/x', 'a@evil.example', 'evil.example\r\nX: 1', '', '.example', 'verein..example', 'verein.example:', "verein.example\n"] as $host) {
             self::assertSame(0, preg_match($muster, $host), $host);

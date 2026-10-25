@@ -161,7 +161,8 @@ aufrufen** und nicht liegen lassen.
 - Formular-Absendungen (POST) – eine umgeleitete Absendung verlöre ihre
   Daten. Seiten, über die man zu einem Formular kommt, werden ohnehin
   umgeleitet.
-- `localhost` (lokale Docker-Umgebung).
+- `localhost`, IP-Adressen und Aufrufe mit eigenem Port (lokale
+  Docker-Umgebung `http://localhost:8080`).
 
 Läuft TLS beim Hoster über einen vorgeschalteten Proxy, erkennt der Shim
 das an `HTTPS`, `REQUEST_SCHEME`, Port 443 oder `X-Forwarded-Proto: https`.

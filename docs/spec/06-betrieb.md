@@ -26,12 +26,14 @@ Umschalten ist das Release-Verzeichnis kurz nicht lesbar, die Selbstheilung
 braucht den Inhalt also ohne Datei. `ShimContentTest` hält beide gleich.
 
 **HTTP → HTTPS im Shim** (Security-Review N-11, #247): ein `GET`/`HEAD`
-über HTTP bekommt `301` auf dieselbe URL mit `https://` (Host aus dem
-`Host`-Header, nur in der Form eines Hostnamens, ohne Port). Ausgenommen:
+über HTTP bekommt `302` auf dieselbe URL mit `https://` (Host aus dem
+`Host`-Header, nur in der Form eines Hostnamens). Ausgenommen:
 `/cron` (ein Hoster-Cron, der nur HTTP kann, läuft weiter), alle anderen
-Methoden (ein umgeleitetes `POST` verlöre seinen Body), `localhost`/
-`127.0.0.1` (Docker-Umgebung) und eine Installation mit
-`shared/https_umleitung_aus.flag` (Notschalter per FTP). Als HTTPS gilt ein
+Methoden (ein umgeleitetes `POST` verlöre seinen Body), `localhost`,
+`*.localhost`, IP-Adressen und jeder andere Port als 80 (Docker-Umgebung auf
+`:8080`) sowie eine Installation mit `shared/https_umleitung_aus.flag`
+(Notschalter per FTP; `302` statt `301`, damit kein Browser eine Schleife
+zwischenspeichert und der Schalter sofort wirkt). Als HTTPS gilt ein
 Request, wenn `HTTPS` gesetzt und nicht `off` ist, `REQUEST_SCHEME`
 `https` ist, der Port 443 ist **oder** `X-Forwarded-Proto` `https` enthält –
 Letzteres verhindert eine Schleife hinter einem TLS-Proxy und kann nur die

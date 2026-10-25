@@ -99,12 +99,21 @@ final readonly class InstallController
     {
         $this->session->start();
 
+        // Deny-all .htaccess in shared/, releases/ and current/ (issue #101).
+        // setup.php already wrote them; the installer repeats it so an
+        // installation whose setup.php could not write them gets a second
+        // try - and a visible warning instead of a silently unprotected
+        // config.php. Idempotent, never overwrites. Before the token is
+        // created, which lives in shared/ as well.
+        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
+        $warnung = $ungeschuetzt === [] ? '' : DenyHtaccess::describe($ungeschuetzt);
+
         $token = $this->token();
         if (!$token->isReleased()) {
             try {
                 $token->ensure();
             } catch (\RuntimeException) {
-                return $this->renderFreigabe(['token' => 'Das Installations-Token lässt sich nicht anlegen: shared/ ist nicht beschreibbar. Bitte die Schreibrechte per FTP prüfen.'], 500);
+                return $this->render(['schritt' => 'freigabe', 'errors' => ['token' => 'Das Installations-Token lässt sich nicht anlegen: shared/ ist nicht beschreibbar. Bitte die Schreibrechte per FTP prüfen.'], 'values' => [], 'ungeschuetzt' => $warnung], 500);
             }
             // The hand-over from setup.php. Redirected at once, so the token
             // does not stay in the address bar or a Referer.
@@ -115,7 +124,7 @@ final readonly class InstallController
                 return Response::redirect('/install');
             }
 
-            return $this->renderFreigabe(is_string($angeboten) ? ['token' => self::FALSCHES_TOKEN] : []);
+            return $this->render(['schritt' => 'freigabe', 'errors' => is_string($angeboten) ? ['token' => self::FALSCHES_TOKEN] : [], 'values' => [], 'ungeschuetzt' => $warnung]);
         }
 
         if (is_array($_SESSION['install_admin'] ?? null)) {
@@ -125,17 +134,10 @@ final readonly class InstallController
             return $this->renderAccess();
         }
 
-        // Deny-all .htaccess in shared/, releases/ and current/ (issue #101).
-        // setup.php already wrote them; the form repeats it so an
-        // installation whose setup.php could not write them gets a second
-        // try - and a visible warning instead of a silently unprotected
-        // config.php. Idempotent, never overwrites.
-        $ungeschuetzt = DenyHtaccess::ensureAll(dirname($this->paths->releaseRoot));
-
         return $this->render([
             'errors' => [],
             'values' => ['kanal' => $this->channelFromSetup()],
-            'ungeschuetzt' => $ungeschuetzt === [] ? '' : DenyHtaccess::describe($ungeschuetzt),
+            'ungeschuetzt' => $warnung,
         ]);
     }
 

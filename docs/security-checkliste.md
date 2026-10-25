@@ -80,7 +80,7 @@ eine in diesem PR behobene Zeile.
 | B-08 | Sperren/Ablauf/Reset beenden laufende Sitzungen sofort | ✓ | `LoginGuard` (Epoche) |
 | B-09 | Logout nur per POST + CSRF, löscht Sitzung und Tresor-Cookie | ✓ | `AuthController::logout()` |
 | B-10 | CSRF-Token auf allen schreibenden Session-Routen | ✓ | je Controller `checkCsrf()`; Ausnahmen gewollt: `/einreichen*` (Formular-Token), `/api/worker/*` (HMAC). Ein zentraler Test über alle POST-Routen fehlt → N-15 |
-| B-11 | Nur HTTPS (Umleitung HTTP → HTTPS) | ✓ (#247) | Shim `ReleaseSwitcher::SHIM`: GET/HEAD über HTTP → 301 auf HTTPS; ausgenommen `/cron`, POST, `localhost`; Proxy-Erkennung nur zum Abschalten der Umleitung, Notschalter `shared/https_umleitung_aus.flag` (N-11); HSTS vorhanden |
+| B-11 | Nur HTTPS (Umleitung HTTP → HTTPS) | ✓ (#247) | Shim `ReleaseSwitcher::SHIM`: GET/HEAD über HTTP → 302 auf HTTPS; ausgenommen `/cron`, POST, `localhost`, IP-Adressen, andere Ports als 80; Proxy-Erkennung nur zum Abschalten der Umleitung, Notschalter `shared/https_umleitung_aus.flag` (N-11); HSTS vorhanden |
 | B-12 | Tresor-Schlüssel nur geteilt (Session-Chiffrat + Cookie-Schlüssel) | ✓ | `SessionVault` |
 
 ## C – Zugriffskontrolle (ASVS V4)

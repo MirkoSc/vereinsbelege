@@ -92,11 +92,4 @@ final readonly class InstallToken
 
         return $token !== null && is_string($freigabe) && hash_equals(hash('sha256', $token), $freigabe);
     }
-
-    public function remove(): void
-    {
-        if (is_file($this->file)) {
-            @unlink($this->file);
-        }
-    }
 }
