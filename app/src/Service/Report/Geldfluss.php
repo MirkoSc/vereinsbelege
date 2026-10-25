@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Report;
 
+use App\Domain\BankTransactionRecord;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceRecord;
 use App\Domain\Zugriffsbereich;
@@ -58,10 +59,14 @@ final readonly class Geldfluss
             $namen = $this->namen($dimension);
             $gruppen = $rechner->gruppiert($daten, $bereich, $dimension, $seite);
             $summe = 0;
+            // Shares are of the non-negative groups only: a group where credit
+            // notes outweigh would otherwise push the others above 100 %.
+            $positiv = 0;
             $groesster = 0;
             foreach ($gruppen as $gruppe) {
                 $betrag = self::betrag($gruppe->summen, $seite);
                 $summe += $betrag;
+                $positiv += max(0, $betrag);
                 $groesster = max($groesster, $betrag);
             }
             $zeilen = [];
@@ -73,7 +78,7 @@ final readonly class Geldfluss
                     self::name($dimension, $schluessel, $namen),
                     $betrag,
                     $gruppe->summen->anzahl,
-                    $summe > 0 && $betrag >= 0 ? self::promille($betrag, $summe) : null,
+                    $positiv > 0 && $betrag >= 0 ? self::promille($betrag, $positiv) : null,
                     $groesster > 0 && $betrag > 0 ? self::promille($betrag, $groesster) : 0,
                 );
             }
@@ -87,8 +92,9 @@ final readonly class Geldfluss
      * The lines behind one group, by date. $schluessel null = the lines
      * without a category / cost center.
      *
-     * @param bool $buchungsdetails whether the reader may see a booking's
-     *        counterparty and purpose (`bank.view`); otherwise a booking
+     * @param Zugriffsbereich|null $buchungsBereich the reader's `bank.view`
+     *        scope, null without that right: a booking's counterparty and
+     *        purpose show only for a booking inside it; otherwise a booking
      *        without a receipt shows as such, nothing more
      */
     public function posten(
@@ -99,13 +105,15 @@ final readonly class Geldfluss
         InvoiceDirection $seite,
         Dimension $dimension,
         ?int $schluessel,
-        bool $buchungsdetails,
+        ?Zugriffsbereich $buchungsBereich,
     ): GeldflussDrilldown {
         if (!in_array($dimension, self::DIMENSIONEN, true)) {
             throw new \InvalidArgumentException('Unsupported dimension.');
         }
         $sichtbar = $zeitraum->begrenztAuf($bereich);
-        $titel = self::name($dimension, $schluessel, $this->namen($dimension));
+        $kategorien = $this->namen(Dimension::Kategorie);
+        $kostenstellen = $this->namen(Dimension::Kostenstelle);
+        $titel = self::name($dimension, $schluessel, $dimension === Dimension::Kategorie ? $kategorien : $kostenstellen);
         if ($sichtbar === null) {
             return new GeldflussDrilldown(null, $titel, [], 0);
         }
@@ -120,8 +128,19 @@ final readonly class Geldfluss
             $records[$record->id] = $record;
         }
 
-        $kategorien = $this->namen(Dimension::Kategorie);
-        $kostenstellen = $this->namen(Dimension::Kostenstelle);
+        // The bookings whose counterparty may show, in one query.
+        $buchungen = [];
+        if ($buchungsBereich !== null) {
+            $ids = [];
+            foreach ($treffer as $p) {
+                if ($p->belegId === null && $p->buchungId !== null && $buchungsBereich->erlaubt($p->kostenstelleId, $p->datum)) {
+                    $ids[] = $p->buchungId;
+                }
+            }
+            foreach ($this->buchungen->nachIds(array_values(array_unique($ids))) as $record) {
+                $buchungen[$record->id] = $record;
+            }
+        }
         $lieferanten = [];
         $zeilen = [];
         $summe = 0;
@@ -130,7 +149,7 @@ final readonly class Geldfluss
             $record = $posten->belegId === null ? null : ($records[$posten->belegId] ?? null);
             [$bezeichnung, $detail] = $record !== null
                 ? $this->belegText($vault, $record, $lieferanten)
-                : $this->buchungText($vault, $posten, $buchungsdetails);
+                : $this->buchungText($vault, $posten->buchungId === null ? null : ($buchungen[$posten->buchungId] ?? null));
             $zeilen[] = new GeldflussPosten(
                 $posten->datum,
                 $posten->betrag,
@@ -177,13 +196,14 @@ final readonly class Geldfluss
         return [$name, $detail];
     }
 
-    /** @return array{0: string, 1: string} */
-    private function buchungText(Vault $vault, Posten $posten, bool $buchungsdetails): array
+    /**
+     * @param BankTransactionRecord|null $record null when the reader may not
+     *        see the booking's details
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function buchungText(Vault $vault, ?BankTransactionRecord $record): array
     {
-        if (!$buchungsdetails || $posten->buchungId === null) {
-            return ['Buchung ohne Beleg', ''];
-        }
-        $record = $this->buchungen->find($posten->buchungId);
         if ($record === null) {
             return ['Buchung ohne Beleg', ''];
         }

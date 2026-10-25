@@ -56,7 +56,7 @@ $zeitraum = $wahl->zeitraum();
 <label for="<?= e($idPrefix) ?>-bis" class="feld-kurz">Bis
     <input type="date" id="<?= e($idPrefix) ?>-bis" name="bis" value="<?= e($zeitraum->bis->format('Y-m-d')) ?>">
 </label>
-<p class="feld-hilfe">Jahr gilt für Kalenderjahr, Quartal und Monat; „Von“ und „Bis“ nur für einen freien Zeitraum.</p>
+<p class="feld-hilfe">Jahr gilt für Kalenderjahr, Quartal und Monat; „Von“ und „Bis“ nur für einen freien Zeitraum (höchstens <?= e((string) Zeitraumwahl::MAX_JAHRE_FREI) ?> Jahre).</p>
 <?php if ($wahl->korrigiert): ?>
     <p class="hinweis hinweis-warnung">Der gewählte Zeitraum war ungültig; gezeigt wird das Jahr <?= e((string) $wahl->jahr) ?>.</p>
 <?php endif; ?>

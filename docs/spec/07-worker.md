@@ -216,7 +216,11 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
     {version, public_key}, artefakte[] (erlaubte Kinds), stammdaten:
     {kategorien[{id, name, richtung, ki_hinweis}], kostenstellen[{id,
     name}]}}`. `tresor` = aktuelle Generation (`vault.current()`); daran
-    versiegelt der Worker seine Ergebnisse.
+    versiegelt der Worker seine Ergebnisse. Seit #54 (E-50) zusätzlich
+    `dokument.originale` (Blob-IDs der Originale in Seitenreihenfolge),
+    `dokument.verarbeitet` (parallel dazu der verarbeitete Scan, nur wenn
+    gewährt, sonst `null`) und `dokument.pdf` – nur IDs, damit der Worker
+    `text`/`pdfa` je Original nummerieren kann.
   - Ergebnis-Upload in drei Schritten, weil das AAD von `data_enc` die
     Zeilen-ID enthält:
     1. `POST /jobs/{id}/artifacts` `{lock, versuch, kind, seq, dek_sealed,
@@ -342,7 +346,8 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - `worker/Dockerfile` im Repo, Basis `debian:trixie-slim` mit
   `php8.x-cli` (+ sodium, curl, mbstring), `ocrmypdf`,
   `tesseract-ocr-deu`, `ghostscript`, `poppler-utils`, `unpaper`.
-  Worker-Code = `bin/worker.php` + gemeinsames `app/src`.
+  Worker-Code = `bin/worker.php` + `worker/src/` (`App\Worker`, nicht im
+  Release-ZIP) + gemeinsames `app/src` (§8).
 - GitHub Action baut bei jedem Tag ein **Multi-Arch-Image**
   (`linux/arm64` + `linux/amd64`) nach
   `ghcr.io/mirkosc/vereinsbelege-worker` mit Tags `vX.Y.Z`, `beta`
@@ -353,6 +358,86 @@ Admin dann als Anbieter „Worker-lokal" auswählen kann.
 - Updates: `docker compose pull && docker compose up -d` (Doku), optional
   automatisch per systemd-Timer; der Admin zeigt „Worker-Version veraltet".
 - Einrichtungsanleitung für den Pi: `docs/worker-einrichtung.md` (M7b-6).
+
+## 8. Worker-Programm (`bin/worker.php`)
+
+**Stand M7b-4 (issue #54, E-50).** Einstieg `bin/worker.php` (nur CLI),
+Code in `worker/src/` (Namespace `App\Worker`, eigener Autoloader
+`worker/autoload.php` – bewusst nicht in `composer.json`, damit die
+Classmap des Webhosters ihn nicht kennt). `worker/` und `bin/worker.php`
+kommen **nicht** ins Release-ZIP (`release.yml`: `zip -d … bin/worker.php`). Er nutzt die gemeinsamen Klassen der
+Web-App: `WorkerProtokoll` (Signatur), `WorkerKrypto` (Grants, Kontext,
+Versiegeln an `VK_pub`), `BlobCipher`/`FieldCipher`, `Service/Processing`
+(`Auslesung`, `Textlayer`, `PdfTextlayer`, E-Rechnung, `PngZuJpeg`,
+`JpegInfo`) und `Service/Ki` (`KiAbfrage`, `OpenAiCompatibleClient`).
+`worker/src/` hängt wie `Service/Processing` nicht an Http, Session,
+Repository oder Datenbank (`ProcessingArchitectureTest`).
+
+- **Befehle:** `pair <https://…> <CODE> [name] [--neu]` (Schlüsselpaar
+  erzeugen, koppeln, Fingerabdruck ausgeben und mit dem des Webhosters
+  vergleichen; nie wiederholt), `run` (Standard), `status`.
+- **Konfiguration** per Umgebung: `WORKER_DATEN` (Volume mit
+  `worker.json`: ID, Zugangsschlüssel, `W_pub`/`W_priv`, Adresse – Modus
+  0600, das Einzige, was dauerhaft gespeichert wird), `WORKER_ARBEIT`
+  (Arbeitsverzeichnis, **muss** tmpfs/ramfs sein), `WORKER_NAME`,
+  `WORKER_FAEHIGKEITEN` (z. B. `ocr,render` – schränkt die Meldung ein),
+  `WORKER_SPEICHER` (PHP-Speichergrenze, Standard 1024M),
+  `WORKER_ERLAUBE_HTTP_LOCALHOST=1` (nur Tests, nur localhost).
+- **Fähigkeiten:** `render` wenn `pdfinfo`+`pdftoppm` da sind, `ocr` wenn
+  `ocrmypdf`+`tesseract` da sind, `ai` immer (die Schlüssel kommen vom
+  Webhoster).
+- **Schleife:** Heartbeat → neue Konfiguration übernehmen (ersetzt die
+  alte vollständig; leere Liste, nicht zu öffnender Umschlag oder fremdes
+  Format → alle Schlüssel weg) → nur mit `status = aktiv` und `wartend > 0`
+  ein Claim (`max 1`) → Job verarbeiten → sofort weiter; sonst
+  `poll_sekunden` warten. Fehler (nicht erreichbar, 5xx, Protokoll,
+  entkoppelt) beenden die Schleife nie: Rückzug 5 s, 10 s … 5 min (±20 %),
+  der nächste gute Heartbeat setzt zurück.
+- **Signierte Anfragen** (`App\Worker\ApiClient`): jeder Versuch mit
+  neuem Nonce und Zeitstempel; beide Auth-Header (`Authorization`,
+  `X-Worker-Authorization`); signiert wird der Pfad, wie er beim Webhoster
+  ankommt (Pfadteil der Basisadresse + API-Pfad). Wiederholt werden
+  Netzfehler, 429, 500, 502–504 (bis 4 Versuche, 2/4/8 s), sonst nichts.
+  Uhrzeit: Versatz aus `server_zeit` bzw. einmal aus dem `Date`-Header
+  einer 401. Nur `https://` (`UrlRegel`), keine Weiterleitungen, Antworten
+  höchstens 80 MiB.
+- **Ein Job** (`App\Worker\JobLauf`): Kontext holen; Blobs als Chiffrat
+  laden und mit dem Grant (`X-Worker-Dek`, an `W_pub`) öffnen – Klartext nur
+  im Speicher bzw. als Datei im Job-Verzeichnis; Ergebnisse unter frischen
+  DEKs verschlüsseln, DEK sofort an `VK_pub` versiegeln, dreistufig
+  hochladen (anmelden, fehlende Chunks, festschreiben; `vorhanden` =
+  erledigt). `dek_veraltet`/`dek_ungueltig` (Tresor-Rotation) → Kontext neu
+  holen, einmal neu versiegeln. Die Sperre wird alle 10 min verlängert
+  (`extend`). Danach `complete`; Fehler als Bezeichner über `fail`
+  (`endgueltig` nur, wenn die Eingabe selbst das Problem ist).
+- **Schritte:**
+  - `render_pages`: jedes PDF-Original Seite für Seite mit `pdftoppm`,
+    Grenzen wie der Browser-Weg (150 DPI, längste Seite ≤ 4000 px, ≤ 2 MiB,
+    Qualität 85 → 70 → 50, höchstens 200 Seiten), `seq` über alle PDFs
+    fortlaufend. Kaputtes/verschlüsseltes PDF → endgültig.
+  - `ocr`: je Original (`seq` = seine Stelle) `ocrmypdf --output-type
+    pdfa-2 -l deu+eng --rotate-pages --deskew --force-ocr --sidecar`
+    (Bilder mit `--image-dpi 300`, verarbeiteter Scan bevorzugt) → `pdfa`
+    und `text` `{befund, brauchbar, seiten}` („brauchbar“ nach
+    `Textlayer`). Nicht lesbares Original oder kein Text → endgültig.
+  - `ai_extract`: Eingabe wie E-50 beschrieben, Kette wie die Session
+    (Standardprofil, Reparatur oder Ausweichprofil + Reparatur, höchstens
+    drei Aufrufe), jeder Versuch ein `extraction`-Artefakt
+    `{versuch, meldung, extraktion, hinweise}` (`seq` = Nummer).
+  - Unbekannter Typ (z. B. `image_cleanup`) → endgültig.
+- **Prozess-Grenze** (CLAUDE.md §1, E-50): Programme startet nur
+  `worker/src/Prozess.php` (`proc_open()` mit Argumentliste, keine Shell,
+  reduzierte Umgebung, Zeitlimit, SIGTERM → SIGKILL), aufgerufen nur über
+  `PosixWerkzeuge`. Werkzeug-Ausgaben werden gelesen, nie geloggt.
+- **Zwischendateien:** nur im tmpfs-Arbeitsverzeichnis, je Job ein eigenes
+  Verzeichnis (0700), im `finally` gelöscht; Reste räumt der Start weg.
+  `HOME`/`TMPDIR` der Werkzeuge zeigen hinein.
+- **Beenden:** SIGTERM/SIGINT → kein neuer Claim; ein laufendes Werkzeug
+  wird beendet, eine laufende Übertragung abgebrochen, der Job mit `fail`
+  ohne `endgueltig` (`WorkerBeendet`) zurückgegeben (ein Versuch, kurzes
+  Zeitlimit); KI-Schlüssel werden verworfen.
+- **Log:** JSON-Zeilen auf stderr, nur Ereignis, IDs, Zähler, Dauer,
+  HTTP-Status und Fehlercodes; alles andere verwirft `App\Worker\Log`.
 
 ## Pflicht-Tests
 
@@ -370,6 +455,12 @@ beanspruchten Job → 403; Artefakte sind mit Tresor-Schlüssel lesbar, mit
 Zeitstempel, Nonce-Replay, manipulierter Body); Kopplung (abgelaufener
 Code, unbestätigter Fingerabdruck → inaktiv); Protokollversions-Prüfung;
 Idempotenz doppelter Artefakt-Uploads; `Service/Processing` hat keine
-Abhängigkeit zu Http/Session/Repository (Architekturtest); Worker-Ablauf
+Abhängigkeit zu Http/Session/Repository (Architekturtest); Worker-Programm
+(#54): jeder Wiederholungsversuch mit neuem Nonce/Zeitstempel, http://
+abgelehnt (localhost nur mit Testoption), leere Profilliste verwirft die
+Schlüssel, Backoff, Arbeitsverzeichnis nur auf tmpfs und nach jedem Job
+leer, SIGTERM gibt den laufenden Job zurück, `render_pages`/`ocr`/
+`ai_extract` gegen den echten Controller und die echte Übernahme,
+Prozess-Aufrufe nur in `worker/src/Prozess.php`; Worker-Ablauf
 end-to-end im Docker (Webhoster-Container + Worker-Container, OCRmyPDF auf
 einem Fixture-Scan, Ergebnis im Posteingang).

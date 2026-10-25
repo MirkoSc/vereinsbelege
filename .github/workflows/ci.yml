@@ -56,7 +56,7 @@ jobs:
         run: composer install --no-interaction --no-progress
 
       - name: Lint every PHP file
-        run: find app bin public tools tests -name '*.php' -print0 | xargs -0 -n1 -P4 php -l
+        run: find app bin public tools tests worker -name '*.php' -print0 | xargs -0 -n1 -P4 php -l
 
       - name: Run tests (deprecations fail the build)
         run: vendor/bin/phpunit

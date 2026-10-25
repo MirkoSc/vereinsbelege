@@ -70,6 +70,14 @@ final class ZeitraumwahlTest extends TestCase
         self::assertSame('15.11.2024 – 10.02.2025', $wahl->bezeichnung());
     }
 
+    public function testAFreeRangeOfJustUnderThreeYears(): void
+    {
+        $wahl = Zeitraumwahl::ausAnfrage(['zeitraum' => 'frei', 'von' => '2020-01-01', 'bis' => '2022-12-31'], 2025, 2000, 2026);
+
+        self::assertFalse($wahl->korrigiert);
+        self::assertSame(Zeitraumart::Frei, $wahl->art);
+    }
+
     /**
      * @param array<string, mixed> $query
      */
@@ -101,6 +109,7 @@ final class ZeitraumwahlTest extends TestCase
         yield 'free end before start' => [['zeitraum' => 'frei', 'von' => '2024-03-01', 'bis' => '2024-02-01']];
         yield 'free impossible date' => [['zeitraum' => 'frei', 'von' => '2024-02-30', 'bis' => '2024-03-01']];
         yield 'free other format' => [['zeitraum' => 'frei', 'von' => '01.02.2024', 'bis' => '2024-03-01']];
+        yield 'free longer than three years' => [['zeitraum' => 'frei', 'von' => '2020-01-01', 'bis' => '2023-01-01']];
         yield 'free beyond the last year' => [['zeitraum' => 'frei', 'von' => '2026-12-01', 'bis' => '2027-01-31']];
     }
 }

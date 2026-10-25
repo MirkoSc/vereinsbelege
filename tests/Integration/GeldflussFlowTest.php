@@ -17,6 +17,8 @@ use App\Domain\InvoiceData;
 use App\Domain\InvoiceDirection;
 use App\Domain\InvoiceStructure;
 use App\Domain\InvoiceType;
+use App\Domain\Permission;
+use App\Domain\PermissionScope;
 use App\Domain\SupplierRole;
 use App\Domain\SystemRole;
 use App\Domain\ZuordnungMethode;
@@ -285,6 +287,41 @@ final class GeldflussFlowTest extends DatabaseTestCase
         self::assertStringNotContainsString('9,99', $vorher->body);
     }
 
+    public function testBookingDetailsOnlyInsideTheBankViewScope(): void
+    {
+        // Reports for everything, bookings only for a cost center: a booking
+        // without a receipt has no cost center, so its counterparty and
+        // purpose stay hidden (and nothing links to the booking page twice
+        // removed from its scope - that page checks itself).
+        $rolle = new RoleRepository($this->pdo())->create('Testrolle Bericht', false, [
+            Permission::ReportView->value => PermissionScope::Alle,
+            Permission::BankView->value => PermissionScope::Kostenstelle,
+        ]);
+        new RoleRepository($this->pdo())->assignToUser($this->userId, [$rolle]);
+        new UserAccessRepository($this->pdo())->setCostCenters($this->userId, [$this->herren]);
+
+        $seite = $this->get('/app/auswertung/geldfluss/posten', ['jahr' => '2025', 'nach' => 'kategorie', 'schluessel' => (string) $this->reise]);
+        self::assertStringContainsString('2 Posten', $seite->body);
+        self::assertStringContainsString('Bahn Testreisen', $seite->body);
+        self::assertStringNotContainsString('Gegenseite', $seite->body);
+        self::assertStringNotContainsString('Zweck', $seite->body);
+        self::assertMatchesRegularExpression('#01\.06\.2025</th>\s*<td data-label="Beleg / Buchung">\s*Buchung ohne Beleg\s*</td>#', $seite->body);
+    }
+
+    public function testACreditNoteGroupHasNoShareAndDoesNotInflateTheOthers(): void
+    {
+        $sonstiges = new CategoryRepository($this->pdo())->create('Testkat Gutschriften', CategoryDirection::Ausgabe, null, '');
+        $this->beleg(20000, '2025-09-01', $sonstiges, null, null, 'G-1', '', InvoiceType::Gutschrift);
+
+        $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025', 'grundlage' => 'belege']);
+        self::assertSame([
+            ['Testkat Platzpflege', '350,00 €', '77,8 %', '2'],
+            ['Testkat Gutschriften', '-200,00 €', '–', '1'],
+            ['Testkat Reisekosten', '100,00 €', '22,2 %', '1'],
+        ], $this->tabelle($seite->body, 'kategorie'));
+        self::assertMatchesRegularExpression('#geldfluss-kategorie.*?Summe</th>\s*<td class="zahl" data-label="Betrag"><strong>250,00 €</strong>#s', $seite->body);
+    }
+
     public function testWithoutAnUnlockedVaultNoFigures(): void
     {
         $seite = $this->get('/app/auswertung/geldfluss', ['jahr' => '2025'], entsperrt: false);
@@ -379,7 +416,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         return $lieferanten->anlegen($this->tresor, ['name' => $name, 'rolle' => SupplierRole::Lieferant->value], new \DateTimeImmutable())->id;
     }
 
-    private function beleg(int $brutto, string $datum, ?int $kategorie, ?int $kostenstelle, ?int $lieferant, string $nummer, string $zweck): int
+    private function beleg(int $brutto, string $datum, ?int $kategorie, ?int $kostenstelle, ?int $lieferant, string $nummer, string $zweck, InvoiceType $typ = InvoiceType::Rechnung): int
     {
         ++$this->laufnummer;
         $dokument = new DocumentRepository($this->pdo())->insert(
@@ -396,7 +433,7 @@ final class GeldflussFlowTest extends DatabaseTestCase
         $rechnungen = new InvoiceRepository($this->pdo());
         $id = $rechnungen->insert(
             $dokument,
-            new InvoiceStructure(InvoiceType::Rechnung, InvoiceDirection::Ausgabe, $lieferant, new \DateTimeImmutable($datum), null, null, null, $kategorie, $kostenstelle),
+            new InvoiceStructure($typ, InvoiceDirection::Ausgabe, $lieferant, new \DateTimeImmutable($datum), null, null, null, $kategorie, $kostenstelle),
             $this->tresor->sealDataKey($schluessel),
             null,
             $this->userId,

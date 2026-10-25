@@ -17,6 +17,13 @@ namespace App\Service\Report;
  */
 final readonly class Zeitraumwahl
 {
+    /**
+     * The longest free period, in years: one request decrypts every line of
+     * it (CLAUDE.md section 1 - no long request; the session cache caps its
+     * size too). Longer views are what the yearly figures are for.
+     */
+    public const int MAX_JAHRE_FREI = 3;
+
     public const array MONATSNAMEN = [
         1 => 'Januar', 2 => 'Februar', 3 => 'März', 4 => 'April', 5 => 'Mai', 6 => 'Juni',
         7 => 'Juli', 8 => 'August', 9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Dezember',
@@ -70,7 +77,8 @@ final readonly class Zeitraumwahl
             $von = self::datum($query['von'] ?? null);
             $bis = self::datum($query['bis'] ?? null);
             if ($von === null || $bis === null || $bis < $von
-                || (int) $von->format('Y') < $erstesJahr || (int) $bis->format('Y') > $letztesJahr) {
+                || (int) $von->format('Y') < $erstesJahr || (int) $bis->format('Y') > $letztesJahr
+                || $bis >= $von->modify('+' . self::MAX_JAHRE_FREI . ' years')) {
                 return $standard->alsKorrigiert();
             }
 

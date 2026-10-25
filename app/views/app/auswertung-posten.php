@@ -46,6 +46,9 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
     <?php if ($drilldown->unlesbar > 0): ?>
         <p class="hinweis hinweis-warnung"><?= e(sprintf('%d %s nicht entschlüsseln und %s nicht mitgezählt.', $drilldown->unlesbar, $drilldown->unlesbar === 1 ? 'Eintrag ließ sich' : 'Einträge ließen sich', $drilldown->unlesbar === 1 ? 'ist' : 'sind')) ?></p>
     <?php endif; ?>
+    <?php if ($drilldown->fremdwaehrung > 0): ?>
+        <p class="hinweis hinweis-warnung"><?= e(sprintf('%d %s in einer anderen Währung als Euro %s nicht mitgezählt.', $drilldown->fremdwaehrung, $drilldown->fremdwaehrung === 1 ? 'Eintrag' : 'Einträge', $drilldown->fremdwaehrung === 1 ? 'ist' : 'sind')) ?></p>
+    <?php endif; ?>
     <?php if ($drilldown->posten === []): ?>
         <div class="leer">Keine Posten in diesem Zeitraum.</div>
     <?php else: ?>
@@ -73,14 +76,16 @@ $zurueck = '/app/auswertung/geldfluss?' . http_build_query($parameter);
                             </td>
                             <td data-label="<?= e($dimension === Dimension::Kostenstelle ? 'Kategorie' : 'Kostenstelle') ?>"><?= e($dimension === Dimension::Kostenstelle ? $p->kategorie : $p->kostenstelle) ?></td>
                             <td class="zahl" data-label="Betrag"><?= e($geld($p->betrag)) ?></td>
-                            <td data-label="Öffnen">
-                                <?php if ($p->dokumentId !== null && $belegPfad !== null): ?>
-                                    <a href="<?= e($belegPfad . $p->dokumentId) ?>">Beleg</a>
-                                <?php endif; ?>
-                                <?php if ($p->buchungId !== null && $buchungPfad !== null): ?>
-                                    <a href="<?= e($buchungPfad . $p->buchungId) ?>">Buchung</a>
-                                <?php endif; ?>
-                            </td>
+                            <?php
+                            $links = [];
+                            if ($p->dokumentId !== null && $belegPfad !== null) {
+                                $links[] = '<a href="' . e($belegPfad . $p->dokumentId) . '">Beleg</a>';
+                            }
+                            if ($p->buchungId !== null && $buchungPfad !== null) {
+                                $links[] = '<a href="' . e($buchungPfad . $p->buchungId) . '">Buchung</a>';
+                            }
+                            ?>
+                            <td data-label="Öffnen"><?= implode(' ', $links) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

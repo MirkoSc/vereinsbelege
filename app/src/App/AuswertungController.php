@@ -104,7 +104,7 @@ final readonly class AuswertungController
             $filter['seite'],
             $dimension,
             $schluessel,
-            $b->darf(Permission::BankView),
+            $b->darf(Permission::BankView) ? $b->zugriffsbereich(Permission::BankView) : null,
         );
 
         return $this->seite('app/auswertung-posten', $drilldown?->titel ?? 'Einzelposten', [
@@ -136,13 +136,20 @@ final readonly class AuswertungController
         $grundlage = Grundlage::tryFrom(self::text($request->query['grundlage'] ?? null)) ?? Grundlage::STANDARD;
         $seite = self::text($request->query['seite'] ?? null) === 'einnahmen' ? InvoiceDirection::Einnahme : InvoiceDirection::Ausgabe;
 
+        // Years offered in the filter: the ones the account may see, newest
+        // first - plus the chosen one, so the form never silently changes it.
+        $jahre = range($standard, min($erstes, $standard), -1);
+        if (!in_array($wahl->jahr, $jahre, true)) {
+            $jahre[] = $wahl->jahr;
+            rsort($jahre);
+        }
+
         return [
             'wahl' => $wahl,
             'grundlage' => $grundlage,
             'seite' => $seite,
             'bereich' => $b->zugriffsbereich(Permission::ReportView),
-            // Years offered in the filter: the ones the account may see, newest first.
-            'jahre' => range($standard, min($erstes, $standard), -1),
+            'jahre' => $jahre,
             'parameter' => [
                 ...$wahl->parameter(),
                 'grundlage' => $grundlage->value,

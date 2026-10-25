@@ -480,6 +480,20 @@ final class RoutePermissionMatrixTest extends TestCase
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/lauf', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/export/lauf/7/bestaetigen', false],
             [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/buchungen', false],
+            // DATEV export (issue #93): export.csv on the user side - the
+            // tax advisor and the auditors export, a club officer does not;
+            // its settings are admin.settings.
+            [SystemRole::Steuerberater, HttpMethod::Get, '/app/datev', true],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/app/datev/datei', true],
+            [SystemRole::Kassenpruefer, HttpMethod::Post, '/app/datev/datei', true],
+            [SystemRole::Vorstand, HttpMethod::Get, '/app/datev', true],
+            [SystemRole::Finanzen, HttpMethod::Post, '/app/datev/datei', true],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Get, '/app/datev', false],
+            [SystemRole::Vereinsverantwortlicher, HttpMethod::Post, '/app/datev/datei', false],
+            [SystemRole::Admin, HttpMethod::Get, '/admin/datev', true],
+            [SystemRole::Admin, HttpMethod::Post, '/admin/datev', true],
+            [SystemRole::Finanzen, HttpMethod::Get, '/admin/datev', false],
+            [SystemRole::Steuerberater, HttpMethod::Post, '/admin/datev', false],
             // Archive import (M12-3): archive.import - Admin and Finanzen
             // only; the board and the auditors read, they do not import.
             [SystemRole::Admin, HttpMethod::Get, '/app/archiv-import', true],
@@ -848,6 +862,9 @@ final class RoutePermissionMatrixTest extends TestCase
             rechtstexteAdmin: $stellvertreter,
             // The dashboard on /app (issue #72/M11-2), optional.
             dashboard: $stellvertreter,
+            // The DATEV export and its settings (issue #93), optional.
+            datev: $stellvertreter,
+            datevAdmin: $stellvertreter,
             // "Wohin fließt das Geld" (issue #73/M11-3), optional.
             geldfluss: $stellvertreter,
         );

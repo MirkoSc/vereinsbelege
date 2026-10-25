@@ -6,6 +6,7 @@ use App\Admin\BackupController;
 use App\Admin\CategoryController;
 use App\Admin\CodeIntegritaetController;
 use App\Admin\CostCenterController;
+use App\Admin\DatevSettingsController;
 use App\Admin\KiAnbieterController;
 use App\Admin\MailController;
 use App\Admin\NextcloudSettingsController;
@@ -34,6 +35,7 @@ use App\App\BuchungController;
 use App\App\AbgleichController;
 use App\App\ErstattungController;
 use App\App\ZahllaufController;
+use App\App\DatevController;
 use App\App\BuchungsregelController;
 use App\App\CsvFormatController;
 use App\App\AuswertungController;
@@ -219,8 +221,14 @@ use App\View\View;
  *        lazily, same reason (issue #80/M13-3). Optional like $nextcloudAdmin.
  * @param (\Closure(): DashboardController)|null $dashboard built lazily,
  *        same reason as $mail: only the dashboard needs the database (issue
- *        #72/M11-2). Optional and last; without it /app is the plain start
+ *        #72/M11-2). Optional; without it /app is the plain start
  *        page with the quick links (route tables built for other pages).
+ * @param (\Closure(): DatevController)|null $datev built lazily, same
+ *        reason as $mail: only the DATEV export needs the database (issue
+ *        #93). Optional like $nextcloudAdmin.
+ * @param (\Closure(): DatevSettingsController)|null $datevAdmin built
+ *        lazily, same reason (issue #93). Optional like
+ *        $nextcloudAdmin.
  * @param (\Closure(): AuswertungController)|null $geldfluss built lazily,
  *        same reason as $mail: only the report pages need the database
  *        (issue #73/M11-3). Optional like $nextcloudAdmin.
@@ -281,6 +289,8 @@ return static function (
     ?\Closure $rechtstexte = null,
     ?\Closure $rechtstexteAdmin = null,
     ?\Closure $dashboard = null,
+    ?\Closure $datev = null,
+    ?\Closure $datevAdmin = null,
     ?\Closure $geldfluss = null,
 ): void {
     $nextcloudAdmin ??= static fn(): never => throw new \LogicException('The Nextcloud settings are not wired into this route table.');
@@ -299,6 +309,8 @@ return static function (
     $zahllaeufe ??= static fn(): never => throw new \LogicException('The payment runs are not wired into this route table.');
     $rechtstexte ??= static fn(): never => throw new \LogicException('The legal pages are not wired into this route table.');
     $rechtstexteAdmin ??= static fn(): never => throw new \LogicException('The legal texts admin page is not wired into this route table.');
+    $datev ??= static fn(): never => throw new \LogicException('The DATEV export is not wired into this route table.');
+    $datevAdmin ??= static fn(): never => throw new \LogicException('The DATEV settings are not wired into this route table.');
     $geldfluss ??= static fn(): never => throw new \LogicException('The report pages are not wired into this route table.');
 
     // Registers a route with its declaration and wraps the handler in the
@@ -833,6 +845,14 @@ return static function (
     $post('/app/export/lauf/{id:\d+}/zip', $exportZip, static fn(Request $r, array $params) => $export()->zip($r, $params));
     $post('/app/export/lauf/{id:\d+}/bestaetigen', $exportZip, static fn(Request $r, array $params) => $export()->bestaetigen($r, $params));
     $post('/app/export/lauf/{id:\d+}/zuruecksetzen', $exportZip, static fn(Request $r, array $params) => $export()->zuruecksetzen($r, $params));
+
+    // DATEV Buchungsstapel for the tax advisor (issue #93, E-49, 05 §4).
+    // Permission `export.csv` - on the user side like the ZIP export; the
+    // period scope narrows the bookings in SQL. The download is a POST
+    // (CSRF) and needs the unlocked vault; the file is built in memory.
+    $exportCsv = Zugriff::recht(Permission::ExportCsv);
+    $get('/app/datev', $exportCsv, static fn(Request $r) => $datev()->seite($r));
+    $post('/app/datev/datei', $exportCsv, static fn(Request $r) => $datev()->datei($r));
     // Filing a run into the club's Nextcloud (issue #95): start, then one
     // JSON step at a time from public/js/nextcloud.js. `export.zip` without
     // a scope only - the controller answers 404 to a scoped role.
@@ -1038,6 +1058,11 @@ return static function (
     $get('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->page($r));
     $post('/admin/export', $einstellungen, static fn(Request $r) => $exportAdmin()->save($r));
     $post('/admin/export/vorschau', $einstellungen, static fn(Request $r) => $exportAdmin()->vorschau($r));
+    // DATEV export settings (issue #93, E-49, 05 §4): advisor and client
+    // number, ledger accounts of categories and accounts. Permission
+    // `admin.settings`; plaintext configuration, CSRF on the write.
+    $get('/admin/datev', $einstellungen, static fn(Request $r) => $datevAdmin()->page($r));
+    $post('/admin/datev', $einstellungen, static fn(Request $r) => $datevAdmin()->save($r));
     // Nextcloud target of the export (05 §2, issue #95): WebDAV address,
     // user, app password - vault data, so the page needs the unlocked
     // vault. Permission: `admin.settings`; CSRF on all writes.
