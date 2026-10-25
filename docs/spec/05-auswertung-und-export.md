@@ -93,7 +93,8 @@ Chart-Bibliothek. Farbe nie das einzige Signal (Werte immer als Text).
   `zuLang` und Hinweis im Filter – seit #250 für alle Seiten, E-51);
   Formular als Baustein `app/views/partials/zeitraum-filter.php` für alle
   Auswertungsseiten.
-  Standard: der freigegebene Zeitraum des Kontos, sonst das Vorjahr.
+  Standard: der freigegebene Zeitraum des Kontos (umfasst er mehr als 3
+  Jahre, dessen letztes Kalenderjahr, #250), sonst das Vorjahr.
 - `App\Service\Report\Kassenpruefung` baut den `KassenpruefungBericht`:
   Salden je Konto über `Auswertungsquelle::kontobewegungen()` +
   `ReportService::kontosalden()` (Session-Cache; Anfang bei Zeitraum-Scope

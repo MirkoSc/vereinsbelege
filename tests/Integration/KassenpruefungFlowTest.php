@@ -338,6 +338,12 @@ final class KassenpruefungFlowTest extends DatabaseTestCase
         new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2025-01-01'), new \DateTimeImmutable('2025-06-30'));
         $pruefer = $this->get('/app/auswertung/kassenpruefung', ['art' => 'frei', 'von' => '2020-01-01', 'bis' => '2025-06-30']);
         self::assertStringContainsString('gezeigt wird der Zeitraum vom 01.01.2025 bis 30.06.2025.', $pruefer->body);
+
+        // A released period longer than that opens with its last calendar year.
+        new UserAccessRepository($this->pdo())->setScope($this->userId, new \DateTimeImmutable('2020-03-01'), new \DateTimeImmutable('2025-06-30'));
+        $breit = $this->get('/app/auswertung/kassenpruefung');
+        self::assertStringContainsString('Zeitraum 01.01.2025 bis 30.06.2025', $breit->body);
+        self::assertStringNotContainsString('Ein freier Zeitraum umfasst höchstens', $breit->body);
     }
 
     // ------------------------------------------------------------ scaffolding

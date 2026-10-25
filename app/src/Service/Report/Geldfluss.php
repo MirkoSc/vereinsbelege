@@ -114,7 +114,7 @@ final readonly class Geldfluss
         Dimension $dimension,
         ?int $schluessel,
         ?Zugriffsbereich $buchungsBereich,
-        ?Zugriffsbereich $belegBereich = null,
+        ?Zugriffsbereich $belegBereich,
     ): GeldflussDrilldown {
         if (!in_array($dimension, self::DIMENSIONEN, true)) {
             throw new \InvalidArgumentException('Unsupported dimension.');
@@ -136,10 +136,12 @@ final readonly class Geldfluss
         foreach ($this->belege->nachIds($belegIds) as $record) {
             $records[$record->id] = $record;
         }
-        $oeffenbar = $belegBereich === null ? [] : array_flip($this->dokumente->idsImBereich(
-            array_values(array_unique(array_map(static fn(InvoiceRecord $r): int => $r->documentId, $records))),
-            $belegBereich,
-        ));
+        $dokumentIds = array_values(array_unique(array_map(static fn(InvoiceRecord $r): int => $r->documentId, $records)));
+        $oeffenbar = array_flip(match (true) {
+            $belegBereich === null => [],
+            $belegBereich->istUnbeschraenkt() => $dokumentIds,
+            default => $this->dokumente->idsImBereich($dokumentIds, $belegBereich),
+        });
 
         // The bookings whose counterparty may show, in one query.
         $buchungen = [];
